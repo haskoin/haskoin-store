@@ -1,15 +1,9 @@
 module Main where
 
-import Test.Framework (defaultMain)
-
-import qualified Network.Haskoin.Wallet.Units (tests)
-import qualified Network.Haskoin.Wallet.Tests (tests)
-
-import Network.Haskoin.Constants
+import           Network.Haskoin.Constants
+import qualified Network.Haskoin.Wallet.Spec
+import           Test.Hspec                  (hspec)
 
 main :: IO ()
-main = setProdnet >> defaultMain
-        (  Network.Haskoin.Wallet.Tests.tests
-        ++ Network.Haskoin.Wallet.Units.tests
-        )
+main = setProdnet >> hspec Network.Haskoin.Wallet.Spec.walletSpec
 

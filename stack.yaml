@@ -3,8 +3,12 @@ flags: {}
 packages:
 - haskoin-core
 extra-deps:
-- daemons-0.2.1
 - pbkdf-1.1.1.1
 - murmur3-1.0.3
 - secp256k1-0.5.2
 - concurrent-extra-0.7.0.10
+- parsec-extra-0.2.0.0
+- console-program-0.4.2.1
+- ansi-terminal-0.6.3.1
+- directory-1.2.7.1
+- time-1.7.0.1

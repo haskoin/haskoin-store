@@ -1,110 +1,490 @@
-{-|
-  This package provides a command line application called /hw/ (haskoin
-  wallet). It is a lightweight bitcoin wallet featuring BIP32 key management,
-  deterministic signatures (RFC-6979) and first order support for
-  multisignature transactions. A library API for /hw/ is also exposed.
--}
-module Network.Haskoin.Wallet
-(
--- *Client
-  clientMain
-, OutputFormat(..)
-, Config(..)
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+module Network.Haskoin.Wallet where
 
--- *Server
-, runSPVServer
-, SPVMode(..)
+import           Control.Monad
+import qualified Data.Aeson                                 as J
+import qualified Data.ByteString                            as BS
+import qualified Data.ByteString.Char8                      as B8
+import qualified Data.ByteString.Lazy                       as BL
+import qualified Data.Map.Strict                            as M
+import           Data.Maybe
+import           Data.Monoid                                ((<>))
+import qualified Data.Serialize                             as S
+import           Data.String.Conversions                    (cs)
+import           Data.Text                                  (Text)
+import qualified Data.Text                                  as T (null)
+import           Data.Word
+import           Network.Haskoin.Constants
+import           Network.Haskoin.Crypto
+import           Network.Haskoin.Transaction
+import           Network.Haskoin.Util
+import           Network.Haskoin.Wallet.AccountStore
+import           Network.Haskoin.Wallet.Amounts
+import           Network.Haskoin.Wallet.ConsolePrinter
+import           Network.Haskoin.Wallet.Entropy
+import           Network.Haskoin.Wallet.HTTP
+import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
+import qualified Network.Haskoin.Wallet.PrettyJson          as Pretty
+import           Network.Haskoin.Wallet.Signing
+import qualified System.Console.Argument                    as Argument
+import           System.Console.Command
+import qualified System.Console.Haskeline                   as Haskeline
+import           System.Console.Program                     (showUsage, single)
+import qualified System.Directory                           as D
 
--- *API JSON Types
-, JsonAccount(..)
-, JsonAddr(..)
-, JsonCoin(..)
-, JsonTx(..)
+clientMain :: IO ()
+clientMain = single hwCommands
 
--- *API Request Types
-, WalletRequest(..)
-, ListRequest(..)
-, NewAccount(..)
-, OfflineTxData(..)
-, CoinSignData(..)
-, CreateTx(..)
-, SignTx(..)
-, NodeAction(..)
-, AccountType(..)
-, AddressType(..)
-, addrTypeIndex
-, TxType(..)
-, TxConfidence(..)
-, AddressInfo(..)
-, BalanceInfo(..)
+hwCommands :: Commands IO
+hwCommands =
+    Node hw [ Node mnemonic []
+            , Node pubkey []
+            , Node watch []
+            , Node rename []
+            , Node receive []
+            , Node history []
+            , Node send []
+            , Node sign []
+            , Node balance []
+            , Node broadcast []
+            , Node help []
+            ]
 
--- *API Response Types
-, WalletResponse(..)
-, TxCompleteRes(..)
-, ListResult(..)
-, RescanRes(..)
+hw :: Command IO
+hw = command "hw" "bitcoin wallet management" $ io $ showUsage hwCommands
 
--- *Database Accounts
-, initWallet
-, accounts
-, newAccount
-, addAccountKeys
-, getAccount
-, isMultisigAccount
-, isReadAccount
-, isCompleteAccount
-, defaultDeriv
-, rootToAccKey
-, rootToAccKeys
+mnemonic :: Command IO
+mnemonic = command "mnemonic" "Generate a mnemonic" $
+    withOption entOpt $ \reqEnt ->
+    withOption diceOpt $ \useDice ->io $ do
+        rollsM <- if useDice
+                    then Just <$> askDiceRolls (fromIntegral reqEnt)
+                    else return Nothing
+        mnemE <- genMnemonic (fromIntegral reqEnt) rollsM
+        case mnemE of
+            Right (orig, ms) -> 
+                renderIO $ vcat
+                    [ formatTitle "System Entropy Source"
+                    , nest 4 $ formatFilePath orig
+                    , formatTitle "Private Mnemonic"
+                    , nest 4 $ mnemonicPrinter 4 (words $ cs ms)
+                    ]
+            Left err -> consoleError $ formatError err
+  where
+    entOpt = Argument.option ['e'] ["entropy"] Argument.integer 16
+             "Entropy in bytes to generate the mnemonic [16,20..32]"
+    diceOpt = Argument.option ['d'] ["dice"] Argument.boolean False
+              "Provide additional entropy from 6-sided dice rolls"
+    askDiceRolls reqEnt = askInputLine $ "Enter your " <>
+                                         show (requiredRolls reqEnt) <>
+                                         " dice rolls: "
 
--- *Database Addresses
-, getAddress
-, addressesAll
-, addresses
-, addressList
-, unusedAddresses
-, addressCount
-, setAddrLabel
-, addressPrvKey
-, useAddress
-, setAccountGap
-, firstAddrTime
-, getPathRedeem
-, getPathPubKey
+mnemonicPrinter :: Int -> [String] -> ConsolePrinter
+mnemonicPrinter n ws =
+    vcat $ map (mconcat . map formatWord) $ groupIn n $ zip ([1..] :: [Int]) ws
+  where
+    formatWord (i, w) = mconcat
+        [ formatKey $ block 4 $ show i <> "."
+        , formatMnemonic $ block 10 w
+        ]
 
--- *Database Bloom Filter
-, getBloomFilter
+derOpt :: Argument.Option Integer
+derOpt = Argument.option ['d'] ["deriv"] Argument.integer 0
+         "Bip44 account derivation"
 
--- *Database transactions
-, txs
-, addrTxs
-, getTx
-, getAccountTx
-, importTx
-, importNetTx
-, signAccountTx
-, createWalletTx
-, signOfflineTx
-, getOfflineTxData
-, isCoinbaseTx
+testOpt :: Argument.Option Bool
+testOpt = Argument.option ['t'] ["testnet"] Argument.boolean False
+          "Switch to testnet"
 
--- *Database blocks
-, importMerkles
-, walletBestBlock
+satOpt :: Argument.Option Bool
+satOpt = Argument.option ['s'] ["satoshi"] Argument.boolean False
+          "Use satoshi precision for amounts"
 
--- *Database coins and balances
-, spendableCoins
-, accountBalance
-, addressBalances
+bitsOpt :: Argument.Option Bool
+bitsOpt = Argument.option ['b'] ["bits"] Argument.boolean False
+          "Use bits precision for amounts"
 
--- *Rescan
-, resetRescan
-) where
+getPrecision :: Bool -> Bool -> Precision
+getPrecision True True =
+    consoleError $ formatError "Can not set both satoshi and bits flags"
+getPrecision True _ = PrecisionSatoshi
+getPrecision _ True = PrecisionBits
+getPrecision _ _    = PrecisionBitcoin
 
-import Network.Haskoin.Wallet.Client
-import Network.Haskoin.Wallet.Server
-import Network.Haskoin.Wallet.Settings
-import Network.Haskoin.Wallet.Types
-import Network.Haskoin.Wallet.Accounts
-import Network.Haskoin.Wallet.Transaction
+setOptNet :: Bool -> IO ()
+setOptNet True = do
+    setTestnet
+    renderIO $ formatWarn "--- Testnet ---"
+setOptNet False = setProdnet
+
+httpNet :: Bool -> HTTPNet
+httpNet t = if t then HTTPTestnet else HTTPProdnet
+
+pubkey :: Command IO
+pubkey = command "pubkey" "Derive a public key from a mnemonic" $
+    withOption derOpt $ \d ->
+    withOption testOpt $ \t -> io $ do
+        setOptNet t
+        xpub <- deriveXPubKey <$> askSigningKey (fromIntegral d)
+        let pref  = if t then "tpub-" else "xpub-"
+            fname = pref <> cs (xPubChecksum xpub) <> ".txt"
+        path <- writeDoc fname $ cs $ xPubExport xpub
+        renderIO $ vcat
+            [ formatTitle "Public Key"
+            , nest 4 $ formatPubKey $ cs $ xPubExport xpub
+            , formatTitle "Public Key File"
+            , nest 4 $ formatFilePath path
+            ]
+
+watch :: Command IO
+watch = command "watch" "Create a new read-only account from an xpub file" $
+    withOption testOpt $ \t ->
+    withNonOption Argument.file $ \fp -> io $ do
+        setOptNet t
+        bs <- BL.readFile fp
+        let xpub = fromMaybe err $ xPubImport $ head $ B8.lines $ cs bs
+            store = AccountStore xpub 0 0 (bip44Deriv $ xPubChild xpub)
+        name <- newAccountStore store
+        renderIO $ vcat
+            [ formatTitle "New Account Created"
+            , nest 4 $ vcat
+                [ formatKey (block 13 "Name:") <>
+                  formatAccount (cs name)
+                , formatKey (block 13 "Derivation:") <>
+                  formatDeriv (show $ accountStoreDeriv store)
+                ]
+            ]
+  where
+    err = consoleError $ formatError "Could not parse the public key"
+
+rename :: Command IO
+rename = command "rename" "Rename an account" $
+    withOption testOpt $ \t ->
+    withNonOption Argument.string $ \oldName ->
+    withNonOption Argument.string $ \newName -> io $ do
+        setOptNet t
+        renameAccountStore (cs oldName) (cs newName)
+        renderIO $
+            formatStatic "Account" <+> formatAccount oldName <+>
+            formatStatic "renamed to" <+> formatAccount newName
+
+accOpt :: Argument.Option String
+accOpt = Argument.option ['a'] ["account"] Argument.string ""
+         "Account name"
+
+receive :: Command IO
+receive = command "receive" "Generate a new address to receive coins" $
+    withOption accOpt $ \acc ->
+    withOption testOpt $ \t -> io $ do
+        setOptNet t
+        withAccountStore (cs acc) $ \(key, store) -> do
+            let (addr, store') = nextExtAddress store
+            updateAccountStore key $ const store'
+            renderIO $ addressFormat [(lst3 addr, fst3 addr)]
+
+history :: Command IO
+history = command "history" "Display historical addresses" $
+    withOption accOpt $ \acc ->
+    withOption cntOpt $ \cnt ->
+    withOption testOpt $ \t -> io $ do
+        setOptNet t
+        withAccountStore (cs acc) $ \(_, store) -> do
+            let xpub = accountStoreXPubKey store
+                idx  = accountStoreExternal store
+            when (idx == 0) $ consoleError $ formatError
+                "No addresses have been generated"
+            let start = fromIntegral $ max (0 :: Integer)
+                                           (fromIntegral idx - cnt)
+                count = fromIntegral $ idx - start
+                addrs = take count $ derivePathAddrs xpub extDeriv start
+            renderIO $ addressFormat $ map (\(a,_,i) -> (i,a)) addrs
+  where
+    cntOpt = Argument.option ['n'] ["number"] Argument.natural 5
+             "Number of addresses to display"
+
+addressFormat :: [(Word32, Address)] -> ConsolePrinter
+addressFormat as =
+    vcat $ map toFormat as
+  where
+    toFormat :: (Word32, Address) -> ConsolePrinter
+    toFormat (i, a) = mconcat
+        [ formatKey $ block (n+2) $ show i <> ":"
+        , formatAddress $ cs $ addrToBase58 a
+        ]
+    n = length $ show $ maximum $ map fst as
+
+send :: Command IO
+send = command "send" "Send coins (hw send address amount [address amount..])" $
+    withOption accOpt $ \acc ->
+    withOption feeOpt $ \feeByte ->
+    withOption dustOpt $ \dust ->
+    withOption satOpt $ \s ->
+    withOption bitsOpt $ \b ->
+    withOption testOpt $ \t ->
+    withNonOptions Argument.string $ \as -> io $ do
+        setOptNet t
+        withAccountStore (cs acc) $ \(key, store) -> do
+            let pr = getPrecision s b
+                rcps = fromMaybe rcptErr $ mapM (toRecipient pr) $ groupIn 2 as
+                feeW = fromIntegral feeByte
+                dustW = fromIntegral dust
+            resE <- buildTxSignData blockchainInfo (httpNet t)
+                                    store rcps feeW dustW
+            let (signDat, store') = either (consoleError . formatError) id resE
+                infoE = pubSignInfo signDat (accountStoreXPubKey store)
+                info = either (consoleError . formatError) id infoE
+            when (store /= store') $ updateAccountStore key $ const store'
+            let chsum = txChksum $ txSignDataTx signDat
+                fname = "tx-" <> cs chsum <> "-unsigned.json"
+            path <- writeDoc fname $ cs $ Pretty.encodePretty signDat
+            renderIO $ vcat
+                [ signingInfoFormat (accountStoreDeriv store) pr info Nothing
+                , formatTitle "Unsigned Tx Data File"
+                , nest 4 $ formatFilePath path
+                ]
+  where
+    feeOpt = Argument.option ['f'] ["fee"] Argument.natural 200
+             "Fee per byte"
+    dustOpt = Argument.option ['d'] ["dust"] Argument.natural 5430
+             "Do not create change outputs below this value"
+    rcptErr = consoleError $ formatError "Could not parse the recipients"
+
+txChksum :: Tx -> BS.ByteString
+txChksum = BS.take 8 . txHashToHex . nosigTxHash
+
+groupIn :: Int -> [a] -> [[a]]
+groupIn n xs
+    | length xs <= n = [xs]
+    | otherwise = [take n xs] <> groupIn n (drop n xs)
+
+toRecipient :: Precision -> [String] -> Maybe (Address, Word64)
+toRecipient pr [a, v] = (,) <$> base58ToAddr (cs a) <*> readBalance pr v
+toRecipient _  _      = Nothing
+
+sign :: Command IO
+sign = command "sign" "Sign the output of the \"send\" command" $
+    withOption derOpt $ \d ->
+    withOption satOpt $ \s ->
+    withOption bitsOpt $ \b ->
+    withOption testOpt $ \t ->
+    withNonOption Argument.file $ \fp -> io $ do
+        setOptNet t
+        bs <- BL.readFile fp
+        case J.decode bs of
+            Just dat -> do
+                signKey <- askSigningKey $ fromIntegral d
+                let resE = signWalletTx dat signKey
+                    pr   = getPrecision s b
+                case resE of
+                    Right (info, signedTx) -> do
+                        renderIO $
+                            signingInfoFormat
+                                (bip44Deriv $ fromIntegral d) pr info
+                                (Just $ BS.length $ S.encode signedTx)
+                        confirmAmount pr $ signingInfoAmount info
+                        let signedHex = encodeHex $ S.encode signedTx
+                            chsum = cs $ txChksum signedTx
+                            fname = "tx-" <> chsum <> "-signed.txt"
+                        path <- writeDoc fname $ cs signedHex
+                        renderIO $ vcat
+                            [ formatTitle "Signed Tx File"
+                            , nest 4 $ formatFilePath path
+                            ]
+                    Left err -> consoleError $ formatError err
+            _ -> consoleError $ formatError "Could not decode transaction data"
+  where
+    confirmAmount pr txAmnt = do
+        userAmnt <- askInputLine "Type the tx amount to continue signing: "
+        when (readBalanceI pr userAmnt /= Just txAmnt) $ do
+            renderIO $ formatError "Invalid tx amount"
+            confirmAmount pr txAmnt
+
+signingInfoFormat :: HardPath
+                  -> Precision
+                  -> SigningInfo
+                  -> Maybe Int
+                  -> ConsolePrinter
+signingInfoFormat accDeriv pr SigningInfo{..} sizeM =
+    vcat [ summary, recips, change, mycoins ]
+  where
+    summary = vcat
+        [ formatTitle "Tx Summary"
+        , nest 4 $ vcat
+            [ case signingInfoTxHash of
+                Just tid ->
+                    formatKey (block 12 "Tx hash:") <>
+                    formatTxHash (cs $ txHashToHex tid)
+                _ -> mempty
+            , formatKey (block 12 "Amount:") <>
+              formatBalanceI pr signingInfoAmount
+            , formatKey (block 12 "Fee:") <>
+              formatBalance pr signingInfoFee
+            , case sizeM of
+                Just size ->
+                  formatKey (block 12 "Tx size:") <>
+                  formatStatic (show size <> " bytes")
+                _ -> mempty
+            , formatKey (block 12 "Fee/byte:") <>
+              formatBalance PrecisionSatoshi signingInfoFeeByte
+            , formatKey (block 12 "Signed:") <>
+              if signingInfoIsSigned
+                 then formatTrue "Yes"
+                 else formatFalse "No"
+            ]
+        ]
+    recips
+        | signingInfoNonStd == 0 && null signingInfoRecipients = mempty
+        | otherwise = vcat
+            [ formatTitle "Tx Recipients"
+            , nest 4 $ vcat $
+                map addrFormat signingInfoRecipients <>
+                [nonStdRcp]
+            ]
+    nonStdRcp
+        | signingInfoNonStd == 0 = mempty
+        | otherwise = templ (formatStatic "Non-standard recipients")
+                        signingInfoNonStd Nothing
+    change
+        | null signingInfoChange = mempty
+        | otherwise = vcat
+            [ formatTitle "Your Tx Change"
+            , nest 4 $ vcat $ map addrFormat' signingInfoChange
+            ]
+    mycoins
+        | null signingInfoMyCoins = mempty
+        | otherwise = vcat
+            [ formatTitle "Your Tx Input Coins"
+            , nest 4 $ vcat $ map addrFormat' signingInfoMyCoins
+            ]
+    addrFormat' (a, (v, p)) =
+        templ (formatAddress $ cs $ addrToBase58 a) v (Just p)
+    addrFormat (a, v) =
+        templ (formatAddress $ cs $ addrToBase58 a) v Nothing
+    templ :: ConsolePrinter -> Word64 -> Maybe SoftPath -> ConsolePrinter
+    templ f v pM = vcat
+        [ f
+        , nest 4 $ vcat
+            [ formatKey (block 8 "Value:") <> formatBalance pr v
+            , case pM of
+                Just p -> mconcat
+                    [ formatKey $ block 8 "Deriv:"
+                    , formatDeriv $ show $ ParsedPrv $
+                        toGeneric $ accDeriv ++/ p
+                    ]
+                _ -> mempty
+            ]
+        ]
+
+balance :: Command IO
+balance = command "balance" "Display the account balance" $
+    withOption accOpt $ \acc ->
+    withOption satOpt $ \s ->
+    withOption bitsOpt $ \b ->
+    withOption testOpt $ \t -> io $ do
+        setOptNet t
+        withAccountStore (cs acc) $ \(_, store) -> do
+            let addrs = allExtAddresses store <> allIntAddresses store
+                pr    = getPrecision s b
+            bal <- httpBalance blockchainInfo (httpNet t) $ map fst addrs
+            renderIO $ vcat
+                [ formatTitle "Account Balance"
+                , nest 4 $ formatBalance pr bal
+                ]
+
+formatBalance :: Precision -> Word64 -> ConsolePrinter
+formatBalance pr bal =
+    formatPosBalance (showBalance pr bal) <+>
+    formatStatic (showPrecision pr)
+
+formatBalanceI :: Precision -> Integer -> ConsolePrinter
+formatBalanceI pr bal =
+    format (showBalanceI pr bal) <+>
+    formatStatic (showPrecision pr)
+  where
+    format = if bal >= 0 then formatPosBalance else formatNegBalance
+
+broadcast :: Command IO
+broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
+    withOption testOpt $ \t ->
+    withNonOption Argument.file $ \fp -> io $ do
+        setOptNet t
+        bs' <- BL.readFile fp
+        let bs = head $ B8.lines $ cs bs'
+        case S.decode =<< maybeToEither "" (decodeHex bs) of
+            Right tx -> do
+                httpBroadcast blockchainInfo (httpNet t) tx
+                renderIO $
+                    formatStatic "Tx" <+>
+                    formatTxHash (cs $ txHashToHex $ txHash tx) <+>
+                    formatStatic "has been broadcast"
+            _ -> consoleError $ formatError "Could not parse the transaction"
+
+help :: Command IO
+help = command "help" "Show usage info" $ io $ showUsage hwCommands
+
+{- Command Line Helpers -}
+
+writeDoc :: FilePath -> BL.ByteString -> IO FilePath
+writeDoc fileName dat = do
+    dir <- D.getUserDocumentsDirectory
+    let path = dir <> "/" <> fileName
+    BL.writeFile path $ dat <> "\n"
+    return path
+
+withAccountStore :: Text -> ((Text, AccountStore) -> IO ()) -> IO ()
+withAccountStore name f
+    | T.null name = do
+        accMap <- readAccountsFile
+        case M.assocs accMap of
+            [val] -> f val
+            _ -> case M.lookup "main" accMap of
+                    Just val -> f ("main", val)
+                    _ -> err $ M.keys accMap
+    | otherwise = do
+        accM <- getAccountStore name
+        case accM of
+            Just acc -> f (name, acc)
+            _ -> err . M.keys =<< readAccountsFile
+  where
+    err :: [Text] -> IO ()
+    err [] = consoleError $ formatError "No accounts have been created"
+    err keys = consoleError $ vcat
+        [ formatError
+            "Select one of the following accounts with -a or --account"
+        , nest 4 $ vcat $ map (formatAccount . cs) keys
+        ]
+
+askInputLineHidden :: String -> IO String
+askInputLineHidden msg = do
+    inputM <- Haskeline.runInputT
+              Haskeline.defaultSettings $
+              Haskeline.getPassword (Just '*') msg
+    maybe (consoleError $ formatError "No action due to EOF") return inputM
+
+askInputLine :: String -> IO String
+askInputLine msg = do
+    inputM <- Haskeline.runInputT
+              Haskeline.defaultSettings $
+              Haskeline.getInputLine msg
+    maybe (consoleError $ formatError "No action due to EOF") return inputM
+
+askSigningKey :: KeyIndex -> IO XPrvKey
+askSigningKey acc = do
+    str <- askInputLineHidden "Enter your private mnemonic: "
+    case mnemonicToSeed "" (cs str) of
+        Right _ -> do
+            passStr <- askPassword
+            either (consoleError . formatError) return $
+                signingKey (cs passStr) (cs str) acc
+        Left err -> consoleError $ formatError err
+
+askPassword :: IO String
+askPassword = do
+    pass <- askInputLineHidden "Mnemonic password or leave empty: "
+    unless (null pass) $ do
+        pass2 <- askInputLineHidden "Repeat your mnemonic password: "
+        when (pass /= pass2) $ consoleError $ formatError
+            "The passwords did not match"
+    return pass
 
