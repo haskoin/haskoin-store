@@ -3,8 +3,7 @@
 [![Build Status](https://travis-ci.org/haskoin/haskoin.svg?branch=master)](https://travis-ci.org/haskoin/haskoin)
 
 Haskoin is an implementation of the Bitcoin protocol in Haskell. There are
-currently 3 main packages in Haskoin, namely haskoin-core, haskoin-node and
-haskoin-wallet.
+currently 2 main packages in Haskoin, namely haskoin-core and haskoin-node.
 
 ## haskoin-core
 
@@ -12,6 +11,7 @@ haskoin-core is a package implementing the core functionalities of the Bitcoin
 protocol specifications. The following features are provided:
 
 - Hashing functions (sha-256, ripemd-160)
+- Block validation
 - Base58 encoding
 - BIP32 extended key derivation and parsing (m/1'/2/3)
 - BIP39 mnemonic keys
@@ -29,54 +29,18 @@ package and the node implementation in haskoin-node.
 
 ## haskoin-node
 
-haskoin-node is essentially an SPV (simple payment verification) server node. It
-implements the Bitcoin network protocol in Haskell and allows the
-synchronization of headers and the download of merkle blocks. haskoin-node is
-not a full node (yet) as it only support SPV verification of headers rather than
-full block validation. The following features are supported:
+haskoin-node is the network server node. It
+implements the Bitcoin protocol in Haskell and allows the
+synchronization of headers and the download of blocks and transactions. haskoin-node is
+not a full node, but a node library, and provides:
 
 - Implementation of the Bitcoin network protocol
-- Headertree implementation with SPV verification
+- Header proof-of-work validation
 - Headers-first synchronization
-- Merkle block download from peers with bloom filters
-- Full block download from peers (without verification)
+- Peer discovery and management
+- Full block download
+- Merkle block download
+- Transaction download
+- Hooks for extra features
 
 [haskoin-node hackage documentation](http://hackage.haskell.org/package/haskoin-node)
-
-## haskoin-wallet
-
-haskoin-wallet is an SPV (simple payment verification) wallet implementation in
-Haskell. It features BIP32 hierarchical-deterministic key management,
-deterministic signatures (RFC-6979) and first order support for multi-signature
-transactions. You can communicate with the wallet process using JSON
-serialization over ØMQ socket or the supplied `hw` tool.
-
-[haskoin-wallet hackage documentation](http://hackage.haskell.org/package/haskoin-wallet)
-
-### Installing haskoin-wallet
-
-Get autoconf, pkg-config, ncurses, libtool and ØMQ.
-
-On Debian/Ubuntu systems, use this command:
-
-```sh
-sudo apt-get install -y \
-    git autoconf pkg-config libncurses5-dev libtool \
-    libzmq3-dev
-```
-
-Get [Stack](https://github.com/commercialhaskell/stack).
-
-Clone this repository, and then install using Stack.
-
-```sh
-git clone https://github.com/haskoin/haskoin.git
-cd haskoin
-stack install
-```
-
-Executable `hw` will be installed in `~/.local/bin`.
-
-## Contributing
-
-Contribute via GitHub pull requests.
