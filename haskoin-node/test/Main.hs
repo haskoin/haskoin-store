@@ -9,8 +9,9 @@ import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Control
-import qualified Data.ByteString                      as BS
+import qualified Data.ByteString                as BS
 import           Data.Maybe
+import           Data.Serialize
 import           Data.String.Conversions
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
@@ -19,12 +20,12 @@ import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
-import           Network.Socket                       (SockAddr (..))
+import           Network.Socket                 (SockAddr (..))
 import           System.IO.Temp
 import           System.Random
 import           Test.Framework
-import           Test.Framework.Providers.HUnit       (testCase)
-import           Test.HUnit                           hiding (Node, Test)
+import           Test.Framework.Providers.HUnit (testCase)
+import           Test.HUnit                     hiding (Node, Test)
 
 main :: IO ()
 main = do
@@ -193,8 +194,8 @@ getTestMerkleBlocks =
     runNoLoggingT . withTestNode $ \(mgr, _ch, mbox) -> do
         n <- liftIO randomIO
         let f0 = bloomCreate 2 0.001 n BloomUpdateAll
-            f1 = bloomInsert f0 $ encodeStrict k
-            f2 = bloomInsert f1 $ encodeStrict $ getAddrHash a
+            f1 = bloomInsert f0 $ encode k
+            f2 = bloomInsert f1 $ encode $ getAddrHash a
         f2 `setManagerFilter` mgr
         p <-
             receiveMatch mbox $ \case

@@ -23,6 +23,7 @@ import qualified Data.ByteString             as BS
 import           Data.Default
 import           Data.List
 import           Data.Maybe
+import           Data.Serialize              (decode, encode)
 import           Data.String.Conversions
 import           Data.Text                   (Text)
 import           Database.LevelDB            (DB, MonadResource, runResourceT)
@@ -54,14 +55,14 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
          BlockHeaders m where
     addBlockHeader bn = do
         db <- asks headerDB
-        let bs = encodeStrict bn
-            sh = encodeStrict $ headerHash $ nodeHeader bn
+        let bs = encode bn
+            sh = encode $ headerHash $ nodeHeader bn
         LevelDB.put db def sh bs
     getBlockHeader bh = do
         db <- asks headerDB
-        let sh = encodeStrict bh
+        let sh = encode bh
         bsM <- LevelDB.get db def sh
-        return $ decodeStrict <$> bsM
+        return $ fromRight . decode <$> bsM
     getBestBlockHeader = do
         db <- asks headerDB
         $(logDebug) $ logMe <> "Get best block header from database"
@@ -70,17 +71,17 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
         case bsM of
             Nothing -> do
                 $(logDebug) $ logMe <> "Did not find best block"
-                let gs = encodeStrict genesisNode
+                let gs = encode genesisNode
                 addBlockHeader genesisNode
                 LevelDB.put db def "best" gs
                 $(logDebug) $ logMe <> "Added genesis block node"
                 return genesisNode
             Just bs -> do
                 $(logDebug) $ logMe <> "Got best block, decoding"
-                return $ decodeStrict bs
+                return . fromRight $ decode bs
     setBestBlockHeader bn = do
         db <- asks headerDB
-        let bs = encodeStrict bn
+        let bs = encode bn
         LevelDB.put db def "best" bs
     addBlockHeaders bns = do
         db <- asks headerDB
@@ -88,8 +89,8 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
             map
                 (\bn ->
                      LevelDB.Put
-                         (encodeStrict $ headerHash $ nodeHeader bn)
-                         (encodeStrict bn))
+                         (encode $ headerHash $ nodeHeader bn)
+                         (encode bn))
                 bns
 
 chain ::
@@ -321,7 +322,7 @@ syncHeaders bb p = do
                     GetHeaders
                     { getHeadersVersion = myVersion
                     , getHeadersBL = loc
-                    , getHeadersHashStop = decodeStrict $ BS.replicate 32 0
+                    , getHeadersHashStop = fromRight . decode $ BS.replicate 32 0
                     }
         $(logDebug) $ logMe <> "Sending getheaders message to syncing peer"
         PeerOutgoing m `send` p

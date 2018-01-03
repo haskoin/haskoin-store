@@ -34,7 +34,6 @@ import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node.Common
 import           Network.Haskoin.Transaction
-import           Network.Haskoin.Util
 import           System.Random
 
 type MonadPeer m = (MonadBase IO m, MonadLoggerIO m, MonadReader PeerReader m)
@@ -106,7 +105,7 @@ handshake = do
                 PeerIncoming (MVersion v) -> Just v
                 _ -> Nothing
         case m of
-            Just v -> return v
+            Just v  -> return v
             Nothing -> throwIO PeerTimeout
     remoteVerAck p = do
         m <-
@@ -249,7 +248,7 @@ inPeerConduit = do
             inPeerConduit
 
 outPeerConduit :: Monad m => Conduit Message m ByteString
-outPeerConduit = awaitForever $ yield . encodeStrict
+outPeerConduit = awaitForever $ yield . encode
 
 downloadTxs ::
        MonadPeer m

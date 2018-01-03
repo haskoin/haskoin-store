@@ -19,7 +19,7 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
-import           Control.Monad.Trans.Either
+import           Control.Monad.Except
 import           Control.Monad.Trans.Maybe
 import           Data.Bits
 import           Data.ByteString             (ByteString)
@@ -344,7 +344,7 @@ processManagerMessage (ManagerSetPeerVersion p v) =
         $(logDebug) $ logMe <> "Got version from peer at " <> cs pn
         modifyPeer f p
         op <- MaybeT $ findPeer p
-        runEitherT testVersion >>= \case
+        runExceptT testVersion >>= \case
             Left ex -> do
                 deletePeer $ onlinePeerAddress op
                 onlinePeerAsync op `cancelWith` ex
@@ -363,14 +363,14 @@ processManagerMessage (ManagerSetPeerVersion p v) =
         , onlinePeerRelay = relay v
         }
     testVersion = do
-        when (services v .&. nodeNetwork == 0) $ left NotNetworkPeer
+        when (services v .&. nodeNetwork == 0) $ throwError NotNetworkPeer
         bfb <- asks myBloomFilter
         bf <- liftIO $ readTVarIO bfb
         when (isJust bf && services v .&. nodeBloom == 0) $
-            left BloomFiltersNotSupported
+            throwError BloomFiltersNotSupported
         myself <-
             any ((verNonce v ==) . onlinePeerNonce) <$> lift getOnlinePeers
-        when myself $ left PeerIsMyself
+        when myself $ throwError PeerIsMyself
     loadFilter = do
         bfb <- asks myBloomFilter
         bf <- liftIO $ readTVarIO bfb
