@@ -2,6 +2,8 @@ resolver: lts-10.1
 flags: {}
 packages:
 - haskoin-core
+- haskoin-node
+- haskoin-store
 - haskoin-wallet
 extra-deps:
 - pbkdf-1.1.1.1
@@ -14,3 +16,4 @@ extra-deps:
 - directory-1.2.7.1
 - time-1.7.0.1
 - foundation-edge-0.0.3
+- nqe-0.1.0.0
