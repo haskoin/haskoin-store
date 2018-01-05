@@ -344,7 +344,7 @@ withAnyPeer ::
     -> m (Maybe a)
 withAnyPeer mgr f =
     bracket
-        (managerTakeAny True mgr)
+        (managerTakeAny False mgr)
         (maybe (return ()) ((`managerFreePeer` mgr) . snd))
         (maybe (return Nothing) (fmap Just . f))
 

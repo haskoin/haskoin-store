@@ -23,8 +23,6 @@ import           Network.Socket              (SockAddr (..))
 import           System.Directory
 import           System.FilePath
 
-type Store = Inbox NodeEvent
-
 newtype StoreEvent =
     BlockEvent BlockEvent
 
@@ -32,15 +30,17 @@ type StoreSupervisor = Inbox SupervisorMessage
 
 data StoreConfig = StoreConfig
     { storeConfDir        :: !FilePath
-    , storeConfMailbox    :: !Store
     , storeConfBlocks     :: !BlockStore
     , storeConfSupervisor :: !StoreSupervisor
     , storeConfChain      :: !Chain
     , storeConfListener   :: !(Listen StoreEvent)
+    , storeConfMaxPeers   :: !Int
+    , storeConfInitPeers  :: ![HostPort]
+    , storeConfNoNewPeers :: !Bool
     }
 
 data StoreRead = StoreRead
-    { mySelf       :: !Store
+    { myMailbox    :: !(Inbox NodeEvent)
     , myBlockStore :: !BlockStore
     , myChain      :: !Chain
     , myManager    :: !Manager
@@ -66,20 +66,21 @@ store cfg = do
     liftIO $ createDirectoryIfMissing False nodeDir
     ns <- Inbox <$> liftIO newTQueueIO
     mgr <- Inbox <$> liftIO newTQueueIO
+    sm <- Inbox <$> liftIO newTQueueIO
     let nodeCfg =
             NodeConfig
-            { maxPeers = 20
+            { maxPeers = storeConfMaxPeers cfg
             , directory = nodeDir
-            , initPeers = []
-            , noNewPeers = False
-            , nodeEvents = (`sendSTM` storeConfMailbox cfg)
+            , initPeers = storeConfInitPeers cfg
+            , noNewPeers = storeConfNoNewPeers cfg
+            , nodeEvents = (`sendSTM` sm)
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeSupervisor = ns
             , nodeChain = storeConfChain cfg
             , nodeManager = mgr
             }
     let storeRead = StoreRead
-            { mySelf = storeConfMailbox cfg
+            { myMailbox = sm
             , myBlockStore = storeConfBlocks cfg
             , myChain = storeConfChain cfg
             , myManager = mgr
@@ -101,7 +102,8 @@ store cfg = do
     run =
         forever $ do
             $(logDebug) $ logMe <> "Awaiting message"
-            msg <- receive $ storeConfMailbox cfg
+            sm <- asks myMailbox
+            msg <- receive sm
             storeDispatch msg
 
 storeDispatch :: MonadStore m => NodeEvent -> m ()
