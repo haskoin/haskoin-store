@@ -19,7 +19,6 @@ import           Network.Haskoin.Crypto
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Transaction
-import           Network.Haskoin.Util
 import           Network.Socket                 (SockAddr (..))
 import           System.IO.Temp
 import           System.Random
@@ -98,11 +97,13 @@ downloadBlock =
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        c <- getBlocks p [h]
-        bM <- liftIO $ atomically c
-        let b = fromJust bM
-        liftIO $ do
-            assertBool "Did not download block" $ isJust bM
+        getBlocks p [h]
+        b <-
+            receiveMatch mbox $ \case
+                PeerEvent (ReceivedBlock p' b)
+                    | p == p' -> Just b
+                _ -> Nothing
+        liftIO $
             assertEqual "Block hash incorrect" h (headerHash $ blockHeader b)
   where
     h = "000000009ec921df4bb16aedd11567e27ede3c0b63835b257475d64a059f102b"
@@ -114,10 +115,17 @@ downloadSomeFailures =
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        m <- getTx p h
+        getTxs p [h]
+        n <-
+            receiveMatch mbox $ \case
+                PeerEvent (ReceivedNotFound p' n)
+                    | p == p' -> Just n
+                _ -> Nothing
         liftIO $
-            assertBool "Managed to download inexistent transaction" $
-            isNothing m
+            assertEqual
+                "Managed to download inexistent transaction"
+                [InvVector InvTx (getTxHash h)]
+                n
   where
     h = TxHash $ fromJust $ bsToHash256 $ BS.replicate 32 0xaa
 
@@ -144,7 +152,7 @@ connectToPeer =
     runNoLoggingT . withTestNode $ \(mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
-                ManagerEvent (ManagerConnect (_a, p)) -> Just p
+                ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
         $(logDebug) "[Test] Connected to a peer, retrieving version..."
         v <- fromMaybe (error "No version") <$> managerGetPeerVersion p mgr
@@ -165,13 +173,17 @@ getTestBlocks =
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        c <- getBlocks p hs
-        b1M <- liftIO $ atomically c
-        liftIO $ assertBool "First block not downloaded" $ isJust b1M
-        let b1 = fromJust b1M
-        b2M <- liftIO $ atomically c
-        liftIO $ assertBool "Second block not downloaded" $ isJust b2M
-        let b2 = fromJust b2M
+        getBlocks p hs
+        b1 <-
+            receiveMatch mbox $ \case
+                PeerEvent (ReceivedBlock p' b)
+                    | p == p' -> Just b
+                _ -> Nothing
+        b2 <-
+            receiveMatch mbox $ \case
+                PeerEvent (ReceivedBlock p' b)
+                    | p == p' -> Just b
+                _ -> Nothing
         $(logDebug) $ "[Test] Got two blocks, computing assertions..."
         liftIO $ do
             "Block 1 hash incorrect" `assertBool`
@@ -201,40 +213,24 @@ getTestMerkleBlocks =
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        c <- getMerkleBlocks p bhs
-        b1M <- liftIO $ atomically c
-        liftIO $ assertBool "Could not get first Merkle block" $ isJust b1M
-        let (b1, txs1) = fromJust b1M
-        b2M <- liftIO $ atomically c
-        liftIO $ assertBool "Could not get second Merkle block" $ isJust b2M
-        let (b2, txs2) = fromJust b2M
-            e1@(Right ths1) = merkleBlockTxs b1
-            ts1 = map txHash txs1
-            e2@(Right ths2) = merkleBlockTxs b2
-            ts2 = map txHash txs2
-            h1' = headerHash $ merkleHeader b1
-            h2' = headerHash $ merkleHeader b2
-            txc1 = merkleTotalTxns b1
-            txc2 = merkleTotalTxns b2
-        endM <- liftIO $ atomically c
+        getMerkleBlocks p bhs
+        b1 <-
+            receiveMatch mbox $ \case
+                PeerEvent (ReceivedMerkleBlock p' b)
+                    | p == p' -> Just b
+                _ -> Nothing
+        b2 <-
+            receiveMatch mbox $ \case
+                PeerEvent (ReceivedMerkleBlock p' b)
+                    | p == p' -> Just b
+                _ -> Nothing
         liftIO $ do
-            assertBool "Did not finish after second block" $ isNothing endM
             assertEqual
                 "Address does not match key"
                 a
                 (pubKeyAddr (k :: PubKeyC))
-            assertBool "Issues decoding first Merkle block" $ isRight e1
-            assertBool "Issues decoding second Merkle block" $ isRight e2
-            assertEqual "First hash incorrect" h1 h1'
-            assertEqual "Second hash incorrect" h2 h2'
-            assertEqual "First tx count incorrect" 42 txc1
-            assertEqual "Second tx count incorrect" 8 txc2
             assertBool "First Merkle root invalid" $ testMerkleRoot b1
             assertBool "Second Merkle root invalid" $ testMerkleRoot b2
-            assertEqual "Incorrect tx list length 1" (length ths1) $ length txs1
-            assertEqual "Incorrect tx list length 2" (length ths2) $ length txs2
-            assertBool "Tx hash 1 incorrect" $ all (`elem` ths1) ts1
-            assertBool "Tx hash 2 incorrect" $ all (`elem` ths2) ts2
   where
     a = "mgpS4Zis8iwNhriKMro1QSGDAbY6pqzRtA"
     k = "02c3cface1777c70251cb206f7c80cabeae195dfbeeff0767cbd2a58d22be383da"

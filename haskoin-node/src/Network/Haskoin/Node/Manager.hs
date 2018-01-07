@@ -390,7 +390,7 @@ processManagerMessage (ManagerSetPeerVersion p v) =
             guard $ not $ onlinePeerConnected op
             $(logDebug) $ logMe <> "Announcing peer"
             l <- mgrConfMgrListener <$> asks myConfig
-            liftIO . atomically . l $ ManagerConnect (onlinePeerAsync op, p)
+            liftIO . atomically . l $ ManagerConnect p
             ch <- asks myChain
             chainNewPeer p ch
             setPeerAnnounced p
@@ -412,13 +412,6 @@ processManagerMessage (ManagerGetPeers th tb reply) = do
     $(logDebug) $ logMe <> "Providing up-to-date peers"
     getPeers th tb >>= liftIO . atomically . reply
 
-processManagerMessage (ManagerPeerAsync p reply) = do
-    $(logDebug) $ logMe <> "Querying peer actor"
-    m <- fmap onlinePeerAsync <$> findPeer p
-    case m of
-        Nothing -> liftIO . atomically $ reply Nothing
-        Just x  -> liftIO . atomically $ reply $ Just x
-
 processManagerMessage (ManagerTakePeer p reply) = do
     $(logDebug) $ logMe <> "Taking a peer"
     m <- fmap onlinePeerBusy <$> findPeer p
@@ -436,12 +429,8 @@ processManagerMessage (ManagerFreePeer p) = do
     modifyPeer (\x -> x {onlinePeerBusy = False}) p
     l <- mgrConfMgrListener <$> asks myConfig
     ch <- asks myChain
-    m <- fmap onlinePeerAsync <$> findPeer p
-    case m of
-        Just a -> do
-            liftIO . atomically $ l $ ManagerAvailable (a, p)
-            chainFreePeer p ch
-        Nothing -> return ()
+    chainFreePeer p ch
+    liftIO . atomically . l $ ManagerAvailable p
 
 processManagerMessage (ManagerPeerPing p i) = do
     $(logDebug) $ logMe <> "Got ping time measurement from peer"
@@ -466,23 +455,22 @@ processPeerOffline op
             logShow (onlinePeerAddress op)
         asks myChain >>= chainRemovePeer p
         l <- mgrConfMgrListener <$> asks myConfig
-        liftIO . atomically $ l $ ManagerDisconnect (onlinePeerAsync op, p)
+        liftIO . atomically . l $ ManagerDisconnect p
     | otherwise =
         $(logDebug) $
         logMe <> "Disconnected unannounced peer " <>
         logShow (onlinePeerAddress op)
 
-getAllPeers :: MonadManager m => m [(Async (), Peer)]
+getAllPeers :: MonadManager m => m [Peer]
 getAllPeers =
-    map f . sortBy (compare `on` median . onlinePeerPings) <$> getOnlinePeers
-  where
-    f op = (onlinePeerAsync op, onlinePeerMailbox op)
+    map onlinePeerMailbox . sortBy (compare `on` median . onlinePeerPings) <$>
+    getOnlinePeers
 
 getPeers ::
        MonadManager m
     => Bool -- ^ test height
     -> Bool -- ^ test busy
-    -> m [(Async (), Peer)]
+    -> m [Peer]
 getPeers th tb = do
     $(logDebug) $ logMe <> "Obtaining available peers"
     bbb <- asks myBestBlock
@@ -491,12 +479,12 @@ getPeers th tb = do
     $(logDebug) $
         logMe <> "There are " <> cs (show $ length ps) <>
         " up-to-date peers connected"
-    return . map f $ sortBy (compare `on` median . onlinePeerPings) ps
+    return . map onlinePeerMailbox $
+        sortBy (compare `on` median . onlinePeerPings) ps
   where
     isGood bb op = isNotBusy op && isAtHeight bb op
     isNotBusy op = not tb || not (onlinePeerBusy op)
     isAtHeight bb op = not th || onlinePeerBestBlock op >= bb
-    f op = (onlinePeerAsync op, onlinePeerMailbox op)
 
 connectNewPeers :: (MonadManager m) => m ()
 connectNewPeers = do

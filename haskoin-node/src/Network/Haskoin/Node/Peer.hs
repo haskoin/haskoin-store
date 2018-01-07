@@ -23,7 +23,6 @@ import qualified Data.ByteString.Lazy        as BL
 import           Data.Conduit
 import qualified Data.Conduit.Binary         as CB
 import           Data.Conduit.Network
-import           Data.List
 import           Data.Maybe
 import           Data.Serialize
 import           Data.String.Conversions
@@ -38,10 +37,17 @@ import           System.Random
 
 type MonadPeer m = (MonadBase IO m, MonadLoggerIO m, MonadReader PeerReader m)
 
+data Pending
+    = PendingTx !TxHash
+    | PendingBlock !BlockHash
+    | PendingMerkle !BlockHash
+    deriving (Show, Eq)
+
 data PeerReader = PeerReader
     { mySelf     :: !Peer
     , myConfig   :: !PeerConfig
     , myHostPort :: !(Host, Port)
+    , myPending  :: !(TVar [(Pending, Word32)])
     }
 
 time :: Int
@@ -72,9 +78,16 @@ peer pc p =
     peerSession hp ad = do
         let src = appSource ad =$= inPeerConduit
             snk = outPeerConduit =$= appSink ad
-        withSource src p . const $
-            let rd = PeerReader {myConfig = pc, mySelf = p, myHostPort = hp}
-            in runReaderT (go $$ snk) rd
+        withSource src p . const $ do
+            pbox <- liftIO $ newTVarIO []
+            let rd =
+                    PeerReader
+                    { myConfig = pc
+                    , mySelf = p
+                    , myHostPort = hp
+                    , myPending = pbox
+                    }
+            runReaderT (go $$ snk) rd
 
 handshake :: MonadPeer m => Source m Message
 handshake = do
@@ -151,25 +164,80 @@ exchangePing = do
                 lp <> "Roundtrip time (milliseconds): " <> logShow (d * 1000)
             ManagerPeerPing me d `send` mgr
 
+checkStale :: MonadPeer m => ConduitM () Message m ()
+checkStale = do
+    lp <- logMe
+    $(logDebug) $ lp <> "Checking if this peer is stale"
+    pbox <- asks myPending
+    ps <- liftIO $ readTVarIO pbox
+    case ps of
+        [] -> return ()
+        (_, ts):_ -> do
+            cur <- computeTime
+            when (cur > ts + 30) $ throwIO PeerTimeout
+
+registerOutgoing :: MonadPeer m => Message -> m ()
+registerOutgoing (MGetData (GetData ivs)) = do
+    pbox <- asks myPending
+    cur <- computeTime
+    ms <-
+        fmap catMaybes . forM ivs $ \iv ->
+            case toPending iv of
+                Nothing -> return Nothing
+                Just p  -> return $ Just (p, cur)
+    liftIO . atomically $ modifyTVar pbox (++ ms)
+  where
+    toPending InvVector {invType = InvTx, invHash = hash} =
+        Just (PendingTx (TxHash hash))
+    toPending InvVector {invType = InvBlock, invHash = hash} =
+        Just (PendingBlock (BlockHash hash))
+    toPending InvVector {invType = InvMerkleBlock, invHash = hash} =
+        Just (PendingMerkle (BlockHash hash))
+    toPending _ = Nothing
+registerOutgoing _ = return ()
+
+registerIncoming :: MonadPeer m => Message -> m ()
+registerIncoming (MNotFound (NotFound ivs)) = do
+    pbox <- asks myPending
+    liftIO . atomically $ modifyTVar pbox (filter (matchNotFound . fst))
+  where
+    matchNotFound (PendingTx (TxHash hash)) = InvVector InvTx hash `notElem` ivs
+    matchNotFound (PendingBlock (BlockHash hash)) =
+        InvVector InvBlock hash `notElem` ivs
+    matchNotFound (PendingMerkle (BlockHash hash)) =
+        InvVector InvBlock hash `notElem` ivs &&
+        InvVector InvMerkleBlock hash `notElem` ivs
+registerIncoming (MTx t) = do
+    pbox <- asks myPending
+    liftIO . atomically $
+        modifyTVar pbox (filter ((/= PendingTx (txHash t)) . fst))
+registerIncoming (MBlock b) = do
+    pbox <- asks myPending
+    liftIO . atomically $
+        modifyTVar
+            pbox
+            (filter ((/= PendingBlock (headerHash (blockHeader b))) . fst))
+registerIncoming (MMerkleBlock b) = do
+    pbox <- asks myPending
+    liftIO . atomically $
+        modifyTVar
+            pbox
+            (filter ((/= PendingMerkle (headerHash (merkleHeader b))) . fst))
+registerIncoming _ = return ()
+
 processMessage :: MonadPeer m => PeerMessage -> ConduitM () Message m ()
 processMessage m = do
     lp <- logMe
+    checkStale
     case m of
         PeerOutgoing msg -> do
             $(logDebug) $ lp <> "Sending " <> logMsg msg
+            registerOutgoing msg
             yield msg
         PeerIncoming msg -> do
             $(logDebug) $ lp <> "Received " <> logMsg msg
+            registerIncoming msg
             incoming msg
-        PeerMerkleBlocks bhs l -> do
-            $(logDebug) $ lp <> "Downloading Merkle blocks"
-            downloadMerkleBlocks bhs l
-        PeerBlocks bhs l -> do
-            $(logDebug) $ lp <> "Downloading blocks"
-            downloadBlocks bhs l
-        PeerTxs ths l -> do
-            $(logDebug) $ lp <> "Downloading transactions"
-            downloadTxs ths l
 
 logMe :: MonadPeer m => m Text
 logMe = logPeer <$> asks myHostPort
@@ -210,12 +278,24 @@ incoming m = do
         MTx t -> do
             $(logDebug) $ lp <> "Relaying transaction " <> logShow (txHash t)
             liftIO . atomically . l $ ReceivedTx p t
+        MBlock b -> do
+            $(logDebug) $
+                lp <> "Relaying block " <> logShow (headerHash $ blockHeader b)
+            liftIO . atomically . l $ ReceivedBlock p b
+        MMerkleBlock b -> do
+            $(logDebug) $
+                lp <> "Relaying Merkle block " <>
+                logShow (headerHash $ merkleHeader b)
+            liftIO . atomically . l $ ReceivedMerkleBlock p b
         MHeaders (Headers hcs) -> do
             $(logDebug) $ lp <> "Sending new headers to chain actor"
             ChainNewHeaders p hcs `send` ch
         MGetData (GetData d) -> do
             $(logDebug) $ lp <> "Relaying getdata message"
             liftIO . atomically . l $ ReceivedGetData p d
+        MNotFound (NotFound n) -> do
+            $(logDebug) $ lp <> "Relaying notfound message"
+            liftIO . atomically . l $ ReceivedNotFound p n
         MGetBlocks g -> do
             $(logDebug) $ lp <> "Relaying getblocks message"
             liftIO . atomically . l $ ReceivedGetBlocks p g
@@ -250,198 +330,3 @@ inPeerConduit = do
 outPeerConduit :: Monad m => Conduit Message m ByteString
 outPeerConduit = awaitForever $ yield . encode
 
-downloadTxs ::
-       MonadPeer m
-    => [TxHash]
-    -> Listen (Maybe (Either TxHash Tx))
-    -> Source m Message
-downloadTxs ths l = do
-    lp <- logMe
-    let ivs = map (InvVector InvTx . getTxHash) ths
-        msg = MGetData (GetData ivs)
-    $(logDebug) $ lp <> "Sending getdata for transactions"
-    yield msg
-    lift $ do
-        receiveTxs ths l
-        liftIO . atomically $ l Nothing
-
-receiveTxs ::
-       MonadPeer m => [TxHash] -> Listen (Maybe (Either TxHash Tx)) -> m ()
-receiveTxs ths l = go ths
-  where
-    go [] = return ()
-    go hs = do
-        lp <- logMe
-        $(logDebug) $ lp <> "Waiting to receive a transaction"
-        p <- asks mySelf
-        eM <-
-            liftIO . timeout time . receiveMatch p $ \case
-                PeerIncoming (MTx tx) -> do
-                    let th = txHash tx
-                    guard (th `elem` hs)
-                    return $ Right tx
-                PeerIncoming (MNotFound (NotFound nf)) -> do
-                    let ths' =
-                            [ th
-                            | x <- nf
-                            , invType x == InvTx
-                            , let th = TxHash (invHash x)
-                            , th `elem` hs
-                            ]
-                    guard (not (null ths'))
-                    return $ Left ths'
-                _ -> Nothing
-        case eM of
-            Just (Right tx) -> do
-                let hs' = txHash tx `delete` hs
-                liftIO . atomically . l . Just $ Right tx
-                go hs'
-            Just (Left ths') -> do
-                let hs' = hs \\ ths'
-                forM_ ths $ liftIO . atomically . l . Just . Left
-                go hs'
-            Nothing -> throwIO PeerTimeout
-
-downloadBlocks ::
-       MonadPeer m => [BlockHash] -> Listen (Maybe Block) -> Source m Message
-downloadBlocks bhs l = do
-    lp <- logMe
-    let ivs = map (InvVector InvBlock . getBlockHash) bhs
-        msg = MGetData (GetData ivs)
-    $(logDebug) $ lp <> "Sending getdata for blocks"
-    yield msg
-    lift $ do
-        receiveBlocks bhs l
-        liftIO . atomically $ l Nothing
-
-receiveBlocks :: MonadPeer m => [BlockHash] -> Listen (Maybe Block) -> m ()
-receiveBlocks bhs l = go bhs
-  where
-    go [] = return ()
-    go (h:hs) = do
-        lp <- logMe
-        $(logDebug) $ lp <> "Waiting to receive a block"
-        p <- asks mySelf
-        mm <-
-            liftIO . timeout time . receiveMatch p $ \case
-                PeerIncoming (MBlock b) -> do
-                    let bh = headerHash $ blockHeader b
-                    guard (bh == h)
-                    return $ Just b
-                PeerIncoming (MNotFound (NotFound nf)) -> do
-                    guard . not . null $
-                        [ BlockHash (invHash x)
-                        | x <- nf
-                        , let t = invType x
-                        , t == InvBlock || t == InvMerkleBlock
-                        , invHash x == getBlockHash h
-                        ]
-                    return Nothing
-                _ -> Nothing
-        case mm of
-            Just m ->
-                when (isJust m) $ do
-                    liftIO . atomically $ l m
-                    go hs
-            Nothing -> throwIO PeerTimeout
-
-downloadMerkleBlocks ::
-       MonadPeer m
-    => [BlockHash]
-    -> Listen (Maybe (MerkleBlock, [Tx]))
-    -> Source m Message
-downloadMerkleBlocks bhs l = do
-    lp <- logMe
-    let ivs = map (InvVector InvMerkleBlock . getBlockHash) bhs
-        msg = MGetData (GetData ivs)
-    $(logDebug) $ lp <> "Sending getdata for merkle blocks"
-    yield msg
-    n <- liftIO randomIO
-    $(logDebug) $ lp <> "Sending ping with nonce " <> logShow n
-    yield $ MPing (Ping n)
-    lift $ do
-        receiveMerkles n bhs l
-        liftIO . atomically $ l Nothing
-
-receiveMerkles ::
-       MonadPeer m
-    => Word64 -- ^ sent ping nonce
-    -> [BlockHash]
-    -> Listen (Maybe (MerkleBlock, [Tx]))
-    -> m ()
-receiveMerkles n bhs l = go Nothing bhs
-  where
-    go cur hs = do
-        lp <- logMe
-        $(logDebug) $ lp <> "Waiting to receive a Merkle block"
-        p <- asks mySelf
-        f p cur hs >>= \case
-            Nothing -> throwIO PeerTimeout
-            Just m ->
-                case m of
-                    Just (b, txs) -> g cur hs b txs
-                    Nothing       -> h cur hs
-    f p cur hs =
-        liftIO . timeout time . receiveMatch p $ \case
-            PeerIncoming (MMerkleBlock b) -> do
-                let bh = headerHash $ merkleHeader b
-                case hs of
-                    [] -> Nothing
-                    h':_ -> do
-                        guard (bh == h')
-                        return $ Just (b, [])
-            PeerIncoming (MTx tx) -> do
-                (b, txs) <- cur
-                if testTx b tx
-                    then return $ Just (b, nub (tx : txs))
-                    else return Nothing
-            PeerIncoming (MNotFound (NotFound nf)) ->
-                case hs of
-                    [] -> Nothing
-                    h':_ -> do
-                        guard . not . null $
-                            [ BlockHash (invHash x)
-                            | x <- nf
-                            , let t = invType x
-                            , t == InvBlock || t == InvMerkleBlock
-                            , invHash x == getBlockHash h'
-                            ]
-                        return Nothing
-            PeerIncoming (MPong (Pong n'))
-                | n' == n -> return Nothing
-            _ -> Nothing
-    g cur hs b txs = do
-        lp <- logMe
-        let m = Just (b, txs)
-        case cur of
-            Just (b', txs') ->
-                if b == b'
-                    then do
-                        $(logDebug) $ lp <> "Got Merkle block transaction"
-                        go m hs
-                    else do
-                        $(logDebug) $ lp <> "Got new Merkle block"
-                        liftIO . atomically . l $ Just (b', reverse txs')
-                        go m (tail hs)
-            Nothing -> do
-                $(logDebug) $ lp <> "Received a new Merkle block"
-                go m (tail hs)
-    h cur hs = do
-        lp <- logMe
-        case cur of
-            Just (b, txs) -> do
-                $(logDebug) $ lp <> "Sending merkle block to listener"
-                liftIO . atomically . l $ Just (b, reverse txs)
-            Nothing -> return ()
-        if null hs
-            then $(logDebug) $ lp <> "All Merkle block data received"
-            else $(logError) $
-                 lp <> "Closing incoming Merkle block channel early"
-
-testTx :: MerkleBlock -> Tx -> Bool
-testTx mb tx =
-    let e = merkleBlockTxs mb
-        txh = txHash tx
-    in case e of
-        Left _    -> False
-        Right ths -> txh `elem` ths

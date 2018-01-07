@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes            #-}
 module Network.Haskoin.Node.Common where
@@ -94,9 +93,9 @@ data NodeEvent
     | PeerEvent !PeerEvent
 
 data ManagerEvent
-    = ManagerConnect !(Async (), Peer)
-    | ManagerAvailable !(Async (), Peer)
-    | ManagerDisconnect !(Async (), Peer)
+    = ManagerConnect !Peer
+    | ManagerAvailable !Peer
+    | ManagerDisconnect !Peer
 
 data ManagerMessage
     = ManagerSetFilter !BloomFilter
@@ -116,14 +115,12 @@ data ManagerMessage
     | ManagerGetPeerVersion !Peer
                             !(Reply (Maybe Word32))
     | ManagerGetChain !(Reply Chain)
-    | ManagerGetAllPeers !(Reply [(Async (), Peer)])
+    | ManagerGetAllPeers !(Reply [Peer])
     | ManagerGetPeers !Bool
                       !Bool
-                      !(Reply [(Async (), Peer)])
+                      !(Reply [Peer])
     | ManagerPeerPing !Peer
                       !NominalDiffTime
-    | ManagerPeerAsync !Peer
-                       !(Reply (Maybe (Async ())))
     | ManagerTakePeer !Peer
                       !(Reply Bool)
     | ManagerFreePeer !Peer
@@ -189,12 +186,18 @@ instance Exception PeerException
 data PeerEvent
     = ReceivedInvTxs !Peer
                      ![TxHash]
+    | ReceivedBlock !Peer
+                    !Block
+    | ReceivedMerkleBlock !Peer
+                          !MerkleBlock
     | ReceivedTx !Peer
                  !Tx
     | ReceivedGetBlocks !Peer
                         !GetBlocks
     | ReceivedGetHeaders !Peer
                          !GetHeaders
+    | ReceivedNotFound !Peer
+                       ![InvVector]
     | ReceivedGetData !Peer
                       ![InvVector]
     | ReceivedMempool !Peer
@@ -204,12 +207,6 @@ data PeerEvent
 data PeerMessage
     = PeerOutgoing !Message
     | PeerIncoming !Message
-    | PeerMerkleBlocks ![BlockHash]
-                       !(Listen (Maybe (MerkleBlock, [Tx])))
-    | PeerBlocks ![BlockHash]
-                 !(Listen (Maybe Block))
-    | PeerTxs ![TxHash]
-              !(Listen (Maybe (Either TxHash Tx)))
 
 logShow :: Show a => a -> Text
 logShow x = cs (show x)
@@ -248,91 +245,84 @@ computeTime = round <$> liftIO getPOSIXTime
 myVersion :: Word32
 myVersion = 70012
 
-managerSetBest :: (MonadIO m) => BlockNode -> Manager -> m ()
+managerSetBest :: MonadIO m => BlockNode -> Manager -> m ()
 managerSetBest bn mgr = ManagerSetBest bn `send` mgr
 
-managerSetPeerVersion :: (MonadIO m) => Peer -> Version -> Manager -> m ()
+managerSetPeerVersion :: MonadIO m => Peer -> Version -> Manager -> m ()
 managerSetPeerVersion p v mgr = ManagerSetPeerVersion p v `send` mgr
 
-managerGetPeerVersion :: (MonadIO m) => Peer -> Manager -> m (Maybe Word32)
+managerGetPeerVersion :: MonadIO m => Peer -> Manager -> m (Maybe Word32)
 managerGetPeerVersion p mgr = ManagerGetPeerVersion p `query` mgr
 
-managerGetPeerBest :: (MonadIO m) => Peer -> Manager -> m (Maybe BlockNode)
+managerGetPeerBest :: MonadIO m => Peer -> Manager -> m (Maybe BlockNode)
 managerGetPeerBest p mgr = ManagerGetPeerBest p `query` mgr
 
-managerSetPeerBest :: (MonadIO m) => Peer -> BlockNode -> Manager -> m ()
+managerSetPeerBest :: MonadIO m => Peer -> BlockNode -> Manager -> m ()
 managerSetPeerBest p bn mgr = ManagerSetPeerBest p bn `send` mgr
 
 managerGetPeers ::
-       (MonadIO m)
+       MonadIO m
     => Bool -- ^ only at height
     -> Bool -- ^ only not busy
     -> Manager
-    -> m [(Async (), Peer)]
+    -> m [Peer]
 managerGetPeers th tb mgr = ManagerGetPeers th tb `query` mgr
 
-managerGetAllPeers :: (MonadIO m) => Manager -> m [(Async (), Peer)]
+managerGetAllPeers :: MonadIO m => Manager -> m [Peer]
 managerGetAllPeers mgr = ManagerGetAllPeers `query` mgr
 
-managerGetChain :: (MonadIO m) => Manager -> m Chain
+managerGetChain :: MonadIO m => Manager -> m Chain
 managerGetChain mgr = ManagerGetChain `query` mgr
 
-managerGetAddr :: (MonadIO m) => Peer -> Manager -> m ()
+managerGetAddr :: MonadIO m => Peer -> Manager -> m ()
 managerGetAddr p mgr = ManagerGetAddr p `send` mgr
 
-managerPeerAsync :: (MonadIO m) => Peer -> Manager -> m (Maybe (Async ()))
-managerPeerAsync p mgr = ManagerPeerAsync p `query` mgr
-
-managerTakePeer :: (MonadIO m) => Peer -> Manager -> m Bool
+managerTakePeer :: MonadIO m => Peer -> Manager -> m Bool
 managerTakePeer p mgr = ManagerTakePeer p `query` mgr
 
-managerFreePeer :: (MonadIO m) => Peer -> Manager -> m ()
+managerFreePeer :: MonadIO m => Peer -> Manager -> m ()
 managerFreePeer p mgr = ManagerFreePeer p `send` mgr
 
 managerTakeAny ::
        (MonadIO m)
     => Bool -- ^ only at height
     -> Manager
-    -> m (Maybe (Async (), Peer))
+    -> m (Maybe Peer)
 managerTakeAny th mgr = go =<< managerGetPeers th True mgr
   where
     go [] = return Nothing
     go (p:ps) =
-        managerTakePeer (snd p) mgr >>= \x ->
+        managerTakePeer p mgr >>= \x ->
             if x
                 then return $ Just p
                 else go ps
 
-managerKill :: (MonadIO m) => PeerException -> Peer -> Manager -> m ()
+managerKill :: MonadIO m => PeerException -> Peer -> Manager -> m ()
 managerKill e p mgr = ManagerKill e p `send` mgr
 
 managerNewPeers ::
-       (MonadIO m) => Peer -> [NetworkAddressTime] -> Manager -> m ()
+       MonadIO m => Peer -> [NetworkAddressTime] -> Manager -> m ()
 managerNewPeers p as mgr = ManagerNewPeers p as `send` mgr
 
-setManagerFilter :: (MonadIO m) => BloomFilter -> Manager -> m ()
+setManagerFilter :: MonadIO m => BloomFilter -> Manager -> m ()
 setManagerFilter bf mgr = ManagerSetFilter bf `send` mgr
 
-sendMessage :: (MonadIO m) => Message -> Peer -> m ()
+sendMessage :: MonadIO m => Message -> Peer -> m ()
 sendMessage msg p = PeerOutgoing msg `send` p
 
-peerSetFilter :: (MonadIO m) => BloomFilter -> Peer -> m ()
+peerSetFilter :: MonadIO m => BloomFilter -> Peer -> m ()
 peerSetFilter f p = MFilterLoad (FilterLoad f) `sendMessage` p
 
 withPeer ::
        (MonadIO m, MonadBaseControl IO m)
     => Peer
     -> Manager
-    -> ((Async (), Peer) -> m a)
+    -> (Peer -> m a)
     -> m (Maybe a)
 withPeer p mgr f =
     bracket (managerTakePeer p mgr) g $ \k ->
         if k
-            then do
-                m <- managerPeerAsync p mgr
-                case m of
-                    Just a  -> Just <$> f (a, p)
-                    Nothing -> return Nothing
+            then Just <$> f p
             else return Nothing
   where
     g k = when k $ managerFreePeer p mgr
@@ -340,79 +330,37 @@ withPeer p mgr f =
 withAnyPeer ::
        (MonadIO m, MonadBaseControl IO m)
     => Manager
-    -> ((Async (), Peer) -> m a)
+    -> (Peer -> m a)
     -> m (Maybe a)
 withAnyPeer mgr f =
     bracket
         (managerTakeAny False mgr)
-        (maybe (return ()) ((`managerFreePeer` mgr) . snd))
+        (maybe (return ()) (`managerFreePeer` mgr))
         (maybe (return Nothing) (fmap Just . f))
-
-asyncReader ::
-       Async () -- ^ asynchronous action generating stream
-    -> TVar Bool -- ^ end of stream?
-    -> TQueue (Maybe b) -- ^ stream "source"
-    -> STM (Maybe b) -- ^ stream "sink"
-asyncReader a x q =
-    readTVar x >>= \b ->
-        if b
-            then return Nothing
-            else do
-                let deadAsync = waitSTM a >> return Nothing
-                m <- readTQueue q `orElse` deadAsync
-                when (isNothing m) $ writeTVar x True
-                return m
-
-actionStream ::
-       (MonadIO m)
-    => (Async (), Peer)
-    -> (Listen (Maybe a) -> PeerMessage)
-    -> m (STM (Maybe a))
-actionStream (a, p) msg = do
-    q <- liftIO newTQueueIO
-    f <- liftIO $ newTVarIO False
-    let r = asyncReader a f q
-        l = writeTQueue q
-    msg l `send` p
-    return r
-
-getMerkleBlock ::
-       (MonadIO m)
-    => (Async (), Peer)
-    -> BlockHash
-    -> m (Maybe (MerkleBlock, [Tx]))
-getMerkleBlock p bh = getMerkleBlocks p [bh] >>= liftIO . atomically
-
-getBlock ::
-       (MonadIO m)
-    => (Async (), Peer)
-    -> BlockHash
-    -> m (Maybe Block)
-getBlock p bh = getBlocks p [bh] >>= liftIO . atomically
-
-getTx :: (MonadIO m) => (Async (), Peer) -> TxHash -> m (Maybe Tx)
-getTx p th =
-    getTxs p [th] >>= liftIO . atomically >>= \case
-        Just (Right tx) -> return $ Just tx
-        _ -> return Nothing
 
 getMerkleBlocks ::
        (MonadIO m)
-    => (Async (), Peer)
+    => Peer
     -> [BlockHash]
-    -> m (STM (Maybe (MerkleBlock, [Tx])))
-getMerkleBlocks p bhs = actionStream p (PeerMerkleBlocks bhs)
+    -> m ()
+getMerkleBlocks p bhs = PeerOutgoing (MGetData (GetData ivs)) `send` p
+  where
+    ivs = map (InvVector InvMerkleBlock . getBlockHash) bhs
 
 getBlocks ::
-       (MonadIO m) => (Async (), Peer) -> [BlockHash] -> m (STM (Maybe Block))
-getBlocks p bhs = actionStream p (PeerBlocks bhs)
+       MonadIO m => Peer -> [BlockHash] -> m ()
+getBlocks p bhs = PeerOutgoing (MGetData (GetData ivs)) `send` p
+  where
+    ivs = map (InvVector InvBlock . getBlockHash) bhs
 
 getTxs ::
-       (MonadIO m)
-    => (Async (), Peer)
+       MonadIO m
+    => Peer
     -> [TxHash]
-    -> m (STM (Maybe (Either TxHash Tx)))
-getTxs p ths = actionStream p (PeerTxs ths)
+    -> m ()
+getTxs p ths = PeerOutgoing (MGetData (GetData ivs)) `send` p
+  where
+    ivs = map (InvVector InvTx . getTxHash) ths
 
 buildVersion ::
        MonadIO m
@@ -436,27 +384,27 @@ buildVersion nonce height loc rmt = do
         , relay = False
         }
 
-chainNewPeer :: (MonadIO m) => Peer -> Chain -> m ()
+chainNewPeer :: MonadIO m => Peer -> Chain -> m ()
 chainNewPeer p ch = ChainNewPeer p `send` ch
 
-chainFreePeer :: (MonadIO m) => Peer -> Chain -> m ()
+chainFreePeer :: MonadIO m => Peer -> Chain -> m ()
 chainFreePeer p ch = ChainFreePeer p `send` ch
 
-chainRemovePeer :: (MonadIO m) => Peer -> Chain -> m ()
+chainRemovePeer :: MonadIO m => Peer -> Chain -> m ()
 chainRemovePeer p ch = ChainRemovePeer p `send` ch
 
-chainGetBlock :: (MonadIO m) => BlockHash -> Chain -> m (Maybe BlockNode)
+chainGetBlock :: MonadIO m => BlockHash -> Chain -> m (Maybe BlockNode)
 chainGetBlock bh ch = ChainGetBlock bh `query` ch
 
-chainGetBest :: (MonadIO m) => Chain -> m BlockNode
+chainGetBest :: MonadIO m => Chain -> m BlockNode
 chainGetBest ch = ChainGetBest `query` ch
 
 chainGetAncestor ::
-       (MonadIO m) => BlockHeight -> BlockNode -> Chain -> m (Maybe BlockNode)
+       MonadIO m => BlockHeight -> BlockNode -> Chain -> m (Maybe BlockNode)
 chainGetAncestor h n c = ChainGetAncestor h n `query` c
 
 chainGetParents ::
-       (MonadIO m) => BlockHeight -> BlockNode -> Chain -> m [BlockNode]
+       MonadIO m => BlockHeight -> BlockNode -> Chain -> m [BlockNode]
 chainGetParents height top ch = go [] top
   where
     go acc b
@@ -468,10 +416,10 @@ chainGetParents height top ch = go [] top
                 Just p  -> go (p : acc) p
 
 chainGetSplitBlock ::
-       (MonadIO m) => BlockNode -> BlockNode -> Chain -> m BlockNode
+       MonadIO m => BlockNode -> BlockNode -> Chain -> m BlockNode
 chainGetSplitBlock l r c = ChainGetSplit l r `query` c
 
-chainBlockMain :: (MonadIO m) => BlockHash -> Chain -> m Bool
+chainBlockMain :: MonadIO m => BlockHash -> Chain -> m Bool
 chainBlockMain bh ch =
     fmap (fromMaybe False) $
     runMaybeT $ do
@@ -480,5 +428,5 @@ chainBlockMain bh ch =
         ba <- MaybeT $ chainGetAncestor (nodeHeight bn) bb ch
         return $ bn == ba
 
-chainIsSynced :: (MonadIO m) => Chain -> m Bool
+chainIsSynced :: MonadIO m => Chain -> m Bool
 chainIsSynced ch = ChainIsSynced `query` ch
