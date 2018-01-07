@@ -11,6 +11,7 @@ module Network.Haskoin.Store.Block
 , BlockMessage(..)
 , StoredBlock(..)
 , blockGetBest
+, blockGet
 , blockGetTxs
 , blockStore
 ) where
@@ -54,6 +55,8 @@ data BlockMessage
     | BlockPeerConnect !(Async (), Peer)
     | BlockGetTxs !BlockHash
                   !(Reply (Maybe (StoredBlock, [Tx])))
+    | BlockGet !BlockHash
+               (Reply (Maybe StoredBlock))
 
 type BlockStore = Inbox BlockMessage
 
@@ -72,7 +75,7 @@ data StoredBlock = StoredBlock
     , storedBlockWork   :: !BlockWork
     , storedBlockHeader :: !BlockHeader
     , storedBlockTxs    :: ![TxHash]
-    }
+    } deriving (Show, Eq)
 
 instance Serialize StoredBlock where
     put sb = do
@@ -455,6 +458,11 @@ processBlockMessage (BlockGetTxs bh reply) = do
     m <- getBlockTxs bh
     liftIO . atomically $ reply m
 
+processBlockMessage (BlockGet bh reply) = do
+    $(logDebug) $ logMe <> "Request to get block information"
+    m <- getStoredBlock bh
+    liftIO . atomically $ reply m
+
 blockGetBest :: (MonadBase IO m, MonadIO m) => BlockStore -> m BlockHash
 blockGetBest b = BlockGetBest `query` b
 
@@ -464,6 +472,9 @@ blockGetTxs ::
     -> BlockStore
     -> m (Maybe (StoredBlock, [Tx]))
 blockGetTxs h b = BlockGetTxs h `query` b
+
+blockGet :: (MonadBase IO m, MonadIO m) => BlockHash -> BlockStore -> m (Maybe StoredBlock)
+blockGet h b = BlockGet h `query` b
 
 logMe :: Text
 logMe = "[Block] "
