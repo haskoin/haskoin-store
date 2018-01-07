@@ -4,7 +4,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TemplateHaskell       #-}
-module Network.Haskoin.Store.Master where
+module Network.Haskoin.Store.Store
+    ( StoreConfig(..)
+    , StoreEvent(..)
+    , store
+    ) where
 
 import           Control.Concurrent.NQE
 import           Control.Monad.Base

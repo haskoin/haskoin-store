@@ -1,17 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell   #-}
 import           Control.Concurrent.NQE
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Maybe
-import           Data.Monoid
-import           Data.String.Conversions
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store.Block
-import           Network.Haskoin.Store.Master
+import           Network.Haskoin.Store.Store
 import           Network.Haskoin.Transaction
 import           System.IO.Temp
 import           Test.Hspec
