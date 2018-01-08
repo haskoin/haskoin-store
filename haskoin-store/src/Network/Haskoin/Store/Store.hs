@@ -122,6 +122,11 @@ storeDispatch (ManagerEvent (ManagerConnect p)) = do
     b <- asks myBlockStore
     BlockPeerConnect p `send` b
 
+storeDispatch (ManagerEvent (ManagerDisconnect p)) = do
+    $(logDebug) $ logMe <> "Peer disconnected"
+    b <- asks myBlockStore
+    BlockPeerDisconnect p `send` b
+
 storeDispatch (ManagerEvent _) = $(logDebug) $ logMe <> "Ignoring manager event"
 
 storeDispatch (ChainEvent (ChainNewBest bn)) = do
@@ -132,6 +137,16 @@ storeDispatch (ChainEvent (ChainNewBest bn)) = do
 
 storeDispatch (ChainEvent _) =
     $(logDebug) $ logMe <> "Ignoring chain event"
+
+storeDispatch (PeerEvent (p, GotBlock block)) = do
+    $(logDebug) $ logMe <> "Received a block"
+    b <- asks myBlockStore
+    BlockReceived p block `send` b
+
+storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
+    $(logDebug) $ logMe <> "A block could not be found: " <> cs (show hash)
+    b <- asks myBlockStore
+    BlockNotReceived p hash `send` b
 
 storeDispatch (PeerEvent _) = $(logDebug) $ logMe <> "Ignoring peer event"
 

@@ -100,7 +100,7 @@ downloadBlock =
         getBlocks p [h]
         b <-
             receiveMatch mbox $ \case
-                PeerEvent (ReceivedBlock p' b)
+                PeerEvent (p', GotBlock b)
                     | p == p' -> Just b
                 _ -> Nothing
         liftIO $
@@ -118,14 +118,10 @@ downloadSomeFailures =
         getTxs p [h]
         n <-
             receiveMatch mbox $ \case
-                PeerEvent (ReceivedNotFound p' n)
+                PeerEvent (p', TxNotFound n)
                     | p == p' -> Just n
                 _ -> Nothing
-        liftIO $
-            assertEqual
-                "Managed to download inexistent transaction"
-                [InvVector InvTx (getTxHash h)]
-                n
+        liftIO $ assertEqual "Managed to download inexistent transaction" h n
   where
     h = TxHash $ fromJust $ bsToHash256 $ BS.replicate 32 0xaa
 
@@ -176,12 +172,12 @@ getTestBlocks =
         getBlocks p hs
         b1 <-
             receiveMatch mbox $ \case
-                PeerEvent (ReceivedBlock p' b)
+                PeerEvent (p', GotBlock b)
                     | p == p' -> Just b
                 _ -> Nothing
         b2 <-
             receiveMatch mbox $ \case
-                PeerEvent (ReceivedBlock p' b)
+                PeerEvent (p', GotBlock b)
                     | p == p' -> Just b
                 _ -> Nothing
         $(logDebug) $ "[Test] Got two blocks, computing assertions..."
@@ -216,12 +212,12 @@ getTestMerkleBlocks =
         getMerkleBlocks p bhs
         b1 <-
             receiveMatch mbox $ \case
-                PeerEvent (ReceivedMerkleBlock p' b)
+                PeerEvent (p', GotMerkleBlock b)
                     | p == p' -> Just b
                 _ -> Nothing
         b2 <-
             receiveMatch mbox $ \case
-                PeerEvent (ReceivedMerkleBlock p' b)
+                PeerEvent (p', GotMerkleBlock b)
                     | p == p' -> Just b
                 _ -> Nothing
         liftIO $ do

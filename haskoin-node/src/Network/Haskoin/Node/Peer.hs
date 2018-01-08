@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 module Network.Haskoin.Node.Peer
 ( peer
@@ -274,40 +275,47 @@ incoming m = do
             let ts = [TxHash (invHash i) | i <- is, invType i == InvTx]
             unless (null ts) $ do
                 $(logDebug) $ lp <> "Relaying transaction inventory"
-                liftIO . atomically . l $ ReceivedInvTxs p ts
-        MTx t -> do
-            $(logDebug) $ lp <> "Relaying transaction " <> logShow (txHash t)
-            liftIO . atomically . l $ ReceivedTx p t
+                liftIO . atomically . forM_ ts $ l . (,) p . TxAvail
+        MTx tx -> do
+            $(logDebug) $ lp <> "Relaying transaction " <> logShow (txHash tx)
+            liftIO . atomically $ l (p, GotTx tx)
         MBlock b -> do
             $(logDebug) $
                 lp <> "Relaying block " <> logShow (headerHash $ blockHeader b)
-            liftIO . atomically . l $ ReceivedBlock p b
+            liftIO . atomically $ l (p, GotBlock b)
         MMerkleBlock b -> do
             $(logDebug) $
                 lp <> "Relaying Merkle block " <>
                 logShow (headerHash $ merkleHeader b)
-            liftIO . atomically . l $ ReceivedMerkleBlock p b
+            liftIO . atomically $ l (p, GotMerkleBlock b)
         MHeaders (Headers hcs) -> do
             $(logDebug) $ lp <> "Sending new headers to chain actor"
             ChainNewHeaders p hcs `send` ch
         MGetData (GetData d) -> do
             $(logDebug) $ lp <> "Relaying getdata message"
-            liftIO . atomically . l $ ReceivedGetData p d
-        MNotFound (NotFound n) -> do
+            liftIO . atomically $ l (p, SendData d)
+        MNotFound (NotFound ns) -> do
             $(logDebug) $ lp <> "Relaying notfound message"
-            liftIO . atomically . l $ ReceivedNotFound p n
+            let f (InvVector InvTx hash) = Just (TxNotFound (TxHash hash))
+                f (InvVector InvBlock hash) =
+                    Just (BlockNotFound (BlockHash hash))
+                f (InvVector InvMerkleBlock hash) =
+                    Just (BlockNotFound (BlockHash hash))
+                f _ = Nothing
+                events = mapMaybe f ns
+            liftIO . atomically $ mapM_ (l . (p, )) events
         MGetBlocks g -> do
             $(logDebug) $ lp <> "Relaying getblocks message"
-            liftIO . atomically . l $ ReceivedGetBlocks p g
+            liftIO . atomically $ l (p, SendBlocks g)
         MGetHeaders h -> do
             $(logDebug) $ lp <> "Relaying getheaders message"
-            liftIO . atomically . l $ ReceivedGetHeaders p h
+            liftIO . atomically $ l (p, SendHeaders h)
         MReject r -> do
             $(logDebug) $ lp <> "Relaying rejection message"
-            liftIO . atomically . l $ ReceivedReject p r
+            liftIO . atomically $ l (p, Rejected r)
         MMempool -> do
             $(logDebug) $ lp <> "Relaying mempool message"
-            liftIO . atomically . l $ ReceivedMempool p
+            liftIO . atomically $ l (p, WantMempool)
         MGetAddr -> do
             $(logDebug) $ lp <> "Asking manager for peers"
             managerGetAddr p mgr

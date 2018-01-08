@@ -80,7 +80,7 @@ data ManagerConfig = ManagerConfig
     , mgrConfPeers          :: ![HostPort]
     , mgrConfNoNewPeers     :: !Bool
     , mgrConfMgrListener    :: !(Listen ManagerEvent)
-    , mgrConfPeerListener   :: !(Listen PeerEvent)
+    , mgrConfPeerListener   :: !(Listen (Peer, PeerEvent))
     , mgrConfNetAddr        :: !NetworkAddress
     , mgrConfManager        :: !Manager
     , mgrConfChain          :: !Chain
@@ -90,7 +90,7 @@ data ManagerConfig = ManagerConfig
 data NodeEvent
     = ManagerEvent !ManagerEvent
     | ChainEvent !ChainEvent
-    | PeerEvent !PeerEvent
+    | PeerEvent !(Peer, PeerEvent)
 
 data ManagerEvent
     = ManagerConnect !Peer
@@ -163,7 +163,7 @@ data PeerConfig = PeerConfig
     , peerConfLocal    :: !NetworkAddress
     , peerConfManager  :: !Manager
     , peerConfChain    :: !Chain
-    , peerConfListener :: !(Listen PeerEvent)
+    , peerConfListener :: !(Listen (Peer, PeerEvent))
     , peerConfNonce    :: !Word64
     }
 
@@ -184,25 +184,17 @@ data PeerException
 instance Exception PeerException
 
 data PeerEvent
-    = ReceivedInvTxs !Peer
-                     ![TxHash]
-    | ReceivedBlock !Peer
-                    !Block
-    | ReceivedMerkleBlock !Peer
-                          !MerkleBlock
-    | ReceivedTx !Peer
-                 !Tx
-    | ReceivedGetBlocks !Peer
-                        !GetBlocks
-    | ReceivedGetHeaders !Peer
-                         !GetHeaders
-    | ReceivedNotFound !Peer
-                       ![InvVector]
-    | ReceivedGetData !Peer
-                      ![InvVector]
-    | ReceivedMempool !Peer
-    | ReceivedReject !Peer
-                     !Reject
+    = TxAvail !TxHash
+    | GotBlock !Block
+    | GotMerkleBlock !MerkleBlock
+    | GotTx !Tx
+    | SendBlocks !GetBlocks
+    | SendHeaders !GetHeaders
+    | SendData ![InvVector]
+    | TxNotFound !TxHash
+    | BlockNotFound !BlockHash
+    | WantMempool
+    | Rejected !Reject
 
 data PeerMessage
     = PeerOutgoing !Message

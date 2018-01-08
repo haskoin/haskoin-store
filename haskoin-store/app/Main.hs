@@ -43,7 +43,6 @@ main = do
                             encodeJsonBlock
                                 storedBlockHeader
                                 storedBlockHeight
-                                Nothing
                                 storedBlockTxs
   where
     run sup c b =

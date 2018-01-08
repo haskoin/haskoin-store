@@ -12,7 +12,6 @@ data JsonBlock = JsonBlock
     { hash         :: !BlockHash
     , height       :: !BlockHeight
     , previous     :: !BlockHash
-    , next         :: !(Maybe BlockHash)
     , timestamp    :: !Timestamp
     , version      :: !Word32
     , bits         :: !Word32
@@ -36,15 +35,13 @@ decodeJsonBlock JsonBlock {..} = (header, transactions)
 encodeJsonBlock ::
        BlockHeader
     -> BlockHeight
-    -> Maybe BlockHash -- ^ next block
     -> [TxHash]
     -> JsonBlock
-encodeJsonBlock header@BlockHeader {..} height next txs =
+encodeJsonBlock header@BlockHeader {..} height txs =
     JsonBlock
     { hash = headerHash header
     , height = height
     , previous = prevBlock
-    , next = next
     , timestamp = blockTimestamp
     , version = blockVersion
     , bits = blockBits
