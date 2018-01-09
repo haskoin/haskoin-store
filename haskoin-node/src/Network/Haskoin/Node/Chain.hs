@@ -65,20 +65,15 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
         return $ fromRight . decode <$> bsM
     getBestBlockHeader = do
         db <- asks headerDB
-        $(logDebug) $ logMe <> "Get best block header from database"
         bsM <- LevelDB.get db def "best"
-        $(logDebug) $ logMe <> "Database query complete"
         case bsM of
             Nothing -> do
-                $(logDebug) $ logMe <> "Did not find best block"
                 let gs = encode genesisNode
                 addBlockHeader genesisNode
                 LevelDB.put db def "best" gs
                 $(logDebug) $ logMe <> "Added genesis block node"
                 return genesisNode
-            Just bs -> do
-                $(logDebug) $ logMe <> "Got best block, decoding"
-                return . fromRight $ decode bs
+            Just bs -> return . fromRight $ decode bs
     setBestBlockHeader bn = do
         db <- asks headerDB
         let bs = encode bn
@@ -124,7 +119,6 @@ chain cfg =
 
 processChainMessage :: MonadChain m => ChainMessage -> m ()
 processChainMessage (ChainNewHeaders p hcs) = do
-    $(logDebug) $ logMe <> "Got headers"
     stb <- asks chainState
     st <- liftIO $ readTVarIO stb
     let spM = syncingPeer st
@@ -137,8 +131,8 @@ processChainMessage (ChainNewHeaders p hcs) = do
             $(logInfo) $ logMe <> "Could not connect headers: " <> cs e
             case spM of
                 Nothing -> do
-                    $(logInfo) $ logMe <> "Attempting to connect headers"
                     bb' <- getBestBlockHeader
+                    $(logDebug) $ logMe <> "Sync from this peer later"
                     liftIO . atomically . modifyTVar stb $ \s ->
                         s {newPeers = nub $ p : newPeers s}
                     syncHeaders bb' p
@@ -165,14 +159,13 @@ processChainMessage (ChainNewHeaders p hcs) = do
         managerFreePeer p mgr
         processSyncQueue
     upeer bb = do
-        $(logDebug) $
-            logMe <> "Updating peer to height " <> cs (show $ nodeHeight bb)
         mgr <- chainConfManager <$> asks myConfig
         managerSetPeerBest p bb mgr
     conn bb bhs spM = do
         bb' <- getBestBlockHeader
         when (bb /= bb') $ do
-            $(logDebug) $ logMe <> "Sending best block notification"
+            $(logDebug) $
+                logMe <> "New best block at height " <> logShow (nodeHeight bb')
             mgr <- chainConfManager <$> asks myConfig
             managerSetBest bb' mgr
             l <- chainConfListener <$> asks myConfig
@@ -232,7 +225,6 @@ processChainMessage (ChainRemovePeer p) = do
         Nothing -> return ()
 
 processChainMessage (ChainGetBest reply) = do
-    $(logDebug) $ logMe <> "Got request for best block"
     b <- getBestBlockHeader
     $(logDebug) $ logMe <> "Best block at height " <> logShow (nodeHeight b)
     liftIO . atomically $ reply b
@@ -266,7 +258,7 @@ processChainMessage (ChainSendHeaders _) =
 processChainMessage (ChainIsSynced reply) = do
     st <- asks chainState
     s <- liftIO $ mySynced <$> readTVarIO st
-    $(logDebug) $ logMe <> "Synced? " <> logShow s
+    $(logDebug) $ logMe <> "Synced: " <> logShow s
     liftIO . atomically $ reply s
 
 processSyncQueue :: MonadChain m => m ()
@@ -290,7 +282,7 @@ processSyncQueue = do
                                  l $ ChainSynced bb
                                  writeTVar st s {mySynced = True}
                     else do
-                        $(logDebug) $ logMe <> "Headers are not synced"
+                        $(logDebug) $ logMe <> "Headers are not yet in sync"
                         l <- chainConfListener <$> asks myConfig
                         st <- asks chainState
                         liftIO . atomically $ do
@@ -311,12 +303,10 @@ syncHeaders bb p = do
             then return True
             else managerTakePeer p mgr
     when t $ do
-        $(logDebug) $ logMe <> "Successfully took peer to sync"
+        $(logDebug) $ logMe <> "Successfully locked syncing peer"
         liftIO . atomically . writeTVar st $
             s {syncingPeer = Just p, newPeers = filter (/= p) (newPeers s)}
-        $(logDebug) $ logMe <> "Constructing block locator"
         loc <- blockLocator bb
-        $(logDebug) $ logMe <> "Preparing getheaders message"
         let m =
                 MGetHeaders
                     GetHeaders
@@ -324,7 +314,6 @@ syncHeaders bb p = do
                     , getHeadersBL = loc
                     , getHeadersHashStop = fromRight . decode $ BS.replicate 32 0
                     }
-        $(logDebug) $ logMe <> "Sending getheaders message to syncing peer"
         PeerOutgoing m `send` p
 
 logMe :: Text

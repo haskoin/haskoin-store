@@ -8,6 +8,16 @@ import           GHC.Generics
 import           Network.Haskoin.Block
 import           Network.Haskoin.Transaction
 
+data JsonTx = JsonTx
+    { txid :: !TxHash
+    , tx   :: !Tx
+    } deriving (Generic, Eq, Show)
+
+instance ToJSON JsonTx where
+    toEncoding = genericToEncoding defaultOptions
+
+instance FromJSON JsonTx
+
 data JsonBlock = JsonBlock
     { hash         :: !BlockHash
     , height       :: !BlockHeight
@@ -16,17 +26,22 @@ data JsonBlock = JsonBlock
     , version      :: !Word32
     , bits         :: !Word32
     , nonce        :: !Word32
-    , transactions :: ![TxHash]
-    } deriving (Generic, Show)
+    , transactions :: ![JsonTx]
+    } deriving (Generic, Eq, Show)
 
-decodeJsonBlock :: JsonBlock -> (BlockHeader, [TxHash])
-decodeJsonBlock JsonBlock {..} = (header, transactions)
+instance ToJSON JsonBlock where
+    toEncoding = genericToEncoding defaultOptions
+
+instance FromJSON JsonBlock
+
+decodeJsonBlock :: JsonBlock -> (BlockHeader, [Tx])
+decodeJsonBlock JsonBlock {..} = (header, map tx transactions)
   where
     header =
         BlockHeader
         { blockVersion = version
         , prevBlock = previous
-        , merkleRoot = buildMerkleRoot transactions
+        , merkleRoot = buildMerkleRoot $ map (txHash . tx) transactions
         , blockTimestamp = timestamp
         , blockBits = bits
         , bhNonce = nonce
@@ -35,7 +50,7 @@ decodeJsonBlock JsonBlock {..} = (header, transactions)
 encodeJsonBlock ::
        BlockHeader
     -> BlockHeight
-    -> [TxHash]
+    -> [Tx]
     -> JsonBlock
 encodeJsonBlock header@BlockHeader {..} height txs =
     JsonBlock
@@ -46,10 +61,11 @@ encodeJsonBlock header@BlockHeader {..} height txs =
     , version = blockVersion
     , bits = blockBits
     , nonce = bhNonce
-    , transactions = txs
+    , transactions = map encodeJsonTx txs
     }
 
-instance ToJSON JsonBlock where
-    toEncoding = genericToEncoding defaultOptions
+decodeJsonTx :: JsonTx -> Tx
+decodeJsonTx = tx
 
-instance FromJSON JsonBlock
+encodeJsonTx :: Tx -> JsonTx
+encodeJsonTx t = JsonTx (txHash t) t

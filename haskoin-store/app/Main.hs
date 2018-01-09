@@ -7,19 +7,45 @@ import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad.Logger
 import           Control.Monad.Trans
+import           Data.Aeson                  hiding (json)
 import           Data.String.Conversions
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Store.Block
+import Network.Haskoin.Transaction
 import           Network.Haskoin.Store.Json
 import           Network.Haskoin.Store.Store
+import           Network.HTTP.Types
 import           System.Environment
-import           System.IO.Temp
-import           Web.Scotty
+import           Web.Scotty.Trans
+
+type StoreM = ActionT Except IO
 
 instance Parsable BlockHash where
     parseParam =
         maybe (Left "Could not decode block hash") Right . hexToBlockHash . cs
+
+instance Parsable TxHash where
+    parseParam =
+        maybe (Left "Could not decode tx hash") Right . hexToTxHash . cs
+
+data Except = NotFound | ServerError | StringError String deriving (Show, Eq)
+
+instance Exception Except
+
+instance ScottyError Except where
+    stringError = StringError
+    showError = cs . show
+
+instance ToJSON Except where
+    toJSON NotFound = object ["error" .= String "Not Found"]
+    toJSON ServerError = object ["error" .= String "You made me kill a unicorn"]
+    toJSON (StringError s) = object ["error" .= s]
+
+defHandler :: Except -> StoreM ()
+defHandler ServerError = json ServerError
+defHandler NotFound    = status status404 >> json NotFound
+defHandler e           = json e
 
 main :: IO ()
 main = do
@@ -30,20 +56,31 @@ main = do
     c <- Inbox <$> liftIO newTQueueIO
     b <- Inbox <$> liftIO newTQueueIO
     withAsync (run sup c b) $ \a ->
-        (`finally` stopSupervisor sup) $ do
+        (`finally` (stopSupervisor sup >> wait a)) $ do
             link a
-            scotty port $ do
+            scottyT port id $ do
+                defaultHandler defHandler
                 get "/block/hash/:block" $ do
                     hash <- param "block"
-                    m <- hash `blockGet` b
+                    m <- hash `blockGetTxs` b
                     case m of
-                        Nothing -> undefined
-                        Just StoredBlock {..} ->
+                        Nothing ->
+                            raise NotFound
+                        Just (BlockValue {..}, txs) ->
                             json $
                             encodeJsonBlock
-                                storedBlockHeader
-                                storedBlockHeight
-                                storedBlockTxs
+                                blockValueHeader
+                                blockValueHeight
+                                txs
+                get "/tx/hash/:tx" $ do
+                    hash <- param "tx"
+                    m <- hash `blockGetTx` b
+                    case m of
+                        Nothing ->
+                            raise NotFound
+                        Just t ->
+                            json $ encodeJsonTx t
+                notFound $ raise NotFound
   where
     run sup c b =
         runStderrLoggingT $ do

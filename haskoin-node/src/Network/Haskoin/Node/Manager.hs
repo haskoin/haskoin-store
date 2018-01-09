@@ -231,27 +231,15 @@ getNewPeer = do
   where
     go i ops = do
         valid <- LevelDB.iterValid i
-        if valid
-            then $(logDebug) $ logMe <> "Continuing on valid iterator"
-            else do
-                $(logDebug) $ logMe <> "End of record set as iterator not valid"
-                MaybeT $ return Nothing
+        guard valid
         val <- MaybeT $ LevelDB.iterValue i
-        let e = decode val
-        a <-
-            getPeerAddress <$>
-            case e of
-                Left x -> do
-                    $(logWarn) $ logMe <> "Could not decode entry: " <> cs x
-                    MaybeT $ return Nothing
-                Right a -> return a
+        e <- MaybeT . return . either (const Nothing) Just $ decode val
+        let a = getPeerAddress e
         if a `elem` ops
             then do
                 LevelDB.iterPrev i
                 go i ops
-            else do
-                $(logDebug) $ logMe <> "Found peer address " <> logShow a
-                return a
+            else return a
 
 getConnectedPeers :: MonadManager m => m [OnlinePeer]
 getConnectedPeers = filter onlinePeerConnected <$> getOnlinePeers
@@ -339,9 +327,6 @@ processManagerMessage (ManagerGetPeerBest p reply) = do
 
 processManagerMessage (ManagerSetPeerVersion p v) =
     void . runMaybeT $ do
-        $(logDebug) $ logMe <> "Processing received peer version"
-        pn <- peerString p
-        $(logDebug) $ logMe <> "Got version from peer at " <> cs pn
         modifyPeer f p
         op <- MaybeT $ findPeer p
         runExceptT testVersion >>= \case
@@ -472,7 +457,6 @@ getPeers ::
     -> Bool -- ^ test busy
     -> m [Peer]
 getPeers th tb = do
-    $(logDebug) $ logMe <> "Obtaining available peers"
     bbb <- asks myBestBlock
     bb <- liftIO $ readTVarIO bbb
     ps <- filter (isGood bb) <$> getConnectedPeers
@@ -512,7 +496,6 @@ connectNewPeers = do
         mgr <- asks mySelf
         ch <- asks myChain
         pl <- mgrConfPeerListener <$> asks myConfig
-        $(logDebug) $ logMe <> "Getting a peer from database"
         sa <- MaybeT getNewPeer
         $(logDebug) $ logMe <> "Connecting to a peer"
         bbb <- asks myBestBlock

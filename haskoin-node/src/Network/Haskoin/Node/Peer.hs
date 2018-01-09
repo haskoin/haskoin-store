@@ -107,7 +107,7 @@ handshake = do
     $(logDebug) $
         lp <> "Got peer version: " <> logShow (getVarString (userAgent v))
     yield MVerAck
-    $(logDebug) $ lp <> "Waiting for peer version acknowledgement"
+    $(logDebug) $ lp <> "Waiting for verack"
     remoteVerAck p
     mgr <- peerConfManager <$> asks myConfig
     $(logDebug) $ lp <> "Handshake complete"
@@ -156,13 +156,13 @@ exchangePing = do
             _ -> Nothing
     case m of
         Nothing -> do
-            $(logError) $ lp <> "Timeout while awaiting for pong"
+            $(logError) $ lp <> "Timeout while waiting for pong"
             throwIO PeerTimeout
         Just () -> do
             t2 <- liftIO getCurrentTime
-            let d = diffUTCTime t1 t2
+            let d = t2 `diffUTCTime` t1
             $(logDebug) $
-                lp <> "Roundtrip time (milliseconds): " <> logShow (d * 1000)
+                lp <> "Roundtrip time: " <> logShow (d * 1000) <> " ms"
             ManagerPeerPing me d `send` mgr
 
 checkStale :: MonadPeer m => ConduitM () Message m ()

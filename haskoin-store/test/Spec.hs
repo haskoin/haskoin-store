@@ -47,7 +47,7 @@ main = do
                         m <- blockGetTxs blockHash b
                         let (sb, txs) =
                                 fromMaybe (error "Could not get block") m
-                        storedBlockHeight sb `shouldBe` 456
+                        blockValueHeight sb `shouldBe` 456
                         length txs `shouldBe` 21
                         let h1 =
                                 "213c4b0958c4f72e45d670940aefca89de25d207d61fa66f50efa4f22b3b0a26"
@@ -55,6 +55,12 @@ main = do
                                 "e1952789b79852d417c3a0c5496cd74ed1c0ca72c1050c0bb5293f4289766408"
                         txHash (head txs) `shouldBe` h1
                         txHash (last txs) `shouldBe` h2
+                        t1 <- blockGetTx h1 b
+                        t1 `shouldSatisfy` isJust
+                        txHash (fromJust t1) `shouldBe` h1
+                        t2 <- blockGetTx h2 b
+                        t2 `shouldSatisfy` isJust
+                        txHash (fromJust t2) `shouldBe` h2
 
 dummyEventHandler :: (MonadIO m, Mailbox b) => b a -> m ()
 dummyEventHandler = forever . void . receive
