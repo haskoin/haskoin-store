@@ -127,8 +127,6 @@ storeDispatch (ManagerEvent (ManagerDisconnect p)) = do
     b <- asks myBlockStore
     BlockPeerDisconnect p `send` b
 
-storeDispatch (ManagerEvent _) = $(logDebug) $ logMe <> "Ignoring manager event"
-
 storeDispatch (ChainEvent (ChainNewBest bn)) = do
     $(logDebug) $
         logMe <> "Chain synced at height " <> cs (show $ nodeHeight bn)

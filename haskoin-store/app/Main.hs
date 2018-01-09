@@ -46,18 +46,16 @@ main = do
                                 storedBlockTxs
   where
     run sup c b =
-        runStderrLoggingT $
-        withSystemTempDirectory "haskoin-store-" $ \w ->
-            runStderrLoggingT $ do
-                let cfg =
-                        StoreConfig
-                        { storeConfDir = w
-                        , storeConfBlocks = b
-                        , storeConfSupervisor = sup
-                        , storeConfChain = c
-                        , storeConfListener = const $ return ()
-                        , storeConfMaxPeers = 20
-                        , storeConfInitPeers = []
-                        , storeConfNoNewPeers = False
-                        }
-                store cfg
+        runStderrLoggingT $ do
+            let cfg =
+                    StoreConfig
+                    { storeConfDir = ".haskoin-store"
+                    , storeConfBlocks = b
+                    , storeConfSupervisor = sup
+                    , storeConfChain = c
+                    , storeConfListener = const $ return ()
+                    , storeConfMaxPeers = 20
+                    , storeConfInitPeers = []
+                    , storeConfNoNewPeers = False
+                    }
+            store cfg

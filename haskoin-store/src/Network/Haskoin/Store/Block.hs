@@ -343,8 +343,14 @@ syncBlocks = do
         let chainHeight = nodeHeight chainBest
             splitHeight = nodeHeight splitBlock
             topHeight = min chainHeight (splitHeight + 501)
-        targetBlock <- MaybeT (chainGetAncestor topHeight chainBest ch)
-        requestBlocks <- chainGetParents (splitHeight + 1) targetBlock ch
+        targetBlock <-
+            MaybeT $
+            if topHeight == chainHeight
+                then return (Just chainBest)
+                else chainGetAncestor topHeight chainBest ch
+        requestBlocks <-
+            (++ [chainBest | targetBlock == chainBest]) <$>
+            chainGetParents (splitHeight + 1) targetBlock ch
         let len = length requestBlocks
         p <-
             MaybeT (liftIO (readTVarIO peerbox)) <|>
