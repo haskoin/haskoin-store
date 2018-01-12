@@ -10,6 +10,7 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Control
 import qualified Data.ByteString                as BS
+import           Data.Either
 import           Data.Maybe
 import           Data.Serialize
 import           Data.String.Conversions
@@ -123,7 +124,9 @@ downloadSomeFailures =
                 _ -> Nothing
         liftIO $ assertEqual "Managed to download inexistent transaction" h n
   where
-    h = TxHash $ fromJust $ bsToHash256 $ BS.replicate 32 0xaa
+    h =
+        TxHash . fromRight (error "Could not decode dummy hash") . decode $
+        BS.replicate 32 0xaa
 
 testSyncedHeaders ::
        [BlockNode] -- blocks 2000, 4000, and 6000
