@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Control.Concurrent.NQE
 import           Control.Exception
@@ -12,9 +11,8 @@ import           Data.String.Conversions
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Store.Block
-import Network.Haskoin.Transaction
-import           Network.Haskoin.Store.Json
 import           Network.Haskoin.Store.Store
+import           Network.Haskoin.Transaction
 import           Network.HTTP.Types
 import           System.Environment
 import           Web.Scotty.Trans
@@ -62,16 +60,11 @@ main = do
                 defaultHandler defHandler
                 get "/block/hash/:block" $ do
                     hash <- param "block"
-                    m <- hash `blockGetTxs` b
+                    m <- hash `blockGet` b
                     case m of
                         Nothing ->
                             raise NotFound
-                        Just (BlockValue {..}, txs) ->
-                            json $
-                            encodeJsonBlock
-                                blockValueHeader
-                                blockValueHeight
-                                txs
+                        Just bv -> json bv
                 get "/tx/hash/:tx" $ do
                     hash <- param "tx"
                     m <- hash `blockGetTx` b
@@ -79,7 +72,7 @@ main = do
                         Nothing ->
                             raise NotFound
                         Just t ->
-                            json $ encodeJsonTx t
+                            json t
                 notFound $ raise NotFound
   where
     run sup c b =

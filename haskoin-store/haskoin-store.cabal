@@ -22,7 +22,6 @@ library
     hs-source-dirs:      src
     exposed-modules:     Network.Haskoin.Store.Block
                          Network.Haskoin.Store.Store
-                         Network.Haskoin.Store.Json
     other-modules:       Network.Haskoin.Store.Common
     build-depends:       aeson >= 1.2 && < 1.3
                        , base >= 4.8 && < 5

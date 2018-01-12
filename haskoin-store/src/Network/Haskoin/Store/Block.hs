@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TemplateHaskell       #-}
 module Network.Haskoin.Store.Block
 ( BlockConfig(..)
@@ -25,6 +26,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
+import           Data.Aeson
 import qualified Data.ByteString              as BS
 import           Data.Conduit
 import           Data.Conduit.List            (consume)
@@ -34,6 +36,7 @@ import           Data.Monoid
 import           Data.Serialize
 import           Data.String.Conversions
 import           Data.Text                    (Text)
+import           Data.Time.Clock.POSIX
 import           Data.Word
 import           Database.LevelDB             (DB, MonadResource, runResourceT)
 import qualified Database.LevelDB             as LevelDB
@@ -142,6 +145,22 @@ instance Serialize BlockValue where
         put (blockValueHeader sb)
         put (blockValueTxs sb)
     get = BlockValue <$> get <*> get <*> get <*> get
+
+blockValuePairs :: KeyValue kv => BlockValue -> [kv]
+blockValuePairs BlockValue {..} =
+    [ "hash" .= headerHash blockValueHeader
+    , "height" .= blockValueHeight
+    , "previous" .= prevBlock blockValueHeader
+    , "timestamp" .= blockTimestamp blockValueHeader
+    , "version" .= blockVersion blockValueHeader
+    , "bits" .= blockBits blockValueHeader
+    , "nonce" .= bhNonce blockValueHeader
+    , "transactions" .= blockValueTxs
+    ]
+
+instance ToJSON BlockValue where
+    toJSON = object . blockValuePairs
+    toEncoding = pairs . mconcat . blockValuePairs
 
 instance Serialize BlockHeightKey where
     put (BlockHeightKey height) = do
