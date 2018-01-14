@@ -11,9 +11,10 @@ module Network.Haskoin.Store.Block
 , BlockEvent(..)
 , BlockMessage(..)
 , BlockValue(..)
+, TxValue(..)
 , blockGetBest
+, blockGetHeight
 , blockGet
-, blockGetTxs
 , blockGetTx
 , blockStore
 ) where
@@ -28,16 +29,13 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson
 import qualified Data.ByteString              as BS
-import           Data.Conduit
-import           Data.Conduit.List            (consume)
 import           Data.Default
 import           Data.List
+import           Data.Maybe
 import           Data.Monoid
 import           Data.Serialize
 import           Data.String.Conversions
 import           Data.Text                    (Text)
-import           Data.Time.Clock.POSIX
-import           Data.Word
 import           Database.LevelDB             (DB, MonadResource, runResourceT)
 import qualified Database.LevelDB             as LevelDB
 import           Network.Haskoin.Block
@@ -58,17 +56,16 @@ newtype BlockEvent = BestBlock BlockHash
 
 data BlockMessage
     = BlockChainNew !BlockNode
-    | BlockGetBest !(Reply BlockHash)
+    | BlockGetBest !(Reply BlockValue)
+    | BlockGetHeight !BlockHeight !(Reply (Maybe BlockValue))
     | BlockPeerAvailable !Peer
     | BlockPeerConnect !Peer
     | BlockPeerDisconnect !Peer
     | BlockReceived !Peer !Block
     | BlockNotReceived !Peer !BlockHash
-    | BlockGetTxs !BlockHash
-                  !(Reply (Maybe (BlockValue, [Tx])))
     | BlockGet !BlockHash
                (Reply (Maybe BlockValue))
-    | BlockGetTx !TxHash !(Reply (Maybe Tx))
+    | BlockGetTx !TxHash !(Reply (Maybe TxValue))
 
 type BlockStore = Inbox BlockMessage
 
@@ -91,6 +88,11 @@ data BlockValue = BlockValue
     , blockValueTxs    :: ![TxHash]
     } deriving (Show, Eq)
 
+data TxValue = TxValue
+    { txValueBlock :: !BlockHash
+    , txValue      :: !Tx
+    } deriving (Show, Eq)
+
 newtype TxKey =
     TxKey TxHash
     deriving (Show, Eq)
@@ -99,37 +101,25 @@ newtype BlockKey =
     BlockKey BlockHash
     deriving (Show, Eq)
 
-newtype BlockHeightKey =
-    BlockHeightKey BlockHeight
-    deriving (Show, Eq)
-
-newtype BlockTxMultiKey =
-    BlockTxMultiKey BlockHash
-    deriving (Show, Eq)
-
-data BlockTxKey =
-    BlockTxKey !BlockHash
-               !Word32
+newtype HeightKey =
+    HeightKey BlockHeight
     deriving (Show, Eq)
 
 data BestBlockKey = BestBlockKey deriving (Show, Eq)
 
 instance Record BlockKey BlockValue
-instance Record TxKey BlockTxKey
-instance Record BlockTxKey Tx
-instance Record BlockHeightKey BlockHash
+instance Record TxKey TxValue
+instance Record HeightKey BlockHash
 instance Record BestBlockKey BlockHash
-instance MultiRecord BlockTxMultiKey BlockTxKey Tx
 
-instance Serialize BlockTxMultiKey where
-    put (BlockTxMultiKey hash) = do
-        putWord8 0x04
-        put hash
+instance Serialize TxValue where
+    put (TxValue bhash tx) = do
+        put bhash
+        put tx
     get = do
-        w <- getWord8
-        guard (w == 0x04)
-        hash <- get
-        return (BlockTxMultiKey hash)
+        bhash <- get
+        tx <- get
+        return (TxValue bhash tx)
 
 instance Serialize BestBlockKey where
     put BestBlockKey = put (BS.replicate 32 0x00)
@@ -162,8 +152,16 @@ instance ToJSON BlockValue where
     toJSON = object . blockValuePairs
     toEncoding = pairs . mconcat . blockValuePairs
 
-instance Serialize BlockHeightKey where
-    put (BlockHeightKey height) = do
+txValuePairs :: KeyValue kv => TxValue -> [kv]
+txValuePairs TxValue {..} =
+    ["hash" .= txHash txValue, "tx" .= txValue, "block" .= txValueBlock]
+
+instance ToJSON TxValue where
+    toJSON = object . txValuePairs
+    toEncoding = pairs . mconcat . txValuePairs
+
+instance Serialize HeightKey where
+    put (HeightKey height) = do
         putWord8 0x03
         put (maxBound - height)
         put height
@@ -171,7 +169,7 @@ instance Serialize BlockHeightKey where
         k <- getWord8
         guard (k == 0x03)
         iheight <- get
-        return (BlockHeightKey (maxBound - iheight))
+        return (HeightKey (maxBound - iheight))
 
 instance Serialize BlockKey where
     put (BlockKey hash) = do
@@ -182,17 +180,6 @@ instance Serialize BlockKey where
         guard (w == 0x01)
         hash <- get
         return (BlockKey hash)
-
-instance Serialize BlockTxKey where
-    put (BlockTxKey hash pos) = do
-        putWord8 0x04
-        put hash
-        put pos
-    get = do
-        getWord8 >>= guard . (== 0x04)
-        bh <- get
-        pos <- get
-        return (BlockTxKey bh pos)
 
 instance Serialize TxKey where
     put (TxKey hash) = do
@@ -261,28 +248,24 @@ getBestBlockHash = do
             return (headerHash genesisHeader)
         Just bb -> return bb
 
+getBlockAtHeight :: MonadBlock m => BlockHeight -> m (Maybe BlockValue)
+getBlockAtHeight height = do
+    $(logDebug) $
+        logMe <> "Processing block request at height: " <> cs (show height)
+    db <- asks myBlockDB
+    runMaybeT $ do
+        h <- MaybeT $ HeightKey height `retrieveValue` db
+        MaybeT $ BlockKey h `retrieveValue` db
+
 getBlockValue :: MonadBlock m => BlockHash -> m (Maybe BlockValue)
 getBlockValue bh = do
     db <- asks myBlockDB
     BlockKey bh `retrieveValue` db
 
-getStoredTx :: MonadBlock m => TxHash -> m (Maybe Tx)
-getStoredTx th =
-    runMaybeT $ do
-        db <- asks myBlockDB
-        k <- MaybeT (TxKey th `retrieveValue` db)
-        MaybeT (k `retrieveValue` db)
-
-getBlockTxs :: MonadBlock m => BlockHash -> m (Maybe (BlockValue, [Tx]))
-getBlockTxs hash =
-    runMaybeT $ do
-        db <- asks myBlockDB
-        b <- MaybeT (BlockKey hash `retrieveValue` db)
-        $(logDebug) $
-            logMe <> "Retrieving block transactions for block " <>
-            logShow (blockValueHeight b)
-        ts <- BlockTxMultiKey hash `valuesForKey` db $$ consume
-        return (b, map snd ts)
+getStoredTx :: MonadBlock m => TxHash -> m (Maybe TxValue)
+getStoredTx th = do
+    db <- asks myBlockDB
+    TxKey th `retrieveValue` db
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock =
@@ -389,20 +372,19 @@ importBlock block = do
             }
         blockKey = BlockKey blockHash
         blockOp = insertOp blockKey blockValue
-        blockHeightKey = BlockHeightKey (nodeHeight blockNode)
+        blockHeightKey = HeightKey (nodeHeight blockNode)
         blockHeightOp = insertOp blockHeightKey blockHash
         bestBlockOp = insertOp BestBlockKey blockHash
-        batch = [blockOp, blockHeightOp, bestBlockOp] ++ txOps ++ txBlockOps
+        batch = [blockOp, blockHeightOp, bestBlockOp] ++ txOps
     LevelDB.write db def batch
     $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight blockNode)
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
   where
     blockHash = headerHash $ blockHeader block
-    blockTxKeys = map (BlockTxKey blockHash) [0 ..]
-    txOps = zipWith insertOp blockTxKeys (blockTxns block)
-    txBlockKeys = map (TxKey . txHash) (blockTxns block)
-    txBlockOps = zipWith insertOp txBlockKeys blockTxKeys
+    txOps = zipWith insertOp txKeys txValues
+    txKeys = map (TxKey . txHash) (blockTxns block)
+    txValues = map (TxValue blockHash) (blockTxns block)
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
@@ -416,9 +398,17 @@ processBlockMessage (BlockChainNew bn) = do
     blockHash = headerHash $ nodeHeader bn
     blockHeight = nodeHeight bn
 
+processBlockMessage (BlockGetHeight height reply) = do
+    $(logDebug) $ logMe <> "Get new block at height " <> cs (show height)
+    getBlockAtHeight height >>= liftIO . atomically . reply
+
 processBlockMessage (BlockGetBest reply) = do
     $(logDebug) $ logMe <> "Got request for best block"
-    getBestBlockHash >>= liftIO . atomically . reply
+    h <- getBestBlockHash
+    b <- fromMaybe e <$> getBlockValue h
+    liftIO . atomically $ reply b
+  where
+    e = error "Could not get best block from database"
 
 processBlockMessage (BlockPeerAvailable _) = do
     $(logDebug) $ logMe <> "A peer became available, syncing blocks"
@@ -427,11 +417,6 @@ processBlockMessage (BlockPeerAvailable _) = do
 processBlockMessage (BlockPeerConnect _) = do
     $(logDebug) $ logMe <> "A peer just connected, syncing blocks"
     syncBlocks
-
-processBlockMessage (BlockGetTxs bh reply) = do
-    $(logDebug) $ logMe <> "Request to get transactions for a block"
-    m <- getBlockTxs bh
-    liftIO . atomically $ reply m
 
 processBlockMessage (BlockGet bh reply) = do
     $(logDebug) $ logMe <> "Request to get block information"
@@ -483,21 +468,21 @@ purgePeer p = do
         managerKill (PeerMisbehaving "Peer purged from block store") p mgr
     syncBlocks
 
-blockGetBest :: (MonadBase IO m, MonadIO m) => BlockStore -> m BlockHash
+blockGetBest :: (MonadBase IO m, MonadIO m) => BlockStore -> m BlockValue
 blockGetBest b = BlockGetBest `query` b
 
-blockGetTxs ::
-       (MonadBase IO m, MonadIO m)
-    => BlockHash
-    -> BlockStore
-    -> m (Maybe (BlockValue, [Tx]))
-blockGetTxs h b = BlockGetTxs h `query` b
-
-blockGetTx :: (MonadBase IO m, MonadIO m) => TxHash -> BlockStore -> m (Maybe Tx)
+blockGetTx :: (MonadBase IO m, MonadIO m) => TxHash -> BlockStore -> m (Maybe TxValue)
 blockGetTx h b = BlockGetTx h `query` b
 
 blockGet :: (MonadBase IO m, MonadIO m) => BlockHash -> BlockStore -> m (Maybe BlockValue)
 blockGet h b = BlockGet h `query` b
+
+blockGetHeight ::
+       (MonadBase IO m, MonadIO m)
+    => BlockHeight
+    -> BlockStore
+    -> m (Maybe BlockValue)
+blockGetHeight h b = BlockGetHeight h `query` b
 
 logMe :: Text
 logMe = "[Block] "

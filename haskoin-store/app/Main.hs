@@ -50,38 +50,42 @@ main = do
     setTestnet
     env <- getEnvironment
     let port = maybe 3000 read (lookup "PORT" env)
-    sup <- Inbox <$> liftIO newTQueueIO
-    c <- Inbox <$> liftIO newTQueueIO
     b <- Inbox <$> liftIO newTQueueIO
-    withAsync (run sup c b) $ \a ->
-        (`finally` (stopSupervisor sup >> wait a)) $ do
-            link a
-            scottyT port id $ do
-                defaultHandler defHandler
-                get "/block/hash/:block" $ do
-                    hash <- param "block"
-                    m <- hash `blockGet` b
-                    case m of
-                        Nothing ->
-                            raise NotFound
-                        Just bv -> json bv
-                get "/tx/hash/:tx" $ do
-                    hash <- param "tx"
-                    m <- hash `blockGetTx` b
-                    case m of
-                        Nothing ->
-                            raise NotFound
-                        Just t ->
-                            json t
-                notFound $ raise NotFound
+    s <- Inbox <$> liftIO newTQueueIO
+    supervisor KillAll s [runWeb port b, runStore b]
   where
-    run sup c b =
+    runWeb port b =
+        scottyT port id $ do
+            defaultHandler defHandler
+            get "/block/hash/:block" $ do
+                hash <- param "block"
+                m <- hash `blockGet` b
+                case m of
+                    Nothing -> raise NotFound
+                    Just bv -> json bv
+            get "/block/height/:height" $ do
+                height <- param "height"
+                m <- height `blockGetHeight` b
+                case m of
+                    Nothing -> raise NotFound
+                    Just bv -> json bv
+            get "/block/best" $ blockGetBest b >>= json
+            get "/tx/hash/:tx" $ do
+                hash <- param "tx"
+                m <- hash `blockGetTx` b
+                case m of
+                    Nothing -> raise NotFound
+                    Just t -> json t
+            notFound $ raise NotFound
+    runStore b =
         runStderrLoggingT $ do
+            s <- Inbox <$> liftIO newTQueueIO
+            c <- Inbox <$> liftIO newTQueueIO
             let cfg =
                     StoreConfig
                     { storeConfDir = ".haskoin-store"
                     , storeConfBlocks = b
-                    , storeConfSupervisor = sup
+                    , storeConfSupervisor = s
                     , storeConfChain = c
                     , storeConfListener = const $ return ()
                     , storeConfMaxPeers = 20

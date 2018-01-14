@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 import           Control.Concurrent.NQE
 import           Control.Monad
 import           Control.Monad.Logger
@@ -44,23 +45,22 @@ main = do
                             return b
                     withAsync (dummyEventHandler e) $ \_ -> do
                         let blockHash = last bs
-                        m <- blockGetTxs blockHash b
-                        let (sb, txs) =
-                                fromMaybe (error "Could not get block") m
-                        blockValueHeight sb `shouldBe` 456
-                        length txs `shouldBe` 21
+                        m <- blockGet blockHash b
+                        let BlockValue{..} = fromMaybe (error "Could not get block") m
+                        blockValueHeight `shouldBe` 456
+                        length blockValueTxs `shouldBe` 21
                         let h1 =
                                 "213c4b0958c4f72e45d670940aefca89de25d207d61fa66f50efa4f22b3b0a26"
                             h2 =
                                 "e1952789b79852d417c3a0c5496cd74ed1c0ca72c1050c0bb5293f4289766408"
-                        txHash (head txs) `shouldBe` h1
-                        txHash (last txs) `shouldBe` h2
+                        head blockValueTxs `shouldBe` h1
+                        last blockValueTxs `shouldBe` h2
                         t1 <- blockGetTx h1 b
                         t1 `shouldSatisfy` isJust
-                        txHash (fromJust t1) `shouldBe` h1
+                        txHash (txValue (fromJust t1)) `shouldBe` h1
                         t2 <- blockGetTx h2 b
                         t2 `shouldSatisfy` isJust
-                        txHash (fromJust t2) `shouldBe` h2
+                        txHash (txValue (fromJust t2)) `shouldBe` h2
 
 dummyEventHandler :: (MonadIO m, Mailbox b) => b a -> m ()
 dummyEventHandler = forever . void . receive
