@@ -13,6 +13,8 @@ module Network.Haskoin.Store.Block
 , BlockMessage(..)
 , BlockValue(..)
 , DetailedTx(..)
+, SpentKey(..)
+, SpentValue(..)
 , TxValue(..)
 , blockGetBest
 , blockGetHeight
@@ -30,21 +32,22 @@ import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson
+import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
-import qualified Data.ByteString.Short        as BSS
+import           Data.Conduit                 (($$))
+import           Data.Conduit.List            (consume)
 import           Data.Default
-import           Data.Either
 import           Data.List
 import           Data.Maybe
 import           Data.Monoid
 import           Data.Serialize               as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
+import           Data.Word
 import           Database.LevelDB             (DB, MonadResource, runResourceT)
 import qualified Database.LevelDB             as LevelDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
-import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
@@ -72,7 +75,7 @@ data BlockMessage
     | BlockNotReceived !Peer !BlockHash
     | BlockGet !BlockHash
                (Reply (Maybe BlockValue))
-    | BlockGetTx !TxHash !(Reply (Maybe TxValue))
+    | BlockGetTx !TxHash !(Reply (Maybe DetailedTx))
 
 type BlockStore = Inbox BlockMessage
 
@@ -100,14 +103,53 @@ data BlockRef = BlockRef
     , blockRefHeight :: !BlockHeight
     } deriving (Show, Eq)
 
-newtype DetailedTx = DetailedTx
-    { detailedTx :: Tx
-    } deriving (Show, Eq, Serialize)
+data DetailedTx = DetailedTx
+    { detailedTx      :: !Tx
+    , detailedTxBlock :: !BlockRef
+    , detailedTxSpent :: ![(SpentKey, SpentValue)]
+    } deriving (Show, Eq)
 
 data TxValue = TxValue
     { txValueBlock :: !BlockRef
-    , txValue      :: !DetailedTx
+    , txValue      :: !Tx
     } deriving (Show, Eq)
+
+data OutputKey = OutputKey
+    { outTx    :: !TxHash
+    , outIndex :: !Word32
+    } deriving (Show, Eq)
+
+data OutputValue = OutputValue
+    { outValue' :: !Word64
+    , outBlock  :: !BlockRef
+    , outScript :: !ByteString
+    } deriving (Show, Eq)
+
+newtype SpentKey = SpentKey
+    { spentOutPoint :: OutPoint
+    } deriving (Show, Eq)
+
+data SpentValue = SpentValue
+    { spentInHash  :: !TxHash
+    , spentInIndex :: !Word32
+    , spentInBlock :: !BlockRef
+    } deriving (Show, Eq)
+
+newtype BaseTxKey =
+    BaseTxKey TxHash
+    deriving (Show, Eq)
+
+data MultiTxKey
+    = MultiTxKey { multiTxKey :: !TxKey }
+    | MultiTxKeyOutput { multiTxKeyOut :: !OutputKey }
+    | MultiTxKeySpent { multiTxKeySpent :: !SpentKey }
+    deriving (Show, Eq)
+
+data MultiTxValue
+    = MultiTx { multiTx :: !TxValue }
+    | MultiTxOut { multiTxOut :: !OutputValue }
+    | MultiTxSpent { multiTxSpent :: !SpentValue }
+    deriving (Show, Eq)
 
 newtype TxKey =
     TxKey TxHash
@@ -127,6 +169,89 @@ instance Record BlockKey BlockValue
 instance Record TxKey TxValue
 instance Record HeightKey BlockHash
 instance Record BestBlockKey BlockHash
+instance Record OutputKey OutputValue
+instance Record SpentKey SpentValue
+instance Record MultiTxKey MultiTxValue
+instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
+
+instance Serialize MultiTxKey where
+    put (MultiTxKey k)       = put k
+    put (MultiTxKeyOutput k) = put k
+    put (MultiTxKeySpent k)  = put k
+    get =
+        (MultiTxKey <$> get) <|> (MultiTxKeyOutput <$> get) <|>
+        (MultiTxKeySpent <$> get)
+
+instance Serialize MultiTxValue where
+    put (MultiTx v)      = put v
+    put (MultiTxOut v)   = put v
+    put (MultiTxSpent v) = put v
+    get = (MultiTx <$> get) <|> (MultiTxOut <$> get) <|> (MultiTxSpent <$> get)
+
+instance Serialize BaseTxKey where
+    put (BaseTxKey k) = do
+        putWord8 0x02
+        put k
+    get = do
+        guard . (== 0x02) =<< getWord8
+        k <- get
+        return (BaseTxKey k)
+
+instance Serialize SpentKey where
+    put SpentKey {..} = do
+        putWord8 0x02
+        put (outPointHash spentOutPoint)
+        putWord8 0x01
+        put (outPointIndex spentOutPoint)
+        putWord8 0x01
+    get = do
+        guard . (== 0x02) =<< getWord8
+        h <- get
+        guard . (== 0x01) =<< getWord8
+        i <- get
+        guard . (== 0x01) =<< getWord8
+        return (SpentKey (OutPoint h i))
+
+instance Serialize SpentValue where
+    put SpentValue {..} = do
+        putWord8 0x02
+        put spentInHash
+        put spentInIndex
+        put spentInBlock
+    get = do
+        guard . (== 0x02) =<< getWord8
+        spentInHash <- get
+        spentInIndex <- get
+        spentInBlock <- get
+        return SpentValue {..}
+
+instance Serialize OutputKey where
+    put OutputKey {..} = do
+        putWord8 0x02
+        put outTx
+        putWord8 0x01
+        put outIndex
+        putWord8 0x00
+    get = do
+        guard . (== 0x02) =<< getWord8
+        outTx <- get
+        guard . (== 0x01) =<< getWord8
+        outIndex <- get
+        guard . (== 0x00) =<< getWord8
+        return OutputKey {..}
+
+instance Serialize OutputValue where
+    put OutputValue {..} = do
+        putWord8 0x01
+        put outValue'
+        put outBlock
+        put outScript
+    get = do
+        guard . (== 0x01) =<< getWord8
+        outValue' <- get
+        outBlock <- get
+        outScript <- get
+        return OutputValue {..}
 
 instance Serialize BlockRef where
     put (BlockRef hash height) = do
@@ -139,9 +264,11 @@ instance Serialize BlockRef where
 
 instance Serialize TxValue where
     put (TxValue bref tx) = do
+        putWord8 0x00
         put bref
         put tx
     get = do
+        guard . (== 0x00) =<< getWord8
         bref <- get
         tx <- get
         return (TxValue bref tx)
@@ -149,8 +276,7 @@ instance Serialize TxValue where
 instance Serialize BestBlockKey where
     put BestBlockKey = put (BS.replicate 32 0x00)
     get = do
-        bs <- getBytes 32
-        guard (bs == BS.replicate 32 0x00)
+        guard . (== BS.replicate 32 0x00) =<< getBytes 32
         return BestBlockKey
 
 instance Serialize BlockValue where
@@ -177,9 +303,16 @@ instance ToJSON BlockValue where
     toJSON = object . blockValuePairs
     toEncoding = pairs . mconcat . blockValuePairs
 
-txValuePairs :: KeyValue kv => TxValue -> [kv]
-txValuePairs TxValue {..} =
-    ["block" .= txValueBlock] <> detailedTxPairs txValue
+spentValuePairs :: KeyValue kv => SpentValue -> [kv]
+spentValuePairs SpentValue {..} =
+    [ "txid" .= spentInHash
+    , "vin" .= spentInIndex
+    , "block" .= spentInBlock
+    ]
+
+instance ToJSON SpentValue where
+    toJSON = object . spentValuePairs
+    toEncoding = pairs . mconcat . spentValuePairs
 
 blockRefPairs :: KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
@@ -187,15 +320,17 @@ blockRefPairs BlockRef {..} =
 
 detailedTxPairs :: KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
-    [ "txid" .= txHash detailedTx
+    [ "txid" .= hash
+    , "block" .= detailedTxBlock
     , "size" .= BS.length (S.encode detailedTx)
     , "version" .= txVersion detailedTx
     , "locktime" .= txLockTime detailedTx
     , "vin" .= map input (txIn detailedTx)
-    , "vout" .= map output (txOut detailedTx)
+    , "vout" .= zipWith output (txOut detailedTx) [0 ..]
     , "hex" .= detailedTx
     ]
   where
+    hash = txHash detailedTx
     input TxIn {..} =
         object
             [ "txid" .= outPointHash prevOutput
@@ -203,23 +338,24 @@ detailedTxPairs DetailedTx {..} =
             , "coinbase" .= (outPointHash prevOutput == zero)
             , "sequence" .= txInSequence
             ]
-    output TxOut {..} =
+    output TxOut {..} i =
         object $
         [ "value" .= ((fromIntegral outValue :: Double) / 1e8)
         , "pkscript" .= String (cs (encodeHex scriptOutput))
+        , "address" .=
+          eitherToMaybe (decodeOutputBS scriptOutput >>= outputAddress)
         ] ++
-        [ "address" .= addr
-        | addr <- rights [decodeOutputBS scriptOutput >>= outputAddress]
-        ]
+        ["spent" .= s | s <- maybeToList (spent i)]
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
+    spent i = lookup (SpentKey (OutPoint hash i)) detailedTxSpent
+
+instance ToJSON DetailedTx where
+    toJSON = object . detailedTxPairs
+    toEncoding = pairs . mconcat . detailedTxPairs
 
 instance ToJSON BlockRef where
     toJSON = object . blockRefPairs
     toEncoding = pairs . mconcat . blockRefPairs
-
-instance ToJSON TxValue where
-    toJSON = object . txValuePairs
-    toEncoding = pairs . mconcat . txValuePairs
 
 instance Serialize HeightKey where
     put (HeightKey height) = do
@@ -227,8 +363,7 @@ instance Serialize HeightKey where
         put (maxBound - height)
         put height
     get = do
-        k <- getWord8
-        guard (k == 0x03)
+        guard . (== 0x03) =<< getWord8
         iheight <- get
         return (HeightKey (maxBound - iheight))
 
@@ -237,8 +372,7 @@ instance Serialize BlockKey where
         putWord8 0x01
         put hash
     get = do
-        w <- getWord8
-        guard (w == 0x01)
+        guard . (== 0x01) =<< getWord8
         hash <- get
         return (BlockKey hash)
 
@@ -246,10 +380,11 @@ instance Serialize TxKey where
     put (TxKey hash) = do
         putWord8 0x02
         put hash
+        putWord8 0x00
     get = do
-        w <- getWord8
-        guard (w == 0x02)
+        guard . (== 0x02) =<< getWord8
         hash <- get
+        guard . (== 0x00) =<< getWord8
         return (TxKey hash)
 
 type MonadBlock m
@@ -323,10 +458,33 @@ getBlockValue bh = do
     db <- asks myBlockDB
     BlockKey bh `retrieveValue` db
 
-getStoredTx :: MonadBlock m => TxHash -> m (Maybe TxValue)
-getStoredTx th = do
-    db <- asks myBlockDB
-    TxKey th `retrieveValue` db
+getStoredTx :: MonadBlock m => TxHash -> m (Maybe DetailedTx)
+getStoredTx th =
+    runMaybeT $ do
+        db <- asks myBlockDB
+        xs <- valuesForKey (BaseTxKey th) db $$ consume
+        t <- MaybeT (return (findTx xs))
+        let ss = filterSpents xs
+        return (DetailedTx (txValue t) (txValueBlock t) ss)
+  where
+    findTx xs =
+        listToMaybe
+            [ v
+            | (f, s) <- xs
+            , case f of
+                  MultiTxKey {} -> True
+                  _             -> False
+            , let MultiTx v = s
+            ]
+    filterSpents xs =
+        [ (k, v)
+        | (f, s) <- xs
+        , case f of
+              MultiTxKeySpent {} -> True
+              _                  -> False
+        , let MultiTxKeySpent k = f
+        , let MultiTxSpent v = s
+        ]
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock =
@@ -341,7 +499,21 @@ revertBestBlock =
                     $(logError) $ logMe <> "Could not retrieve best block"
                     error "BUG: Could not retrieve best block"
         db <- asks myBlockDB
+        deleteBlockRecords db sb
         insertRecord BestBlockKey (prevBlock (blockValueHeader sb)) db
+  where
+    deleteBlockRecords db BlockValue {..} = do
+        ks <- (map fst . concat) <$> mapM tks blockValueTxs
+        let blockOp = deleteOp (BlockKey (headerHash blockValueHeader))
+            blockHeightOp = deleteOp (HeightKey blockValueHeight)
+            txOps = map deleteOp ks
+            blockOps = [blockOp, blockHeightOp]
+            batch = txOps ++ blockOps
+        LevelDB.write db def batch
+    tks :: MonadBlock m => TxHash -> m [(MultiTxKey, MultiTxValue)]
+    tks th = do
+        db <- asks myBlockDB
+        valuesForKey (BaseTxKey th) db $$ consume
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
@@ -433,22 +605,40 @@ importBlock block = do
             }
         blockKey = BlockKey blockHash
         blockOp = insertOp blockKey blockValue
-        blockHeightKey = HeightKey (nodeHeight blockNode)
+        height = nodeHeight blockNode
+        blockHeightKey = HeightKey height
         blockHeightOp = insertOp blockHeightKey blockHash
         bestBlockOp = insertOp BestBlockKey blockHash
         batch =
             [blockOp, blockHeightOp, bestBlockOp] ++
-            txOps (nodeHeight blockNode)
+            txOps (nodeHeight blockNode) ++
+            outOps (blockRef height) ++ spentOps (blockRef height)
     LevelDB.write db def batch
     $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight blockNode)
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
   where
+    outOps h =
+        map (uncurry insertOp) $ concatMap (outputEntries h) (blockTxns block)
+    spentOps h =
+        map (uncurry insertOp) $ concatMap (spentEntries h) (blockTxns block)
     blockHash = headerHash $ blockHeader block
     txOps h = zipWith insertOp txKeys (txValues h)
     txKeys = map (TxKey . txHash) (blockTxns block)
     blockRef = BlockRef blockHash
-    txValues h = map (TxValue (blockRef h) . DetailedTx) (blockTxns block)
+    txValues h = map (TxValue (blockRef h)) (blockTxns block)
+
+outputEntries :: BlockRef -> Tx -> [(OutputKey, OutputValue)]
+outputEntries block tx = zipWith f (txOut tx) [0 ..]
+  where
+    f TxOut {..} index =
+        (OutputKey (txHash tx) index, OutputValue outValue block scriptOutput)
+
+spentEntries :: BlockRef -> Tx -> [(SpentKey, SpentValue)]
+spentEntries block tx = zipWith f (txIn tx) [0..]
+  where
+    f TxIn {..} index =
+        (SpentKey prevOutput, SpentValue (txHash tx) index block)
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
@@ -535,7 +725,7 @@ purgePeer p = do
 blockGetBest :: (MonadBase IO m, MonadIO m) => BlockStore -> m BlockValue
 blockGetBest b = BlockGetBest `query` b
 
-blockGetTx :: (MonadBase IO m, MonadIO m) => TxHash -> BlockStore -> m (Maybe TxValue)
+blockGetTx :: (MonadBase IO m, MonadIO m) => TxHash -> BlockStore -> m (Maybe DetailedTx)
 blockGetTx h b = BlockGetTx h `query` b
 
 blockGet :: (MonadBase IO m, MonadIO m) => BlockHash -> BlockStore -> m (Maybe BlockValue)

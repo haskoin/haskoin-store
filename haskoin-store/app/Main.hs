@@ -8,6 +8,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Aeson                  hiding (json)
 import           Data.String.Conversions
+import           Data.Text                   (Text)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Store.Block
@@ -75,7 +76,7 @@ main = do
                 m <- hash `blockGetTx` b
                 case m of
                     Nothing -> raise NotFound
-                    Just t -> json t
+                    Just t  -> json t
             notFound $ raise NotFound
     runStore b =
         runStderrLoggingT $ do
