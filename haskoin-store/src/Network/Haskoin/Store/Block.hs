@@ -211,7 +211,7 @@ detailedTxPairs DetailedTx {..} =
         [ "address" .= addr
         | addr <- rights [decodeOutputBS scriptOutput >>= outputAddress]
         ]
-    zero = TxHash (Hash256 (BSS.toShort (32 `BS.replicate` 0x00)))
+    zero = "0000000000000000000000000000000000000000000000000000000000000000"
 
 instance ToJSON BlockRef where
     toJSON = object . blockRefPairs
