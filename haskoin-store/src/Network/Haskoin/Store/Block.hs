@@ -1,16 +1,18 @@
-{-# LANGUAGE ConstraintKinds       #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TemplateHaskell            #-}
 module Network.Haskoin.Store.Block
 ( BlockConfig(..)
 , BlockStore
 , BlockEvent(..)
 , BlockMessage(..)
 , BlockValue(..)
+, DetailedTx(..)
 , TxValue(..)
 , blockGetBest
 , blockGetHeight
@@ -29,20 +31,25 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson
 import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Short        as BSS
 import           Data.Default
+import           Data.Either
 import           Data.List
 import           Data.Maybe
 import           Data.Monoid
-import           Data.Serialize
+import           Data.Serialize               as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
 import           Database.LevelDB             (DB, MonadResource, runResourceT)
 import qualified Database.LevelDB             as LevelDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
+import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node
+import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Transaction
+import           Network.Haskoin.Util
 
 data BlockConfig = BlockConfig
     { blockConfDir      :: !FilePath
@@ -88,9 +95,18 @@ data BlockValue = BlockValue
     , blockValueTxs    :: ![TxHash]
     } deriving (Show, Eq)
 
+data BlockRef = BlockRef
+    { blockRefHash   :: !BlockHash
+    , blockRefHeight :: !BlockHeight
+    } deriving (Show, Eq)
+
+newtype DetailedTx = DetailedTx
+    { detailedTx :: Tx
+    } deriving (Show, Eq, Serialize)
+
 data TxValue = TxValue
-    { txValueBlock :: !BlockHash
-    , txValue      :: !Tx
+    { txValueBlock :: !BlockRef
+    , txValue      :: !DetailedTx
     } deriving (Show, Eq)
 
 newtype TxKey =
@@ -112,14 +128,23 @@ instance Record TxKey TxValue
 instance Record HeightKey BlockHash
 instance Record BestBlockKey BlockHash
 
+instance Serialize BlockRef where
+    put (BlockRef hash height) = do
+        put hash
+        put height
+    get = do
+        hash <- get
+        height <- get
+        return (BlockRef hash height)
+
 instance Serialize TxValue where
-    put (TxValue bhash tx) = do
-        put bhash
+    put (TxValue bref tx) = do
+        put bref
         put tx
     get = do
-        bhash <- get
+        bref <- get
         tx <- get
-        return (TxValue bhash tx)
+        return (TxValue bref tx)
 
 instance Serialize BestBlockKey where
     put BestBlockKey = put (BS.replicate 32 0x00)
@@ -154,7 +179,43 @@ instance ToJSON BlockValue where
 
 txValuePairs :: KeyValue kv => TxValue -> [kv]
 txValuePairs TxValue {..} =
-    ["hash" .= txHash txValue, "tx" .= txValue, "block" .= txValueBlock]
+    ["block" .= txValueBlock] <> detailedTxPairs txValue
+
+blockRefPairs :: KeyValue kv => BlockRef -> [kv]
+blockRefPairs BlockRef {..} =
+    ["hash" .= blockRefHash, "height" .= blockRefHeight]
+
+detailedTxPairs :: KeyValue kv => DetailedTx -> [kv]
+detailedTxPairs DetailedTx {..} =
+    [ "txid" .= txHash detailedTx
+    , "size" .= BS.length (S.encode detailedTx)
+    , "version" .= txVersion detailedTx
+    , "locktime" .= txLockTime detailedTx
+    , "vin" .= map input (txIn detailedTx)
+    , "vout" .= map output (txOut detailedTx)
+    , "hex" .= detailedTx
+    ]
+  where
+    input TxIn {..} =
+        object
+            [ "txid" .= outPointHash prevOutput
+            , "vout" .= outPointIndex prevOutput
+            , "coinbase" .= (outPointHash prevOutput == zero)
+            , "sequence" .= txInSequence
+            ]
+    output TxOut {..} =
+        object $
+        [ "value" .= ((fromIntegral outValue :: Double) / 1e8)
+        , "pkscript" .= String (cs (encodeHex scriptOutput))
+        ] ++
+        [ "address" .= addr
+        | addr <- rights [decodeOutputBS scriptOutput >>= outputAddress]
+        ]
+    zero = TxHash (Hash256 (BSS.toShort (32 `BS.replicate` 0x00)))
+
+instance ToJSON BlockRef where
+    toJSON = object . blockRefPairs
+    toEncoding = pairs . mconcat . blockRefPairs
 
 instance ToJSON TxValue where
     toJSON = object . txValuePairs
@@ -375,16 +436,19 @@ importBlock block = do
         blockHeightKey = HeightKey (nodeHeight blockNode)
         blockHeightOp = insertOp blockHeightKey blockHash
         bestBlockOp = insertOp BestBlockKey blockHash
-        batch = [blockOp, blockHeightOp, bestBlockOp] ++ txOps
+        batch =
+            [blockOp, blockHeightOp, bestBlockOp] ++
+            txOps (nodeHeight blockNode)
     LevelDB.write db def batch
     $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight blockNode)
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
   where
     blockHash = headerHash $ blockHeader block
-    txOps = zipWith insertOp txKeys txValues
+    txOps h = zipWith insertOp txKeys (txValues h)
     txKeys = map (TxKey . txHash) (blockTxns block)
-    txValues = map (TxValue blockHash) (blockTxns block)
+    blockRef = BlockRef blockHash
+    txValues h = map (TxValue (blockRef h) . DetailedTx) (blockTxns block)
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 

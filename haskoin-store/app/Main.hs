@@ -70,7 +70,7 @@ main = do
                     Nothing -> raise NotFound
                     Just bv -> json bv
             get "/block/best" $ blockGetBest b >>= json
-            get "/tx/hash/:tx" $ do
+            get "/transaction/:tx" $ do
                 hash <- param "tx"
                 m <- hash `blockGetTx` b
                 case m of
