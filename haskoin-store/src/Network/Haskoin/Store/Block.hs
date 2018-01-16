@@ -92,15 +92,17 @@ data BlockRead = BlockRead
     }
 
 data BlockValue = BlockValue
-    { blockValueHeight :: !BlockHeight
-    , blockValueWork   :: !BlockWork
-    , blockValueHeader :: !BlockHeader
-    , blockValueTxs    :: ![TxHash]
+    { blockValueHeight    :: !BlockHeight
+    , blockValueWork      :: !BlockWork
+    , blockValueHeader    :: !BlockHeader
+    , blockValueMainChain :: !Bool
+    , blockValueTxs       :: ![TxHash]
     } deriving (Show, Eq)
 
 data BlockRef = BlockRef
-    { blockRefHash   :: !BlockHash
-    , blockRefHeight :: !BlockHeight
+    { blockRefHash      :: !BlockHash
+    , blockRefHeight    :: !BlockHeight
+    , blockRefMainChain :: !Bool
     } deriving (Show, Eq)
 
 data DetailedTx = DetailedTx
@@ -254,13 +256,15 @@ instance Serialize OutputValue where
         return OutputValue {..}
 
 instance Serialize BlockRef where
-    put (BlockRef hash height) = do
+    put (BlockRef hash height main) = do
         put hash
         put height
+        put main
     get = do
         hash <- get
         height <- get
-        return (BlockRef hash height)
+        main <- get
+        return (BlockRef hash height main)
 
 instance Serialize TxValue where
     put (TxValue bref tx) = do
@@ -280,23 +284,30 @@ instance Serialize BestBlockKey where
         return BestBlockKey
 
 instance Serialize BlockValue where
-    put sb = do
-        put (blockValueHeight sb)
-        put (blockValueWork sb)
-        put (blockValueHeader sb)
-        put (blockValueTxs sb)
-    get = BlockValue <$> get <*> get <*> get <*> get
+    put BlockValue {..} = do
+        put blockValueHeight
+        put blockValueWork
+        put blockValueHeader
+        put blockValueMainChain
+        put blockValueTxs
+    get = BlockValue <$> get <*> get <*> get <*> get <*> get
 
 blockValuePairs :: KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
-    [ "hash" .= headerHash blockValueHeader
-    , "height" .= blockValueHeight
-    , "previous" .= prevBlock blockValueHeader
-    , "timestamp" .= blockTimestamp blockValueHeader
-    , "version" .= blockVersion blockValueHeader
-    , "bits" .= blockBits blockValueHeader
-    , "nonce" .= bhNonce blockValueHeader
-    , "transactions" .= blockValueTxs
+    [ "block" .=
+      BlockRef
+          (headerHash blockValueHeader)
+          blockValueHeight
+          blockValueMainChain
+    , "data" .=
+      object
+          [ "previous" .= prevBlock blockValueHeader
+          , "timestamp" .= blockTimestamp blockValueHeader
+          , "version" .= blockVersion blockValueHeader
+          , "bits" .= blockBits blockValueHeader
+          , "nonce" .= bhNonce blockValueHeader
+          , "transactions" .= blockValueTxs
+          ]
     ]
 
 instance ToJSON BlockValue where
@@ -316,7 +327,10 @@ instance ToJSON SpentValue where
 
 blockRefPairs :: KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
-    ["hash" .= blockRefHash, "height" .= blockRefHeight]
+    [ "hash" .= blockRefHash
+    , "height" .= blockRefHeight
+    , "mainchain" .= blockRefMainChain
+    ]
 
 detailedTxPairs :: KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
@@ -492,28 +506,25 @@ revertBestBlock =
         best <- getBestBlockHash
         guard (best /= headerHash genesisHeader)
         $(logDebug) $ logMe <> "Reverting block " <> logShow best
-        sb <-
+        ch <- asks myChain
+        bn <-
+            chainGetBlock best ch >>= \case
+                Just bn -> return bn
+                Nothing -> do
+                    $(logError) $
+                        logMe <> "Could not obtain best block from chain"
+                    error "BUG: Could not obtain best block from chain"
+        BlockValue {..} <-
             getBlockValue best >>= \case
                 Just b -> return b
                 Nothing -> do
                     $(logError) $ logMe <> "Could not retrieve best block"
                     error "BUG: Could not retrieve best block"
+        txs <- mapMaybe (fmap txValue) <$> getBlockTxs blockValueTxs
         db <- asks myBlockDB
-        deleteBlockRecords db sb
-        insertRecord BestBlockKey (prevBlock (blockValueHeader sb)) db
-  where
-    deleteBlockRecords db BlockValue {..} = do
-        ks <- (map fst . concat) <$> mapM tks blockValueTxs
-        let blockOp = deleteOp (BlockKey (headerHash blockValueHeader))
-            blockHeightOp = deleteOp (HeightKey blockValueHeight)
-            txOps = map deleteOp ks
-            blockOps = [blockOp, blockHeightOp]
-            batch = txOps ++ blockOps
-        LevelDB.write db def batch
-    tks :: MonadBlock m => TxHash -> m [(MultiTxKey, MultiTxValue)]
-    tks th = do
-        db <- asks myBlockDB
-        valuesForKey (BaseTxKey th) db $$ consume
+        let block = Block blockValueHeader txs
+            blockOps = blockBatchOps block (nodeHeight bn) (nodeWork bn) False
+        LevelDB.write db def blockOps
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
@@ -581,64 +592,61 @@ importBlocks = do
         Nothing    -> syncBlocks
 
 importBlock :: MonadBlock m => Block -> m ()
-importBlock block = do
+importBlock block@Block {..} = do
     $(logDebug) $ logMe <> "Importing block " <> logShow blockHash
-    when (blockHash /= headerHash genesisHeader) $ do
-        best <- getBestBlockHash
-        when (prevBlock (blockHeader block) /= best) $ do
-            $(logError) "Cannot import block not building on best"
-            error "BUG: Cannot import block not building on best"
     ch <- asks myChain
-    blockNode <-
+    bn <-
         chainGetBlock blockHash ch >>= \case
             Just bn -> return bn
             Nothing -> do
-                $(logError) "Could not obtain best block from chain"
+                $(logError) $ logMe <> "Could not obtain best block from chain"
                 error "BUG: Could not obtain best block from chain"
+    let blockOps = blockBatchOps block (nodeHeight bn) (nodeWork bn) True
     db <- asks myBlockDB
-    let blockValue =
-            BlockValue
-            { blockValueHeight = nodeHeight blockNode
-            , blockValueWork = nodeWork blockNode
-            , blockValueHeader = nodeHeader blockNode
-            , blockValueTxs = map txHash (blockTxns block)
-            }
-        blockKey = BlockKey blockHash
-        blockOp = insertOp blockKey blockValue
-        height = nodeHeight blockNode
-        blockHeightKey = HeightKey height
-        blockHeightOp = insertOp blockHeightKey blockHash
-        bestBlockOp = insertOp BestBlockKey blockHash
-        batch =
-            [blockOp, blockHeightOp, bestBlockOp] ++
-            txOps (nodeHeight blockNode) ++
-            outOps (blockRef height) ++ spentOps (blockRef height)
-    LevelDB.write db def batch
-    $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight blockNode)
+    LevelDB.write db def blockOps
+    $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
   where
-    outOps h =
-        map (uncurry insertOp) $ concatMap (outputEntries h) (blockTxns block)
-    spentOps h =
-        map (uncurry insertOp) $ concatMap (spentEntries h) (blockTxns block)
-    blockHash = headerHash $ blockHeader block
-    txOps h = zipWith insertOp txKeys (txValues h)
-    txKeys = map (TxKey . txHash) (blockTxns block)
-    blockRef = BlockRef blockHash
-    txValues h = map (TxValue (blockRef h)) (blockTxns block)
+    blockHash = headerHash blockHeader
 
-outputEntries :: BlockRef -> Tx -> [(OutputKey, OutputValue)]
-outputEntries block tx = zipWith f (txOut tx) [0 ..]
-  where
-    f TxOut {..} index =
-        (OutputKey (txHash tx) index, OutputValue outValue block scriptOutput)
+getBlockTxs :: MonadBlock m => [TxHash] -> m [Maybe TxValue]
+getBlockTxs hs = do
+    db <- asks myBlockDB
+    forM hs (\h -> retrieveValue (TxKey h) db)
 
-spentEntries :: BlockRef -> Tx -> [(SpentKey, SpentValue)]
-spentEntries block tx = zipWith f (txIn tx) [0..]
+blockBatchOps ::
+       Block -> BlockHeight -> BlockWork -> Bool -> [LevelDB.BatchOp]
+blockBatchOps Block {..} height work mainChain =
+    blockOp : bestOp ++ heightOp ++ txOps ++ outputOps ++ spentOps
   where
-    f TxIn {..} index =
-        (SpentKey prevOutput, SpentValue (txHash tx) index block)
+    blockHash = headerHash blockHeader
+    blockKey = BlockKey blockHash
+    txHashes = map txHash blockTxns
+    blockValue = BlockValue height work blockHeader mainChain txHashes
+    blockRef = BlockRef blockHash height mainChain
+    outputOps = concatMap (outputBatchOps blockRef) blockTxns
+    spentOps = concatMap (spentBatchOps blockRef) blockTxns
+    txOps = map (txBatchOp blockRef) blockTxns
+    blockOp = insertOp blockKey blockValue
+    bestOp = [insertOp BestBlockKey blockHash | mainChain]
+    heightKey = HeightKey height
+    heightOp = [insertOp heightKey blockHash | mainChain]
+
+txBatchOp :: BlockRef -> Tx -> LevelDB.BatchOp
+txBatchOp block tx = insertOp (TxKey (txHash tx)) (TxValue block tx)
+
+outputBatchOps :: BlockRef -> Tx -> [LevelDB.BatchOp]
+outputBatchOps block tx = zipWith f (txOut tx) [0 ..]
+  where
+    f TxOut {..} index = insertOp
+        (OutputKey (txHash tx) index) (OutputValue outValue block scriptOutput)
+
+spentBatchOps :: BlockRef -> Tx -> [LevelDB.BatchOp]
+spentBatchOps block tx = zipWith f (txIn tx) [0..]
+  where
+    f TxIn {..} index = insertOp
+        (SpentKey prevOutput) (SpentValue (txHash tx) index block)
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
