@@ -37,7 +37,10 @@ import qualified Data.ByteString              as BS
 import           Data.Conduit                 (($$))
 import           Data.Conduit.List            (consume)
 import           Data.Default
+import           Data.Function
 import           Data.List
+import           Data.Map.Strict              (Map)
+import qualified Data.Map.Strict              as M
 import           Data.Maybe
 import           Data.Monoid
 import           Data.Serialize               as S
@@ -48,11 +51,13 @@ import           Database.LevelDB             (DB, MonadResource, runResourceT)
 import qualified Database.LevelDB             as LevelDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
+import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
+import           System.Random
 
 data BlockConfig = BlockConfig
     { blockConfDir      :: !FilePath
@@ -79,16 +84,30 @@ data BlockMessage
 
 type BlockStore = Inbox BlockMessage
 
+type UnspentCache = (Map OutputKey OutputValue, Map BlockHeight [OutputKey])
+
+data IndexOutKey = IndexOutKey
+    { indexOutHash   :: !Hash256
+    , indexOutHeight :: !BlockHeight
+    , indexOutPoint  :: !OutPoint
+    } deriving (Eq, Show)
+
+data IndexOutValue = IndexOutValue
+    { indexOutValue :: !Word64
+    , indexOutSpent :: !SpentValue
+    } deriving (Eq, Show)
+
 data BlockRead = BlockRead
-    { myBlockDB    :: !DB
-    , mySelf       :: !BlockStore
-    , myDir        :: !FilePath
-    , myChain      :: !Chain
-    , myManager    :: !Manager
-    , myListener   :: !(Listen BlockEvent)
-    , myPending    :: !(TVar [BlockHash])
-    , myDownloaded :: !(TVar [Block])
-    , myPeer       :: !(TVar (Maybe Peer))
+    { myBlockDB      :: !DB
+    , mySelf         :: !BlockStore
+    , myDir          :: !FilePath
+    , myChain        :: !Chain
+    , myManager      :: !Manager
+    , myListener     :: !(Listen BlockEvent)
+    , myPending      :: !(TVar [BlockHash])
+    , myDownloaded   :: !(TVar [Block])
+    , myPeer         :: !(TVar (Maybe Peer))
+    , myUnspentCache :: !(TVar UnspentCache)
     }
 
 data BlockValue = BlockValue
@@ -109,16 +128,17 @@ data DetailedTx = DetailedTx
     { detailedTx      :: !Tx
     , detailedTxBlock :: !BlockRef
     , detailedTxSpent :: ![(SpentKey, SpentValue)]
+    , detailedTxOuts  :: ![(OutPoint, OutputValue)]
     } deriving (Show, Eq)
 
 data TxValue = TxValue
     { txValueBlock :: !BlockRef
     , txValue      :: !Tx
+    , txValueOuts  :: [(OutPoint, OutputValue)]
     } deriving (Show, Eq)
 
-data OutputKey = OutputKey
-    { outTx    :: !TxHash
-    , outIndex :: !Word32
+newtype OutputKey = OutputKey
+    { outPoint :: OutPoint
     } deriving (Show, Eq)
 
 data OutputValue = OutputValue
@@ -142,15 +162,15 @@ newtype BaseTxKey =
     deriving (Show, Eq)
 
 data MultiTxKey
-    = MultiTxKey { multiTxKey :: !TxKey }
-    | MultiTxKeyOutput { multiTxKeyOut :: !OutputKey }
-    | MultiTxKeySpent { multiTxKeySpent :: !SpentKey }
+    = MultiTxKey !TxKey
+    | MultiTxKeyOutput !OutputKey
+    | MultiTxKeySpent !SpentKey
     deriving (Show, Eq)
 
 data MultiTxValue
-    = MultiTx { multiTx :: !TxValue }
-    | MultiTxOut { multiTxOut :: !OutputValue }
-    | MultiTxSpent { multiTxSpent :: !SpentValue }
+    = MultiTx !TxValue
+    | MultiTxOut !OutputValue
+    | MultiTxSpent !SpentValue
     deriving (Show, Eq)
 
 newtype TxKey =
@@ -175,6 +195,11 @@ instance Record OutputKey OutputValue
 instance Record SpentKey SpentValue
 instance Record MultiTxKey MultiTxValue
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
+
+instance Ord OutputKey where
+    compare = compare `on` f
+      where
+        f (OutputKey (OutPoint hash index)) = (hash, index)
 
 instance Serialize MultiTxKey where
     put (MultiTxKey k)       = put k
@@ -230,16 +255,17 @@ instance Serialize SpentValue where
 instance Serialize OutputKey where
     put OutputKey {..} = do
         putWord8 0x02
-        put outTx
+        put (outPointHash outPoint)
         putWord8 0x01
-        put outIndex
+        put (outPointIndex outPoint)
         putWord8 0x00
     get = do
         guard . (== 0x02) =<< getWord8
-        outTx <- get
+        hash <- get
         guard . (== 0x01) =<< getWord8
-        outIndex <- get
+        index <- get
         guard . (== 0x00) =<< getWord8
+        let outPoint = OutPoint hash index
         return OutputKey {..}
 
 instance Serialize OutputValue where
@@ -267,15 +293,17 @@ instance Serialize BlockRef where
         return (BlockRef hash height main)
 
 instance Serialize TxValue where
-    put (TxValue bref tx) = do
+    put TxValue {..} = do
         putWord8 0x00
-        put bref
-        put tx
+        put txValueBlock
+        put txValue
+        put txValueOuts
     get = do
         guard . (== 0x00) =<< getWord8
-        bref <- get
-        tx <- get
-        return (TxValue bref tx)
+        txValueBlock <- get
+        txValue <- get
+        txValueOuts <- get
+        return TxValue {..}
 
 instance Serialize BestBlockKey where
     put BestBlockKey = put (BS.replicate 32 0x00)
@@ -294,20 +322,15 @@ instance Serialize BlockValue where
 
 blockValuePairs :: KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
-    [ "block" .=
-      BlockRef
-          (headerHash blockValueHeader)
-          blockValueHeight
-          blockValueMainChain
-    , "data" .=
-      object
-          [ "previous" .= prevBlock blockValueHeader
-          , "timestamp" .= blockTimestamp blockValueHeader
-          , "version" .= blockVersion blockValueHeader
-          , "bits" .= blockBits blockValueHeader
-          , "nonce" .= bhNonce blockValueHeader
-          , "transactions" .= blockValueTxs
-          ]
+    [ "hash" .= headerHash blockValueHeader
+    , "height" .= blockValueHeight
+    , "mainchain" .= blockValueMainChain
+    , "previous" .= prevBlock blockValueHeader
+    , "timestamp" .= blockTimestamp blockValueHeader
+    , "version" .= blockVersion blockValueHeader
+    , "bits" .= blockBits blockValueHeader
+    , "nonce" .= bhNonce blockValueHeader
+    , "transactions" .= blockValueTxs
     ]
 
 instance ToJSON BlockValue where
@@ -346,12 +369,13 @@ detailedTxPairs DetailedTx {..} =
   where
     hash = txHash detailedTx
     input TxIn {..} =
-        object
-            [ "txid" .= outPointHash prevOutput
-            , "vout" .= outPointIndex prevOutput
-            , "coinbase" .= (outPointHash prevOutput == zero)
-            , "sequence" .= txInSequence
-            ]
+        object $
+        [ "txid" .= outPointHash prevOutput
+        , "vout" .= outPointIndex prevOutput
+        , "coinbase" .= (outPointHash prevOutput == zero)
+        , "sequence" .= txInSequence
+        ] ++
+        outInfo prevOutput
     output TxOut {..} i =
         object $
         [ "value" .= ((fromIntegral outValue :: Double) / 1e8)
@@ -363,6 +387,19 @@ detailedTxPairs DetailedTx {..} =
         ["input" .= s | s <- maybeToList (spent i)]
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
     spent i = lookup (SpentKey (OutPoint hash i)) detailedTxSpent
+    outInfo op@OutPoint {..} =
+        concat
+            [ x
+            | OutputValue {..} <- maybeToList (op `lookup` detailedTxOuts)
+            , let x =
+                      [ "value" .= ((fromIntegral outValue' :: Double) / 1e8)
+                      , "pkscript" .= String (cs (encodeHex outScript))
+                      , "address" .=
+                        eitherToMaybe
+                            (decodeOutputBS outScript >>= outputAddress)
+                      , "block" .= outBlock
+                      ]
+            ]
 
 instance ToJSON DetailedTx where
     toJSON = object . detailedTxPairs
@@ -427,6 +464,7 @@ blockStore cfg =
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []
         dbox <- liftIO $ newTVarIO []
+        ubox <- liftIO $ newTVarIO (M.empty, M.empty)
         peerbox <- liftIO $ newTVarIO Nothing
         runReaderT
             (syncBlocks >> run)
@@ -440,6 +478,7 @@ blockStore cfg =
             , myPending = pbox
             , myDownloaded = dbox
             , myPeer = peerbox
+            , myUnspentCache = ubox
             }
   where
     run =
@@ -478,9 +517,9 @@ getStoredTx th =
     runMaybeT $ do
         db <- asks myBlockDB
         xs <- valuesForKey (BaseTxKey th) db $$ consume
-        t <- MaybeT (return (findTx xs))
+        TxValue {..} <- MaybeT (return (findTx xs))
         let ss = filterSpents xs
-        return (DetailedTx (txValue t) (txValueBlock t) ss)
+        return (DetailedTx txValue txValueBlock ss txValueOuts)
   where
     findTx xs =
         listToMaybe
@@ -524,7 +563,7 @@ revertBestBlock =
         txs <- mapMaybe (fmap txValue) <$> getBlockTxs blockValueTxs
         db <- asks myBlockDB
         let block = Block blockValueHeader txs
-            blockOps = blockBatchOps block (nodeHeight bn) (nodeWork bn) False
+        blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) False
         LevelDB.write db def blockOps
 
 syncBlocks :: MonadBlock m => m ()
@@ -602,7 +641,7 @@ importBlock block@Block {..} = do
             Nothing -> do
                 $(logError) $ logMe <> "Could not obtain best block from chain"
                 error "BUG: Could not obtain best block from chain"
-    let blockOps = blockBatchOps block (nodeHeight bn) (nodeWork bn) True
+    blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) True
     db <- asks myBlockDB
     LevelDB.write db def blockOps
     $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
@@ -616,35 +655,105 @@ getBlockTxs hs = do
     db <- asks myBlockDB
     forM hs (\h -> retrieveValue (TxKey h) db)
 
-blockBatchOps ::
-       Block -> BlockHeight -> BlockWork -> Bool -> [LevelDB.BatchOp]
-blockBatchOps Block {..} height work mainChain =
-    blockOp : bestOp ++ heightOp ++ txOps ++ outputOps ++ spentOps
+blockBatchOps :: MonadBlock m =>
+       Block -> BlockHeight -> BlockWork -> Bool -> m [LevelDB.BatchOp]
+blockBatchOps Block {..} height work main = do
+    outputOps <- concat <$> mapM (outputBatchOps blockRef) blockTxns
+    spentOps <- concat <$> mapM (spentBatchOps blockRef) blockTxns
+    txOps <- mapM (txBatchOp blockRef blockTxns) blockTxns
+    ubox <- asks myUnspentCache
+    (cache, heights) <- liftIO (readTVarIO ubox)
+    let del =
+            concat . M.elems $
+            M.filterWithKey
+                (\k _ -> height > cacheNo && k <= height - cacheNo)
+                heights
+        heights' =
+            M.filterWithKey
+                (\k _ -> height < cacheNo || k > height - cacheNo)
+                heights
+        cache' = foldl' (flip M.delete) cache del
+    liftIO . atomically $ writeTVar ubox (cache', heights')
+    $(logDebug) $
+        logMe <> "Deleted " <> cs (show (length del)) <> " entries from cache"
+    return (blockOp : bestOp ++ heightOp ++ txOps ++ outputOps ++ spentOps)
   where
+    cacheNo = 2500
     blockHash = headerHash blockHeader
     blockKey = BlockKey blockHash
     txHashes = map txHash blockTxns
-    blockValue = BlockValue height work blockHeader mainChain txHashes
-    blockRef = BlockRef blockHash height mainChain
-    outputOps = concatMap (outputBatchOps blockRef) blockTxns
-    spentOps = concatMap (spentBatchOps blockRef) blockTxns
-    txOps = map (txBatchOp blockRef) blockTxns
+    blockValue = BlockValue height work blockHeader main txHashes
+    blockRef = BlockRef blockHash height main
     blockOp = insertOp blockKey blockValue
-    bestOp = [insertOp BestBlockKey blockHash | mainChain]
+    bestOp = [insertOp BestBlockKey blockHash | main]
     heightKey = HeightKey height
-    heightOp = [insertOp heightKey blockHash | mainChain]
+    heightOp = [insertOp heightKey blockHash | main]
 
-txBatchOp :: BlockRef -> Tx -> LevelDB.BatchOp
-txBatchOp block tx = insertOp (TxKey (txHash tx)) (TxValue block tx)
-
-outputBatchOps :: BlockRef -> Tx -> [LevelDB.BatchOp]
-outputBatchOps block tx = zipWith f (txOut tx) [0 ..]
+txBatchOp ::
+       MonadBlock m
+    => BlockRef
+    -> [Tx]
+    -> Tx
+    -> m LevelDB.BatchOp
+txBatchOp block txs tx = do
+    os <-
+        fmap catMaybes . forM (txIn tx) $ \TxIn {..} ->
+            runMaybeT $ do
+                guard (outPointHash prevOutput /= zero)
+                val <-
+                    fromCache prevOutput <|> fromDB prevOutput <|>
+                    fromThisBlock prevOutput
+                return (prevOutput, val)
+    return $ insertOp (TxKey (txHash tx)) (TxValue block tx os)
   where
-    f TxOut {..} index = insertOp
-        (OutputKey (txHash tx) index) (OutputValue outValue block scriptOutput)
+    fromCache op = do
+        ubox <- asks myUnspentCache
+        (cache, heights) <- liftIO $ readTVarIO ubox
+        m <- MaybeT . return $ M.lookup (OutputKey op) cache
+        $(logDebug) $
+            logMe <> "Cache hit for output " <> cs (show (outPointHash op)) <>
+            " " <>
+            cs (show (outPointIndex op))
+        liftIO . atomically $
+            writeTVar ubox (M.delete (OutputKey op) cache, heights)
+        return m
+    fromDB op = do
+        db <- asks myBlockDB
+        $(logDebug) $
+            logMe <> "Cache miss for output " <> cs (show (outPointHash op)) <>
+            " " <>
+            cs (show (outPointIndex op))
+        MaybeT $ OutputKey op `retrieveValue` db
+    fromThisBlock op = do
+        tx' <- MaybeT . return $ find ((== outPointHash op) . txHash) txs
+        let i = fromIntegral (outPointIndex op)
+            TxOut {..} = txOut tx' !! i
+            val = OutputValue outValue block scriptOutput
+        return val
+    zero = "0000000000000000000000000000000000000000000000000000000000000000"
 
-spentBatchOps :: BlockRef -> Tx -> [LevelDB.BatchOp]
-spentBatchOps block tx = zipWith f (txIn tx) [0..]
+outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
+outputBatchOps block tx = do
+    let kvs = zipWith f (txOut tx) [0 ..]
+    ubox <- asks myUnspentCache
+    (cache, heights) <- liftIO (readTVarIO ubox)
+    let cache' = foldl' (\c (k, v) -> M.insert k v c) cache kvs
+        heights' =
+            foldl'
+                (\c (k, _) -> M.insertWith (++) (blockRefHeight block) [k] c)
+                heights
+                kvs
+    liftIO . atomically $ writeTVar ubox (cache', heights')
+    return $ map (uncurry insertOp) kvs
+  where
+    f TxOut {..} index =
+        let key = OutputKey (OutPoint (txHash tx) index)
+            value = OutputValue outValue block scriptOutput
+        in (key, value)
+
+spentBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
+spentBatchOps block tx =
+    return $ zipWith f (txIn tx) [0..]
   where
     f TxIn {..} index = insertOp
         (SpentKey prevOutput) (SpentValue (txHash tx) index block)

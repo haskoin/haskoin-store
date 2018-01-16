@@ -8,7 +8,6 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Aeson                  hiding (json)
 import           Data.String.Conversions
-import           Data.Text                   (Text)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Store.Block
@@ -46,6 +45,10 @@ defHandler ServerError = json ServerError
 defHandler NotFound    = status status404 >> json NotFound
 defHandler e           = json e
 
+maybeJSON :: ToJSON a => Maybe a -> StoreM ()
+maybeJSON Nothing = raise NotFound
+maybeJSON (Just x) = json x
+
 main :: IO ()
 main = do
     setTestnet
@@ -58,25 +61,16 @@ main = do
     runWeb port b =
         scottyT port id $ do
             defaultHandler defHandler
+            get "/block/best" $ blockGetBest b >>= json
             get "/block/hash/:block" $ do
-                hash <- param "block"
-                m <- hash `blockGet` b
-                case m of
-                    Nothing -> raise NotFound
-                    Just bv -> json bv
+                block <- param "block"
+                block `blockGet` b >>= maybeJSON
             get "/block/height/:height" $ do
                 height <- param "height"
-                m <- height `blockGetHeight` b
-                case m of
-                    Nothing -> raise NotFound
-                    Just bv -> json bv
-            get "/block/best" $ blockGetBest b >>= json
-            get "/transaction/:tx" $ do
-                hash <- param "tx"
-                m <- hash `blockGetTx` b
-                case m of
-                    Nothing -> raise NotFound
-                    Just t  -> json t
+                height `blockGetHeight` b >>= maybeJSON
+            get "/transaction/:txid" $ do
+                txid <- param "txid"
+                txid `blockGetTx` b >>= maybeJSON
             notFound $ raise NotFound
     runStore b =
         runStderrLoggingT $ do
@@ -89,8 +83,8 @@ main = do
                     , storeConfSupervisor = s
                     , storeConfChain = c
                     , storeConfListener = const $ return ()
-                    , storeConfMaxPeers = 20
-                    , storeConfInitPeers = []
-                    , storeConfNoNewPeers = False
+                    , storeConfMaxPeers = 1
+                    , storeConfInitPeers = [("localhost", defaultPort)]
+                    , storeConfNoNewPeers = True
                     }
             store cfg

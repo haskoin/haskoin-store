@@ -175,7 +175,7 @@ checkStale = do
         [] -> return ()
         (_, ts):_ -> do
             cur <- computeTime
-            when (cur > ts + 30) $ throwIO PeerTimeout
+            when (cur > ts + 300) $ throwIO PeerTimeout
 
 registerOutgoing :: MonadPeer m => Message -> m ()
 registerOutgoing (MGetData (GetData ivs)) = do
