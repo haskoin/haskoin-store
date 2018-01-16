@@ -358,8 +358,9 @@ detailedTxPairs DetailedTx {..} =
         , "pkscript" .= String (cs (encodeHex scriptOutput))
         , "address" .=
           eitherToMaybe (decodeOutputBS scriptOutput >>= outputAddress)
+        , "spent" .= isJust (spent i)
         ] ++
-        ["spent" .= s | s <- maybeToList (spent i)]
+        ["input" .= s | s <- maybeToList (spent i)]
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
     spent i = lookup (SpentKey (OutPoint hash i)) detailedTxSpent
 
