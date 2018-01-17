@@ -396,7 +396,7 @@ detailedTxPairs DetailedTx {..} =
         outInfo prevOutput
     output TxOut {..} i =
         object $
-        [ "value" .= ((fromIntegral outValue :: Double) / 1e8)
+        [ "value" .= outValue
         , "pkscript" .= String (cs (encodeHex scriptOutput))
         , "address" .=
           eitherToMaybe (decodeOutputBS scriptOutput >>= outputAddress)
@@ -410,7 +410,7 @@ detailedTxPairs DetailedTx {..} =
             [ x
             | OutputValue {..} <- maybeToList (op `lookup` detailedTxOuts)
             , let x =
-                      [ "value" .= ((fromIntegral outValue' :: Double) / 1e8)
+                      [ "value" .= outValue'
                       , "pkscript" .= String (cs (encodeHex outScript))
                       , "address" .=
                         eitherToMaybe
