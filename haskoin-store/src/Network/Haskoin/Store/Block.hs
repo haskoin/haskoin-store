@@ -681,7 +681,7 @@ blockBatchOps :: MonadBlock m =>
 blockBatchOps Block {..} height work main = do
     outputOps <- concat <$> mapM (outputBatchOps blockRef) blockTxns
     spentOps <- concat <$> mapM (spentBatchOps blockRef) blockTxns
-    txOps <- mapM (txBatchOp blockRef blockTxns) blockTxns
+    txOps <- mapM (txBatchOp blockRef) blockTxns
     unspentCachePrune
     return (blockOp : bestOp ++ heightOp ++ txOps ++ outputOps ++ spentOps)
   where
@@ -694,6 +694,33 @@ blockBatchOps Block {..} height work main = do
     bestOp = [insertOp BestBlockKey blockHash | main]
     heightKey = HeightKey height
     heightOp = [insertOp heightKey blockHash | main]
+
+getOutput :: MonadBlock m => Bool -> OutputKey -> m (Maybe OutputValue)
+getOutput del key = runMaybeT (fromCache <|> fromDB)
+  where
+    hash = outPointHash (outPoint key)
+    index = outPointIndex (outPoint key)
+    fromDB = do
+        db <- asks myBlockDB
+        $(logDebug) $
+            logMe <> "Cache miss for output " <> cs (show hash) <> "/" <>
+            cs (show index)
+        MaybeT $ key `retrieveValue` db
+    fromCache = do
+        ubox <- asks myUnspentCache
+        cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
+        m <- MaybeT . return $ M.lookup key unspentCache
+        $(logDebug) $
+            logMe <> "Cache hit for output " <> cs (show hash) <> " " <>
+            cs (show index)
+        when del . liftIO . atomically $
+            writeTVar
+                ubox
+                cache
+                { unspentCache = M.delete key unspentCache
+                , unspentCacheCount = unspentCacheCount - 1
+                }
+        return m
 
 unspentCachePrune :: MonadBlock m => m ()
 unspentCachePrune = do
@@ -731,60 +758,27 @@ unspentCachePrune = do
 txBatchOp ::
        MonadBlock m
     => BlockRef
-    -> [Tx]
     -> Tx
     -> m LevelDB.BatchOp
-txBatchOp block txs tx = do
+txBatchOp block tx = do
     os <-
         fmap catMaybes . forM (txIn tx) $ \TxIn {..} ->
             runMaybeT $ do
                 guard (outPointHash prevOutput /= zero)
-                val <-
-                    fromCache prevOutput <|> fromDB prevOutput <|>
-                    fromThisBlock prevOutput
+                val <- MaybeT (getOutput True (OutputKey prevOutput))
                 return (prevOutput, val)
     return $ insertOp (TxKey (txHash tx)) (TxValue block tx os)
   where
-    fromCache op = do
-        ubox <- asks myUnspentCache
-        cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
-        m <- MaybeT . return $ M.lookup (OutputKey op) unspentCache
-        $(logDebug) $
-            logMe <> "Cache hit for output " <> cs (show (outPointHash op)) <>
-            " " <>
-            cs (show (outPointIndex op))
-        liftIO . atomically $
-            writeTVar
-                ubox
-                cache
-                { unspentCache = M.delete (OutputKey op) unspentCache
-                , unspentCacheCount = unspentCacheCount - 1
-                }
-        return m
-    fromDB op = do
-        db <- asks myBlockDB
-        $(logDebug) $
-            logMe <> "Cache miss for output " <> cs (show (outPointHash op)) <>
-            " " <>
-            cs (show (outPointIndex op))
-        MaybeT $ OutputKey op `retrieveValue` db
-    fromThisBlock op = do
-        tx' <- MaybeT . return $ find ((== outPointHash op) . txHash) txs
-        let i = fromIntegral (outPointIndex op)
-            TxOut {..} = txOut tx' !! i
-            val = OutputValue outValue block scriptOutput
-        return val
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
 
-outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
-outputBatchOps block@BlockRef {..} tx = do
-    let kvs = zipWith f (txOut tx) [0 ..]
+addToCache :: MonadBlock m => BlockRef -> [(OutputKey, OutputValue)] -> m ()
+addToCache BlockRef {..} xs = do
     ubox <- asks myUnspentCache
     UnspentCache {..} <- liftIO (readTVarIO ubox)
-    let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache kvs
-        blocks =
-            M.insertWith (++) blockRefHeight (map fst kvs) unspentCacheBlocks
-        count = unspentCacheCount + length kvs
+    let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache xs
+        keys = map fst xs
+        blocks = M.insertWith (++) blockRefHeight keys unspentCacheBlocks
+        count = unspentCacheCount + length xs
     liftIO . atomically $
         writeTVar
             ubox
@@ -793,6 +787,11 @@ outputBatchOps block@BlockRef {..} tx = do
             , unspentCacheBlocks = blocks
             , unspentCacheCount = count
             }
+
+outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
+outputBatchOps block@BlockRef {..} tx = do
+    let kvs = zipWith f (txOut tx) [0 ..]
+    addToCache block kvs
     return $ map (uncurry insertOp) kvs
   where
     f TxOut {..} index =
