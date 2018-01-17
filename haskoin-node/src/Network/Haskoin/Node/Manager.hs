@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TupleSections         #-}
 module Network.Haskoin.Node.Manager
@@ -15,11 +16,10 @@ import           Control.Concurrent.Unique
 import           Control.Monad
 import           Control.Monad.Base
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
+import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
-import           Control.Monad.Except
 import           Control.Monad.Trans.Maybe
 import           Data.Bits
 import           Data.ByteString             (ByteString)
@@ -221,13 +221,18 @@ deletePeer sa = do
 
 getNewPeer :: MonadManager m => m (Maybe SockAddr)
 getNewPeer = do
-    $(logDebug) $ logMe <> "Attempting to get a new peer from database"
-    pdb <- asks myPeerDB
+    ManagerConfig {..} <- asks myConfig
     ops <- map onlinePeerAddress <$> getOnlinePeers
-    LevelDB.withIterator pdb def $ \i -> do
-        LevelDB.iterSeek i (BS.singleton 0x01)
-        LevelDB.iterPrev i
-        runMaybeT $ go i ops
+    cps <- concat <$> mapM toSockAddr mgrConfPeers
+    if mgrConfNoNewPeers
+        then return $ find (not . (`elem` ops)) cps
+        else do
+            $(logDebug) $ logMe <> "Attempting to get a new peer from database"
+            pdb <- asks myPeerDB
+            LevelDB.withIterator pdb def $ \i -> do
+                LevelDB.iterSeek i (BS.singleton 0x01)
+                LevelDB.iterPrev i
+                runMaybeT $ go i ops
   where
     go i ops = do
         valid <- LevelDB.iterValid i
@@ -289,10 +294,10 @@ processManagerMessage (ManagerGetAddr _) =
 
 processManagerMessage (ManagerNewPeers p as) =
     void . runMaybeT $ do
+        ManagerConfig {..} <- asks myConfig
+        guard (not mgrConfNoNewPeers)
         $(logDebug) $ logMe <> "Processing received addresses"
         pn <- peerString p
-        io <- mgrConfNoNewPeers <$> asks myConfig
-        guard (not io)
         $(logDebug) $
             logMe <> "Received " <> logShow (length as) <> " new peers from " <>
             cs pn

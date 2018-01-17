@@ -57,7 +57,6 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
-import           System.Random
 
 data BlockConfig = BlockConfig
     { blockConfDir      :: !FilePath
@@ -65,6 +64,8 @@ data BlockConfig = BlockConfig
     , blockConfManager  :: !Manager
     , blockConfChain    :: !Chain
     , blockConfListener :: !(Listen BlockEvent)
+    , blockConfCacheNo  :: !Word32
+    , blockConfBlockNo  :: !Word32
     }
 
 newtype BlockEvent = BestBlock BlockHash
@@ -81,10 +82,15 @@ data BlockMessage
     | BlockGet !BlockHash
                (Reply (Maybe BlockValue))
     | BlockGetTx !TxHash !(Reply (Maybe DetailedTx))
+    | BlockProcess
 
 type BlockStore = Inbox BlockMessage
 
-type UnspentCache = (Map OutputKey OutputValue, Map BlockHeight [OutputKey])
+data UnspentCache = UnspentCache
+    { unspentCache       :: !(Map OutputKey OutputValue)
+    , unspentCacheBlocks :: !(Map BlockHeight [OutputKey])
+    , unspentCacheCount  :: !Int
+    }
 
 data IndexOutKey = IndexOutKey
     { indexOutHash   :: !Hash256
@@ -108,6 +114,8 @@ data BlockRead = BlockRead
     , myDownloaded   :: !(TVar [Block])
     , myPeer         :: !(TVar (Maybe Peer))
     , myUnspentCache :: !(TVar UnspentCache)
+    , myCacheNo      :: !Word32
+    , myBlockNo      :: !Word32
     }
 
 data BlockValue = BlockValue
@@ -457,34 +465,43 @@ blockStore ::
        )
     => BlockConfig
     -> m ()
-blockStore cfg =
+blockStore BlockConfig {..} =
     runResourceT $ do
         let opts = def {LevelDB.createIfMissing = True}
-        db <- LevelDB.open (blockConfDir cfg) opts
+        db <- LevelDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []
         dbox <- liftIO $ newTVarIO []
-        ubox <- liftIO $ newTVarIO (M.empty, M.empty)
+        ubox <-
+            liftIO $
+            newTVarIO
+                UnspentCache
+                { unspentCache = M.empty
+                , unspentCacheBlocks = M.empty
+                , unspentCacheCount = 0
+                }
         peerbox <- liftIO $ newTVarIO Nothing
         runReaderT
             (syncBlocks >> run)
             BlockRead
-            { mySelf = blockConfMailbox cfg
+            { mySelf = blockConfMailbox
             , myBlockDB = db
-            , myDir = blockConfDir cfg
-            , myChain = blockConfChain cfg
-            , myManager = blockConfManager cfg
-            , myListener = blockConfListener cfg
+            , myDir = blockConfDir
+            , myChain = blockConfChain
+            , myManager = blockConfManager
+            , myListener = blockConfListener
             , myPending = pbox
             , myDownloaded = dbox
             , myPeer = peerbox
             , myUnspentCache = ubox
+            , myCacheNo = blockConfCacheNo
+            , myBlockNo = blockConfBlockNo
             }
   where
     run =
         forever $ do
             $(logDebug) $ logMe <> "Awaiting message"
-            msg <- receive $ blockConfMailbox cfg
+            msg <- receive blockConfMailbox
             processBlockMessage msg
 
 getBestBlockHash :: MonadBlock m => m BlockHash
@@ -583,9 +600,10 @@ syncBlocks = do
         let splitHash = headerHash (nodeHeader splitBlock)
         $(logDebug) $ logMe <> "Split block: " <> logShow splitHash
         revertUntil myBest splitBlock
+        blockNo <- asks myBlockNo
         let chainHeight = nodeHeight chainBest
             splitHeight = nodeHeight splitBlock
-            topHeight = min chainHeight (splitHeight + 501)
+            topHeight = min chainHeight (splitHeight + blockNo + 1)
         targetBlock <-
             MaybeT $
             if topHeight == chainHeight
@@ -628,7 +646,10 @@ importBlocks = do
                 modifyTVar dbox (filter (/= b))
                 return (Just b)
     case m of
-        Just block -> importBlock block >> importBlocks
+        Just block -> do
+            importBlock block
+            mbox <- asks mySelf
+            BlockProcess `send` mbox
         Nothing    -> syncBlocks
 
 importBlock :: MonadBlock m => Block -> m ()
@@ -661,24 +682,9 @@ blockBatchOps Block {..} height work main = do
     outputOps <- concat <$> mapM (outputBatchOps blockRef) blockTxns
     spentOps <- concat <$> mapM (spentBatchOps blockRef) blockTxns
     txOps <- mapM (txBatchOp blockRef blockTxns) blockTxns
-    ubox <- asks myUnspentCache
-    (cache, heights) <- liftIO (readTVarIO ubox)
-    let del =
-            concat . M.elems $
-            M.filterWithKey
-                (\k _ -> height > cacheNo && k <= height - cacheNo)
-                heights
-        heights' =
-            M.filterWithKey
-                (\k _ -> height < cacheNo || k > height - cacheNo)
-                heights
-        cache' = foldl' (flip M.delete) cache del
-    liftIO . atomically $ writeTVar ubox (cache', heights')
-    $(logDebug) $
-        logMe <> "Deleted " <> cs (show (length del)) <> " entries from cache"
+    unspentCachePrune
     return (blockOp : bestOp ++ heightOp ++ txOps ++ outputOps ++ spentOps)
   where
-    cacheNo = 2500
     blockHash = headerHash blockHeader
     blockKey = BlockKey blockHash
     txHashes = map txHash blockTxns
@@ -688,6 +694,39 @@ blockBatchOps Block {..} height work main = do
     bestOp = [insertOp BestBlockKey blockHash | main]
     heightKey = HeightKey height
     heightOp = [insertOp heightKey blockHash | main]
+
+unspentCachePrune :: MonadBlock m => m ()
+unspentCachePrune = do
+    n <- asks myCacheNo
+    ubox <- asks myUnspentCache
+    cache <- liftIO (readTVarIO ubox)
+    let new = clear (fromIntegral n) cache
+        del = unspentCacheCount cache - unspentCacheCount new
+    liftIO . atomically $ writeTVar ubox new
+    $(logDebug) $
+        logMe <> "Deleted " <> cs (show del) <> " of " <>
+        cs (show (unspentCacheCount cache)) <>
+        " entries from UTXO cache"
+  where
+    clear n c@UnspentCache {..}
+        | unspentCacheCount < n = c
+        | otherwise =
+            let (del, keep) = M.splitAt 1 unspentCacheBlocks
+                ks =
+                    [ k
+                    | keys <- M.elems del
+                    , k <- keys
+                    , isJust (M.lookup k unspentCache)
+                    ]
+                count = unspentCacheCount - length ks
+                cache = foldl' (flip M.delete) unspentCache ks
+            in clear
+                   n
+                   UnspentCache
+                   { unspentCache = cache
+                   , unspentCacheBlocks = keep
+                   , unspentCacheCount = count
+                   }
 
 txBatchOp ::
        MonadBlock m
@@ -708,14 +747,19 @@ txBatchOp block txs tx = do
   where
     fromCache op = do
         ubox <- asks myUnspentCache
-        (cache, heights) <- liftIO $ readTVarIO ubox
-        m <- MaybeT . return $ M.lookup (OutputKey op) cache
+        cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
+        m <- MaybeT . return $ M.lookup (OutputKey op) unspentCache
         $(logDebug) $
             logMe <> "Cache hit for output " <> cs (show (outPointHash op)) <>
             " " <>
             cs (show (outPointIndex op))
         liftIO . atomically $
-            writeTVar ubox (M.delete (OutputKey op) cache, heights)
+            writeTVar
+                ubox
+                cache
+                { unspentCache = M.delete (OutputKey op) unspentCache
+                , unspentCacheCount = unspentCacheCount - 1
+                }
         return m
     fromDB op = do
         db <- asks myBlockDB
@@ -733,17 +777,22 @@ txBatchOp block txs tx = do
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
 
 outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
-outputBatchOps block tx = do
+outputBatchOps block@BlockRef {..} tx = do
     let kvs = zipWith f (txOut tx) [0 ..]
     ubox <- asks myUnspentCache
-    (cache, heights) <- liftIO (readTVarIO ubox)
-    let cache' = foldl' (\c (k, v) -> M.insert k v c) cache kvs
-        heights' =
-            foldl'
-                (\c (k, _) -> M.insertWith (++) (blockRefHeight block) [k] c)
-                heights
-                kvs
-    liftIO . atomically $ writeTVar ubox (cache', heights')
+    UnspentCache {..} <- liftIO (readTVarIO ubox)
+    let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache kvs
+        blocks =
+            M.insertWith (++) blockRefHeight (map fst kvs) unspentCacheBlocks
+        count = unspentCacheCount + length kvs
+    liftIO . atomically $
+        writeTVar
+            ubox
+            UnspentCache
+            { unspentCache = cache
+            , unspentCacheBlocks = blocks
+            , unspentCacheCount = count
+            }
     return $ map (uncurry insertOp) kvs
   where
     f TxOut {..} index =
@@ -810,6 +859,13 @@ processBlockMessage (BlockReceived _p b) = do
         when (hash `elem` ps) $ do
             modifyTVar dbox (b :)
             modifyTVar pbox (filter (/= hash))
+    mbox <- asks mySelf
+    best <- getBestBlockHash
+    -- Only send BlockProcess message if download box has a block to process
+    when (prevBlock (blockHeader b) == best) (BlockProcess `send` mbox)
+
+processBlockMessage BlockProcess = do
+    $(logDebug) $ logMe <> "Processing downloaded block"
     importBlocks
 
 processBlockMessage (BlockPeerDisconnect p) = do

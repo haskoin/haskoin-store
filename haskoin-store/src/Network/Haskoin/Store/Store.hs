@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TemplateHaskell       #-}
 module Network.Haskoin.Store.Store
     ( StoreConfig(..)
@@ -19,6 +20,7 @@ import           Control.Monad.Trans.Control
 import           Data.Monoid
 import           Data.String.Conversions
 import           Data.Text                   (Text)
+import           Data.Word
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
@@ -41,6 +43,8 @@ data StoreConfig = StoreConfig
     , storeConfMaxPeers   :: !Int
     , storeConfInitPeers  :: ![HostPort]
     , storeConfNoNewPeers :: !Bool
+    , storeConfCacheNo    :: !Word32
+    , storeConfBlockNo    :: !Word32
     }
 
 data StoreRead = StoreRead
@@ -63,44 +67,46 @@ store ::
        (MonadLoggerIO m, MonadBaseControl IO m, MonadMask m, Forall (Pure m))
     => StoreConfig
     -> m ()
-store cfg = do
+store StoreConfig {..} = do
     $(logDebug) $ logMe <> "Launching store"
-    let nodeDir = storeConfDir cfg </> "node"
-        blockDir = storeConfDir cfg </> "blocks"
+    let nodeDir = storeConfDir </> "node"
+        blockDir = storeConfDir </> "blocks"
     liftIO $ createDirectoryIfMissing False nodeDir
     ns <- Inbox <$> liftIO newTQueueIO
     mgr <- Inbox <$> liftIO newTQueueIO
     sm <- Inbox <$> liftIO newTQueueIO
     let nodeCfg =
             NodeConfig
-            { maxPeers = storeConfMaxPeers cfg
+            { maxPeers = storeConfMaxPeers
             , directory = nodeDir
-            , initPeers = storeConfInitPeers cfg
-            , noNewPeers = storeConfNoNewPeers cfg
+            , initPeers = storeConfInitPeers
+            , noNewPeers = storeConfNoNewPeers
             , nodeEvents = (`sendSTM` sm)
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeSupervisor = ns
-            , nodeChain = storeConfChain cfg
+            , nodeChain = storeConfChain
             , nodeManager = mgr
             }
     let storeRead = StoreRead
             { myMailbox = sm
-            , myBlockStore = storeConfBlocks cfg
-            , myChain = storeConfChain cfg
+            , myBlockStore = storeConfBlocks
+            , myChain = storeConfChain
             , myManager = mgr
-            , myDir = storeConfDir cfg
-            , myListener = storeConfListener cfg
+            , myDir = storeConfDir
+            , myListener = storeConfListener
             }
     let blockCfg = BlockConfig
             { blockConfDir = blockDir
-            , blockConfMailbox = storeConfBlocks cfg
-            , blockConfChain = storeConfChain cfg
+            , blockConfMailbox = storeConfBlocks
+            , blockConfChain = storeConfChain
             , blockConfManager = mgr
-            , blockConfListener = storeConfListener cfg . BlockEvent
+            , blockConfListener = storeConfListener . BlockEvent
+            , blockConfCacheNo = storeConfCacheNo
+            , blockConfBlockNo = storeConfBlockNo
             }
     supervisor
         KillAll
-        (storeConfSupervisor cfg)
+        storeConfSupervisor
         [runReaderT run storeRead, node nodeCfg, blockStore blockCfg]
   where
     run =
