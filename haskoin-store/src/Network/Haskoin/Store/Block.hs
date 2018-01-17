@@ -122,6 +122,7 @@ data BlockValue = BlockValue
     { blockValueHeight    :: !BlockHeight
     , blockValueWork      :: !BlockWork
     , blockValueHeader    :: !BlockHeader
+    , blockValueSize      :: !Word32
     , blockValueMainChain :: !Bool
     , blockValueTxs       :: ![TxHash]
     } deriving (Show, Eq)
@@ -324,9 +325,17 @@ instance Serialize BlockValue where
         put blockValueHeight
         put blockValueWork
         put blockValueHeader
+        put blockValueSize
         put blockValueMainChain
         put blockValueTxs
-    get = BlockValue <$> get <*> get <*> get <*> get <*> get
+    get = do
+        blockValueHeight <- get
+        blockValueWork <- get
+        blockValueHeader <- get
+        blockValueSize <- get
+        blockValueMainChain <- get
+        blockValueTxs <- get
+        return BlockValue {..}
 
 blockValuePairs :: KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
@@ -338,6 +347,7 @@ blockValuePairs BlockValue {..} =
     , "version" .= blockVersion blockValueHeader
     , "bits" .= blockBits blockValueHeader
     , "nonce" .= bhNonce blockValueHeader
+    , "size" .= blockValueSize
     , "transactions" .= blockValueTxs
     ]
 
@@ -678,7 +688,7 @@ getBlockTxs hs = do
 
 blockBatchOps :: MonadBlock m =>
        Block -> BlockHeight -> BlockWork -> Bool -> m [LevelDB.BatchOp]
-blockBatchOps Block {..} height work main = do
+blockBatchOps block@Block {..} height work main = do
     outputOps <- concat <$> mapM (outputBatchOps blockRef) blockTxns
     spentOps <- concat <$> mapM (spentBatchOps blockRef) blockTxns
     txOps <- mapM (txBatchOp blockRef) blockTxns
@@ -688,7 +698,8 @@ blockBatchOps Block {..} height work main = do
     blockHash = headerHash blockHeader
     blockKey = BlockKey blockHash
     txHashes = map txHash blockTxns
-    blockValue = BlockValue height work blockHeader main txHashes
+    size = fromIntegral (BS.length (S.encode block))
+    blockValue = BlockValue height work blockHeader size main txHashes
     blockRef = BlockRef blockHash height main
     blockOp = insertOp blockKey blockValue
     bestOp = [insertOp BestBlockKey blockHash | main]
