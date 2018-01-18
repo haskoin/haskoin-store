@@ -380,12 +380,18 @@ detailedTxPairs DetailedTx {..} =
     , "size" .= BS.length (S.encode detailedTx)
     , "version" .= txVersion detailedTx
     , "locktime" .= txLockTime detailedTx
+    , "fee" .= fee
     , "vin" .= map input (txIn detailedTx)
     , "vout" .= zipWith output (txOut detailedTx) [0 ..]
     , "hex" .= detailedTx
     ]
   where
     hash = txHash detailedTx
+    fee =
+        if any ((== zero) . outPointHash . prevOutput) (txIn detailedTx)
+            then 0
+            else sum (map (outValue' . snd) detailedTxOuts) -
+                 sum (map outValue (txOut detailedTx))
     input TxIn {..} =
         object $
         [ "txid" .= outPointHash prevOutput
@@ -477,7 +483,11 @@ blockStore ::
     -> m ()
 blockStore BlockConfig {..} =
     runResourceT $ do
-        let opts = def {LevelDB.createIfMissing = True}
+        let opts =
+                def
+                { LevelDB.createIfMissing = True
+                , LevelDB.cacheSize = 512 ^ 20
+                }
         db <- LevelDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []
@@ -691,7 +701,7 @@ blockBatchOps :: MonadBlock m =>
 blockBatchOps block@Block {..} height work main = do
     outputOps <- concat <$> mapM (outputBatchOps blockRef) blockTxns
     spentOps <- concat <$> mapM (spentBatchOps blockRef) blockTxns
-    txOps <- mapM (txBatchOp blockRef) blockTxns
+    txOps <- mapM (txBatchOp blockRef blockTxns) blockTxns
     unspentCachePrune
     return (blockOp : bestOp ++ heightOp ++ txOps ++ outputOps ++ spentOps)
   where
@@ -706,8 +716,8 @@ blockBatchOps block@Block {..} height work main = do
     heightKey = HeightKey height
     heightOp = [insertOp heightKey blockHash | main]
 
-getOutput :: MonadBlock m => Bool -> OutputKey -> m (Maybe OutputValue)
-getOutput del key = runMaybeT (fromCache <|> fromDB)
+getOutput :: MonadBlock m => BlockRef -> [Tx] -> Bool -> OutputKey -> m (Maybe OutputValue)
+getOutput block txs del key = runMaybeT (fromCache <|> fromDB <|> fromTxs)
   where
     hash = outPointHash (outPoint key)
     index = outPointIndex (outPoint key)
@@ -732,6 +742,19 @@ getOutput del key = runMaybeT (fromCache <|> fromDB)
                 , unspentCacheCount = unspentCacheCount - 1
                 }
         return m
+    fromTxs =
+        MaybeT . return $ do
+            tx <- find ((== outPointHash (outPoint key)) . txHash) txs
+            guard
+                (length (txOut tx) > fromIntegral (outPointIndex (outPoint key)))
+            let o = txOut tx !! fromIntegral (outPointIndex (outPoint key))
+            return
+                OutputValue
+                { outValue' = outValue o
+                , outBlock = block
+                , outScript = scriptOutput o
+                }
+
 
 unspentCachePrune :: MonadBlock m => m ()
 unspentCachePrune = do
@@ -769,14 +792,15 @@ unspentCachePrune = do
 txBatchOp ::
        MonadBlock m
     => BlockRef
+    -> [Tx]
     -> Tx
     -> m LevelDB.BatchOp
-txBatchOp block tx = do
+txBatchOp block txs tx = do
     os <-
         fmap catMaybes . forM (txIn tx) $ \TxIn {..} ->
             runMaybeT $ do
                 guard (outPointHash prevOutput /= zero)
-                val <- MaybeT (getOutput True (OutputKey prevOutput))
+                val <- MaybeT (getOutput block txs True (OutputKey prevOutput))
                 return (prevOutput, val)
     return $ insertOp (TxKey (txHash tx)) (TxValue block tx os)
   where

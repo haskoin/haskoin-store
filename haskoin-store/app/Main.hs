@@ -46,7 +46,7 @@ defHandler NotFound    = status status404 >> json NotFound
 defHandler e           = json e
 
 maybeJSON :: ToJSON a => Maybe a -> StoreM ()
-maybeJSON Nothing = raise NotFound
+maybeJSON Nothing  = raise NotFound
 maybeJSON (Just x) = json x
 
 main :: IO ()
@@ -86,7 +86,7 @@ main = do
                     , storeConfMaxPeers = 1
                     , storeConfInitPeers = [("localhost", defaultPort)]
                     , storeConfNoNewPeers = True
-                    , storeConfCacheNo = 2000000
+                    , storeConfCacheNo = 250000
                     , storeConfBlockNo = 500
                     }
             store cfg

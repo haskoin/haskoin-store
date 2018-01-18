@@ -84,7 +84,7 @@ withTestStore f =
                     , storeConfMaxPeers = 20
                     , storeConfInitPeers = []
                     , storeConfNoNewPeers = False
-                    , storeConfCacheNo = 1000000
+                    , storeConfCacheNo = 100000
                     , storeConfBlockNo = 200
                     }
             withAsync (store cfg) $ \a -> do
