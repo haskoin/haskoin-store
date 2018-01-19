@@ -10,6 +10,7 @@ import           Data.Aeson                  hiding (json)
 import           Data.String.Conversions
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
+import           Network.Haskoin.Crypto
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Store
 import           Network.Haskoin.Transaction
@@ -26,6 +27,10 @@ instance Parsable BlockHash where
 instance Parsable TxHash where
     parseParam =
         maybe (Left "Could not decode tx hash") Right . hexToTxHash . cs
+
+instance Parsable Address where
+    parseParam =
+        maybe (Left "Could not decode address") Right . base58ToAddr . cs
 
 data Except = NotFound | ServerError | StringError String deriving (Show, Eq)
 
@@ -71,6 +76,9 @@ main = do
             get "/transaction/:txid" $ do
                 txid <- param "txid"
                 txid `blockGetTx` b >>= maybeJSON
+            get "/address/transactions/:address" $ do
+                address <- param "address"
+                address `blockGetAddrTxs` b >>= json
             notFound $ raise NotFound
     runStore b =
         runStderrLoggingT $ do
