@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
 module Network.Haskoin.Wallet.Transaction
@@ -631,7 +632,7 @@ buildAccTxs notifChanM tx confidence inCoins outCoins = do
         -- Insert the new transaction. If it already exists, update the
         -- information with the newly computed values. Also make sure that the
         -- confidence is set to the new value (it could have changed to TxDead).
-        Entity ti newAtx <- P.insertBy atx >>= \resE -> case resE of
+        Entity ti newAtx <- P.insertBy atx >>= \case
             Left (Entity ti prev) -> do
                 let prevConf = walletTxConfidence prev
                     newConf | confidence == TxDead     = TxDead
@@ -659,7 +660,7 @@ buildAccTxs notifChanM tx confidence inCoins outCoins = do
 
         -- Insert the output coins with updated accTx key
         let newOs = map (toCoin ai ti now) os
-        forM_ newOs $ \c -> P.insertBy c >>= \resE -> case resE of
+        forM_ newOs $ \c -> P.insertBy c >>= \case
             Left (Entity ci _) -> replace ci c
             _                  -> return ()
 
@@ -1167,9 +1168,7 @@ signOfflineTx acc masterM tx coinSignData
     prvKeys = concatMap toPrvKeys coinSignData
     -- Build a SigInput from a CoinSignData
     toSigData acc' (CoinSignData op so deriv) =
-        -- TODO: Here we override the SigHash to be SigAll False all the time.
-        -- Should we be more flexible?
-        SigInput so op (SigAll False) $
+        SigInput so op (SigHash SigAll False False) $
             if isMultisigAccount acc
                 then Just $ getPathRedeem acc' deriv
                 else Nothing

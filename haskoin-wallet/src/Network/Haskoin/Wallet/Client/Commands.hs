@@ -814,23 +814,17 @@ encodeSigJSON ts@(TxSignature _ sh) = object
     ]
 
 encodeSigHashJSON :: SigHash -> Value
-encodeSigHashJSON sh = case sh of
-    SigAll acp -> object
-        [ "type" .= String "SigAll"
-        , "acp"  .= acp
-        ]
-    SigNone acp -> object
-        [ "type" .= String "SigNone"
-        , "acp"  .= acp
-        ]
-    SigSingle acp -> object
-        [ "type" .= String "SigSingle"
-        , "acp"  .= acp
-        ]
-    SigUnknown acp v -> object
-        [ "type"  .= String "SigUnknown"
-        , "acp"   .= acp
-        , "value" .= v
+encodeSigHashJSON (SigHash t acp fid) =
+    object
+        [ "type" .=
+          String
+              (case t of
+                   SigAll -> "SigAll"
+                   SigNone -> "SigNone"
+                   SigSingle -> "SigSingle"
+                   SigUnknown n -> cs $ "SigUnknown " <> show n)
+        , "anyonecanpay" .= acp
+        , "forkid" .= fid
         ]
 
 {- Print utilities -}
