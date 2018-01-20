@@ -8,8 +8,7 @@ import           Data.Maybe
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Node
-import           Network.Haskoin.Store.Block
-import           Network.Haskoin.Store.Store
+import           Network.Haskoin.Store
 import           Network.Haskoin.Transaction
 import           System.IO.Temp
 import           Test.Hspec
@@ -18,12 +17,12 @@ main :: IO ()
 main = do
     setTestnet
     hspec $ do
-        describe "bootstrap" $
+        describe "Bootstrap" $
             it "successfully starts actors and communicates" $
             withTestStore $ \(b, _c, _e) -> do
                 _ <- blockGetBest b
                 return ()
-        describe "download" $ do
+        describe "Download" $ do
             it "gets 8 blocks" $
                 withTestStore $ \(_b, c, e) -> do
                     bs <-

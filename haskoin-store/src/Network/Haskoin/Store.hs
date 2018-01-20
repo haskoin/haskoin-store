@@ -5,10 +5,22 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TemplateHaskell       #-}
-module Network.Haskoin.Store.Store
-    ( StoreConfig(..)
+module Network.Haskoin.Store
+    ( BlockStore
+    , StoreConfig(..)
     , StoreEvent(..)
+    , BlockEvent(..)
+    , BlockValue(..)
+    , DetailedTx(..)
+    , AddressTx(..)
+    , Unspent(..)
     , store
+    , blockGetBest
+    , blockGetHeight
+    , blockGet
+    , blockGetTx
+    , blockGetAddrTxs
+    , blockGetAddrUnspent
     ) where
 
 import           Control.Concurrent.NQE
@@ -25,6 +37,7 @@ import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store.Block
+import           Network.Haskoin.Store.Types
 import           Network.Socket              (SockAddr (..))
 import           System.Directory
 import           System.FilePath

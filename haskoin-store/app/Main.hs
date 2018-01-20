@@ -11,8 +11,7 @@ import           Data.String.Conversions
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Store.Block
-import           Network.Haskoin.Store.Store
+import           Network.Haskoin.Store
 import           Network.Haskoin.Transaction
 import           Network.HTTP.Types
 import           System.Environment
