@@ -55,9 +55,12 @@ module Network.Haskoin.Script
 -- *SigHash
 -- | For additional information on sighashes, see:
 -- <http://en.bitcoin.it/wiki/OP_CHECKSIG>
+, SigHashType(..)
 , SigHash(..)
+, encodeSigHashForkId
+, sigHashToWord8
+, word8ToSigHash
 , txSigHash
-, encodeSigHash32
 , isSigAll
 , isSigNone
 , isSigSingle

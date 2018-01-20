@@ -9,7 +9,7 @@ module Network.Haskoin.Script.Tests
 
 import           Control.Monad                        (when)
 import qualified Data.Aeson                           as A
-import           Data.Bits                            (testBit)
+import           Data.Bits                            (testBit, clearBit)
 import           Data.ByteString                      (ByteString)
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Char8                as C
@@ -63,8 +63,10 @@ tests =
           [ testProperty "canonical signatures" $
             forAll arbitraryTxSignature $ testCanonicalSig . lst3
           , testProperty "decode SigHash from Word8" binSigHashByte
-          , testProperty "encodeSigHash32 is 4 bytes long" $
-            forAll arbitrarySigHash testEncodeSH32
+          , testProperty "decode . encode SigHash" $
+            forAll arbitrarySigHash binSigHash
+          , testProperty "encodeSigHashForkId is 4 bytes long" $
+            forAll arbitrarySigHash testEncodeSigHashForkId
           , testProperty "decode . encode TxSignature" $
             forAll arbitraryTxSignature $ binTxSig . lst3
           , testProperty "decodeCanonical . encode TxSignature" $
@@ -102,53 +104,70 @@ testSortMulSig out =
 {- Script SigHash -}
 
 testCanonicalSig :: TxSignature -> Bool
-testCanonicalSig ts@(TxSignature _ sh)
+testCanonicalSig (TxSignature sig sh)
     | isSigUnknown sh = isLeft $ decodeCanonicalSig bs
     | otherwise =
         isRight (decodeCanonicalSig bs) && isCanonicalHalfOrder (txSignature ts)
   where
+    -- Set the forkId to false as it is not canonical on Bitcoin prodnet
+    ts = TxSignature sig sh{ sigHashForkId = False }
     bs = encodeSig ts
 
 binSigHashByte :: Word8 -> Bool
 binSigHashByte w
-    | w == 0x01 = res == SigAll False
-    | w == 0x02 = res == SigNone False
-    | w == 0x03 = res == SigSingle False
-    | w == 0x81 = res == SigAll True
-    | w == 0x82 = res == SigNone True
-    | w == 0x83 = res == SigSingle True
-    | testBit w 7 = res == SigUnknown True w
-    | otherwise = res == SigUnknown False w
+    | w == 0x01 = res == SigHash SigAll False False
+    | w == 0x02 = res == SigHash SigNone False False
+    | w == 0x03 = res == SigHash SigSingle False False
+    | w == 0x41 = res == SigHash SigAll False True
+    | w == 0x42 = res == SigHash SigNone False True
+    | w == 0x43 = res == SigHash SigSingle False True
+    | w == 0x81 = res == SigHash SigAll True False
+    | w == 0x82 = res == SigHash SigNone True False
+    | w == 0x83 = res == SigHash SigSingle True False
+    | w == 0xc1 = res == SigHash SigAll True True
+    | w == 0xc2 = res == SigHash SigNone True True
+    | w == 0xc3 = res == SigHash SigSingle True True
+    | otherwise =
+        res ==
+        SigHash
+            (SigUnknown $ (`clearBit` 6) . (`clearBit` 7) $ w)
+            (w `testBit` 7)
+            (w `testBit` 6)
   where
     res = either error id . decode $ BS.singleton w
 
-testEncodeSH32 :: SigHash -> Bool
-testEncodeSH32 sh =
+binSigHash :: SigHash -> Bool
+binSigHash sh = Right sh == decode (encode sh)
+
+testEncodeSigHashForkId :: SigHash -> Bool
+testEncodeSigHashForkId sh =
     BS.length bs == 4 &&
     BS.head bs == BS.head (encode sh) &&
     BS.tail bs == BS.pack [0,0,0]
   where
-    bs = encodeSigHash32 sh
+    bs = encodeSigHashForkId sh
 
 binTxSig :: TxSignature -> Bool
 binTxSig ts = decodeSig (encodeSig ts) == Right ts
 
 binTxSigCanonical :: TxSignature -> Bool
-binTxSigCanonical ts@(TxSignature _ sh)
+binTxSigCanonical (TxSignature sig sh)
     | isSigUnknown sh = isLeft $ decodeCanonicalSig $ encodeSig ts
     | otherwise =
         fromRight
             (error "Colud not decode sig")
-            (decodeCanonicalSig $ encodeSig ts) ==
-        ts
+            (decodeCanonicalSig $ encodeSig ts) == ts
+  where
+    -- Force th forkId to be False as it is not canonical on Bitcoin prodnet
+    ts = TxSignature sig sh{ sigHashForkId = False }
 
-testSigHashOne :: Tx -> Script -> Bool -> Property
-testSigHashOne tx s acp = not (null $ txIn tx) ==>
+testSigHashOne :: Tx -> Script -> Bool -> Bool -> Property
+testSigHashOne tx s acp fid = not (null $ txIn tx) ==>
     if length (txIn tx) > length (txOut tx)
         then res == one
         else res /= one
   where
-    res = txSigHash tx s (length (txIn tx) - 1) (SigSingle acp)
+    res = txSigHash tx s (length (txIn tx) - 1) (SigHash SigSingle acp fid)
     one = "0100000000000000000000000000000000000000000000000000000000000000"
 
 {- Script Evaluation Primitives -}

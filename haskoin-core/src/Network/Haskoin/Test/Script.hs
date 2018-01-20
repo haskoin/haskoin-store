@@ -3,7 +3,7 @@
 -}
 module Network.Haskoin.Test.Script where
 
-import           Data.Bits                         (testBit)
+import           Data.Bits
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Test.Crypto
@@ -157,26 +157,26 @@ arbitraryIntScriptOp =
 arbitraryPushDataType :: Gen PushDataType
 arbitraryPushDataType = elements [OPCODE, OPDATA1, OPDATA2, OPDATA4]
 
+arbitrarySigHashType :: Gen SigHashType
+arbitrarySigHashType =
+    oneof
+        [ return SigAll
+        , return SigNone
+        , return SigSingle
+        , SigUnknown . (`clearBit` 0) . (`clearBit` 1)
+                     . (`clearBit` 6) . (`clearBit` 7) <$> arbitrary
+        ]
+
 -- | Arbitrary SigHash (including invalid/unknown sighash codes)
 arbitrarySigHash :: Gen SigHash
-arbitrarySigHash =
-    oneof
-        [ SigAll <$> arbitrary
-        , SigNone <$> arbitrary
-        , SigSingle <$> arbitrary
-          -- avoid valid SigHash bytes
-        , do w <- elements $ 0x00 : 0x80 : [0x04 .. 0x7f] ++ [0x84 .. 0xff]
-             return $ SigUnknown (testBit w 7) w
-        ]
+arbitrarySigHash = SigHash <$> arbitrarySigHashType <*> arbitrary <*> arbitrary
 
 -- | Arbitrary valid SigHash
 arbitraryValidSigHash :: Gen SigHash
 arbitraryValidSigHash =
-    oneof
-        [ SigAll    <$> arbitrary
-        , SigNone   <$> arbitrary
-        , SigSingle <$> arbitrary
-        ]
+    SigHash <$> elements [SigAll, SigNone, SigSingle]
+            <*> arbitrary
+            <*> return False
 
 -- | Arbitrary message hash, private key and corresponding TxSignature. The
 -- signature is generated deterministically using a random message and a
@@ -197,7 +197,7 @@ arbitraryMSParam = do
 
 -- | Arbitrary ScriptOutput (Can by any valid type)
 arbitraryScriptOutput :: Gen ScriptOutput
-arbitraryScriptOutput = 
+arbitraryScriptOutput =
     oneof
         [ arbitraryPKOutput
         , arbitraryPKHashOutput

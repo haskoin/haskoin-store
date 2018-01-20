@@ -788,7 +788,7 @@ runStack = stack
 verifySigWithType :: Tx -> Int -> [ ScriptOp ] -> TxSignature -> PubKey -> Bool
 verifySigWithType tx i outOps txSig pubKey =
   let outScript = Script outOps
-      h = txSigHash tx outScript i ( sigHashType txSig ) in
+      h = txSigHash tx outScript i ( txSignatureSigHash txSig ) in
   verifySig h ( txSignature txSig ) pubKey
 
 -- | Uses `evalScript` to check that the input script of a spending

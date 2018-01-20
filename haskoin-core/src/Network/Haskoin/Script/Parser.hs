@@ -252,7 +252,7 @@ data SimpleInput
                   }
       -- | Spend the coins of a PayMulSig output.
     | SpendMulSig { getInputMulSigKeys :: ![TxSignature] }
-    deriving (Eq, Show, Read)
+    deriving (Eq, Show)
 
 instance NFData SimpleInput where
     rnf (SpendPK i)       = rnf i

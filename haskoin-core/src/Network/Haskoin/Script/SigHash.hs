@@ -1,7 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Script.SigHash
-( SigHash(..)
-, encodeSigHash32
+( SigHashType(..)
+, SigHash(..)
+, encodeSigHashForkId
+, sigHashToWord8
+, word8ToSigHash
 , isSigAll
 , isSigNone
 , isSigSingle
@@ -18,21 +21,36 @@ import           Control.Monad                     (liftM2, mzero, (<=<))
 import           Data.Aeson                        (FromJSON, ToJSON,
                                                     Value (String), parseJSON,
                                                     toJSON, withText)
-import           Data.Bits                         (clearBit, testBit)
+import           Data.Bits
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
 import           Data.Maybe                        (fromMaybe)
-import           Data.Serialize                    (Serialize, decode, encode,
-                                                    get, getWord8, put,
-                                                    putWord8)
+import           Data.Serialize
 import           Data.Serialize.Put                (runPut)
 import           Data.String.Conversions           (cs)
-import           Data.Word                         (Word8)
+import           Data.Word
+import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto.ECDSA
 import           Network.Haskoin.Crypto.Hash
 import           Network.Haskoin.Script.Types
 import           Network.Haskoin.Transaction.Types
 import           Network.Haskoin.Util
+
+data SigHashType
+    -- | Sign all of the outputs of a transaction (This is the default value).
+    -- Changing any of the outputs of the transaction will invalidate the
+    -- signature.
+    = SigAll
+    -- | Sign none of the outputs of a transaction. This allows anyone to
+    -- change any of the outputs of the transaction.
+    | SigNone
+    -- | Sign only the output corresponding the the current transaction input.
+    -- You care about your own output in the transaction but you don't
+    -- care about any of the other outputs.
+    | SigSingle
+    -- | Unrecognized sighash types will decode to SigUnknown.
+    | SigUnknown { getSigCode :: !Word8 }
+    deriving (Eq, Show)
 
 -- | Data type representing the different ways a transaction can be signed.
 -- When producing a signature, a hash of the transaction is used as the message
@@ -45,69 +63,18 @@ import           Network.Haskoin.Util
 -- If the anyoneCanPay flag is True, then only the current input is signed.
 -- Otherwise, all of the inputs of a transaction are signed. The default value
 -- for anyoneCanPay is False.
-data SigHash
-    -- | Sign all of the outputs of a transaction (This is the default value).
-    -- Changing any of the outputs of the transaction will invalidate the
-    -- signature.
-    = SigAll     { anyoneCanPay :: !Bool }
-    -- | Sign none of the outputs of a transaction. This allows anyone to
-    -- change any of the outputs of the transaction.
-    | SigNone    { anyoneCanPay :: !Bool }
-    -- | Sign only the output corresponding the the current transaction input.
-    -- You care about your own output in the transaction but you don't
-    -- care about any of the other outputs.
-    | SigSingle  { anyoneCanPay :: !Bool }
-    -- | Unrecognized sighash types will decode to SigUnknown.
-    | SigUnknown { anyoneCanPay :: !Bool
-                 , getSigCode   :: !Word8
-                 }
-    deriving (Eq, Show, Read)
+data SigHash = SigHash
+    { sigHashType         :: !SigHashType
+    , sigHashAnyoneCanPay :: !Bool
+    , sigHashForkId       :: !Bool
+    } deriving (Eq, Show)
+
+instance NFData SigHashType where
+    rnf (SigUnknown c) = rnf c
+    rnf _              = ()
 
 instance NFData SigHash where
-    rnf (SigAll a)       = rnf a
-    rnf (SigNone a)      = rnf a
-    rnf (SigSingle a)    = rnf a
-    rnf (SigUnknown a c) = rnf a `seq` rnf c
-
--- | Returns True if the 'SigHash' has the value SigAll.
-isSigAll :: SigHash -> Bool
-isSigAll sh = case sh of
-    SigAll _ -> True
-    _        -> False
-
--- | Returns True if the 'SigHash' has the value SigNone.
-isSigNone :: SigHash -> Bool
-isSigNone sh = case sh of
-    SigNone _ -> True
-    _         -> False
-
--- | Returns True if the 'SigHash' has the value SigSingle.
-isSigSingle :: SigHash -> Bool
-isSigSingle sh = case sh of
-    SigSingle _ -> True
-    _           -> False
-
--- | Returns True if the 'SigHash' has the value SigUnknown.
-isSigUnknown :: SigHash -> Bool
-isSigUnknown sh = case sh of
-    SigUnknown _ _ -> True
-    _              -> False
-
-instance Serialize SigHash where
-
-    get = getWord8 >>= \w ->
-        let acp = testBit w 7
-            in return $ case clearBit w 7 of
-                1 -> SigAll acp
-                2 -> SigNone acp
-                3 -> SigSingle acp
-                _ -> SigUnknown acp w
-
-    put sh = putWord8 $ case sh of
-        SigAll acp     -> if acp then 0x81 else 0x01
-        SigNone acp    -> if acp then 0x82 else 0x02
-        SigSingle acp  -> if acp then 0x83 else 0x03
-        SigUnknown _ w -> w
+    rnf (SigHash t a f) = rnf t `seq` rnf a `seq` rnf f
 
 instance ToJSON SigHash where
     toJSON = String . cs . encodeHex . encode
@@ -116,9 +83,71 @@ instance FromJSON SigHash where
     parseJSON = withText "sighash" $
         maybe mzero return . (eitherToMaybe . decode <=< decodeHex) . cs
 
+-- | Returns True if the 'SigHash' has the value SigAll.
+isSigAll :: SigHash -> Bool
+isSigAll sh =
+    case sigHashType sh of
+        SigAll -> True
+        _      -> False
+
+-- | Returns True if the 'SigHash' has the value SigNone.
+isSigNone :: SigHash -> Bool
+isSigNone sh =
+    case sigHashType sh of
+        SigNone -> True
+        _       -> False
+
+-- | Returns True if the 'SigHash' has the value SigSingle.
+isSigSingle :: SigHash -> Bool
+isSigSingle sh =
+    case sigHashType sh of
+        SigSingle -> True
+        _         -> False
+
+-- | Returns True if the 'SigHash' has the value SigUnknown.
+isSigUnknown :: SigHash -> Bool
+isSigUnknown sh =
+    case sigHashType sh of
+        SigUnknown _ -> True
+        _            -> False
+
+instance Serialize SigHash where
+    get = word8ToSigHash <$> getWord8
+    put = putWord8 . sigHashToWord8
+
+sigHashToWord8 :: SigHash -> Word8
+sigHashToWord8 sh =
+    f1 . f2 $ w
+  where
+    w = case sigHashType sh of
+            SigAll       -> 1
+            SigNone      -> 2
+            SigSingle    -> 3
+            SigUnknown n -> n
+    f1 | sigHashForkId sh = (`setBit` 6)
+       | otherwise = id
+    f2 | sigHashAnyoneCanPay sh = (`setBit` 7)
+       | otherwise = id
+
+word8ToSigHash :: Word8 -> SigHash
+word8ToSigHash w =
+    SigHash
+    { sigHashType =
+          case (`clearBit` 7) . (`clearBit` 6) $ w of
+              1 -> SigAll
+              2 -> SigNone
+              3 -> SigSingle
+              n -> SigUnknown n
+    , sigHashAnyoneCanPay = w `testBit` 7
+    , sigHashForkId = w `testBit` 6
+    }
+
 -- | Encodes a 'SigHash' to a 32 bit-long bytestring.
-encodeSigHash32 :: SigHash -> ByteString
-encodeSigHash32 sh = encode sh `BS.append` BS.pack [0, 0, 0]
+encodeSigHashForkId :: SigHash -> ByteString
+encodeSigHashForkId sh =
+    runPut $ putWord32le w
+  where
+    w = sigHashForkValue `shiftL` 8 .|. fromIntegral (sigHashToWord8 sh)
 
 -- | Computes the hash that will be used for signing a transaction.
 txSigHash :: Tx      -- ^ Transaction to sign.
@@ -134,14 +163,14 @@ txSigHash tx out i sh = do
         let newTx = createTx (txVersion tx) newIn newOut (txLockTime tx)
         return $
             doubleHash256 $
-            encode newTx `BS.append` encodeSigHash32 sh
+            encode newTx `BS.append` encodeSigHashForkId sh
   where
     one = "0100000000000000000000000000000000000000000000000000000000000000"
 
 -- Builds transaction inputs for computing SigHashes
 buildInputs :: [TxIn] -> Script -> Int -> SigHash -> [TxIn]
 buildInputs txins out i sh
-    | anyoneCanPay sh =
+    | sigHashAnyoneCanPay sh =
         [ (txins !! i) { scriptInput = encode out } ]
     | isSigAll sh || isSigUnknown sh = single
     | otherwise = zipWith noSeq single [0 ..]
@@ -168,9 +197,9 @@ buildOutputs txos i sh
 -- 'SigHash' is serialized as one byte at the end of a regular ECDSA
 -- 'Signature'. All signatures in transaction inputs are of type 'TxSignature'.
 data TxSignature = TxSignature
-    { txSignature :: !Signature
-    , sigHashType :: !SigHash
-    } deriving (Eq, Show, Read)
+    { txSignature        :: !Signature
+    , txSignatureSigHash :: !SigHash
+    } deriving (Eq, Show)
 
 instance NFData TxSignature where
     rnf (TxSignature s h) = rnf s `seq` rnf h
