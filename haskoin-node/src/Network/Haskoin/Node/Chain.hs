@@ -104,8 +104,7 @@ chain ::
     -> m ()
 chain cfg =
     runResourceT $ do
-        let opts =
-                def {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
+        let opts = def {LevelDB.createIfMissing = True}
         hdb <- LevelDB.open (chainConfDbFile cfg) opts
         st <-
             liftIO $

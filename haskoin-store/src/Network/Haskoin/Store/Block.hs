@@ -62,7 +62,7 @@ blockStore ::
     -> m ()
 blockStore BlockConfig {..} =
     runResourceT $ do
-        let opts = def {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 128}
+        let opts = def {LevelDB.createIfMissing = True}
         db <- LevelDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []

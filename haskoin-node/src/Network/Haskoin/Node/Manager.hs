@@ -126,9 +126,7 @@ manager cfg = do
     bbb <- liftIO $ newTVarIO bb
     withConnectLoop (mgrConfManager cfg) $
         runResourceT $ do
-            let opts =
-                    def
-                    {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
+            let opts = def {LevelDB.createIfMissing = True}
             pdb <- LevelDB.open (mgrConfDir cfg </> "peers") opts
             let rd =
                     ManagerReader
