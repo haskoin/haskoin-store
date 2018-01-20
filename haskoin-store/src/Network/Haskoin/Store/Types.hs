@@ -565,6 +565,18 @@ instance ToJSON AddressTx where
     toJSON = object . addrTxPairs
     toEncoding = pairs . mconcat . addrTxPairs
 
+unspentPairs :: KeyValue kv => Unspent -> [kv]
+unspentPairs Unspent {..} =
+    [ "txid" .= unspentTxId
+    , "vout" .= unspentIndex
+    , "value" .= unspentValue
+    , "block" .= unspentBlock
+    ]
+
+instance ToJSON Unspent where
+    toJSON = object . unspentPairs
+    toEncoding = pairs . mconcat . unspentPairs
+
 instance Serialize HeightKey where
     put (HeightKey height) = do
         putWord8 0x03

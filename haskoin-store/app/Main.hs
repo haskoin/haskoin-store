@@ -78,6 +78,9 @@ main = do
             get "/address/transactions/:address" $ do
                 address <- param "address"
                 address `blockGetAddrTxs` b >>= json
+            get "/address/unspent/:address" $ do
+                address <- param "address"
+                address `blockGetAddrUnspent` b >>= json
             notFound $ raise NotFound
     runStore b =
         runStderrLoggingT $ do
