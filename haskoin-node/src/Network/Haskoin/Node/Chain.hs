@@ -104,7 +104,8 @@ chain ::
     -> m ()
 chain cfg =
     runResourceT $ do
-        let opts = def {LevelDB.createIfMissing = True}
+        let opts =
+                def {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
         hdb <- LevelDB.open (chainConfDbFile cfg) opts
         st <-
             liftIO $
@@ -158,8 +159,6 @@ processChainMessage (ChainNewHeaders p hcs) = do
         st <- asks chainState
         liftIO . atomically . modifyTVar st $ \s -> s {syncingPeer = Nothing}
         MSendHeaders `sendMessage` p
-        mgr <- chainConfManager <$> asks myConfig
-        managerFreePeer p mgr
         processSyncQueue
     upeer bb = do
         mgr <- chainConfManager <$> asks myConfig
@@ -200,17 +199,6 @@ processChainMessage (ChainNewPeer p) = do
     case sp of
         Nothing -> processSyncQueue
         Just _  -> return ()
-
-processChainMessage (ChainFreePeer p) = do
-    $(logDebug) $ logMe <> "Got free peer"
-    st <- asks chainState
-    s <- liftIO $ readTVarIO st
-    when (p `elem` newPeers s) $
-        case syncingPeer s of
-            Nothing -> do
-                bb <- getBestBlockHeader
-                syncHeaders bb p
-            Just _ -> return ()
 
 processChainMessage (ChainRemovePeer p) = do
     $(logWarn) $ logMe <> "Got peer disconnection"
@@ -298,29 +286,22 @@ processSyncQueue = do
 syncHeaders :: MonadChain m => BlockNode -> Peer -> m ()
 syncHeaders bb p = do
     $(logDebug) $ logMe <> "Attempting to sync headers with a peer"
-    mgr <- chainConfManager <$> asks myConfig
     st <- asks chainState
     s <- liftIO $ readTVarIO st
-    t <-
-        if syncingPeer s == Just p
-            then return True
-            else managerTakePeer p mgr
-    when t $ do
-        $(logDebug) $ logMe <> "Successfully locked syncing peer"
-        liftIO . atomically . writeTVar st $
-            s {syncingPeer = Just p, newPeers = filter (/= p) (newPeers s)}
-        loc <- blockLocator bb
-        let m =
-                MGetHeaders
-                    GetHeaders
-                    { getHeadersVersion = myVersion
-                    , getHeadersBL = loc
-                    , getHeadersHashStop =
-                          fromRight (error "Could not decode zero hash") .
-                          decode $
-                          BS.replicate 32 0
-                    }
-        PeerOutgoing m `send` p
+    liftIO . atomically . writeTVar st $
+        s {syncingPeer = Just p, newPeers = filter (/= p) (newPeers s)}
+    loc <- blockLocator bb
+    let m =
+            MGetHeaders
+                GetHeaders
+                { getHeadersVersion = myVersion
+                , getHeadersBL = loc
+                , getHeadersHashStop =
+                      fromRight (error "Could not decode zero hash") .
+                      decode $
+                      BS.replicate 32 0
+                }
+    PeerOutgoing m `send` p
 
 logMe :: Text
 logMe = "[Chain] "

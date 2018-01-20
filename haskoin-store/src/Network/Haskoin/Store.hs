@@ -14,6 +14,7 @@ module Network.Haskoin.Store
     , DetailedTx(..)
     , AddressTx(..)
     , Unspent(..)
+    , AddressBalance(..)
     , store
     , blockGetBest
     , blockGetHeight
@@ -21,6 +22,7 @@ module Network.Haskoin.Store
     , blockGetTx
     , blockGetAddrTxs
     , blockGetAddrUnspent
+    , blockGetAddrBalance
     ) where
 
 import           Control.Concurrent.NQE

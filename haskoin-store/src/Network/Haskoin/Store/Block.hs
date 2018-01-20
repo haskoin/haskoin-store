@@ -13,10 +13,12 @@ module Network.Haskoin.Store.Block
     , blockGetTx
     , blockGetAddrTxs
     , blockGetAddrUnspent
+    , blockGetAddrBalance
     , blockStore
     ) where
 
 import           Control.Applicative
+import           Control.Arrow
 import           Control.Concurrent.NQE
 import           Control.Monad.Base
 import           Control.Monad.Catch
@@ -26,7 +28,7 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString              as BS
 import           Data.Conduit                 (($$))
-import           Data.Conduit.List            (consume)
+import qualified Data.Conduit.List            as CL
 import           Data.Default
 import           Data.Function
 import           Data.List
@@ -60,11 +62,7 @@ blockStore ::
     -> m ()
 blockStore BlockConfig {..} =
     runResourceT $ do
-        let opts =
-                def
-                { LevelDB.createIfMissing = True
-                , LevelDB.cacheSize = 512 ^ (20 :: Int)
-                }
+        let opts = def {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 128}
         db <- LevelDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []
@@ -163,19 +161,54 @@ getBlockValue bh = do
 getAddrSpent :: MonadBlock m => Address -> m [(AddrSpentKey, AddrSpentValue)]
 getAddrSpent addr = do
     db <- asks myBlockDB
-    MultiAddrSpentKey addr `valuesForKey` db $$ consume
+    MultiAddrSpentKey addr `valuesForKey` db $$ CL.consume
 
 getAddrUnspent ::
        MonadBlock m => Address -> m [(AddrUnspentKey, AddrUnspentValue)]
 getAddrUnspent addr = do
     db <- asks myBlockDB
-    MultiAddrUnspentKey addr `valuesForKey` db $$ consume
+    MultiAddrUnspentKey addr `valuesForKey` db $$ CL.consume
+
+getAddrBalance ::
+    MonadBlock m => Address -> m (Maybe AddressBalance)
+getAddrBalance addr =
+    runMaybeT $ do
+        db <- asks myBlockDB
+        bal <- MaybeT $ MultiBalance addr `valuesForKey` db $$ CL.head
+        best <- fmap (fromMaybe e) $ BestBlockKey `retrieveValue` db
+        block <- fmap (fromMaybe e) $ BlockKey best `retrieveValue` db
+        let h = blockValueHeight block
+            bs = second (i h) bal
+            is = sum (map immatureValue (balanceImmature (snd bs)))
+            ub = balanceValue (snd bs)
+        return
+            AddressBalance
+            { addressBalAddress = addr
+            , addressBalConfirmed = ub
+            , addressBalUnconfirmed = ub
+            , addressBalImmature = is
+            , addressBalBlock =
+                  BlockRef
+                  { blockRefHeight = blockValueHeight block
+                  , blockRefHash = best
+                  , blockRefMainChain = True
+                  }
+            }
+  where
+    e = error "Colud not retrieve best block from database"
+    i h BalanceValue {..} =
+        let f Immature {..} = blockRefHeight immatureBlock <= h - 99
+            (ms, is) = partition f balanceImmature
+        in BalanceValue
+           { balanceValue = balanceValue + sum (map immatureValue ms)
+           , balanceImmature = is
+           }
 
 getStoredTx :: MonadBlock m => TxHash -> m (Maybe DetailedTx)
 getStoredTx th =
     runMaybeT $ do
         db <- asks myBlockDB
-        xs <- valuesForKey (BaseTxKey th) db $$ consume
+        xs <- valuesForKey (BaseTxKey th) db $$ CL.consume
         TxValue {..} <- MaybeT (return (findTx xs))
         let ss = filterSpents xs
         return (DetailedTx txValue txValueBlock ss txValueOuts)
@@ -256,7 +289,7 @@ syncBlocks = do
             chainGetParents (splitHeight + 1) targetBlock ch
         p <-
             MaybeT (liftIO (readTVarIO peerbox)) <|>
-            MaybeT (managerTakeAny False mgr)
+            MaybeT (listToMaybe <$> managerGetPeers mgr)
         liftIO . atomically $ writeTVar peerbox (Just p)
         downloadBlocks p (map (headerHash . nodeHeader) requestBlocks)
   where
@@ -327,10 +360,19 @@ blockBatchOps block@Block {..} height work main = do
     txOps <- forM blockTxns (txBatchOp blockRef spent)
     addrOps <-
         concat <$> zipWithM (addrBatchOps blockRef spent) blockTxns [0 ..]
+    balOps <- balanceBatchOps blockRef (map (fst . snd) spent) blockTxns
     unspentCachePrune
     return $
         concat
-            [[blockOp], bestOp, heightOp, txOps, outputOps, spentOps, addrOps]
+            [ [blockOp]
+            , bestOp
+            , heightOp
+            , txOps
+            , outputOps
+            , spentOps
+            , addrOps
+            , balOps
+            ]
   where
     blockHash = headerHash blockHeader
     blockKey = BlockKey blockHash
@@ -425,6 +467,72 @@ spentOutputs block tx pos =
   where
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
     e = error "Colud not retrieve information for output being spent"
+
+balanceBatchOps ::
+       MonadBlock m => BlockRef -> [OutputValue] -> [Tx] -> m [LevelDB.BatchOp]
+balanceBatchOps block spent txs =
+    if blockRefMainChain block
+        then do
+            bals <- catMaybes <$> mapM balance addrs
+            let matBals = M.fromList $ map (uncurry update) bals
+                finalBals = M.unionsWith j [matBals, addrBals, coinbaseBals]
+            return $ map (uncurry insertOp) (M.toList finalBals)
+        else return $
+             map
+                 (\a ->
+                      deleteOp
+                          BalanceKey {balanceAddress = a, balanceBlock = block})
+                 addrs
+  where
+    j bv1 bv2 =
+        let val = balanceValue bv1 + balanceValue bv2
+            imm = balanceImmature bv1 ++ balanceImmature bv2
+        in BalanceValue
+           { balanceValue = val
+           , balanceImmature =
+                 sortBy (flip compare `on` (blockRefHeight . immatureBlock)) imm
+           }
+    mature = (<= blockRefHeight block - 99) . blockRefHeight . immatureBlock
+    update BalanceKey {..} BalanceValue {..} =
+        let (ms, is) = partition mature balanceImmature
+            mbal = sum (map immatureValue ms)
+            k =
+                BalanceKey
+                {balanceAddress = balanceAddress, balanceBlock = block}
+            v =
+                BalanceValue
+                {balanceValue = balanceValue + mbal, balanceImmature = is}
+        in (k, v)
+    addrs = nub (M.keys addrMap ++ M.keys coinbaseMap)
+    addrBals =
+        let f addr amount =
+                ( BalanceKey {balanceAddress = addr, balanceBlock = block}
+                , BalanceValue {balanceValue = amount, balanceImmature = []})
+        in M.fromList $ map (uncurry f) (M.assocs addrMap)
+    coinbaseBals =
+        let f addr amount =
+                ( BalanceKey {balanceAddress = addr, balanceBlock = block}
+                , BalanceValue
+                  {balanceValue = 0, balanceImmature = [Immature block amount]})
+        in M.fromList $ map (uncurry f) (M.assocs coinbaseMap)
+    balance addr = do
+        db <- asks myBlockDB
+        MultiBalance addr `valuesForKey` db $$ CL.head
+    addrMap = foldl' credit debits (concatMap txOut (tail txs))
+    coinbaseMap = foldl' coinbase M.empty (txOut (head txs))
+    debits = foldl' debit M.empty spent
+    debit m OutputValue {..} =
+        case scriptToAddressBS outScript of
+            Nothing -> m
+            Just a  -> M.insertWith subtract a (fromIntegral outputValue) m
+    credit m TxOut {..} =
+        case scriptToAddressBS scriptOutput of
+            Nothing -> m
+            Just a  -> M.insertWith (+) a (fromIntegral outValue) m
+    coinbase m TxOut {..} =
+        case scriptToAddressBS scriptOutput of
+            Nothing -> m
+            Just a  -> M.insertWith (+) a (fromIntegral outValue) m
 
 addrBatchOps ::
        MonadBlock m
@@ -662,6 +770,11 @@ processBlockMessage (BlockGetAddrUnspent addr reply) = do
     os <- getAddrUnspent addr
     liftIO . atomically $ reply os
 
+processBlockMessage (BlockGetAddrBalance addr reply) = do
+    $(logDebug) $ logMe <> "Get balance for address " <> cs (show addr)
+    ab <- getAddrBalance addr
+    liftIO . atomically $ reply ab
+
 processBlockMessage (BlockReceived _p b) = do
     $(logDebug) $ logMe <> "Received a block"
     pbox <- asks myPending
@@ -761,12 +874,13 @@ blockGetAddrTxs addr b = do
             | (_, v) <- ss
             , let s = addrSpentValue v
             ]
+        ts = sortBy (flip compare `on` f) (itx ++ stx ++ utx)
         zs =
             [ atx {addressTxAmount = amount}
-            | ts@(atx:_) <- groupBy ((==) `on` addressTxId) (itx ++ stx ++ utx)
-            , let amount = sum (map addressTxAmount ts)
+            | xs@(atx:_) <- groupBy ((==) `on` addressTxId) ts
+            , let amount = sum (map addressTxAmount xs)
             ]
-    return $ sortBy (flip compare `on` f) zs
+    return zs
   where
     f AddressTx {..} = (blockRefHeight addressTxBlock, addressTxPos)
 
@@ -786,6 +900,13 @@ blockGetAddrUnspent addr b = do
         , unspentValue = outputValue addrUnspentOutput
         , unspentBlock = outBlock addrUnspentOutput
         }
+
+blockGetAddrBalance ::
+       (MonadBase IO m, MonadIO m)
+    => Address
+    -> BlockStore
+    -> m (Maybe AddressBalance)
+blockGetAddrBalance addr b = BlockGetAddrBalance addr `query` b
 
 logMe :: Text
 logMe = "[Block] "

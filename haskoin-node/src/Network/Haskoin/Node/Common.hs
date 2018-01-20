@@ -7,7 +7,6 @@ import           Control.Concurrent.Async.Lifted.Safe
 import           Control.Concurrent.NQE
 import           Control.Concurrent.Unique
 import           Control.Exception.Lifted
-import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
@@ -115,15 +114,9 @@ data ManagerMessage
     | ManagerGetPeerVersion !Peer
                             !(Reply (Maybe Word32))
     | ManagerGetChain !(Reply Chain)
-    | ManagerGetAllPeers !(Reply [Peer])
-    | ManagerGetPeers !Bool
-                      !Bool
-                      !(Reply [Peer])
+    | ManagerGetPeers !(Reply [Peer])
     | ManagerPeerPing !Peer
                       !NominalDiffTime
-    | ManagerTakePeer !Peer
-                      !(Reply Bool)
-    | ManagerFreePeer !Peer
     | PeerStopped !(Async (), Either SomeException ())
 
 data ChainConfig = ChainConfig
@@ -148,7 +141,6 @@ data ChainMessage
     | ChainGetBlock !BlockHash
                     !(Reply (Maybe BlockNode))
     | ChainSendHeaders !Peer
-    | ChainFreePeer !Peer
     | ChainIsSynced !(Reply Bool)
 
 data ChainEvent
@@ -252,42 +244,14 @@ managerGetPeerBest p mgr = ManagerGetPeerBest p `query` mgr
 managerSetPeerBest :: MonadIO m => Peer -> BlockNode -> Manager -> m ()
 managerSetPeerBest p bn mgr = ManagerSetPeerBest p bn `send` mgr
 
-managerGetPeers ::
-       MonadIO m
-    => Bool -- ^ only at height
-    -> Bool -- ^ only not busy
-    -> Manager
-    -> m [Peer]
-managerGetPeers th tb mgr = ManagerGetPeers th tb `query` mgr
-
-managerGetAllPeers :: MonadIO m => Manager -> m [Peer]
-managerGetAllPeers mgr = ManagerGetAllPeers `query` mgr
+managerGetPeers :: MonadIO m => Manager -> m [Peer]
+managerGetPeers mgr = ManagerGetPeers `query` mgr
 
 managerGetChain :: MonadIO m => Manager -> m Chain
 managerGetChain mgr = ManagerGetChain `query` mgr
 
 managerGetAddr :: MonadIO m => Peer -> Manager -> m ()
 managerGetAddr p mgr = ManagerGetAddr p `send` mgr
-
-managerTakePeer :: MonadIO m => Peer -> Manager -> m Bool
-managerTakePeer p mgr = ManagerTakePeer p `query` mgr
-
-managerFreePeer :: MonadIO m => Peer -> Manager -> m ()
-managerFreePeer p mgr = ManagerFreePeer p `send` mgr
-
-managerTakeAny ::
-       (MonadIO m)
-    => Bool -- ^ only at height
-    -> Manager
-    -> m (Maybe Peer)
-managerTakeAny th mgr = go =<< managerGetPeers th True mgr
-  where
-    go [] = return Nothing
-    go (p:ps) =
-        managerTakePeer p mgr >>= \x ->
-            if x
-                then return $ Just p
-                else go ps
 
 managerKill :: MonadIO m => PeerException -> Peer -> Manager -> m ()
 managerKill e p mgr = ManagerKill e p `send` mgr
@@ -304,31 +268,6 @@ sendMessage msg p = PeerOutgoing msg `send` p
 
 peerSetFilter :: MonadIO m => BloomFilter -> Peer -> m ()
 peerSetFilter f p = MFilterLoad (FilterLoad f) `sendMessage` p
-
-withPeer ::
-       (MonadIO m, MonadBaseControl IO m)
-    => Peer
-    -> Manager
-    -> (Peer -> m a)
-    -> m (Maybe a)
-withPeer p mgr f =
-    bracket (managerTakePeer p mgr) g $ \k ->
-        if k
-            then Just <$> f p
-            else return Nothing
-  where
-    g k = when k $ managerFreePeer p mgr
-
-withAnyPeer ::
-       (MonadIO m, MonadBaseControl IO m)
-    => Manager
-    -> (Peer -> m a)
-    -> m (Maybe a)
-withAnyPeer mgr f =
-    bracket
-        (managerTakeAny False mgr)
-        (maybe (return ()) (`managerFreePeer` mgr))
-        (maybe (return Nothing) (fmap Just . f))
 
 getMerkleBlocks ::
        (MonadIO m)
@@ -378,9 +317,6 @@ buildVersion nonce height loc rmt = do
 
 chainNewPeer :: MonadIO m => Peer -> Chain -> m ()
 chainNewPeer p ch = ChainNewPeer p `send` ch
-
-chainFreePeer :: MonadIO m => Peer -> Chain -> m ()
-chainFreePeer p ch = ChainFreePeer p `send` ch
 
 chainRemovePeer :: MonadIO m => Peer -> Chain -> m ()
 chainRemovePeer p ch = ChainRemovePeer p `send` ch

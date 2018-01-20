@@ -42,6 +42,7 @@ data Pending
     = PendingTx !TxHash
     | PendingBlock !BlockHash
     | PendingMerkle !BlockHash
+    | PendingHeaders
     deriving (Show, Eq)
 
 data PeerReader = PeerReader
@@ -175,7 +176,7 @@ checkStale = do
         [] -> return ()
         (_, ts):_ -> do
             cur <- computeTime
-            when (cur > ts + 300) $ throwIO PeerTimeout
+            when (cur > ts + 30) $ throwIO PeerTimeout
 
 registerOutgoing :: MonadPeer m => Message -> m ()
 registerOutgoing (MGetData (GetData ivs)) = do
@@ -195,6 +196,11 @@ registerOutgoing (MGetData (GetData ivs)) = do
     toPending InvVector {invType = InvMerkleBlock, invHash = hash} =
         Just (PendingMerkle (BlockHash hash))
     toPending _ = Nothing
+registerOutgoing MGetHeaders {} = do
+    pbox <- asks myPending
+    cur <- computeTime
+    liftIO . atomically $
+        modifyTVar pbox (reverse . ((PendingHeaders, cur) :) . reverse)
 registerOutgoing _ = return ()
 
 registerIncoming :: MonadPeer m => Message -> m ()
@@ -208,6 +214,7 @@ registerIncoming (MNotFound (NotFound ivs)) = do
     matchNotFound (PendingMerkle (BlockHash hash)) =
         InvVector InvBlock hash `notElem` ivs &&
         InvVector InvMerkleBlock hash `notElem` ivs
+    matchNotFound _ = False
 registerIncoming (MTx t) = do
     pbox <- asks myPending
     liftIO . atomically $
@@ -224,6 +231,9 @@ registerIncoming (MMerkleBlock b) = do
         modifyTVar
             pbox
             (filter ((/= PendingMerkle (headerHash (merkleHeader b))) . fst))
+registerIncoming MHeaders {} = do
+    pbox <- asks myPending
+    liftIO . atomically $ modifyTVar pbox (filter ((/= PendingHeaders) . fst))
 registerIncoming _ = return ()
 
 processMessage :: MonadPeer m => PeerMessage -> ConduitM () Message m ()

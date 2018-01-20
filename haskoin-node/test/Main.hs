@@ -88,7 +88,7 @@ connectToPeers =
                 ManagerEvent (ManagerDisconnect _) ->
                     liftIO $ assertFailure "Received peer disconnection"
                 _ -> return ()
-        ps <- managerGetAllPeers mgr
+        ps <- managerGetPeers mgr
         liftIO $ assertBool "Not even two peers connected" $ length ps >= 2
 
 downloadBlock :: Assertion

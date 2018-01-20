@@ -66,7 +66,6 @@ data OnlinePeer = OnlinePeer
     , onlinePeerAsync       :: !(Async ())
     , onlinePeerMailbox     :: !Peer
     , onlinePeerNonce       :: !Word64
-    , onlinePeerBusy        :: !Bool
     , onlinePeerPings       :: ![NominalDiffTime]
     }
 
@@ -127,7 +126,9 @@ manager cfg = do
     bbb <- liftIO $ newTVarIO bb
     withConnectLoop (mgrConfManager cfg) $
         runResourceT $ do
-            let opts = def {LevelDB.createIfMissing = True}
+            let opts =
+                    def
+                    {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
             pdb <- LevelDB.open (mgrConfDir cfg </> "peers") opts
             let rd =
                     ManagerReader
@@ -190,7 +191,6 @@ decodeSockAddr = do
 
 storePeer :: MonadManager m => Word32 -> SockAddr -> m ()
 storePeer t sa = do
-    $(logDebug) $ logMe <> "Storing peer address " <> logShow sa
     pdb <- asks myPeerDB
     let p = PeerAddress sa
         k = encode p
@@ -394,33 +394,9 @@ processManagerMessage (ManagerGetChain reply) = do
     $(logDebug) $ logMe <> "Providing chain"
     asks myChain >>= liftIO . atomically . reply
 
-processManagerMessage (ManagerGetAllPeers reply) = do
-    $(logDebug) $ logMe <> "Providing all peers"
-    getAllPeers >>= liftIO . atomically . reply
-
-processManagerMessage (ManagerGetPeers th tb reply) = do
+processManagerMessage (ManagerGetPeers reply) = do
     $(logDebug) $ logMe <> "Providing up-to-date peers"
-    getPeers th tb >>= liftIO . atomically . reply
-
-processManagerMessage (ManagerTakePeer p reply) = do
-    $(logDebug) $ logMe <> "Taking a peer"
-    m <- fmap onlinePeerBusy <$> findPeer p
-    case m of
-        Nothing -> liftIO . atomically $ reply False
-        Just b ->
-            if b
-                then liftIO . atomically $ reply False
-                else do
-                    modifyPeer (\x -> x {onlinePeerBusy = True}) p
-                    liftIO . atomically $ reply True
-
-processManagerMessage (ManagerFreePeer p) = do
-    $(logDebug) $ logMe <> "Freeing a peer"
-    modifyPeer (\x -> x {onlinePeerBusy = False}) p
-    l <- mgrConfMgrListener <$> asks myConfig
-    ch <- asks myChain
-    chainFreePeer p ch
-    liftIO . atomically . l $ ManagerAvailable p
+    getPeers >>= liftIO . atomically . reply
 
 processManagerMessage (ManagerPeerPing p i) = do
     $(logDebug) $ logMe <> "Got ping time measurement from peer"
@@ -451,29 +427,11 @@ processPeerOffline op
         logMe <> "Disconnected unannounced peer " <>
         logShow (onlinePeerAddress op)
 
-getAllPeers :: MonadManager m => m [Peer]
-getAllPeers =
-    map onlinePeerMailbox . sortBy (compare `on` median . onlinePeerPings) <$>
-    getOnlinePeers
-
-getPeers ::
-       MonadManager m
-    => Bool -- ^ test height
-    -> Bool -- ^ test busy
-    -> m [Peer]
-getPeers th tb = do
-    bbb <- asks myBestBlock
-    bb <- liftIO $ readTVarIO bbb
-    ps <- filter (isGood bb) <$> getConnectedPeers
-    $(logDebug) $
-        logMe <> "There are " <> cs (show $ length ps) <>
-        " up-to-date peers connected"
+getPeers :: MonadManager m => m [Peer]
+getPeers = do
+    ps <- getConnectedPeers
     return . map onlinePeerMailbox $
         sortBy (compare `on` median . onlinePeerPings) ps
-  where
-    isGood bb op = isNotBusy op && isAtHeight bb op
-    isNotBusy op = not tb || not (onlinePeerBusy op)
-    isAtHeight bb op = not th || onlinePeerBestBlock op >= bb
 
 connectNewPeers :: (MonadManager m) => m ()
 connectNewPeers = do
@@ -541,7 +499,6 @@ newPeerConnection sa nonce p a =
         , onlinePeerAsync = a
         , onlinePeerMailbox = p
         , onlinePeerNonce = nonce
-        , onlinePeerBusy = False
         , onlinePeerPings = []
         }
 

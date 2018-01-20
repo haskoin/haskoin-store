@@ -26,6 +26,11 @@ module Network.Haskoin.Store.Types
 , AddrUnspentKey(..)
 , AddrSpentValue(..)
 , AddrUnspentValue(..)
+, AddressBalance(..)
+, BalanceKey(..)
+, BalanceValue(..)
+, Immature(..)
+, MultiBalance(..)
 , UnspentCache(..)
 , BestBlockKey(..)
 , BlockKey(..)
@@ -94,6 +99,8 @@ data BlockMessage
                         !(Reply [(AddrSpentKey, AddrSpentValue)])
     | BlockGetAddrUnspent !Address
                           !(Reply [(AddrUnspentKey, AddrUnspentValue)])
+    | BlockGetAddrBalance !Address
+                          !(Reply (Maybe AddressBalance))
     | BlockProcess
 
 type BlockStore = Inbox BlockMessage
@@ -163,13 +170,21 @@ data BlockRef = BlockRef
     { blockRefHash      :: !BlockHash
     , blockRefHeight    :: !BlockHeight
     , blockRefMainChain :: !Bool
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data DetailedTx = DetailedTx
     { detailedTx      :: !Tx
     , detailedTxBlock :: !BlockRef
     , detailedTxSpent :: ![(SpentKey, SpentValue)]
     , detailedTxOuts  :: ![(OutputKey, OutputValue)]
+    } deriving (Show, Eq)
+
+data AddressBalance = AddressBalance
+    { addressBalAddress     :: !Address
+    , addressBalConfirmed   :: !Word64
+    , addressBalUnconfirmed :: !Word64
+    , addressBalImmature    :: !Word64
+    , addressBalBlock       :: !BlockRef
     } deriving (Show, Eq)
 
 data TxValue = TxValue
@@ -227,6 +242,25 @@ newtype HeightKey =
     HeightKey BlockHeight
     deriving (Show, Eq)
 
+data Immature = Immature
+    { immatureBlock :: !BlockRef
+    , immatureValue :: !Word64
+    } deriving (Show, Eq)
+
+data BalanceKey = BalanceKey
+    { balanceAddress :: !Address
+    , balanceBlock   :: !BlockRef
+    } deriving (Show, Eq, Ord)
+
+data BalanceValue = BalanceValue
+    { balanceValue    :: !Word64
+    , balanceImmature :: ![Immature]
+    } deriving (Show, Eq)
+
+newtype MultiBalance = MultiBalance
+    { multiAddress :: Address
+    } deriving (Show, Eq)
+
 data BestBlockKey = BestBlockKey deriving (Show, Eq)
 
 data AddressTx = AddressTx
@@ -253,6 +287,8 @@ instance Record SpentKey SpentValue
 instance Record MultiTxKey MultiTxValue
 instance Record AddrSpentKey AddrSpentValue
 instance Record AddrUnspentKey AddrUnspentValue
+instance Record BalanceKey BalanceValue
+instance MultiRecord MultiBalance BalanceKey BalanceValue
 instance MultiRecord MultiAddrSpentKey AddrSpentKey AddrSpentValue
 instance MultiRecord MultiAddrUnspentKey AddrUnspentKey AddrUnspentValue
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
@@ -261,6 +297,46 @@ instance Ord OutputKey where
     compare = compare `on` f
       where
         f (OutputKey (OutPoint hash index)) = (hash, index)
+
+instance Serialize MultiBalance where
+    put MultiBalance {..} = do
+        putWord8 0x04
+        put multiAddress
+    get = do
+        guard . (== 0x04) =<< getWord8
+        multiAddress <- get
+        return MultiBalance {..}
+
+instance Serialize BalanceKey where
+    put BalanceKey {..} = do
+        putWord8 0x04
+        put balanceAddress
+        put (maxBound - blockRefHeight balanceBlock)
+        put (blockRefHash balanceBlock)
+    get = do
+        guard . (== 0x04) =<< getWord8
+        balanceAddress <- get
+        blockRefHeight <- (maxBound -) <$> get
+        blockRefHash <- get
+        let blockRefMainChain = True
+            balanceBlock = BlockRef {..}
+        return BalanceKey {..}
+
+instance Serialize BalanceValue where
+    put BalanceValue {..} = do
+        put balanceValue
+        put balanceImmature
+    get = do
+        balanceValue <- get
+        balanceImmature <- get
+        return BalanceValue {..}
+
+instance Serialize Immature where
+    put Immature {..} =
+        put (immatureBlock, immatureValue)
+    get = do
+        (immatureBlock, immatureValue) <- get
+        return Immature {..}
 
 instance Serialize AddrSpentKey where
     put AddrSpentKey {..} = do
@@ -576,6 +652,19 @@ unspentPairs Unspent {..} =
 instance ToJSON Unspent where
     toJSON = object . unspentPairs
     toEncoding = pairs . mconcat . unspentPairs
+
+addressBalancePairs :: KeyValue kv => AddressBalance -> [kv]
+addressBalancePairs AddressBalance {..} =
+    [ "address" .= addressBalAddress
+    , "block" .= addressBalBlock
+    , "confirmed" .= addressBalConfirmed
+    , "unconfirmed" .= addressBalUnconfirmed
+    , "immature" .= addressBalImmature
+    ]
+
+instance ToJSON AddressBalance where
+    toJSON = object . addressBalancePairs
+    toEncoding = pairs . mconcat . addressBalancePairs
 
 instance Serialize HeightKey where
     put (HeightKey height) = do
