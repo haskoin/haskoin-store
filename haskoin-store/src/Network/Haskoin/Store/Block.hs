@@ -32,6 +32,7 @@ import qualified Data.Conduit.List            as CL
 import           Data.Default
 import           Data.Function
 import           Data.List
+import           Data.Map                     (Map)
 import qualified Data.Map.Strict              as M
 import           Data.Maybe
 import           Data.Monoid
@@ -354,8 +355,9 @@ getBlockTxs hs = do
 blockBatchOps :: MonadBlock m =>
        Block -> BlockHeight -> BlockWork -> Bool -> m [LevelDB.BatchOp]
 blockBatchOps block@Block {..} height work main = do
-    outputOps <- concat <$> mapM (outputBatchOps blockRef) blockTxns
-    spent <- concat <$> zipWithM (spentOutputs blockRef) blockTxns [0 ..]
+    outputs <- M.fromList . concat <$> mapM (outputBatchOps blockRef) blockTxns
+    let outputOps = map (uncurry insertOp) (M.toList outputs)
+    spent <- concat <$> zipWithM (spentOutputs blockRef outputs) blockTxns [0 ..]
     spentOps <- concat <$> zipWithM (spentBatchOps blockRef) blockTxns [0 ..]
     txOps <- forM blockTxns (txBatchOp blockRef spent)
     addrOps <-
@@ -388,11 +390,13 @@ blockBatchOps block@Block {..} height work main = do
 getOutput ::
        MonadBlock m
     => OutputKey
+    -> Map OutputKey OutputValue
     -> m (Maybe OutputValue)
-getOutput key = runMaybeT (fromCache <|> fromDB)
+getOutput key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
   where
     hash = outPointHash (outPoint key)
     index = outPointIndex (outPoint key)
+    fromMap = MaybeT (return (M.lookup key os))
     fromDB = do
         db <- asks myBlockDB
         $(logDebug) $
@@ -400,6 +404,8 @@ getOutput key = runMaybeT (fromCache <|> fromDB)
             cs (show index)
         MaybeT $ key `retrieveValue` db
     fromCache = do
+        n <- asks myCacheNo
+        guard (n /= 0)
         ubox <- asks myUnspentCache
         cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
         m <- MaybeT . return $ M.lookup key unspentCache
@@ -417,8 +423,9 @@ getOutput key = runMaybeT (fromCache <|> fromDB)
 
 
 unspentCachePrune :: MonadBlock m => m ()
-unspentCachePrune = do
+unspentCachePrune = void . runMaybeT $ do
     n <- asks myCacheNo
+    guard (n /= 0)
     ubox <- asks myUnspentCache
     cache <- liftIO (readTVarIO ubox)
     let new = clear (fromIntegral n) cache
@@ -452,16 +459,17 @@ unspentCachePrune = do
 spentOutputs ::
        MonadBlock m
     => BlockRef
+    -> Map OutputKey OutputValue
     -> Tx
     -> Word32 -- ^ position in block
     -> m [(OutputKey, (OutputValue, SpentValue))]
-spentOutputs block tx pos =
+spentOutputs block os tx pos =
     fmap catMaybes . forM (zip [0 ..] (txIn tx)) $ \(i, TxIn {..}) ->
         if outPointHash prevOutput == zero
             then return Nothing
             else do
                 let key = OutputKey prevOutput
-                val <- fromMaybe e <$> getOutput key
+                val <- fromMaybe e <$> getOutput key os
                 let spent = SpentValue (txHash tx) i block pos
                 return $ Just (key, (val, spent))
   where
@@ -473,10 +481,9 @@ balanceBatchOps ::
 balanceBatchOps block spent txs =
     if blockRefMainChain block
         then do
-            bals <- catMaybes <$> mapM balance addrs
-            let matBals = M.fromList $ map (uncurry update) bals
-                finalBals = M.unionsWith j [matBals, addrBals, coinbaseBals]
-            return $ map (uncurry insertOp) (M.toList finalBals)
+            cur <- (M.fromList . map f . catMaybes) <$> mapM balance addrs
+            let bals = map (g cur) addrs
+            return $ map (uncurry insertOp) bals
         else return $
              map
                  (\a ->
@@ -484,55 +491,44 @@ balanceBatchOps block spent txs =
                           BalanceKey {balanceAddress = a, balanceBlock = block})
                  addrs
   where
-    j bv1 bv2 =
-        let val = balanceValue bv1 + balanceValue bv2
-            imm = balanceImmature bv1 ++ balanceImmature bv2
-        in BalanceValue
-           { balanceValue = val
-           , balanceImmature =
-                 sortBy (flip compare `on` (blockRefHeight . immatureBlock)) imm
-           }
-    mature = (<= blockRefHeight block - 99) . blockRefHeight . immatureBlock
-    update BalanceKey {..} BalanceValue {..} =
-        let (ms, is) = partition mature balanceImmature
-            mbal = sum (map immatureValue ms)
-            k =
-                BalanceKey
-                {balanceAddress = balanceAddress, balanceBlock = block}
-            v =
-                BalanceValue
-                {balanceValue = balanceValue + mbal, balanceImmature = is}
+    f (BalanceKey {..}, BalanceValue {..}) =
+        (balanceAddress, (balanceValue, balanceImmature))
+    g cur addr =
+        let bal = maybe 0 fst (M.lookup addr cur)
+            imms = concat (maybeToList (snd <$> M.lookup addr cur))
+            cred = fromMaybe 0 (M.lookup addr creditMap)
+            deb = fromMaybe 0 (M.lookup addr debitMap)
+            (mts, imms') = partition mature imms
+            mat = sum (map immatureValue mts)
+            bal' = bal + mat + cred - deb
+            imms'' =
+                [ Immature {immatureBlock = block, immatureValue = value}
+                | value <- maybeToList (M.lookup addr coinbaseMap)
+                ] ++
+                imms'
+            k = BalanceKey {balanceAddress = addr, balanceBlock = block}
+            v = BalanceValue {balanceValue = bal', balanceImmature = imms''}
         in (k, v)
-    addrs = nub (M.keys addrMap ++ M.keys coinbaseMap)
-    addrBals =
-        let f addr amount =
-                ( BalanceKey {balanceAddress = addr, balanceBlock = block}
-                , BalanceValue {balanceValue = amount, balanceImmature = []})
-        in M.fromList $ map (uncurry f) (M.assocs addrMap)
-    coinbaseBals =
-        let f addr amount =
-                ( BalanceKey {balanceAddress = addr, balanceBlock = block}
-                , BalanceValue
-                  {balanceValue = 0, balanceImmature = [Immature block amount]})
-        in M.fromList $ map (uncurry f) (M.assocs coinbaseMap)
+    mature = (<= blockRefHeight block - 99) . blockRefHeight . immatureBlock
+    addrs = nub (M.keys creditMap ++ M.keys debitMap ++ M.keys coinbaseMap)
     balance addr = do
         db <- asks myBlockDB
         MultiBalance addr `valuesForKey` db $$ CL.head
-    addrMap = foldl' credit debits (concatMap txOut (tail txs))
+    creditMap = foldl' credit M.empty (concatMap txOut (tail txs))
     coinbaseMap = foldl' coinbase M.empty (txOut (head txs))
-    debits = foldl' debit M.empty spent
+    debitMap = foldl' debit M.empty spent
     debit m OutputValue {..} =
         case scriptToAddressBS outScript of
             Nothing -> m
-            Just a  -> M.insertWith subtract a (fromIntegral outputValue) m
+            Just a  -> M.insertWith (+) a outputValue m
     credit m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a  -> M.insertWith (+) a (fromIntegral outValue) m
+            Just a  -> M.insertWith (+) a outValue m
     coinbase m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a  -> M.insertWith (+) a (fromIntegral outValue) m
+            Just a  -> M.insertWith (+) a outValue m
 
 addrBatchOps ::
        MonadBlock m
@@ -669,7 +665,9 @@ txBatchOp block spent tx =
 
 
 addToCache :: MonadBlock m => BlockRef -> [(OutputKey, OutputValue)] -> m ()
-addToCache BlockRef {..} xs = do
+addToCache BlockRef {..} xs = void . runMaybeT $ do
+    n <- asks myCacheNo
+    guard (n /= 0)
     ubox <- asks myUnspentCache
     UnspentCache {..} <- liftIO (readTVarIO ubox)
     let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache xs
@@ -685,11 +683,11 @@ addToCache BlockRef {..} xs = do
             , unspentCacheCount = count
             }
 
-outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
+outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [(OutputKey, OutputValue)]
 outputBatchOps block@BlockRef {..} tx = do
     let os = zipWith f (txOut tx) [0 ..]
     addToCache block os
-    return $ map (uncurry insertOp) os
+    return os
   where
     f TxOut {..} i =
         let key = OutputKey {outPoint = OutPoint (txHash tx) i}

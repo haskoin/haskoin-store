@@ -99,7 +99,7 @@ main = do
                     , storeConfMaxPeers = 1
                     , storeConfInitPeers = [("localhost", defaultPort)]
                     , storeConfNoNewPeers = True
-                    , storeConfCacheNo = 250000
-                    , storeConfBlockNo = 500
+                    , storeConfCacheNo = 0
+                    , storeConfBlockNo = 100
                     }
             store cfg
