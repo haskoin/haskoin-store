@@ -16,7 +16,8 @@ module Network.Haskoin.Store.Block
 , SpentKey(..)
 , SpentValue(..)
 , TxValue(..)
-, AddrOutValue(..)
+, AddrSpentValue(..)
+, AddrUnspentValue(..)
 , blockGetBest
 , blockGetHeight
 , blockGet
@@ -86,11 +87,13 @@ data BlockMessage
     | BlockNotReceived !Peer
                        !BlockHash
     | BlockGet !BlockHash
-               (Reply (Maybe BlockValue))
+               !(Reply (Maybe BlockValue))
     | BlockGetTx !TxHash
                  !(Reply (Maybe DetailedTx))
-    | BlockGetAddrOutputs !Address
-                          (Reply [(AddrOutKey, AddrOutValue)])
+    | BlockGetAddrSpent !Address
+                        !(Reply [(AddrSpentKey, AddrSpentValue)])
+    | BlockGetAddrUnspent !Address
+                          !(Reply [(AddrUnspentKey, AddrUnspentValue)])
     | BlockProcess
 
 type BlockStore = Inbox BlockMessage
@@ -116,20 +119,35 @@ data BlockRead = BlockRead
     , myBlockNo      :: !Word32
     }
 
-newtype MultiAddrKey =
-    MultiAddrKey Hash256
+newtype MultiAddrSpentKey =
+    MultiAddrSpentKey Address
     deriving (Show, Eq)
 
-data AddrOutKey = AddrOutKey
-    { addrOutKey    :: !Hash256
-    , addrOutHeight :: !BlockHeight
-    , addrOutPoint  :: !OutputKey
+newtype MultiAddrUnspentKey =
+    MultiAddrUnspentKey Address
+    deriving (Show, Eq)
+
+data AddrUnspentKey = AddrUnspentKey
+    { addrUnspentKey      :: !Address
+    , addrUnspentHeight   :: !BlockHeight
+    , addrUnspentOutPoint :: !OutputKey
     } deriving (Show, Eq)
 
-data AddrOutValue = AddrOutValue
-    { addrOutValue :: !OutputValue
-    , addrOutPos   :: !Word32
-    , addrOutSpent :: !(Maybe SpentValue)
+data AddrUnspentValue = AddrUnspentValue
+    { addrUnspentOutput :: !OutputValue
+    , addrUnspentPos    :: !Word32
+    } deriving (Show, Eq)
+
+data AddrSpentKey = AddrSpentKey
+    { addrSpentKey      :: !Address
+    , addrSpentHeight   :: !BlockHeight
+    , addrSpentOutPoint :: !OutputKey
+    } deriving (Show, Eq)
+
+data AddrSpentValue = AddrSpentValue
+    { addrSpentValue  :: !SpentValue
+    , addrSpentOutput :: !OutputValue
+    , addrSpentPos    :: !Word32
     } deriving (Show, Eq)
 
 data BlockValue = BlockValue
@@ -226,8 +244,10 @@ instance Record BestBlockKey BlockHash
 instance Record OutputKey OutputValue
 instance Record SpentKey SpentValue
 instance Record MultiTxKey MultiTxValue
-instance Record AddrOutKey AddrOutValue
-instance MultiRecord MultiAddrKey AddrOutKey AddrOutValue
+instance Record AddrSpentKey AddrSpentValue
+instance Record AddrUnspentKey AddrUnspentValue
+instance MultiRecord MultiAddrSpentKey AddrSpentKey AddrSpentValue
+instance MultiRecord MultiAddrUnspentKey AddrUnspentKey AddrUnspentValue
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
 
 instance Ord OutputKey where
@@ -235,38 +255,69 @@ instance Ord OutputKey where
       where
         f (OutputKey (OutPoint hash index)) = (hash, index)
 
-instance Serialize AddrOutKey where
-    put AddrOutKey {..} = do
+instance Serialize AddrSpentKey where
+    put AddrSpentKey {..} = do
         putWord8 0x03
-        put addrOutKey
-        put (maxBound - addrOutHeight)
-        put addrOutPoint
+        put addrSpentKey
+        put (maxBound - addrSpentHeight)
+        put addrSpentOutPoint
     get = do
         guard . (== 0x03) =<< getWord8
-        addrOutKey <- get
-        addrOutHeight <- (maxBound -) <$> get
-        addrOutPoint <- get
-        return AddrOutKey {..}
+        addrSpentKey <- get
+        addrSpentHeight <- (maxBound -) <$> get
+        addrSpentOutPoint <- get
+        return AddrSpentKey {..}
 
-instance Serialize MultiAddrKey where
-    put (MultiAddrKey h) = do
+instance Serialize AddrUnspentKey where
+    put AddrUnspentKey {..} = do
+        putWord8 0x05
+        put addrUnspentKey
+        put (maxBound - addrUnspentHeight)
+        put addrUnspentOutPoint
+    get = do
+        guard . (== 0x05) =<< getWord8
+        addrUnspentKey <- get
+        addrUnspentHeight <- (maxBound -) <$> get
+        addrUnspentOutPoint <- get
+        return AddrUnspentKey {..}
+
+instance Serialize MultiAddrSpentKey where
+    put (MultiAddrSpentKey h) = do
         putWord8 0x03
         put h
     get = do
         guard . (== 0x03) =<< getWord8
         h <- get
-        return (MultiAddrKey h)
+        return (MultiAddrSpentKey h)
 
-instance Serialize AddrOutValue where
-    put AddrOutValue {..} = do
-        put addrOutValue
-        put addrOutSpent
-        put addrOutPos
+instance Serialize MultiAddrUnspentKey where
+    put (MultiAddrUnspentKey h) = do
+        putWord8 0x05
+        put h
     get = do
-        addrOutValue <- get
-        addrOutSpent <- get
-        addrOutPos <- get
-        return AddrOutValue {..}
+        guard . (== 0x05) =<< getWord8
+        h <- get
+        return (MultiAddrUnspentKey h)
+
+instance Serialize AddrSpentValue where
+    put AddrSpentValue {..} = do
+        put addrSpentValue
+        put addrSpentOutput
+        put addrSpentPos
+    get = do
+        addrSpentValue <- get
+        addrSpentOutput <- get
+        addrSpentPos <- get
+        return AddrSpentValue {..}
+
+instance Serialize AddrUnspentValue where
+    put AddrUnspentValue {..} = do
+        put addrUnspentOutput
+        put addrUnspentPos
+    get = do
+        addrUnspentOutput <- get
+        addrUnspentPos <- get
+        return AddrUnspentValue {..}
 
 instance Serialize MultiTxKey where
     put (MultiTxKey k)       = put k
@@ -598,6 +649,40 @@ blockStore BlockConfig {..} =
             msg <- receive blockConfMailbox
             processBlockMessage msg
 
+spendAddr ::
+       AddrUnspentKey
+    -> AddrUnspentValue
+    -> SpentValue
+    -> (AddrSpentKey, AddrSpentValue)
+spendAddr uk uv s = (sk, sv)
+  where
+    sk =
+        AddrSpentKey
+        { addrSpentKey = addrUnspentKey uk
+        , addrSpentHeight = addrUnspentHeight uk
+        , addrSpentOutPoint = addrUnspentOutPoint uk
+        }
+    sv =
+        AddrSpentValue
+        { addrSpentValue = s
+        , addrSpentOutput = addrUnspentOutput uv
+        , addrSpentPos = addrUnspentPos uv
+        }
+
+unspendAddr :: AddrSpentKey -> AddrSpentValue -> (AddrUnspentKey, AddrUnspentValue)
+unspendAddr sk sv = (uk, uv)
+  where
+    uk = AddrUnspentKey
+         { addrUnspentKey = addrSpentKey sk
+         , addrUnspentHeight = addrSpentHeight sk
+         , addrUnspentOutPoint = addrSpentOutPoint sk
+         }
+    uv = AddrUnspentValue
+         { addrUnspentOutput = addrSpentOutput sv
+         , addrUnspentPos = addrSpentPos sv
+         }
+
+
 getBestBlockHash :: MonadBlock m => m BlockHash
 getBestBlockHash = do
     $(logDebug) $ logMe <> "Processing best block request from database"
@@ -623,12 +708,16 @@ getBlockValue bh = do
     db <- asks myBlockDB
     BlockKey bh `retrieveValue` db
 
-getAddrOutputs :: MonadBlock m => Address -> m [(AddrOutKey, AddrOutValue)]
-getAddrOutputs addr = do
+getAddrSpent :: MonadBlock m => Address -> m [(AddrSpentKey, AddrSpentValue)]
+getAddrSpent addr = do
     db <- asks myBlockDB
-    let pkScript = addressToScriptBS addr
-        hash = hash256 pkScript
-    MultiAddrKey hash `valuesForKey` db $$ consume
+    MultiAddrSpentKey addr `valuesForKey` db $$ consume
+
+getAddrUnspent ::
+       MonadBlock m => Address -> m [(AddrUnspentKey, AddrUnspentValue)]
+getAddrUnspent addr = do
+    db <- asks myBlockDB
+    MultiAddrUnspentKey addr `valuesForKey` db $$ consume
 
 getStoredTx :: MonadBlock m => TxHash -> m (Maybe DetailedTx)
 getStoredTx th =
@@ -761,8 +850,8 @@ importBlock block@Block {..} = do
         chainGetBlock blockHash ch >>= \case
             Just bn -> return bn
             Nothing -> do
-                $(logError) $ logMe <> "Could not obtain best block from chain"
-                error "BUG: Could not obtain best block from chain"
+                $(logError) $ logMe <> "Could not obtain block from chain"
+                error "BUG: Could not obtain block from chain"
     blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) True
     db <- asks myBlockDB
     LevelDB.write db def blockOps
@@ -890,47 +979,113 @@ addrBatchOps ::
     => BlockRef
     -> [(OutputKey, (OutputValue, SpentValue))]
     -> Tx
-    -> Word32 -- ^ position in block
+    -> Word32
     -> m [LevelDB.BatchOp]
-addrBatchOps block spent tx p = do
-    db <- asks myBlockDB
-    let os = zipWith f (txOut tx) [0 ..]
-    as <-
-        fmap catMaybes . forM (txIn tx) $ \TxIn {..} ->
-            runMaybeT $ do
-                guard (outPointHash prevOutput /= zero)
-                let ok = OutputKey prevOutput
-                (ov, sv) <- MaybeT (return (ok `lookup` spent))
-                let hash = hash256 (outScript ov)
-                    height = blockRefHeight (outBlock ov)
-                    ak = AddrOutKey hash height ok
-                av <- MaybeT (ak `retrieveValue` db)
-                let av' = av {addrOutSpent = Just sv}
-                return (ak, av')
-    return $ map (uncurry insertOp) os <> map (uncurry insertOp) as
+addrBatchOps block spent tx pos = do
+    ins <-
+        fmap concat . forM (txIn tx) $ \ti@TxIn {..} ->
+            if outPointHash prevOutput == zero
+                then return []
+                else if mainchain
+                         then spend ti
+                         else unspend ti
+    let outs = concat . catMaybes $ zipWith output (txOut tx) [0 ..]
+    return $ ins ++ outs
   where
+    height = blockRefHeight block
+    mainchain = blockRefMainChain block
+    output TxOut {..} i =
+        let ok = OutputKey (OutPoint (txHash tx) i)
+            ov =
+                OutputValue
+                { outputValue = outValue
+                , outBlock = block
+                , outScript = scriptOutput
+                }
+            m = ok `lookup` spent
+        in case scriptToAddressBS scriptOutput of
+               Just addr ->
+                   if mainchain
+                       then Just (insertOutput ok addr ov m)
+                       else Just (deleteOutput ok addr)
+               Nothing -> Nothing
+    deleteOutput ok addr =
+        [ deleteOp
+              AddrSpentKey
+              { addrSpentKey = addr
+              , addrSpentHeight = height
+              , addrSpentOutPoint = ok
+              }
+        , deleteOp
+              AddrUnspentKey
+              { addrUnspentKey = addr
+              , addrUnspentHeight = height
+              , addrUnspentOutPoint = ok
+              }
+        ]
+    insertOutput ok hash ov =
+        \case
+            Nothing ->
+                let uk =
+                        AddrUnspentKey
+                        { addrUnspentKey = hash
+                        , addrUnspentHeight = height
+                        , addrUnspentOutPoint = ok
+                        }
+                    uv =
+                        AddrUnspentValue
+                        {addrUnspentOutput = ov, addrUnspentPos = pos}
+                in [insertOp uk uv]
+            Just (_, s) ->
+                let sk =
+                        AddrSpentKey
+                        { addrSpentKey = hash
+                        , addrSpentHeight = height
+                        , addrSpentOutPoint = ok
+                        }
+                    sv =
+                        AddrSpentValue
+                        { addrSpentValue = s
+                        , addrSpentOutput = ov
+                        , addrSpentPos = pos
+                        }
+                in [insertOp sk sv]
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
-    op = OutputKey . OutPoint (txHash tx)
-    f TxOut {..} i =
-        let key =
-                AddrOutKey
-                { addrOutKey = hash256 scriptOutput
-                , addrOutHeight = blockRefHeight block
-                , addrOutPoint = op i
-                }
-            s = snd <$> OutputKey (OutPoint (txHash tx) i) `lookup` spent
-            value =
-                AddrOutValue
-                { addrOutValue =
-                      OutputValue
-                      { outputValue = outValue
-                      , outBlock = block
-                      , outScript = scriptOutput
-                      }
-                , addrOutSpent = s
-                , addrOutPos = p
-                }
-        in (key, value)
+    eo = error "Colud not find spent output"
+    spend TxIn {..} =
+        fmap (concat . maybeToList) . runMaybeT $ do
+            let (ok, s, maddr, height') = getSpent prevOutput
+            addr <- MaybeT $ return maddr
+            db <- asks myBlockDB
+            let uk =
+                    AddrUnspentKey
+                    { addrUnspentKey = addr
+                    , addrUnspentHeight = height'
+                    , addrUnspentOutPoint = ok
+                    }
+            uv <- MaybeT $ uk `retrieveValue` db
+            let (sk, sv) = spendAddr uk uv s
+            return [deleteOp uk, insertOp sk sv]
+    unspend TxIn {..} =
+        fmap (concat . maybeToList) . runMaybeT $ do
+            let (ok, _s, maddr, height') = getSpent prevOutput
+            addr <- MaybeT $ return maddr
+            db <- asks myBlockDB
+            let sk =
+                    AddrSpentKey
+                    { addrSpentKey = addr
+                    , addrSpentHeight = height'
+                    , addrSpentOutPoint = ok
+                    }
+            sv <- MaybeT $ sk `retrieveValue` db
+            let (uk, uv) = unspendAddr sk sv
+            return [deleteOp sk, insertOp uk uv]
+    getSpent po =
+        let ok = OutputKey po
+            (ov, s) = fromMaybe eo $ ok `lookup` spent
+            maddr = scriptToAddressBS (outScript ov)
+            height' = blockRefHeight (outBlock ov)
+        in (ok, s, maddr, height')
 
 txBatchOp ::
        MonadBlock m
@@ -974,7 +1129,7 @@ outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [LevelDB.BatchOp]
 outputBatchOps block@BlockRef {..} tx = do
     let os = zipWith f (txOut tx) [0 ..]
     addToCache block os
-    return (map (uncurry insertOp) os)
+    return $ map (uncurry insertOp) os
   where
     f TxOut {..} i =
         let key = OutputKey {outPoint = OutPoint (txHash tx) i}
@@ -1045,9 +1200,14 @@ processBlockMessage (BlockGetTx th reply) = do
     m <- getStoredTx th
     liftIO . atomically $ reply m
 
-processBlockMessage (BlockGetAddrOutputs addr reply) = do
+processBlockMessage (BlockGetAddrSpent addr reply) = do
     $(logDebug) $ logMe <> "Get outputs for address " <> cs (show addr)
-    os <- getAddrOutputs addr
+    os <- getAddrSpent addr
+    liftIO . atomically $ reply os
+
+processBlockMessage (BlockGetAddrUnspent addr reply) = do
+    $(logDebug) $ logMe <> "Get outputs for address " <> cs (show addr)
+    os <- getAddrUnspent addr
     liftIO . atomically $ reply os
 
 processBlockMessage (BlockReceived _p b) = do
@@ -1116,32 +1276,42 @@ blockGetHeight h b = BlockGetHeight h `query` b
 blockGetAddrTxs ::
        (MonadBase IO m, MonadIO m) => Address -> BlockStore -> m [AddressTx]
 blockGetAddrTxs addr b = do
-    os <- BlockGetAddrOutputs addr `query` b
-    let xs =
+    us <- BlockGetAddrUnspent addr `query` b
+    ss <- BlockGetAddrSpent addr `query` b
+    let utx =
             [ AddressTx
             { addressTxAddress = addr
-            , addressTxId = outPointHash (outPoint (addrOutPoint k))
-            , addressTxAmount = fromIntegral (outputValue (addrOutValue v))
-            , addressTxBlock = outBlock (addrOutValue v)
-            , addressTxPos = addrOutPos v
+            , addressTxId = outPointHash (outPoint (addrUnspentOutPoint k))
+            , addressTxAmount = fromIntegral (outputValue (addrUnspentOutput v))
+            , addressTxBlock = outBlock (addrUnspentOutput v)
+            , addressTxPos = addrUnspentPos v
             }
-            | (k, v) <- os
+            | (k, v) <- us
             ]
-        ys =
+        stx =
+            [ AddressTx
+            { addressTxAddress = addr
+            , addressTxId = outPointHash (outPoint (addrSpentOutPoint k))
+            , addressTxAmount = fromIntegral (outputValue (addrSpentOutput v))
+            , addressTxBlock = outBlock (addrSpentOutput v)
+            , addressTxPos = addrSpentPos v
+            }
+            | (k, v) <- ss
+            ]
+        itx =
             [ AddressTx
             { addressTxAddress = addr
             , addressTxId = spentInHash s
-            , addressTxAmount = -fromIntegral (outputValue v)
+            , addressTxAmount = -fromIntegral (outputValue (addrSpentOutput v))
             , addressTxBlock = spentInBlock s
             , addressTxPos = spentInPos s
             }
-            | AddrOutValue {addrOutValue = v, addrOutSpent = m} <- map snd os
-            , isJust m
-            , let Just s = m
+            | (_, v) <- ss
+            , let s = addrSpentValue v
             ]
         zs =
             [ atx {addressTxAmount = amount}
-            | ts@(atx:_) <- groupBy ((==) `on` addressTxId) (xs ++ ys)
+            | ts@(atx:_) <- groupBy ((==) `on` addressTxId) (itx ++ stx ++ utx)
             , let amount = sum (map addressTxAmount ts)
             ]
     return $ sortBy (flip compare `on` f) zs
