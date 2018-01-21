@@ -55,7 +55,7 @@ arbitraryTx = do
     outs <- vectorOf no arbitraryTxOut
     let uniqueInps = nubBy (\a b -> prevOutput a == prevOutput b) inps
     t    <- arbitrary
-    return $ createTx v uniqueInps outs t
+    return $ Tx v uniqueInps outs t
 
 -- | Arbitrary Tx containing only inputs of type SpendPKHash, SpendScriptHash
 -- (multisig) and outputs of type PayPKHash and PaySH. Only compressed
@@ -68,7 +68,7 @@ arbitraryAddrOnlyTx = do
     inps <- vectorOf ni arbitraryAddrOnlyTxIn
     outs <- vectorOf no arbitraryAddrOnlyTxOut
     t    <- arbitrary
-    return $ createTx v inps outs t
+    return $ Tx v inps outs t
 
 -- | Arbitrary TxIn that can only be of type SpendPKHash or
 -- SpendScriptHash (multisig). Only compressed public keys are used.
@@ -102,18 +102,20 @@ arbitraryPKSigInput :: Gen (SigInput, PrvKey)
 arbitraryPKSigInput = do
     k <- arbitraryPrvKey
     let out = PayPK $ derivePubKey k
+    val <- getTestCoin <$> arbitrarySatoshi
     op <- arbitraryOutPoint
     sh <- arbitraryValidSigHash
-    return (SigInput out op sh Nothing, k)
+    return (SigInput out val op sh Nothing, k)
 
 -- | Arbitrary SigInput with a ScriptOutput of type PayPKHash
 arbitraryPKHashSigInput :: Gen (SigInput, PrvKey)
 arbitraryPKHashSigInput = do
     k <- arbitraryPrvKey
     let out = PayPKHash $ getAddrHash $ pubKeyAddr $ derivePubKey k
+    val <- getTestCoin <$> arbitrarySatoshi
     op <- arbitraryOutPoint
     sh <- arbitraryValidSigHash
-    return (SigInput out op sh Nothing, k)
+    return (SigInput out val op sh Nothing, k)
 
 -- | Arbitrary SigInput with a ScriptOutput of type PayMulSig
 arbitraryMSSigInput :: Gen (SigInput, [PrvKey])
@@ -121,22 +123,23 @@ arbitraryMSSigInput = do
     (m,n) <- arbitraryMSParam
     ks    <- vectorOf n arbitraryPrvKey
     let out = PayMulSig (map derivePubKey ks) m
+    val <- getTestCoin <$> arbitrarySatoshi
     op <- arbitraryOutPoint
     sh <- arbitraryValidSigHash
     perm <- choose (0,n-1)
     let ksPerm = take m $ permutations ks !! perm
-    return (SigInput out op sh Nothing, ksPerm)
+    return (SigInput out val op sh Nothing, ksPerm)
 
 -- | Arbitrary SigInput with  ScriptOutput of type PaySH and a RedeemScript
 arbitrarySHSigInput :: Gen (SigInput, [PrvKey])
 arbitrarySHSigInput = do
-    (SigInput rdm op sh _, ks) <- oneof
+    (SigInput rdm val op sh _, ks) <- oneof
         [ f <$> arbitraryPKSigInput
         , f <$> arbitraryPKHashSigInput
         , arbitraryMSSigInput
         ]
     let out = PayScriptHash $ getAddrHash $ p2shAddr rdm
-    return (SigInput out op sh $ Just rdm, ks)
+    return (SigInput out val op sh $ Just rdm, ks)
   where
     f (si, k) = (si, [k])
 
@@ -148,14 +151,14 @@ arbitrarySigningData = do
     ni <- choose (1,5)
     no <- choose (1,5)
     sigis <- vectorOf ni arbitrarySigInput
-    let uSigis = nubBy (\(a,_) (b,_) -> sigDataOP a == sigDataOP b) sigis
+    let uSigis = nubBy (\(a,_) (b,_) -> sigInputOP a == sigInputOP b) sigis
     inps <- forM uSigis $ \(s,_) -> do
         sq <- arbitrary
-        return $ TxIn (sigDataOP s) BS.empty sq
+        return $ TxIn (sigInputOP s) BS.empty sq
     outs <- vectorOf no arbitraryTxOut
     l    <- arbitrary
     perm <- choose (0, length inps - 1)
-    let tx   = createTx v (permutations inps !! perm) outs l
+    let tx   = Tx v (permutations inps !! perm) outs l
         keys = concatMap snd uSigis
     return (tx, map fst uSigis, keys)
 
@@ -168,25 +171,26 @@ arbitraryEmptyTx = do
     ops  <- vectorOf ni arbitraryOutPoint
     t    <- arbitrary
     s    <- arbitrary
-    return $ createTx v (map (\op -> TxIn op BS.empty s) (nub ops)) outs t
+    return $ Tx v (map (\op -> TxIn op BS.empty s) (nub ops)) outs t
 
-arbitraryPartialTxs :: Gen ([Tx], [(ScriptOutput, OutPoint, Int, Int)])
+arbitraryPartialTxs :: Gen ([Tx], [(ScriptOutput, Word64, OutPoint, Int, Int)])
 arbitraryPartialTxs = do
     tx <- arbitraryEmptyTx
     res <-
         forM (map prevOutput $ txIn tx) $ \op -> do
-            (so, rdmM, prvs, m, n) <- arbitraryData
-            txs <- mapM (singleSig so rdmM tx op) prvs
-            return (txs, (so, op, m, n))
+            (so, val, rdmM, prvs, m, n) <- arbitraryData
+            txs <- mapM (singleSig so val rdmM tx op) prvs
+            return (txs, (so, val, op, m, n))
     return (concatMap fst res, map snd res)
   where
-    singleSig so rdmM tx op prv = do
+    singleSig so val rdmM tx op prv = do
         sh <- arbitraryValidSigHash
-        let sigi = SigInput so op sh rdmM
+        let sigi = SigInput so val op sh rdmM
         return . fromRight (error "Colud not decode transaction") $
             signTx tx [sigi] [prv]
     arbitraryData = do
         (m, n) <- arbitraryMSParam
+        val <- getTestCoin <$> arbitrarySatoshi
         nPrv <- choose (m, n)
         keys <- vectorOf n arbitraryPubKey
         perm <- choose (0, length keys - 1)
@@ -194,8 +198,9 @@ arbitraryPartialTxs = do
             prvKeys = take nPrv $ permutations (map fst keys) !! perm
         let so = PayMulSig pubKeys m
         elements
-            [ (so, Nothing, prvKeys, m, n)
+            [ (so, val, Nothing, prvKeys, m, n)
             , ( PayScriptHash $ getAddrHash $ p2shAddr so
+              , val
               , Just so
               , prvKeys
               , m

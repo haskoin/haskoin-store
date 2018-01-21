@@ -57,8 +57,8 @@ module Network.Haskoin.Script
 -- <http://en.bitcoin.it/wiki/OP_CHECKSIG>
 , SigHashType(..)
 , SigHash(..)
-, encodeSigHashForkId
 , sigHashToWord8
+, sigHashToWord32
 , word8ToSigHash
 , txSigHash
 , isSigAll

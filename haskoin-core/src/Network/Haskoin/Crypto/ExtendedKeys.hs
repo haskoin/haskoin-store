@@ -277,7 +277,7 @@ xPrvID = xPubID . deriveXPubKey
 
 -- | Computes the key identifier of an extended public key.
 xPubID :: XPubKey -> Hash160
-xPubID = hash160 . encode . hash256 . encode . xPubKey
+xPubID = ripemd160 . encode . sha256 . encode . xPubKey
 
 -- | Computes the key fingerprint of an extended private key.
 xPrvFP :: XPrvKey -> Word32

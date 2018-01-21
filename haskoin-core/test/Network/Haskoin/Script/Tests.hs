@@ -7,21 +7,23 @@ module Network.Haskoin.Script.Tests
 , runTests
 ) where
 
-import           Control.Monad                        (when)
+import           Control.Monad
 import qualified Data.Aeson                           as A
-import           Data.Bits                            (testBit, clearBit)
+import           Data.Bits
 import           Data.ByteString                      (ByteString)
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Char8                as C
 import qualified Data.ByteString.Lazy.Char8           as CL
 import           Data.Char                            (ord)
-import           Data.Either                          (fromRight, isRight, isLeft)
+import           Data.Either                          (fromRight, isLeft,
+                                                       isRight)
 import           Data.Int                             (Int64)
 import           Data.List                            (isPrefixOf)
 import           Data.List.Split                      (splitOn)
 import           Data.Maybe                           (catMaybes, isNothing)
-import           Data.Serialize                       (decode, encode)
-import           Data.Word                            (Word32, Word8)
+import           Data.Serialize
+import           Data.Serialize.Put                   (runPut)
+import           Data.Word
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Internals            (Flag, cltvDecodeInt,
                                                        decodeBool,
@@ -110,30 +112,19 @@ testCanonicalSig (TxSignature sig sh)
         isRight (decodeCanonicalSig bs) && isCanonicalHalfOrder (txSignature ts)
   where
     -- Set the forkId to false as it is not canonical on Bitcoin prodnet
-    ts = TxSignature sig sh{ sigHashForkId = False }
+    ts = TxSignature sig sh{ forkIdFlag = False }
     bs = encodeSig ts
 
 binSigHashByte :: Word8 -> Bool
 binSigHashByte w
-    | w == 0x01 = res == SigHash SigAll False False
-    | w == 0x02 = res == SigHash SigNone False False
-    | w == 0x03 = res == SigHash SigSingle False False
-    | w == 0x41 = res == SigHash SigAll False True
-    | w == 0x42 = res == SigHash SigNone False True
-    | w == 0x43 = res == SigHash SigSingle False True
-    | w == 0x81 = res == SigHash SigAll True False
-    | w == 0x82 = res == SigHash SigNone True False
-    | w == 0x83 = res == SigHash SigSingle True False
-    | w == 0xc1 = res == SigHash SigAll True True
-    | w == 0xc2 = res == SigHash SigNone True True
-    | w == 0xc3 = res == SigHash SigSingle True True
-    | otherwise =
-        res ==
-        SigHash
-            (SigUnknown $ (`clearBit` 6) . (`clearBit` 7) $ w)
-            (w `testBit` 7)
-            (w `testBit` 6)
+    | t == 0x01 = res == SigHash SigAll acp fid
+    | t == 0x02 = res == SigHash SigNone acp fid
+    | t == 0x03 = res == SigHash SigSingle acp fid
+    | otherwise = res == SigHash (SigUnknown t) acp fid
   where
+    t = w .&. 0x1f
+    acp = w `testBit` 7
+    fid = w `testBit` 6
     res = either error id . decode $ BS.singleton w
 
 binSigHash :: SigHash -> Bool
@@ -145,7 +136,7 @@ testEncodeSigHashForkId sh =
     BS.head bs == BS.head (encode sh) &&
     BS.tail bs == BS.pack [0,0,0]
   where
-    bs = encodeSigHashForkId sh
+    bs = runPut $ putWord32le $ sigHashToWord32 sh
 
 binTxSig :: TxSignature -> Bool
 binTxSig ts = decodeSig (encodeSig ts) == Right ts
@@ -159,15 +150,15 @@ binTxSigCanonical (TxSignature sig sh)
             (decodeCanonicalSig $ encodeSig ts) == ts
   where
     -- Force th forkId to be False as it is not canonical on Bitcoin prodnet
-    ts = TxSignature sig sh{ sigHashForkId = False }
+    ts = TxSignature sig sh{ forkIdFlag = False }
 
-testSigHashOne :: Tx -> Script -> Bool -> Bool -> Property
-testSigHashOne tx s acp fid = not (null $ txIn tx) ==>
+testSigHashOne :: Tx -> Script -> Word64 -> Bool -> Property
+testSigHashOne tx s val acp = not (null $ txIn tx) ==>
     if length (txIn tx) > length (txOut tx)
         then res == one
         else res /= one
   where
-    res = txSigHash tx s (length (txIn tx) - 1) (SigHash SigSingle acp fid)
+    res = txSigHash tx s val (length (txIn tx) - 1) (SigHash SigSingle acp False)
     one = "0100000000000000000000000000000000000000000000000000000000000000"
 
 {- Script Evaluation Primitives -}
@@ -233,7 +224,7 @@ parseScript scriptString = do
   where
     decodeScript bytes =
         case decode bytes of
-            Left e -> Left $ "decode error: " ++ e
+            Left e           -> Left $ "decode error: " ++ e
             Right (Script s) -> Right $ Script s
     parseBytes :: String -> Either ParseError [Word8]
     parseBytes string = concat <$> mapM parseToken (words string)
@@ -241,7 +232,7 @@ parseScript scriptString = do
     parseToken tok =
         case alternatives of
             (ops:_) -> Right ops
-            _ -> Left $ "unknown token " ++ tok
+            _       -> Left $ "unknown token " ++ tok
       where
         alternatives :: [[Word8]]
         alternatives = catMaybes [parseHex, parseInt, parseQuote, parseOp]
@@ -286,9 +277,9 @@ testFile groupLabel path expected =
             Nothing ->
                 testCase "can't parse test case" $
                 HUnit.assertFailure $ "json element " ++ show s
-            Just (sig, pubKey, flags, label) -> makeTest label sig pubKey flags
+            Just (sig, pubKey, flags, l) -> makeTest l sig pubKey flags
     makeTest :: String -> String -> String -> String -> Test
-    makeTest label sig pubKey flags =
+    makeTest l sig pubKey flags =
         testCase label' $
         case (parseScript sig, parseScript pubKey) of
             (Left e, _) ->
@@ -300,9 +291,9 @@ testFile groupLabel path expected =
                 runTest scriptSig scriptPubKey (parseFlags flags)
       where
         label' =
-            if null label
+            if null l
                 then "sig: [" ++ sig ++ "] " ++ " pubKey: [" ++ pubKey ++ "] "
-                else " label: " ++ label
+                else " label: " ++ l
     parseError message =
         HUnit.assertBool
             ("parse error in valid script: " ++ message)
@@ -384,7 +375,7 @@ nullOutPoint =
 -- nLockTimes are 0, all nSequences are max."
 buildCreditTx :: ByteString -> Tx
 buildCreditTx scriptPubKey =
-    createTx 1 [ txI ] [ txO ] 0
+    Tx 1 [ txI ] [ txO ] 0
   where
     txO = TxOut { outValue = 0
                 , scriptOutput = scriptPubKey
@@ -400,7 +391,7 @@ buildSpendTx :: ByteString  -- ScriptSig
              -> Tx          -- Creditting Tx
              -> Tx
 buildSpendTx scriptSig creditTx =
-    createTx 1 [ txI ] [ txO ] 0
+    Tx 1 [ txI ] [ txO ] 0
   where
     txI = TxIn { prevOutput = OutPoint { outPointHash = txHash creditTx
                                        , outPointIndex = 0
@@ -421,7 +412,7 @@ scriptPairTestExec scriptSig pubKey flags =
     let bsScriptSig = encode scriptSig
         bsPubKey = encode pubKey
         spendTx = buildSpendTx bsScriptSig (buildCreditTx bsPubKey)
-    in verifySpend spendTx 0 pubKey flags
+    in verifySpend spendTx 0 pubKey 0 flags
 
 runTests :: [Test] -> IO ()
 runTests ts = defaultMainWithArgs ts ["--hide-success"]

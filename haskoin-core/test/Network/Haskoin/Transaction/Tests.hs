@@ -123,9 +123,9 @@ testDetSignTx (tx, sigis, prv) =
     txSigC =
         fromRight (error "Could not decode transaction") $
         signTx txSigP sigis [head prv]
-    verData = map (\(SigInput s o _ _) -> (s, o)) sigis
+    verData = map (\(SigInput s v o _ _) -> (s, v, o)) sigis
 
-testMergeTx :: ([Tx], [(ScriptOutput, OutPoint, Int, Int)]) -> Bool
+testMergeTx :: ([Tx], [(ScriptOutput, Word64, OutPoint, Int, Int)]) -> Bool
 testMergeTx (txs, os) = and
     [ isRight mergeRes
     , length (txIn mergedTx) == length os
@@ -134,12 +134,12 @@ testMergeTx (txs, os) = and
     , sum (map snd sigMap) == min (length txs) (sum (map fst sigMap))
     ]
   where
-    outs = map (\(so, op, _, _) -> (so, op)) os
+    outs = map (\(so, val, op, _, _) -> (so, val, op)) os
     mergeRes = mergeTxs txs outs
     mergedTx = fromRight (error "Could not merge") mergeRes
     isValid = verifyStdTx mergedTx outs
     enoughSigs = all (\(m,c) -> c >= m) sigMap
-    sigMap = map (\((_,_,m,_), inp) -> (m, sigCnt inp)) $ zip os $ txIn mergedTx
+    sigMap = map (\((_,_,_,m,_), inp) -> (m, sigCnt inp)) $ zip os $ txIn mergedTx
     sigCnt inp = case decodeInputBS $ scriptInput inp of
         Right (RegularInput (SpendMulSig sigs)) -> length sigs
         Right (ScriptHashInput (SpendMulSig sigs) _) -> length sigs

@@ -88,7 +88,7 @@ tests =
         , testCase "Check public key compression" checkKeyCompressed
         , testCase "Check matching address" checkMatchingAddress
         ] ++
-        map (\x -> testCase ("Check sig: " ++ show x) $ checkSignatures (doubleHash256 x)) sigMsg
+        map (\x -> testCase ("Check sig: " ++ show x) $ checkSignatures (doubleSHA256 x)) sigMsg
     , testGroup "Trezor RFC 6979 Test Vectors"
         [ testCase "RFC 6979 Test Vector 1" (testSigning $ head detVec)
         , testCase "RFC 6979 Test Vector 2" (testSigning $ detVec !! 1)
@@ -237,7 +237,7 @@ testSigning (prv, msg, str) = do
     assertBool "Valid sig" $ verifySig msg' sig (derivePubKey prv')
   where
     sig@(Signature g) = signMsg msg' prv'
-    msg' = hash256 msg
+    msg' = sha256 msg
     prv' = makePrvKey prv
     compact = EC.exportCompactSig g
     res = encode compact

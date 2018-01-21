@@ -1,11 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Network.Haskoin.Transaction.Types
-( Tx
-, createTx
-, txVersion
-, txIn
-, txOut
-, txLockTime
+( Tx(..)
 , txHash
 , TxIn(..)
 , TxOut(..)
@@ -59,7 +54,7 @@ instance ToJSON TxHash where
 
 nosigTxHash :: Tx -> TxHash
 nosigTxHash tx =
-    TxHash $ doubleHash256 $ encode tx { txIn = map clearInput $ txIn tx }
+    TxHash $ doubleSHA256 $ encode tx { txIn = map clearInput $ txIn tx }
   where
     clearInput ti = ti { scriptInput = BS.empty }
 
@@ -85,15 +80,7 @@ data Tx = Tx
     } deriving (Eq)
 
 txHash :: Tx -> TxHash
-txHash = TxHash . doubleHash256 . encode
-
-createTx :: Word32 -> [TxIn] -> [TxOut] -> Word32 -> Tx
-createTx v is os l =
-    Tx { txVersion  = v
-       , txIn       = is
-       , txOut      = os
-       , txLockTime = l
-       }
+txHash = TxHash . doubleSHA256 . encode
 
 instance Show Tx where
     show = show . encodeHex . encode

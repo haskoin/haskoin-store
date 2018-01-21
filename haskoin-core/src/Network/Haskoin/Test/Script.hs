@@ -10,7 +10,7 @@ import           Network.Haskoin.Test.Crypto
 import           Network.Haskoin.Test.Util
 import           Network.Haskoin.Transaction.Types
 import           Network.Haskoin.Util
-import           Test.QuickCheck
+import           Test.QuickCheck                   hiding ((.&.))
 
 -- | Arbitrary Script with random script ops
 arbitraryScript :: Gen Script
@@ -163,8 +163,7 @@ arbitrarySigHashType =
         [ return SigAll
         , return SigNone
         , return SigSingle
-        , SigUnknown . (`clearBit` 0) . (`clearBit` 1)
-                     . (`clearBit` 6) . (`clearBit` 7) <$> arbitrary
+        , SigUnknown . (.&. 0x1c) <$> arbitrary
         ]
 
 -- | Arbitrary SigHash (including invalid/unknown sighash codes)

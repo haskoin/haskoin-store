@@ -76,7 +76,7 @@ data Network = Network
     , getCheckpoints              :: ![(BlockHeight, BlockHash)]
     , getBip44Coin                :: !Word32
     , getSeeds                    :: [String]
-    , getSigHashForkValue         :: !Word32
+    , getSigHashForkValue         :: Maybe Word32
     } deriving Eq
 
 setRegtest :: IO ()
@@ -186,7 +186,7 @@ seeds :: [String]
 seeds = getSeeds getNetwork
 
 -- | The Fork ID used for producing signatures on different networks
-sigHashForkValue :: Word32
+sigHashForkValue :: Maybe Word32
 sigHashForkValue = getSigHashForkValue getNetwork
 
 prodnet :: Network
@@ -263,7 +263,7 @@ prodnet = Network
         , "seed.bitcoin.jonasschnelli.ch" -- Jonas Schnelli
         ]
     , getBip44Coin = 0
-    , getSigHashForkValue = 0
+    , getSigHashForkValue = Nothing
     }
 
 testnet3 :: Network
@@ -317,7 +317,7 @@ testnet3 = Network
         , "testnet-seed.bitcoin.schildbach.de"
         ]
     , getBip44Coin = 1
-    , getSigHashForkValue = 0
+    , getSigHashForkValue = Nothing
     }
 
 regtest :: Network
@@ -358,5 +358,5 @@ regtest = Network
     , getCheckpoints = []
     , getSeeds = [ "localhost" ]
     , getBip44Coin = 1
-    , getSigHashForkValue = 0
+    , getSigHashForkValue = Nothing
     }

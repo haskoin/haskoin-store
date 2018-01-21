@@ -123,7 +123,7 @@ data BlockHeader =
                 } deriving (Eq, Show)            -- 208 bytes (above + 16 bytes)
 
 headerHash :: BlockHeader -> BlockHash
-headerHash = BlockHash . doubleHash256 . encode
+headerHash = BlockHash . doubleSHA256 . encode
 
 instance NFData BlockHeader where
     rnf (BlockHeader v p m t b n) =

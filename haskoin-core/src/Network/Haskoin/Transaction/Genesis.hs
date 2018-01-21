@@ -8,7 +8,7 @@ import           Network.Haskoin.Util
 
 genesisTx :: Tx
 genesisTx =
-    createTx version [txin] [txout] locktime
+    Tx version [txin] [txout] locktime
   where
     version = 1
     txin = TxIn outpoint inputBS maxBound

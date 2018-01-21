@@ -6,7 +6,6 @@ module Network.Haskoin.Transaction
 (
   -- *Transaction Types
   Tx(..)
-, createTx
 , txHash
 , TxIn(..)
 , TxOut(..)

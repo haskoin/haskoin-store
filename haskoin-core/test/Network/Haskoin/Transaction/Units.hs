@@ -90,7 +90,7 @@ runVerifyVec (SatoshiCoreTxTest _ is bsTx) i =
         "    > Verify transaction " ++ show i ++ "bsTx: " ++ convertString bsTx
     tx :: Tx
     tx = fromJust $ either (const Nothing) return . decode =<< decodeHex bsTx
-    outputsAndOutpoints :: [(ScriptOutput, OutPoint)]
+    outputsAndOutpoints :: [(ScriptOutput, Word64, OutPoint)]
     outputsAndOutpoints = map f is
     f (SatoshiCoreTxTestInput bsOutputHash bsOutputIndex bsOutputScriptPubKey) =
         let s :: ScriptOutput
@@ -111,7 +111,7 @@ runVerifyVec (SatoshiCoreTxTest _ is bsTx) i =
                     (fromRight (error "Could not decode output index") .
                      runGet getWord32le . fromJust . decodeHex $
                      bsOutputIndex)
-        in (s, op)
+        in (s, 0, op)
 
 -- These test vectors have been generated from bitcoind raw transaction api
 

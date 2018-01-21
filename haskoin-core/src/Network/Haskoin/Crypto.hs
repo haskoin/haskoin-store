@@ -67,12 +67,12 @@ module Network.Haskoin.Crypto
 , Hash256(getHash256)
 , Hash160(getHash160)
 , checkSum32
-, hash512
-, hash256
-, hash160
-, hashSHA1
+, sha512
+, sha256
+, ripemd160
+, sha1
 , addressHash
-, doubleHash256
+, doubleSHA256
 , hmac512
 , hmac256
 , split512

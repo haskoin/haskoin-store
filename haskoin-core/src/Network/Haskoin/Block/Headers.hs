@@ -473,7 +473,7 @@ appendBlocks seed bh i =
     bh' = mineBlock seed bh
         { prevBlock = headerHash bh
           -- Just to make it different in every header
-        , merkleRoot = hash256 $ encode seed
+        , merkleRoot = sha256 $ encode seed
         }
 
 splitPoint :: BlockHeaders m => BlockNode -> BlockNode -> m BlockNode
