@@ -21,28 +21,29 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
+import           Control.Monad.Trans.Resource
 import           Data.Bits
-import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as BS
+import           Data.ByteString              (ByteString)
+import qualified Data.ByteString              as BS
 import           Data.Default
 import           Data.Function
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize              (Get, Put, Serialize, decode,
-                                              encode, get, put)
-import qualified Data.Serialize              as S
+import           Data.Serialize               (Get, Put, Serialize, decode,
+                                               encode, get, put)
+import qualified Data.Serialize               as S
 import           Data.String.Conversions
-import           Data.Text                   (Text)
+import           Data.Text                    (Text)
 import           Data.Time.Clock
 import           Data.Word
-import           Database.LevelDB            (DB, MonadResource, runResourceT)
-import qualified Database.LevelDB            as LevelDB
+import           Database.RocksDB             (DB)
+import qualified Database.RocksDB             as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node.Common
 import           Network.Haskoin.Node.Peer
-import           Network.Socket              (SockAddr (..))
+import           Network.Socket               (SockAddr (..))
 import           System.FilePath
 import           System.Random
 
@@ -128,8 +129,10 @@ manager cfg = do
         runResourceT $ do
             let opts =
                     def
-                    {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
-            pdb <- LevelDB.open (mgrConfDir cfg </> "peers") opts
+                    { RocksDB.createIfMissing = True
+                    , RocksDB.compression = RocksDB.NoCompression
+                    }
+            pdb <- RocksDB.open (mgrConfDir cfg </> "peers") opts
             let rd =
                     ManagerReader
                     { mySelf = mgrConfManager cfg
@@ -195,14 +198,14 @@ storePeer t sa = do
     let p = PeerAddress sa
         k = encode p
         v = encode $ PeerTimeAddress t p
-    m <- LevelDB.get pdb def k
+    m <- RocksDB.get pdb def k
     case m of
-        Nothing -> LevelDB.write pdb def [LevelDB.Put v k, LevelDB.Put k v]
+        Nothing -> RocksDB.write pdb def [RocksDB.Put v k, RocksDB.Put k v]
         Just x ->
-            LevelDB.write
+            RocksDB.write
                 pdb
                 def
-                [LevelDB.Del x, LevelDB.Put v k, LevelDB.Put k v]
+                [RocksDB.Del x, RocksDB.Put v k, RocksDB.Put k v]
 
 deletePeer :: MonadManager m => SockAddr -> m ()
 deletePeer sa = do
@@ -210,14 +213,14 @@ deletePeer sa = do
     pdb <- asks myPeerDB
     let p = PeerAddress sa
         k = encode p
-    m <- LevelDB.get pdb def k
+    m <- RocksDB.get pdb def k
     case m of
         Nothing -> return ()
         Just v ->
-            LevelDB.write
+            RocksDB.write
                 pdb
                 def
-                [LevelDB.Del k, LevelDB.Del v]
+                [RocksDB.Del k, RocksDB.Del v]
 
 getNewPeer :: MonadManager m => m (Maybe SockAddr)
 getNewPeer = do
@@ -229,20 +232,20 @@ getNewPeer = do
         else do
             $(logDebug) $ logMe <> "Attempting to get a new peer from database"
             pdb <- asks myPeerDB
-            LevelDB.withIterator pdb def $ \i -> do
-                LevelDB.iterSeek i (BS.singleton 0x01)
-                LevelDB.iterPrev i
+            RocksDB.withIterator pdb def $ \i -> do
+                RocksDB.iterSeek i (BS.singleton 0x01)
+                RocksDB.iterPrev i
                 runMaybeT $ go i ops
   where
     go i ops = do
-        valid <- LevelDB.iterValid i
+        valid <- RocksDB.iterValid i
         guard valid
-        val <- MaybeT $ LevelDB.iterValue i
+        val <- MaybeT $ RocksDB.iterValue i
         e <- MaybeT . return . either (const Nothing) Just $ decode val
         let a = getPeerAddress e
         if a `elem` ops
             then do
-                LevelDB.iterPrev i
+                RocksDB.iterPrev i
                 go i ops
             else return a
 

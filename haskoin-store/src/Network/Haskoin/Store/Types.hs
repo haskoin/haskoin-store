@@ -48,6 +48,7 @@ import           Control.Monad.Catch
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
+import           Control.Monad.Trans.Resource
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
@@ -58,7 +59,7 @@ import           Data.Maybe
 import           Data.Serialize               as S
 import           Data.String.Conversions
 import           Data.Word
-import           Database.LevelDB             (DB, MonadResource)
+import           Database.RocksDB             (DB)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node

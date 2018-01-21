@@ -17,3 +17,4 @@ extra-deps:
 - time-1.7.0.1
 - foundation-edge-0.0.3
 - nqe-0.1.0.0
+- rocksdb-haskell-1.0.1

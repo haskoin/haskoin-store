@@ -43,7 +43,7 @@ main = do
 
 getParents :: Assertion
 getParents =
-    runNoLoggingT . withTestNode $ \(_mgr, ch, mbox) -> do
+    runStderrLoggingT . withTestNode "parents" $ \(_mgr, ch, mbox) -> do
         $(logDebug) "[Test] Preparing to receive from mailbox"
         bn <-
             receiveMatch mbox $ \case
@@ -68,7 +68,7 @@ getParents =
 
 nodeConnectSync :: Assertion
 nodeConnectSync =
-    runNoLoggingT . withTestNode $ \(_mgr, ch, mbox) -> do
+    runStderrLoggingT . withTestNode "connect-sync" $ \(_mgr, ch, mbox) -> do
         bns <-
             replicateM 3 . receiveMatch mbox $ \case
                 ChainEvent (ChainNewBest bn) -> Just bn
@@ -81,7 +81,7 @@ nodeConnectSync =
 
 connectToPeers :: Assertion
 connectToPeers =
-    runNoLoggingT . withTestNode $ \(mgr, _ch, mbox) -> do
+    runStderrLoggingT . withTestNode "connect-peers" $ \(mgr, _ch, mbox) -> do
         replicateM_ 3 $ do
             pc <- receive mbox
             case pc of
@@ -93,7 +93,7 @@ connectToPeers =
 
 downloadBlock :: Assertion
 downloadBlock =
-    runNoLoggingT . withTestNode $ \(_mgr, _ch, mbox) -> do
+    runStderrLoggingT . withTestNode "download-block" $ \(_mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
@@ -111,7 +111,7 @@ downloadBlock =
 
 downloadSomeFailures :: Assertion
 downloadSomeFailures =
-    runNoLoggingT . withTestNode $ \(_mgr, _ch, mbox) -> do
+    runStderrLoggingT . withTestNode "download-fail" $ \(_mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
@@ -148,7 +148,7 @@ testSyncedHeaders bns bb an = do
 
 connectToPeer :: Assertion
 connectToPeer =
-    runNoLoggingT . withTestNode $ \(mgr, _ch, mbox) -> do
+    runStderrLoggingT . withTestNode "connect-one-peer" $ \(mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
@@ -166,7 +166,7 @@ connectToPeer =
 
 getTestBlocks :: Assertion
 getTestBlocks =
-    runNoLoggingT . withTestNode $ \(_mgr, _ch, mbox) -> do
+    runStderrLoggingT . withTestNode "get-blocks" $ \(_mgr, _ch, mbox) -> do
         $(logDebug) $ "[Test] Waiting for a peer"
         p <-
             receiveMatch mbox $ \case
@@ -202,7 +202,7 @@ getTestBlocks =
 
 getTestMerkleBlocks :: Assertion
 getTestMerkleBlocks =
-    runNoLoggingT . withTestNode $ \(mgr, _ch, mbox) -> do
+    runStderrLoggingT . withTestNode "get-merkle-blocks" $ \(mgr, _ch, mbox) -> do
         n <- liftIO randomIO
         let f0 = bloomCreate 2 0.001 n BloomUpdateAll
             f1 = bloomInsert f0 $ encode k
@@ -244,11 +244,12 @@ withTestNode ::
        , MonadLoggerIO m
        , Forall (Pure m)
        )
-    => ((Manager, Chain, Inbox NodeEvent) -> m ())
+    => String
+    -> ((Manager, Chain, Inbox NodeEvent) -> m ())
     -> m ()
-withTestNode f = do
+withTestNode t f = do
     $(logDebug) "[Test] Setting up test directory"
-    withSystemTempDirectory "haskoin-node-test-manager-" $ \w -> do
+    withSystemTempDirectory ("haskoin-node-test-" <> t <> "-") $ \w -> do
         $(logDebug) $ "[Test] Test directory created at " <> cs w
         events <- Inbox <$> liftIO newTQueueIO
         ch <- Inbox <$> liftIO newTQueueIO

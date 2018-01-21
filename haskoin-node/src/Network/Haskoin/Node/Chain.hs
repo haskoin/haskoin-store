@@ -19,16 +19,17 @@ import           Control.Monad.Catch
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
-import qualified Data.ByteString             as BS
+import           Control.Monad.Trans.Resource
+import qualified Data.ByteString              as BS
 import           Data.Default
 import           Data.Either
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize              (decode, encode)
+import           Data.Serialize               (decode, encode)
 import           Data.String.Conversions
-import           Data.Text                   (Text)
-import           Database.LevelDB            (DB, MonadResource, runResourceT)
-import qualified Database.LevelDB            as LevelDB
+import           Data.Text                    (Text)
+import           Database.RocksDB             (DB)
+import qualified Database.RocksDB             as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node.Common
@@ -57,21 +58,21 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
         db <- asks headerDB
         let bs = encode bn
             sh = encode $ headerHash $ nodeHeader bn
-        LevelDB.put db def sh bs
+        RocksDB.put db def sh bs
     getBlockHeader bh = do
         db <- asks headerDB
         let sh = encode bh
-        bsM <- LevelDB.get db def sh
+        bsM <- RocksDB.get db def sh
         return $
             fromRight (error "Could not decode block header") . decode <$> bsM
     getBestBlockHeader = do
         db <- asks headerDB
-        bsM <- LevelDB.get db def "best"
+        bsM <- RocksDB.get db def "best"
         case bsM of
             Nothing -> do
                 let gs = encode genesisNode
                 addBlockHeader genesisNode
-                LevelDB.put db def "best" gs
+                RocksDB.put db def "best" gs
                 $(logDebug) $ logMe <> "Added genesis block node"
                 return genesisNode
             Just bs ->
@@ -80,13 +81,13 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
     setBestBlockHeader bn = do
         db <- asks headerDB
         let bs = encode bn
-        LevelDB.put db def "best" bs
+        RocksDB.put db def "best" bs
     addBlockHeaders bns = do
         db <- asks headerDB
-        LevelDB.write db def $
+        RocksDB.write db def $
             map
                 (\bn ->
-                     LevelDB.Put
+                     RocksDB.Put
                          (encode $ headerHash $ nodeHeader bn)
                          (encode bn))
                 bns
@@ -105,8 +106,11 @@ chain ::
 chain cfg =
     runResourceT $ do
         let opts =
-                def {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
-        hdb <- LevelDB.open (chainConfDbFile cfg) opts
+                def
+                { RocksDB.createIfMissing = True
+                , RocksDB.compression = RocksDB.NoCompression
+                }
+        hdb <- RocksDB.open (chainConfDbFile cfg) opts
         st <-
             liftIO $
             newTVarIO

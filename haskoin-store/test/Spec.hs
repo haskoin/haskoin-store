@@ -5,6 +5,7 @@ import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Maybe
+import           Data.Monoid
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Node
@@ -19,12 +20,12 @@ main = do
     hspec $ do
         describe "Bootstrap" $
             it "successfully starts actors and communicates" $
-            withTestStore $ \(b, _c, _e) -> do
+            withTestStore "start" $ \(b, _c, _e) -> do
                 _ <- blockGetBest b
                 return ()
         describe "Download" $ do
             it "gets 8 blocks" $
-                withTestStore $ \(_b, c, e) -> do
+                withTestStore "eight-blocks" $ \(_b, c, e) -> do
                     bs <-
                         replicateM 9 $ do
                             BlockEvent (BestBlock b) <- receive e
@@ -37,7 +38,7 @@ main = do
                             bestHeight = nodeHeight bestNode
                         bestHeight `shouldBe` 8
             it "get a block and its transactions" $
-                withTestStore $ \(b, _c, e) -> do
+                withTestStore "get-block-txs" $ \(b, _c, e) -> do
                     bs <-
                         replicateM 382 $ do
                             BlockEvent (BestBlock bb) <- receive e
@@ -65,9 +66,10 @@ main = do
 dummyEventHandler :: (MonadIO m, Mailbox b) => b a -> m ()
 dummyEventHandler = forever . void . receive
 
-withTestStore :: ((BlockStore, Chain, Inbox StoreEvent) -> IO ()) -> IO ()
-withTestStore f =
-    withSystemTempDirectory "haskoin-store-test-" $ \w ->
+withTestStore ::
+       String -> ((BlockStore, Chain, Inbox StoreEvent) -> IO ()) -> IO ()
+withTestStore t f =
+    withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
         runNoLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO

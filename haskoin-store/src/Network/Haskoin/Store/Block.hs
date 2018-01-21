@@ -26,9 +26,8 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
+import           Control.Monad.Trans.Resource
 import qualified Data.ByteString              as BS
-import           Data.Conduit                 (($$))
-import qualified Data.Conduit.List            as CL
 import           Data.Default
 import           Data.Function
 import           Data.List
@@ -40,8 +39,7 @@ import           Data.Serialize               as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
 import           Data.Word
-import           Database.LevelDB             (runResourceT)
-import qualified Database.LevelDB             as LevelDB
+import qualified Database.RocksDB             as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
@@ -65,12 +63,10 @@ blockStore BlockConfig {..} =
     runResourceT $ do
         let opts =
                 def
-                { LevelDB.createIfMissing = True
-                , LevelDB.blockSize = 4 * 2 ^ 20
-                , LevelDB.cacheSize = 2 ^ 30
-                , LevelDB.writeBufferSize = 512 * 2 ^ 20
+                { RocksDB.createIfMissing = True
+                , RocksDB.compression = RocksDB.NoCompression
                 }
-        db <- LevelDB.open blockConfDir opts
+        db <- RocksDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []
         dbox <- liftIO $ newTVarIO []
@@ -179,20 +175,20 @@ getBlockValue bh = do
 getAddrSpent :: MonadBlock m => Address -> m [(AddrSpentKey, AddrSpentValue)]
 getAddrSpent addr = do
     db <- asks myBlockDB
-    MultiAddrSpentKey addr `valuesForKey` db $$ CL.consume
+    MultiAddrSpentKey addr `valuesForKey` db
 
 getAddrUnspent ::
        MonadBlock m => Address -> m [(AddrUnspentKey, AddrUnspentValue)]
 getAddrUnspent addr = do
     db <- asks myBlockDB
-    MultiAddrUnspentKey addr `valuesForKey` db $$ CL.consume
+    MultiAddrUnspentKey addr `valuesForKey` db
 
 getAddrBalance ::
     MonadBlock m => Address -> m (Maybe AddressBalance)
 getAddrBalance addr =
     runMaybeT $ do
         db <- asks myBlockDB
-        bal <- MaybeT $ MultiBalance addr `valuesForKey` db $$ CL.head
+        bal <- MaybeT . fmap listToMaybe $ MultiBalance addr `valuesForKey` db
         best <- fmap (fromMaybe e) $ BestBlockKey `retrieveValue` db
         block <- fmap (fromMaybe e) $ BlockKey best `retrieveValue` db
         let h = blockValueHeight block
@@ -226,7 +222,7 @@ getStoredTx :: MonadBlock m => TxHash -> m (Maybe DetailedTx)
 getStoredTx th =
     runMaybeT $ do
         db <- asks myBlockDB
-        xs <- valuesForKey (BaseTxKey th) db $$ CL.consume
+        xs <- valuesForKey (BaseTxKey th) db
         TxValue {..} <- MaybeT (return (findTx xs))
         let ss = filterSpents xs
         return (DetailedTx txValue txValueBlock ss txValueOuts)
@@ -274,7 +270,7 @@ revertBestBlock =
         db <- asks myBlockDB
         let block = Block blockValueHeader txs
         blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) False
-        LevelDB.write db def blockOps
+        RocksDB.write db def blockOps
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
@@ -363,7 +359,7 @@ importBlock block@Block {..} = do
         logMe <> "Writing " <> logShow (length blockOps) <>
         " entries for block " <>
         logShow (nodeHeight bn)
-    LevelDB.write db def blockOps
+    RocksDB.write db def blockOps
     $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
@@ -376,7 +372,7 @@ getBlockTxs hs = do
     forM hs (\h -> retrieveValue (TxKey h) db)
 
 blockBatchOps :: MonadBlock m =>
-       Block -> BlockHeight -> BlockWork -> Bool -> m [LevelDB.BatchOp]
+       Block -> BlockHeight -> BlockWork -> Bool -> m [RocksDB.BatchOp]
 blockBatchOps block@Block {..} height work main = do
     outputs <- M.fromList . concat <$> mapM (outputBatchOps blockRef) blockTxns
     let outputOps = map (uncurry insertOp) (M.toList outputs)
@@ -492,7 +488,7 @@ spentOutputs block os tx pos =
     e = error "Colud not retrieve information for output being spent"
 
 balanceBatchOps ::
-       MonadBlock m => BlockRef -> [OutputValue] -> [Tx] -> m [LevelDB.BatchOp]
+       MonadBlock m => BlockRef -> [OutputValue] -> [Tx] -> m [RocksDB.BatchOp]
 balanceBatchOps block spent txs =
     if blockRefMainChain block
         then do
@@ -528,22 +524,22 @@ balanceBatchOps block spent txs =
     addrs = nub (M.keys creditMap ++ M.keys debitMap ++ M.keys coinbaseMap)
     balance addr = do
         db <- asks myBlockDB
-        MultiBalance addr `valuesForKey` db $$ CL.head
+        MultiBalance addr `firstValue` db
     creditMap = foldl' credit M.empty (concatMap txOut (tail txs))
     coinbaseMap = foldl' coinbase M.empty (txOut (head txs))
     debitMap = foldl' debit M.empty spent
     debit m OutputValue {..} =
         case scriptToAddressBS outScript of
             Nothing -> m
-            Just a  -> M.insertWith (+) a outputValue m
+            Just a -> M.insertWith (+) a outputValue m
     credit m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a  -> M.insertWith (+) a outValue m
+            Just a -> M.insertWith (+) a outValue m
     coinbase m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a  -> M.insertWith (+) a outValue m
+            Just a -> M.insertWith (+) a outValue m
 
 addrBatchOps ::
        MonadBlock m
@@ -551,7 +547,7 @@ addrBatchOps ::
     -> [(OutputKey, (OutputValue, SpentValue))]
     -> Tx
     -> Word32
-    -> m [LevelDB.BatchOp]
+    -> m [RocksDB.BatchOp]
 addrBatchOps block spent tx pos = do
     ins <-
         fmap concat . forM (txIn tx) $ \ti@TxIn {..} ->
@@ -663,7 +659,7 @@ txBatchOp ::
     => BlockRef
     -> [(OutputKey, (OutputValue, SpentValue))]
     -> Tx
-    -> m LevelDB.BatchOp
+    -> m RocksDB.BatchOp
 txBatchOp block spent tx =
     return $ insertOp (TxKey (txHash tx)) (TxValue block tx vs)
   where
@@ -716,7 +712,7 @@ spentBatchOps ::
     => BlockRef
     -> Tx
     -> Word32 -- ^ position in block
-    -> m [LevelDB.BatchOp]
+    -> m [RocksDB.BatchOp]
 spentBatchOps block tx pos = return . catMaybes $ zipWith f (txIn tx) [0 ..]
   where
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -793,7 +789,7 @@ processBlockMessage (BlockReceived _p b) = do
     liftIO . atomically $ do
         ps <- readTVar pbox
         when (hash `elem` ps) $ do
-            modifyTVar dbox (b :)
+            modifyTVar dbox (nub . (b :))
             modifyTVar pbox (filter (/= hash))
     mbox <- asks mySelf
     best <- getBestBlockHash
