@@ -203,25 +203,31 @@ pubSignInfo tsd@(TxSignData tx _ inPaths outPaths) pubKey
 
 signWalletTx :: TxSignData -> XPrvKey -> Either String (SigningInfo, Tx)
 signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
-    sigDat   <- mapM g myCoins
+    sigDat <- mapM g myCoins
     signedTx <- signTx tx (map f sigDat) prvKeys
     let byteSize = fromIntegral $ BS.length $ S.encode signedTx
-        vDat     = rights $ map g coins
+        vDat = rights $ map g coins
         isSigned = noEmptyInputs signedTx && verifyStdTx signedTx vDat
     dat <- pubSignInfo tsd pubKey
     return
-        ( dat { signingInfoFeeByte  = signingInfoFee dat `div` byteSize
-              , signingInfoTxHash   = Just $ txHash signedTx
-              , signingInfoIsSigned = isSigned
-              }
-        , signedTx
-        )
+        ( dat
+          { signingInfoFeeByte = signingInfoFee dat `div` byteSize
+          , signingInfoTxHash = Just $ txHash signedTx
+          , signingInfoIsSigned = isSigned
+          }
+        , signedTx)
   where
-    pubKey  = deriveXPubKey signKey
+    pubKey = deriveXPubKey signKey
     (coins, myCoins) = parseTxCoins tsd pubKey
     prvKeys = map (\p -> toPrvKeyG $ xPrvKey $ derivePath p signKey) inPaths
-    f (so, op) = SigInput so op (SigAll False) Nothing
-    g (op, to) = (,) <$> decodeTxOutSO to <*> return op
+    f (so, val, op) =
+        SigInput
+            so
+            val
+            op
+            (SigHash SigAll False $ isJust sigHashForkValue)
+            Nothing
+    g (op, to) = (,,) <$> decodeTxOutSO to <*> return (outValue to) <*> return op
 
 noEmptyInputs :: Tx -> Bool
 noEmptyInputs = all (not . BS.null) . map scriptInput . txIn

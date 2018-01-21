@@ -397,16 +397,16 @@ buildSpec = describe "Transaction builder" $
     it "can build a transaction" $ do
         let coins =
                 [ WalletCoin (OutPoint dummyTid1 0)
-                             (PayPKHash $ head extAddrs)
+                             (PayPKHash $ getAddrHash $ head extAddrs)
                              100000000
                 , WalletCoin (OutPoint dummyTid1 1)
-                             (PayPKHash $ extAddrs !! 1)
+                             (PayPKHash $ getAddrHash $ extAddrs !! 1)
                              200000000
                 , WalletCoin (OutPoint dummyTid1 2)
-                             (PayPKHash $ extAddrs !! 1)
+                             (PayPKHash $ getAddrHash $ extAddrs !! 1)
                              300000000
                 , WalletCoin (OutPoint dummyTid1 3)
-                             (PayPKHash $ extAddrs !! 2)
+                             (PayPKHash $ getAddrHash $ extAddrs !! 2)
                              400000000
                 ]
             change = ( head intAddrs, intDeriv :/ 0, 0 )
@@ -506,11 +506,11 @@ othAddrs =
 
 testTx :: [(TxHash, Word32)] -> [(Address, Word64)] -> Tx
 testTx xs ys =
-    createTx 1 txi txo 0
+    Tx 1 txi txo 0
   where
     txi = map (\(h,p) -> TxIn (OutPoint h p) (BS.pack [1]) maxBound) xs
     f   = encodeOutputBS . PayPKHash
-    txo = map (\(a,v) -> TxOut v $ f a ) ys
+    txo = map (\(a,v) -> TxOut v $ f (getAddrHash a) ) ys
 
 dummyTid1 :: TxHash
 dummyTid1 = "0000000000000000000000000000000000000000000000000000000000000001"
