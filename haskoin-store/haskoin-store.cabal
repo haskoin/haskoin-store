@@ -72,7 +72,7 @@ executable haskoin-store
                        , text >= 1.2 && < 1.3
     main-is:             Main.hs
     default-language:    Haskell2010
-    ghc-options:         -O3 -threaded -rtsopts -with-rtsopts=-N
+    ghc-options:         -threaded -rtsopts -with-rtsopts=-N
 
 test-suite haskoin-store-test
     type:                exitcode-stdio-1.0
@@ -99,5 +99,5 @@ test-suite haskoin-store-test
                        , string-conversions >= 0.4 && < 0.5
                        , temporary >= 1.2 && < 1.3
                        , transformers-base >= 0.4 && < 0.5
-    ghc-options:         -O3 -threaded -rtsopts -with-rtsopts=-N
     default-language:    Haskell2010
+    ghc-options:         -threaded -rtsopts -with-rtsopts=-N

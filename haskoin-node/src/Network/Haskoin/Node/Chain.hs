@@ -104,7 +104,8 @@ chain ::
     -> m ()
 chain cfg =
     runResourceT $ do
-        let opts = def {LevelDB.createIfMissing = True}
+        let opts =
+                def {LevelDB.createIfMissing = True, LevelDB.maxOpenFiles = 64}
         hdb <- LevelDB.open (chainConfDbFile cfg) opts
         st <-
             liftIO $
@@ -116,9 +117,14 @@ chain cfg =
   where
     run =
         forever $ do
+            stats
             $(logDebug) $ logMe <> "Awaiting message"
             msg <- receive $ chainConfChain cfg
             processChainMessage msg
+    stats = do
+        nps <-
+            fmap (length . newPeers) $ liftIO . readTVarIO =<< asks chainState
+        $(logDebug) $ logMe <> "Pending peers: " <> logShow nps
 
 processChainMessage :: MonadChain m => ChainMessage -> m ()
 processChainMessage (ChainNewHeaders p hcs) = do

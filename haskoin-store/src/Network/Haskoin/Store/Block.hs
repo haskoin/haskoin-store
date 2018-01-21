@@ -63,7 +63,13 @@ blockStore ::
     -> m ()
 blockStore BlockConfig {..} =
     runResourceT $ do
-        let opts = def {LevelDB.createIfMissing = True}
+        let opts =
+                def
+                { LevelDB.createIfMissing = True
+                , LevelDB.blockSize = 4 * 2 ^ 20
+                , LevelDB.cacheSize = 2 ^ 30
+                , LevelDB.writeBufferSize = 512 * 2 ^ 20
+                }
         db <- LevelDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
         pbox <- liftIO $ newTVarIO []
@@ -72,10 +78,7 @@ blockStore BlockConfig {..} =
             liftIO $
             newTVarIO
                 UnspentCache
-                { unspentCache = M.empty
-                , unspentCacheBlocks = M.empty
-                , unspentCacheCount = 0
-                }
+                {unspentCache = M.empty, unspentCacheBlocks = M.empty}
         peerbox <- liftIO $ newTVarIO Nothing
         runReaderT
             (syncBlocks >> run)
@@ -94,11 +97,25 @@ blockStore BlockConfig {..} =
             , myBlockNo = blockConfBlockNo
             }
   where
+    stats = do
+        cache <- liftIO . readTVarIO =<< asks myUnspentCache
+        pending <- liftIO . readTVarIO =<< asks myPending
+        downloaded <- liftIO . readTVarIO =<< asks myDownloaded
+        $(logDebug) $
+            logMe <> "Cache blocks count: " <>
+            cs (show (M.size (unspentCacheBlocks cache)))
+        $(logDebug) $
+            logMe <> "Cache entry count: " <>
+            cs (show (M.size (unspentCache cache)))
+        $(logDebug) $
+            logMe <> "Pending block count: " <> cs (show (length pending))
+        $(logDebug) $
+            logMe <> "Download count: " <> cs (show (length downloaded))
     run =
         forever $ do
+            stats
             $(logDebug) $ logMe <> "Awaiting message"
-            msg <- receive blockConfMailbox
-            processBlockMessage msg
+            processBlockMessage =<< receive blockConfMailbox
 
 spendAddr ::
        AddrUnspentKey
@@ -264,13 +281,15 @@ syncBlocks = do
     mgr <- asks myManager
     peerbox <- asks myPeer
     pbox <- asks myPending
+    dbox <- asks myPending
     ch <- asks myChain
     chainBest <- chainGetBest ch
     let bestHash = headerHash (nodeHeader chainBest)
     myBestHash <- getBestBlockHash
     void . runMaybeT $ do
         guard (myBestHash /= bestHash)
-        liftIO (readTVarIO pbox) >>= guard . null
+        guard . null =<< liftIO (readTVarIO pbox)
+        guard . null =<< liftIO (readTVarIO dbox)
         myBest <- MaybeT (chainGetBlock myBestHash ch)
         splitBlock <- chainGetSplitBlock chainBest myBest ch
         let splitHash = headerHash (nodeHeader splitBlock)
@@ -340,6 +359,10 @@ importBlock block@Block {..} = do
                 error "BUG: Could not obtain block from chain"
     blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) True
     db <- asks myBlockDB
+    $(logDebug) $
+        logMe <> "Writing " <> logShow (length blockOps) <>
+        " entries for block " <>
+        logShow (nodeHeight bn)
     LevelDB.write db def blockOps
     $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
     l <- asks myListener
@@ -399,13 +422,13 @@ getOutput key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
     fromMap = MaybeT (return (M.lookup key os))
     fromDB = do
         db <- asks myBlockDB
-        $(logDebug) $
+        asks myCacheNo >>= \n ->
+            when (n /= 0) . $(logDebug) $
             logMe <> "Cache miss for output " <> cs (show hash) <> "/" <>
             cs (show index)
         MaybeT $ key `retrieveValue` db
     fromCache = do
-        n <- asks myCacheNo
-        guard (n /= 0)
+        guard . (/= 0) =<< asks myCacheNo
         ubox <- asks myUnspentCache
         cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
         m <- MaybeT . return $ M.lookup key unspentCache
@@ -413,31 +436,27 @@ getOutput key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
             logMe <> "Cache hit for output " <> cs (show hash) <> " " <>
             cs (show index)
         liftIO . atomically $
-            writeTVar
-                ubox
-                cache
-                { unspentCache = M.delete key unspentCache
-                , unspentCacheCount = unspentCacheCount - 1
-                }
+            writeTVar ubox cache {unspentCache = M.delete key unspentCache}
         return m
 
 
 unspentCachePrune :: MonadBlock m => m ()
-unspentCachePrune = void . runMaybeT $ do
-    n <- asks myCacheNo
-    guard (n /= 0)
-    ubox <- asks myUnspentCache
-    cache <- liftIO (readTVarIO ubox)
-    let new = clear (fromIntegral n) cache
-        del = unspentCacheCount cache - unspentCacheCount new
-    liftIO . atomically $ writeTVar ubox new
-    $(logDebug) $
-        logMe <> "Deleted " <> cs (show del) <> " of " <>
-        cs (show (unspentCacheCount cache)) <>
-        " entries from UTXO cache"
+unspentCachePrune =
+    void . runMaybeT $ do
+        n <- asks myCacheNo
+        guard (n /= 0)
+        ubox <- asks myUnspentCache
+        cache <- liftIO (readTVarIO ubox)
+        let new = clear (fromIntegral n) cache
+            del = M.size (unspentCache cache) - M.size (unspentCache new)
+        liftIO . atomically $ writeTVar ubox new
+        $(logDebug) $
+            logMe <> "Deleted " <> cs (show del) <> " of " <>
+            cs (show (M.size (unspentCache cache))) <>
+            " entries from UTXO cache"
   where
     clear n c@UnspentCache {..}
-        | unspentCacheCount < n = c
+        | M.size unspentCache < n = c
         | otherwise =
             let (del, keep) = M.splitAt 1 unspentCacheBlocks
                 ks =
@@ -446,15 +465,11 @@ unspentCachePrune = void . runMaybeT $ do
                     , k <- keys
                     , isJust (M.lookup k unspentCache)
                     ]
-                count = unspentCacheCount - length ks
                 cache = foldl' (flip M.delete) unspentCache ks
             in clear
                    n
                    UnspentCache
-                   { unspentCache = cache
-                   , unspentCacheBlocks = keep
-                   , unspentCacheCount = count
-                   }
+                   {unspentCache = cache, unspentCacheBlocks = keep}
 
 spentOutputs ::
        MonadBlock m
@@ -666,21 +681,18 @@ txBatchOp block spent tx =
 
 addToCache :: MonadBlock m => BlockRef -> [(OutputKey, OutputValue)] -> m ()
 addToCache BlockRef {..} xs = void . runMaybeT $ do
-    n <- asks myCacheNo
-    guard (n /= 0)
+    guard . (/= 0) =<< asks myCacheNo
     ubox <- asks myUnspentCache
     UnspentCache {..} <- liftIO (readTVarIO ubox)
     let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache xs
         keys = map fst xs
         blocks = M.insertWith (++) blockRefHeight keys unspentCacheBlocks
-        count = unspentCacheCount + length xs
     liftIO . atomically $
         writeTVar
             ubox
             UnspentCache
             { unspentCache = cache
             , unspentCacheBlocks = blocks
-            , unspentCacheCount = count
             }
 
 outputBatchOps :: MonadBlock m => BlockRef -> Tx -> m [(OutputKey, OutputValue)]

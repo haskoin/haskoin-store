@@ -108,7 +108,6 @@ type BlockStore = Inbox BlockMessage
 data UnspentCache = UnspentCache
     { unspentCache       :: !(Map OutputKey OutputValue)
     , unspentCacheBlocks :: !(Map BlockHeight [OutputKey])
-    , unspentCacheCount  :: !Int
     }
 
 data BlockRead = BlockRead

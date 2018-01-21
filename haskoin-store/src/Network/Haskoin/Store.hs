@@ -128,8 +128,7 @@ store StoreConfig {..} = do
         forever $ do
             $(logDebug) $ logMe <> "Awaiting message"
             sm <- asks myMailbox
-            msg <- receive sm
-            storeDispatch msg
+            storeDispatch =<< receive sm
 
 storeDispatch :: MonadStore m => NodeEvent -> m ()
 

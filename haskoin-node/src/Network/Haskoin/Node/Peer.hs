@@ -134,11 +134,17 @@ peerLoop =
     forever $ do
         me <- asks mySelf
         lp <- logMe
+        stats
         $(logDebug) $ lp <> "Awaiting message"
         m <- liftIO $ timeout (2 * 60 * 1000 * 1000) (receive me)
         case m of
-            Nothing  -> exchangePing
+            Nothing -> exchangePing
             Just msg -> processMessage msg
+  where
+    stats = do
+        lp <- logMe
+        pend <- fmap length $ liftIO . readTVarIO =<< asks myPending
+        $(logDebug) $ lp <> "Pending count: " <> logShow pend
 
 exchangePing :: MonadPeer m => Source m Message
 exchangePing = do
