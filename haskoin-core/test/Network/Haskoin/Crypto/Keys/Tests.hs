@@ -6,8 +6,6 @@ import           Data.Serialize                       (encode, runGet, runPut)
 import           Data.String                          (fromString)
 import           Data.String.Conversions              (cs)
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Internals            (PrvKeyI (..),
-                                                       PubKeyI (..))
 import           Network.Haskoin.Test
 import           Network.Haskoin.Util
 import           Test.Framework

@@ -3,8 +3,7 @@ module Network.Haskoin.Crypto.Hash.Units (tests) where
 
 import           Data.ByteString                (ByteString)
 import           Data.Maybe                     (fromJust)
-import           Network.Haskoin.Internals      (hmacDRBGGen, hmacDRBGNew,
-                                                 hmacDRBGRsd)
+import           Network.Haskoin.Crypto
 import           Network.Haskoin.Util
 import           Test.Framework                 (Test, testGroup)
 import           Test.Framework.Providers.HUnit (testCase)

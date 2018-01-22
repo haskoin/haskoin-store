@@ -9,7 +9,6 @@ import           Data.List                      (isPrefixOf)
 import           Data.Maybe                     (fromJust)
 import           Data.String.Conversions        (cs)
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Internals      (fromMnemonic)
 import           Network.Haskoin.Util
 import           Test.Framework                 (Test, testGroup)
 import           Test.Framework.Providers.HUnit (testCase)

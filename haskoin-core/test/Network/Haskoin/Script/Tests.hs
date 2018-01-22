@@ -21,12 +21,6 @@ import           Data.List.Split                      (splitOn)
 import           Data.Maybe                           (catMaybes, isNothing)
 import           Data.Serialize
 import           Data.Word
-import           Network.Haskoin.Internals            (Flag, cltvDecodeInt,
-                                                       decodeBool,
-                                                       decodeFullInt, decodeInt,
-                                                       dumpStack, encodeBool,
-                                                       encodeInt, execScript,
-                                                       runStack)
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
 import           Numeric                              (readHex)

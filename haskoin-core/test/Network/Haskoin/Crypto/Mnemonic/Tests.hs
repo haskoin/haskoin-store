@@ -8,7 +8,6 @@ import           Data.Either                          (fromRight)
 import           Data.Serialize                       (Serialize, encode)
 import           Data.Word                            (Word32, Word64)
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Internals            (fromMnemonic, getBits)
 import           Network.Haskoin.Test
 import           Test.Framework
 import           Test.Framework.Providers.QuickCheck2

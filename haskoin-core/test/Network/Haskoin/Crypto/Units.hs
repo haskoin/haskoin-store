@@ -9,8 +9,6 @@ import qualified Data.ByteString.Char8          as C (pack)
 import           Data.Maybe                     (fromJust, isJust, isNothing)
 import           Data.Serialize                 (encode)
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Internals      (PrvKeyI (..), PubKeyI (..),
-                                                 Signature (..))
 import           Network.Haskoin.Util
 import           Test.Framework                 (Test, testGroup)
 import           Test.Framework.Providers.HUnit (testCase)

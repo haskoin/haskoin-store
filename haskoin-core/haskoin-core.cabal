@@ -43,7 +43,6 @@ library
                          Network.Haskoin.Block
                          Network.Haskoin.Constants
                          Network.Haskoin.Test
-                         Network.Haskoin.Internals
     other-modules:       Network.Haskoin.Crypto.Hash
                          Network.Haskoin.Crypto.Base58
                          Network.Haskoin.Crypto.Keys
