@@ -329,19 +329,21 @@ importBlocks :: MonadBlock m => m ()
 importBlocks = do
     dbox <- asks myDownloaded
     best <- getBestBlockHash
-    m <- liftIO . atomically $ do
-        ds <- readTVar dbox
-        case find ((== best) . prevBlock . blockHeader) ds of
-            Nothing -> return Nothing
-            Just b -> do
-                modifyTVar dbox (filter (/= b))
-                return (Just b)
+    m <-
+        liftIO . atomically $ do
+            ds <- readTVar dbox
+            let (xs, ys) = partition ((== best) . prevBlock . blockHeader) ds
+            case xs of
+                [] -> return Nothing
+                b:_ -> do
+                    writeTVar dbox ys
+                    return (Just b)
     case m of
         Just block -> do
             importBlock block
             mbox <- asks mySelf
             BlockProcess `send` mbox
-        Nothing    -> syncBlocks
+        Nothing -> syncBlocks
 
 importBlock :: MonadBlock m => Block -> m ()
 importBlock block@Block {..} = do
@@ -748,10 +750,6 @@ processBlockMessage (BlockGetBest reply) = do
   where
     e = error "Could not get best block from database"
 
-processBlockMessage (BlockPeerAvailable _) = do
-    $(logDebug) $ logMe <> "A peer became available, syncing blocks"
-    syncBlocks
-
 processBlockMessage (BlockPeerConnect _) = do
     $(logDebug) $ logMe <> "A peer just connected, syncing blocks"
     syncBlocks
@@ -789,7 +787,7 @@ processBlockMessage (BlockReceived _p b) = do
     liftIO . atomically $ do
         ps <- readTVar pbox
         when (hash `elem` ps) $ do
-            modifyTVar dbox (nub . (b :))
+            modifyTVar dbox (b :)
             modifyTVar pbox (filter (/= hash))
     mbox <- asks mySelf
     best <- getBestBlockHash

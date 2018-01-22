@@ -85,7 +85,6 @@ data BlockMessage
     | BlockGetBest !(Reply BlockValue)
     | BlockGetHeight !BlockHeight
                      !(Reply (Maybe BlockValue))
-    | BlockPeerAvailable !Peer
     | BlockPeerConnect !Peer
     | BlockPeerDisconnect !Peer
     | BlockReceived !Peer

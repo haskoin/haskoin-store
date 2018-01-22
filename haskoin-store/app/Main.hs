@@ -35,6 +35,16 @@ data Config = Config
     , configNetwork :: !(Maybe String)
     } deriving (Show, Eq)
 
+instance Monoid Config where
+    mempty = def
+    one `mappend` two =
+        Config
+            (configDir two <|> configDir one)
+            (configCache two <|> configCache one)
+            (configBlocks two <|> configBlocks one)
+            (configPort two <|> configPort one)
+            (configNetwork two <|> configNetwork one)
+
 instance Parsable BlockHash where
     parseParam =
         maybe (Left "Could not decode block hash") Right . hexToBlockHash . cs
@@ -128,14 +138,8 @@ myDirectory = getAppUserDataDirectory "haskoin-store"
 main :: IO ()
 main =
     execParser opts >>= \conf' -> do
-        let conf =
-                Config
-                    (configDir conf' <|> configDir def)
-                    (configCache conf' <|> configCache def)
-                    (configBlocks conf' <|> configBlocks def)
-                    (configPort conf' <|> configPort def)
-                    (configNetwork conf' <|> configNetwork def)
-        let port = fromJust $ configPort conf
+        let conf = def <> conf'
+            port = fromJust $ configPort conf
             blocks = fromJust $ configBlocks conf
             cache = fromJust $ configCache conf
             dir = fromJust $ configDir conf

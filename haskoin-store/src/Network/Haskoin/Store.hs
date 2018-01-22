@@ -132,11 +132,6 @@ store StoreConfig {..} = do
 
 storeDispatch :: MonadStore m => NodeEvent -> m ()
 
-storeDispatch (ManagerEvent (ManagerAvailable p)) = do
-    $(logDebug) $ logMe <> "Peer became available"
-    b <- asks myBlockStore
-    BlockPeerAvailable p `send` b
-
 storeDispatch (ManagerEvent (ManagerConnect p)) = do
     $(logDebug) $ logMe <> "New peer connected"
     b <- asks myBlockStore

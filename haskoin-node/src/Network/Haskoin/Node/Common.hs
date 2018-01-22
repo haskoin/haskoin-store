@@ -93,7 +93,6 @@ data NodeEvent
 
 data ManagerEvent
     = ManagerConnect !Peer
-    | ManagerAvailable !Peer
     | ManagerDisconnect !Peer
 
 data ManagerMessage
