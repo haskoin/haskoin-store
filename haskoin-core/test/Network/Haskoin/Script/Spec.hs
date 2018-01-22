@@ -8,6 +8,7 @@ import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BL
 import           Data.Either
 import           Data.List
+import           Data.List
 import           Data.Maybe
 import           Data.Monoid                 ((<>))
 import           Data.Serialize
