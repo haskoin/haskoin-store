@@ -98,6 +98,17 @@ arbitraryAddrOnlyTxFull = do
     t    <- arbitrary
     return $ Tx v inps outs [] t
 
+-- | Like `arbitraryAddrOnlyTx` without empty signatures in the inputs
+arbitraryAddrOnlyTxFull :: Gen Tx
+arbitraryAddrOnlyTxFull = do
+    v    <- arbitrary
+    ni   <- choose (0,5)
+    no   <- choose (0,5)
+    inps <- vectorOf ni arbitraryAddrOnlyTxInFull
+    outs <- vectorOf no arbitraryAddrOnlyTxOut
+    t    <- arbitrary
+    return $ Tx v inps outs t
+
 -- | Arbitrary TxIn that can only be of type SpendPKHash or
 -- SpendScriptHash (multisig). Only compressed public keys are used.
 arbitraryAddrOnlyTxIn :: Gen TxIn
