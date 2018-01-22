@@ -9,22 +9,18 @@ module Network.Haskoin.Script.Tests
 
 import           Control.Monad
 import qualified Data.Aeson                           as A
-import           Data.Bits
 import           Data.ByteString                      (ByteString)
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Char8                as C
 import qualified Data.ByteString.Lazy.Char8           as CL
 import           Data.Char                            (ord)
-import           Data.Either                          (fromRight, isLeft,
-                                                       isRight)
+import           Data.Either                          (fromRight)
 import           Data.Int                             (Int64)
 import           Data.List                            (isPrefixOf)
 import           Data.List.Split                      (splitOn)
 import           Data.Maybe                           (catMaybes, isNothing)
 import           Data.Serialize
-import           Data.Serialize.Put                   (runPut)
 import           Data.Word
-import           Network.Haskoin.Crypto
 import           Network.Haskoin.Internals            (Flag, cltvDecodeInt,
                                                        decodeBool,
                                                        decodeFullInt, decodeInt,
@@ -32,37 +28,18 @@ import           Network.Haskoin.Internals            (Flag, cltvDecodeInt,
                                                        encodeInt, execScript,
                                                        runStack)
 import           Network.Haskoin.Script
-import           Network.Haskoin.Test
 import           Network.Haskoin.Transaction
-import           Network.Haskoin.Util
 import           Numeric                              (readHex)
 import           Test.Framework
 import           Test.Framework.Providers.HUnit
 import           Test.Framework.Providers.QuickCheck2
 import           Test.Framework.Runners.Console       (defaultMainWithArgs)
 import qualified Test.HUnit                           as HUnit
-import           Test.QuickCheck                      (Property, forAll, (==>))
 import           Text.Read                            (readMaybe)
 
 tests :: [Test]
 tests =
     [ testGroup
-          "Script SigHash"
-          [ testProperty "canonical signatures" $
-            forAll arbitraryTxSignature $ testCanonicalSig . lst3
-          , testProperty "decode SigHash from Word8" binSigHashByte
-          , testProperty "decode . encode SigHash" $
-            forAll arbitrarySigHash binSigHash
-          , testProperty "encodeSigHashForkId is 4 bytes long" $
-            forAll arbitrarySigHash testEncodeSigHashForkId
-          , testProperty "decode . encode TxSignature" $
-            forAll arbitraryTxSignature $ binTxSig . lst3
-          , testProperty "decodeCanonical . encode TxSignature" $
-            forAll arbitraryTxSignature $ binTxSigCanonical . lst3
-          , testProperty "Testing txSigHash with SigSingle" $
-            forAll arbitraryTx $ forAll arbitraryScript . testSigHashOne
-          ]
-    , testGroup
           "Integer Types"
           [ testProperty "decodeInt . encodeInt Int" testEncodeInt
           , testProperty "decodeFullInt . encodeInt Int" testEncodeInt64
@@ -78,64 +55,6 @@ tests =
           "test/data/script_invalid.json"
           False
     ]
-
-{- Script SigHash -}
-
-testCanonicalSig :: TxSignature -> Bool
-testCanonicalSig (TxSignature sig sh)
-    | isSigUnknown sh = isLeft $ decodeCanonicalSig bs
-    | otherwise =
-        isRight (decodeCanonicalSig bs) && isCanonicalHalfOrder (txSignature ts)
-  where
-    -- Set the forkId to false as it is not canonical on Bitcoin prodnet
-    ts = TxSignature sig sh{ forkIdFlag = False }
-    bs = encodeSig ts
-
-binSigHashByte :: Word8 -> Bool
-binSigHashByte w
-    | t == 0x01 = res == SigHash SigAll acp fid
-    | t == 0x02 = res == SigHash SigNone acp fid
-    | t == 0x03 = res == SigHash SigSingle acp fid
-    | otherwise = res == SigHash (SigUnknown t) acp fid
-  where
-    t = w .&. 0x1f
-    acp = w `testBit` 7
-    fid = w `testBit` 6
-    res = either error id . decode $ BS.singleton w
-
-binSigHash :: SigHash -> Bool
-binSigHash sh = Right sh == decode (encode sh)
-
-testEncodeSigHashForkId :: SigHash -> Bool
-testEncodeSigHashForkId sh =
-    BS.length bs == 4 &&
-    BS.head bs == BS.head (encode sh) &&
-    BS.tail bs == BS.pack [0,0,0]
-  where
-    bs = runPut $ putWord32le $ sigHashToWord32 sh
-
-binTxSig :: TxSignature -> Bool
-binTxSig ts = decodeSig (encodeSig ts) == Right ts
-
-binTxSigCanonical :: TxSignature -> Bool
-binTxSigCanonical (TxSignature sig sh)
-    | isSigUnknown sh = isLeft $ decodeCanonicalSig $ encodeSig ts
-    | otherwise =
-        fromRight
-            (error "Colud not decode sig")
-            (decodeCanonicalSig $ encodeSig ts) == ts
-  where
-    -- Force th forkId to be False as it is not canonical on Bitcoin prodnet
-    ts = TxSignature sig sh{ forkIdFlag = False }
-
-testSigHashOne :: Tx -> Script -> Word64 -> Bool -> Property
-testSigHashOne tx s val acp = not (null $ txIn tx) ==>
-    if length (txIn tx) > length (txOut tx)
-        then res == one
-        else res /= one
-  where
-    res = txSigHash tx s val (length (txIn tx) - 1) (SigHash SigSingle acp False)
-    one = "0100000000000000000000000000000000000000000000000000000000000000"
 
 {- Script Evaluation Primitives -}
 

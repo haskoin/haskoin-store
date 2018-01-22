@@ -410,7 +410,7 @@ checkMultiSig :: SigCheck -- ^ Signature checking function
               -> Bool
 checkMultiSig f encPubKeys encSigs hOps =
   let pubKeys = mapMaybe (eitherToMaybe . decode . opToSv) encPubKeys
-      sigs = rights $ map ( decodeSig . opToSv ) encSigs
+      sigs = rights $ map ( decodeTxDerSig . opToSv ) encSigs
       cleanHashOps = findAndDelete encSigs hOps
   in (length sigs == length encSigs) && -- check for bad signatures
      orderedSatisfy (f cleanHashOps) sigs pubKeys

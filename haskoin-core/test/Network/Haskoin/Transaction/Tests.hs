@@ -28,7 +28,7 @@ tests =
           [ testProperty "building address tx" $
             forAll arbitraryAddress $ forAll arbitrarySatoshi . testBuildAddrTx
           , testProperty "testing guessTxSize function" $
-            forAll arbitraryAddrOnlyTx testGuessSize
+            forAll arbitraryAddrOnlyTxFull testGuessSize
           , testProperty "testing chooseCoins function" $
             forAll (listOf arbitrarySatoshi) testChooseCoins
           , testProperty "testing chooseMSCoins function" $

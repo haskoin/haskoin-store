@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Script.Standard
 ( ScriptOutput(..)
 , ScriptInput(..)
@@ -41,7 +42,6 @@ import           Data.Aeson                     (FromJSON, ToJSON,
                                                  toJSON, withText)
 import           Data.ByteString                (ByteString)
 import qualified Data.ByteString                as BS
-import           Data.Foldable                  (foldrM)
 import           Data.Function                  (on)
 import           Data.List                      (sortBy)
 import           Data.Serialize                 (decode, encode)
@@ -294,32 +294,31 @@ instance NFData ScriptInput where
 -- | Computes a 'Script' from a 'SimpleInput'. The 'Script' is a list of
 -- 'ScriptOp' that can be used to build a 'Tx'.
 encodeSimpleInput :: SimpleInput -> Script
-encodeSimpleInput s = Script $ case s of
-    SpendPK ts       -> [ opPushData $ encodeSig ts ]
-    SpendPKHash ts p -> [ opPushData $ encodeSig ts
-                        , opPushData $ encode p
-                        ]
-    SpendMulSig ts   -> OP_0 : map (opPushData . encodeSig) ts
+encodeSimpleInput s =
+    Script $
+    case s of
+        SpendPK ts -> [f ts]
+        SpendPKHash ts p -> [f ts, opPushData $ encode p]
+        SpendMulSig xs -> OP_0 : map f xs
+  where
+    f TxSignatureEmpty = OP_0
+    f ts = opPushData $ encodeTxSig ts
 
 decodeSimpleInput :: Script -> Either String SimpleInput
 decodeSimpleInput (Script ops) =
     maybeToEither errMsg $ matchPK ops <|> matchPKHash ops <|> matchMulSig ops
   where
-    matchPK [OP_PUSHDATA bs _] = SpendPK <$> eitherToMaybe (decodeSig bs)
-    matchPK _                  = Nothing
-    matchPKHash [OP_PUSHDATA sig _, OP_PUSHDATA pub _] =
-        liftM2
-            SpendPKHash
-            (eitherToMaybe $ decodeSig sig)
-            (eitherToMaybe $ decode pub)
+    matchPK [op] = SpendPK <$> f op
+    matchPK _ = Nothing
+    matchPKHash [op, OP_PUSHDATA pub _] =
+        SpendPKHash <$> f op <*> eitherToMaybe (decode pub)
     matchPKHash _ = Nothing
-    matchMulSig (x:xs) = do
-        guard $ isPushOp x
-        SpendMulSig <$> foldrM f [] xs
+    matchMulSig (x:xs) = guard (isPushOp x) >> SpendMulSig <$> mapM f xs
     matchMulSig _ = Nothing
-    f (OP_PUSHDATA bs _) acc =
-        liftM2 (:) (eitherToMaybe $ decodeSig bs) (Just acc)
-    f _ _ = Nothing
+    f OP_0 = return TxSignatureEmpty
+    f (OP_PUSHDATA "" OPCODE) = f OP_0
+    f (OP_PUSHDATA bs _) = eitherToMaybe $ decodeTxDerSig bs
+    f _ = Nothing
     errMsg = "decodeInput: Could not decode script input"
 
 encodeInput :: ScriptInput -> Script

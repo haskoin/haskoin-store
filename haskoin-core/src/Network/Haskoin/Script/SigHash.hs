@@ -11,9 +11,9 @@ module Network.Haskoin.Script.SigHash
 , isSigUnknown
 , txSigHash
 , TxSignature(..)
-, encodeSig
-, decodeSig
-, decodeCanonicalSig
+, encodeTxSig
+, decodeTxDerSig
+, decodeTxStrictSig
 ) where
 
 import           Control.DeepSeq                   (NFData, rnf)
@@ -238,31 +238,36 @@ txSigHashForkId tx out v i sh
 -- | Data type representing a 'Signature' together with a 'SigHash'. The
 -- 'SigHash' is serialized as one byte at the end of a regular ECDSA
 -- 'Signature'. All signatures in transaction inputs are of type 'TxSignature'.
-data TxSignature = TxSignature
-    { txSignature        :: !Signature
-    , txSignatureSigHash :: !SigHash
-    } deriving (Eq, Show)
+data TxSignature
+    = TxSignature { txSignature        :: !Signature
+                  , txSignatureSigHash :: !SigHash
+                  }
+    | TxSignatureEmpty
+    deriving (Eq, Show)
 
 instance NFData TxSignature where
     rnf (TxSignature s h) = rnf s `seq` rnf h
+    rnf TxSignatureEmpty = ()
 
 -- | Serialize a 'TxSignature' to a ByteString.
-encodeSig :: TxSignature -> ByteString
-encodeSig (TxSignature sig sh) = runPut $ put sig >> put sh
+encodeTxSig :: TxSignature -> ByteString
+encodeTxSig TxSignatureEmpty = error "Can not encode an empty signature"
+encodeTxSig (TxSignature sig sh) = runPut $ put sig >> put sh
 
 -- | Decode a 'TxSignature' from a ByteString.
-decodeSig :: ByteString -> Either String TxSignature
-decodeSig bs = do
+decodeTxDerSig :: ByteString -> Either String TxSignature
+decodeTxDerSig bs = do
     let (h, l) = BS.splitAt (BS.length bs - 1) bs
     liftM2 TxSignature (decode h) (decode l)
 
-decodeCanonicalSig :: ByteString -> Either String TxSignature
-decodeCanonicalSig bs =
+decodeTxStrictSig :: ByteString -> Either String TxSignature
+decodeTxStrictSig bs =
     case decodeStrictSig $ BS.init bs of
-        Just sig ->
-            case decode $ BS.singleton $ BS.last bs of
-                Right (SigHash (SigUnknown _) _ _) ->
-                    Left "Non-canonical signature: unknown hashtype byte"
-                sh -> TxSignature sig <$> sh
+        Just sig -> do
+            sh <- decode $ BS.singleton $ BS.last bs
+            when (isSigUnknown sh) $
+                Left "Non-canonical signature: unknown hashtype byte"
+            when (isNothing sigHashForkValue && forkIdFlag sh) $
+                Left "Non-canonical signature: invalid network for forkId"
+            return $ TxSignature sig sh
         Nothing -> Left "Non-canonical signature: could not parse signature"
-
