@@ -98,7 +98,7 @@ import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto.Base58
 import           Network.Haskoin.Crypto.Hash
 import           Network.Haskoin.Crypto.Keys
-import           Network.Haskoin.Script.Parser
+import           Network.Haskoin.Script.Standard
 import           Network.Haskoin.Util
 
 {- See BIP32 for details: https://en.bitcoin.it/wiki/BIP_0032 -}

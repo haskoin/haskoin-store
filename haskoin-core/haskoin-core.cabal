@@ -54,7 +54,7 @@ library
                          Network.Haskoin.Network.Message
                          Network.Haskoin.Network.Bloom
                          Network.Haskoin.Script.Types
-                         Network.Haskoin.Script.Parser
+                         Network.Haskoin.Script.Standard
                          Network.Haskoin.Script.SigHash
                          Network.Haskoin.Script.Evaluator
                          Network.Haskoin.Transaction.Types

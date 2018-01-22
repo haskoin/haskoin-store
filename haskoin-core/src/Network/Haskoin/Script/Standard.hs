@@ -1,4 +1,4 @@
-module Network.Haskoin.Script.Parser
+module Network.Haskoin.Script.Standard
 ( ScriptOutput(..)
 , ScriptInput(..)
 , SimpleInput(..)

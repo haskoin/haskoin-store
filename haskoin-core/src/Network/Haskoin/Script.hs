@@ -77,6 +77,6 @@ module Network.Haskoin.Script
 ) where
 
 import Network.Haskoin.Script.Types
-import Network.Haskoin.Script.Parser
+import Network.Haskoin.Script.Standard
 import Network.Haskoin.Script.SigHash
 import Network.Haskoin.Script.Evaluator

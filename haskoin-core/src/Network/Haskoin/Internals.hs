@@ -19,7 +19,7 @@ import           Network.Haskoin.Network.Bloom       as X
 import           Network.Haskoin.Network.Message     as X
 import           Network.Haskoin.Network.Types       as X
 import           Network.Haskoin.Script.Evaluator    as X
-import           Network.Haskoin.Script.Parser       as X
+import           Network.Haskoin.Script.Standard     as X
 import           Network.Haskoin.Script.SigHash      as X
 import           Network.Haskoin.Script.Types        as X
 import           Network.Haskoin.Test.Block          as X

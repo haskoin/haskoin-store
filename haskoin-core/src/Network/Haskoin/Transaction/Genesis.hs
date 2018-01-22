@@ -2,7 +2,7 @@
 module Network.Haskoin.Transaction.Genesis where
 
 import           Data.String                       (fromString)
-import           Network.Haskoin.Script.Parser
+import           Network.Haskoin.Script.Standard
 import           Network.Haskoin.Transaction.Types
 import           Network.Haskoin.Util
 
