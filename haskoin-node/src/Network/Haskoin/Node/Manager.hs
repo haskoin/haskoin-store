@@ -380,7 +380,7 @@ processManagerMessage (ManagerSetPeerVersion p v) =
     announcePeer =
         void . runMaybeT $ do
             op <- MaybeT $ findPeer p
-            guard $ not $ onlinePeerConnected op
+            guard (not (onlinePeerConnected op))
             $(logDebug) $ logMe <> "Announcing peer"
             l <- mgrConfMgrListener <$> asks myConfig
             liftIO . atomically . l $ ManagerConnect p

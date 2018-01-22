@@ -65,6 +65,7 @@ blockStore BlockConfig {..} =
                 def
                 { RocksDB.createIfMissing = True
                 , RocksDB.compression = RocksDB.NoCompression
+                , RocksDB.writeBufferSize = 512 * 1024 * 1024
                 }
         db <- RocksDB.open blockConfDir opts
         $(logDebug) $ logMe <> "Database opened"
@@ -276,16 +277,17 @@ syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
     mgr <- asks myManager
     peerbox <- asks myPeer
-    pbox <- asks myPending
-    dbox <- asks myPending
     ch <- asks myChain
     chainBest <- chainGetBest ch
     let bestHash = headerHash (nodeHeader chainBest)
     myBestHash <- getBestBlockHash
     void . runMaybeT $ do
         guard (myBestHash /= bestHash)
-        guard . null =<< liftIO (readTVarIO pbox)
-        guard . null =<< liftIO (readTVarIO dbox)
+        guard =<< do
+            pbox <- asks myPending
+            dbox <- asks myDownloaded
+            liftIO . atomically $
+                (&&) <$> (null <$> readTVar pbox) <*> (null <$> readTVar dbox)
         myBest <- MaybeT (chainGetBlock myBestHash ch)
         splitBlock <- chainGetSplitBlock chainBest myBest ch
         let splitHash = headerHash (nodeHeader splitBlock)
