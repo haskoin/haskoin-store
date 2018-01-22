@@ -47,20 +47,6 @@ import           Text.Read                            (readMaybe)
 tests :: [Test]
 tests =
     [ testGroup
-          "Script Parser"
-          [ testProperty "decode . encode OP_1 .. OP_16" $
-            forAll arbitraryIntScriptOp $ \i ->
-                (intToScriptOp <$> scriptOpToInt i) == Right i
-          , testProperty "decode . encode ScriptOutput" $
-            forAll arbitraryScriptOutput $ \so ->
-                decodeOutput (encodeOutput so) == Right so
-          , testProperty "decode . encode ScriptInput" $
-            forAll arbitraryScriptInput $ \si ->
-                decodeInput (encodeInput si) == Right si
-          , testProperty "sorting MultiSig scripts" $
-            forAll arbitraryMSOutput testSortMulSig
-          ]
-    , testGroup
           "Script SigHash"
           [ testProperty "canonical signatures" $
             forAll arbitraryTxSignature $ testCanonicalSig . lst3
@@ -92,16 +78,6 @@ tests =
           "test/data/script_invalid.json"
           False
     ]
-
-{- Script Parser -}
-
-testSortMulSig :: ScriptOutput -> Bool
-testSortMulSig out =
-    snd $ foldl f (head pubs,True) $ tail pubs
-  where
-    pubs = getOutputMulSigKeys $ sortMulSig out
-    f (a,t) b | t && encode a <= encode b = (b,True)
-              | otherwise                 = (b,False)
 
 {- Script SigHash -}
 
