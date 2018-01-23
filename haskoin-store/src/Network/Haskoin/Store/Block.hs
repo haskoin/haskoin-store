@@ -52,7 +52,6 @@ import           Network.Haskoin.Transaction
 data BlockRead = BlockRead
     { myBlockDB      :: !DB
     , mySelf         :: !BlockStore
-    , myDir          :: !FilePath
     , myChain        :: !Chain
     , myManager      :: !Manager
     , myListener     :: !(Listen BlockEvent)
@@ -94,7 +93,6 @@ blockStore BlockConfig {..} = do
         BlockRead
         { mySelf = blockConfMailbox
         , myBlockDB = blockConfDB
-        , myDir = blockConfDir
         , myChain = blockConfChain
         , myManager = blockConfManager
         , myListener = blockConfListener
@@ -225,8 +223,8 @@ getBalance addr db s =
             bal <-
                 MaybeT
                     (fmap listToMaybe (valuesForKey (MultiBalance addr) db s'))
-            best <- fmap (fromMaybe e) (getBestBlockHash db s')
-            block <- fmap (fromMaybe e) (getBlock best db s')
+            best <- getBestBlockHash db s' >>= me
+            block <- getBlock best db s' >>= me
             let h = blockValueHeight block
                 bs = second (i h) bal
                 is = sum (map immatureValue (balanceImmature (snd bs)))
@@ -244,7 +242,8 @@ getBalance addr db s =
                       , blockRefMainChain = True
                       }
                 }
-    e = error "Colud not retrieve best block from database"
+    me Nothing = error "Could not retrieve best block from database"
+    me (Just x) = return x
     i h BalanceValue {..} =
         let f Immature {..} = blockRefHeight immatureBlock <= h - 99
             (ms, is) = partition f balanceImmature
@@ -285,29 +284,23 @@ revertBestBlock :: MonadBlock m => m ()
 revertBestBlock =
     void . runMaybeT $ do
         db <- asks myBlockDB
-        best <- fromMaybe e <$> getBestBlockHash db Nothing
+        best <-
+            getBestBlockHash db Nothing >>= me "Could not retrieve best block"
         guard (best /= headerHash genesisHeader)
         $(logDebug) $ logMe <> "Reverting block " <> logShow best
         ch <- asks myChain
-        bn <-
-            chainGetBlock best ch >>= \case
-                Just bn -> return bn
-                Nothing -> do
-                    $(logError) $
-                        logMe <> "Could not obtain best block from chain"
-                    error "BUG: Could not obtain best block from chain"
+        bn <- chainGetBlock best ch >>= me "Could not retrieve block from chain"
         BlockValue {..} <-
-            getBlock best db Nothing >>= \case
-                Just b -> return b
-                Nothing -> do
-                    $(logError) $ logMe <> "Could not retrieve best block"
-                    error "BUG: Could not retrieve best block"
+            getBlock best db Nothing >>= me "Could not retrieve best block"
         txs <- mapMaybe (fmap txValue) <$> getBlockTxs blockValueTxs db Nothing
         let block = Block blockValueHeader txs
         blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) False
         RocksDB.write db def blockOps
   where
-    e = error "Could not get best block from database"
+    me msg Nothing = do
+        $(logError) $ logMe <> cs msg
+        error msg
+    me _ (Just x) = return x
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
@@ -317,7 +310,8 @@ syncBlocks = do
     chainBest <- chainGetBest ch
     let bestHash = headerHash (nodeHeader chainBest)
     db <- asks myBlockDB
-    myBestHash <- fromMaybe e <$> getBestBlockHash db Nothing
+    myBestHash <-
+        getBestBlockHash db Nothing >>= me "Could not get best block hash"
     void . runMaybeT $ do
         guard (myBestHash /= bestHash)
         guard =<< do
@@ -348,13 +342,18 @@ syncBlocks = do
         liftIO . atomically $ writeTVar peerbox (Just p)
         downloadBlocks p (map (headerHash . nodeHeader) requestBlocks)
   where
-    e = error "Colud not get best block from database"
+    me msg Nothing = do
+        $(logError) $ logMe <> cs msg
+        error msg
+    me _ (Just x) = return x
     revertUntil myBest splitBlock
         | myBest == splitBlock = return ()
         | otherwise = do
             revertBestBlock
             db <- asks myBlockDB
-            newBestHash <- fromMaybe e <$> getBestBlockHash db Nothing
+            newBestHash <-
+                getBestBlockHash db Nothing >>=
+                me "Could not get best block hash"
             $(logDebug) $ logMe <> "Reverted to block " <> logShow newBestHash
             ch <- asks myChain
             newBest <- MaybeT (chainGetBlock newBestHash ch)
@@ -370,7 +369,7 @@ importBlocks :: MonadBlock m => m ()
 importBlocks = do
     dbox <- asks myDownloaded
     db <- asks myBlockDB
-    best <- fromMaybe e <$> getBestBlockHash db Nothing
+    best <- getBestBlockHash db Nothing >>= me "Could not get block hash"
     m <-
         liftIO . atomically $ do
             ds <- readTVar dbox
@@ -387,7 +386,10 @@ importBlocks = do
             BlockProcess `send` mbox
         Nothing -> syncBlocks
   where
-    e = error "Could not get best block from database"
+    me msg Nothing = do
+        $(logError) $ logMe <> cs msg
+        error msg
+    me _ (Just x) = return x
 
 importBlock :: MonadBlock m => Block -> m ()
 importBlock block@Block {..} = do
@@ -530,12 +532,15 @@ spentOutputs block os tx pos =
             then return Nothing
             else do
                 let key = OutputKey prevOutput
-                val <- fromMaybe e <$> getOutput key os
+                val <- getOutput key os >>= me "Could not get output"
                 let spent = SpentValue (txHash tx) i block pos
                 return $ Just (key, (val, spent))
   where
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
-    e = error "Colud not retrieve information for output being spent"
+    me msg Nothing = do
+        $(logError) $ logMe <> cs msg
+        error msg
+    me _ (Just x) = return x
 
 balanceBatchOps ::
        MonadBlock m => BlockRef -> [OutputValue] -> [Tx] -> m [RocksDB.BatchOp]
@@ -668,7 +673,6 @@ addrBatchOps block spent tx pos = do
                         }
                 in [insertOp sk sv]
     zero = "0000000000000000000000000000000000000000000000000000000000000000"
-    eo = error "Colud not find spent output"
     spend TxIn {..} =
         fmap (concat . maybeToList) . runMaybeT $ do
             let (ok, s, maddr, height') = getSpent prevOutput
@@ -699,7 +703,9 @@ addrBatchOps block spent tx pos = do
             return [deleteOp sk, insertOp uk uv]
     getSpent po =
         let ok = OutputKey po
-            (ov, s) = fromMaybe eo $ ok `lookup` spent
+            (ov, s) =
+                fromMaybe (error "Colud not find spent output") $
+                ok `lookup` spent
             maddr = scriptToAddressBS (outScript ov)
             height' = blockRefHeight (outBlock ov)
         in (ok, s, maddr, height')
@@ -900,6 +906,7 @@ getUnspent addr db s = do
         , unspentIndex = outPointIndex (outPoint addrUnspentOutPoint)
         , unspentValue = outputValue addrUnspentOutput
         , unspentBlock = outBlock addrUnspentOutput
+        , unspentPos = addrUnspentPos
         }
 
 logMe :: Text

@@ -28,8 +28,7 @@ import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
 
 data BlockConfig = BlockConfig
-    { blockConfDir      :: !FilePath
-    , blockConfMailbox  :: !BlockStore
+    { blockConfMailbox  :: !BlockStore
     , blockConfManager  :: !Manager
     , blockConfChain    :: !Chain
     , blockConfListener :: !(Listen BlockEvent)
@@ -207,6 +206,7 @@ data Unspent = Unspent
     , unspentIndex :: !Word32
     , unspentValue :: !Word64
     , unspentBlock :: !BlockRef
+    , unspentPos   :: !Word32
     }
 
 instance Record BlockKey BlockValue
@@ -578,6 +578,7 @@ unspentPairs Unspent {..} =
     , "vout" .= unspentIndex
     , "value" .= unspentValue
     , "block" .= unspentBlock
+    , "position" .= unspentPos
     ]
 
 instance ToJSON Unspent where

@@ -66,7 +66,6 @@ store ::
 store StoreConfig {..} = do
     $(logDebug) $ logMe <> "Launching store"
     let nodeDir = storeConfDir </> "node"
-        blockDir = storeConfDir </> "blocks"
     liftIO $ createDirectoryIfMissing False nodeDir
     ns <- Inbox <$> liftIO newTQueueIO
     mgr <- Inbox <$> liftIO newTQueueIO
@@ -92,8 +91,7 @@ store StoreConfig {..} = do
             , myListener = storeConfListener
             }
     let blockCfg = BlockConfig
-            { blockConfDir = blockDir
-            , blockConfMailbox = storeConfBlocks
+            { blockConfMailbox = storeConfBlocks
             , blockConfChain = storeConfChain
             , blockConfManager = mgr
             , blockConfListener = storeConfListener . BlockEvent
