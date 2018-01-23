@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 module Network.Haskoin.Transaction.Types
 ( Tx(..)
 , txHash
@@ -9,6 +10,7 @@ module Network.Haskoin.Transaction.Types
 , hexToTxHash
 , txHashToHex
 , nosigTxHash
+, nullOutPoint
 ) where
 
 import           Control.DeepSeq               (NFData, rnf)
@@ -199,3 +201,12 @@ instance Serialize OutPoint where
         (h,i) <- liftM2 (,) get getWord32le
         return $ OutPoint h i
     put (OutPoint h i) = put h >> putWord32le i
+
+-- | Outpoint used in coinbase transactions
+nullOutPoint :: OutPoint
+nullOutPoint =
+    OutPoint
+    { outPointHash =
+          "0000000000000000000000000000000000000000000000000000000000000000"
+    , outPointIndex = maxBound
+    }

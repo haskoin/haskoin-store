@@ -290,7 +290,7 @@ arbitraryPKHashCInput = do
     key <- snd <$> arbitraryPubKeyC
     return $ RegularInput $ SpendPKHash sig $ toPubKeyG key
 
--- | Like `arbitraryPKHashCInput` without empty signatures
+-- | Like 'arbitraryPKHashCInput' without empty signatures
 arbitraryPKHashCInputFull :: Gen ScriptInput
 arbitraryPKHashCInputFull = do
     sig <- lst3 <$> arbitraryTxSignature
@@ -320,7 +320,7 @@ arbitraryMulSigSHCInput = do
     sigs <- vectorOf m arbitraryTxSignatureEmpty
     return $ ScriptHashInput (SpendMulSig sigs) rdm
 
--- | Like `arbitraryMulSigSHCInput` with no empty signatures
+-- | Like 'arbitraryMulSigSHCInput' with no empty signatures
 arbitraryMulSigSHCInputFull :: Gen ScriptInput
 arbitraryMulSigSHCInputFull = do
     rdm@(PayMulSig _ m) <- arbitraryMSCOutput

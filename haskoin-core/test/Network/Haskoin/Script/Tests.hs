@@ -245,15 +245,6 @@ testInvalid = testFile "Canonical Valid Script Test Cases"
 maxSeqNum :: Word32
 maxSeqNum = 0xffffffff -- Perhaps this should be moved to constants.
 
--- | Null output used to create CoinbaseTx
-nullOutPoint :: OutPoint
-nullOutPoint =
-    OutPoint
-    { outPointHash =
-          "0000000000000000000000000000000000000000000000000000000000000000"
-    , outPointIndex = maxBound
-    }
-
 -- | Some of the scripts tests require transactions be built in a
 -- standard way.  This function builds the crediting transaction.
 -- Quoting the top comment of script_valid.json: "It is evaluated as

@@ -29,7 +29,7 @@ tests =
             (\s -> decodeStrictSig (encode s) == Just s) . lst3
           , testProperty "decode . encode sig == id" $
             forAll arbitrarySignature $
-            (\s -> decodeDerSig (encode s) == Just s) . lst3
+            (\s -> decodeLaxSig (encode s) == Just s) . lst3
           ]
     ]
 

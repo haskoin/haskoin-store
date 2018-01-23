@@ -11,6 +11,8 @@ module Network.Haskoin.Script.Standard
 , encodeInputBS
 , decodeInput
 , decodeInputBS
+, decodeInputStrict
+, decodeInputStrictBS
 , addressToOutput
 , addressToScript
 , addressToScriptBS
@@ -56,17 +58,16 @@ import           Network.Haskoin.Util
 -- | Data type describing standard transaction output scripts. Output scripts
 -- provide the conditions that must be fulfilled for someone to spend the
 -- output coins.
-data ScriptOutput =
+data ScriptOutput
       -- | Pay to a public key.
-      PayPK         { getOutputPubKey   :: !PubKey }
+    = PayPK { getOutputPubKey :: !PubKey }
       -- | Pay to a public key hash.
-    | PayPKHash     { getOutputHash     :: !Hash160 }
+    | PayPKHash { getOutputHash :: !Hash160 }
       -- | Pay to multiple public keys.
-    | PayMulSig     { getOutputMulSigKeys     :: ![PubKey]
-                    , getOutputMulSigRequired :: !Int
-                    }
+    | PayMulSig { getOutputMulSigKeys     :: ![PubKey]
+                , getOutputMulSigRequired :: !Int }
       -- | Pay to a script hash.
-    | PayScriptHash { getOutputHash     :: !Hash160 }
+    | PayScriptHash { getOutputHash :: !Hash160 }
       -- | Provably unspendable data carrier.
     | DataCarrier { getOutputData :: !ByteString }
     deriving (Eq, Show)
@@ -297,15 +298,15 @@ encodeSimpleInput :: SimpleInput -> Script
 encodeSimpleInput s =
     Script $
     case s of
-        SpendPK ts -> [f ts]
+        SpendPK ts       -> [f ts]
         SpendPKHash ts p -> [f ts, opPushData $ encode p]
-        SpendMulSig xs -> OP_0 : map f xs
+        SpendMulSig xs   -> OP_0 : map f xs
   where
     f TxSignatureEmpty = OP_0
-    f ts = opPushData $ encodeTxSig ts
+    f ts               = opPushData $ encodeTxSig ts
 
-decodeSimpleInput :: Script -> Either String SimpleInput
-decodeSimpleInput (Script ops) =
+decodeSimpleInput :: Bool -> Script -> Either String SimpleInput
+decodeSimpleInput strict (Script ops) =
     maybeToEither errMsg $ matchPK ops <|> matchPKHash ops <|> matchMulSig ops
   where
     matchPK [op] = SpendPK <$> f op
@@ -313,11 +314,18 @@ decodeSimpleInput (Script ops) =
     matchPKHash [op, OP_PUSHDATA pub _] =
         SpendPKHash <$> f op <*> eitherToMaybe (decode pub)
     matchPKHash _ = Nothing
-    matchMulSig (x:xs) = guard (isPushOp x) >> SpendMulSig <$> mapM f xs
+    matchMulSig (x:xs) = do
+        guard $
+            if strict
+                then x == OP_0
+                else isPushOp x
+        SpendMulSig <$> mapM f xs
     matchMulSig _ = Nothing
     f OP_0 = return TxSignatureEmpty
     f (OP_PUSHDATA "" OPCODE) = f OP_0
-    f (OP_PUSHDATA bs _) = eitherToMaybe $ decodeTxDerSig bs
+    f (OP_PUSHDATA bs _)
+        | strict = eitherToMaybe $ decodeTxStrictSig bs
+        | otherwise = eitherToMaybe $ decodeTxDerSig bs
     f _ = Nothing
     errMsg = "decodeInput: Could not decode script input"
 
@@ -334,19 +342,30 @@ encodeInputBS = encode . encodeInput
 -- | Decodes a 'ScriptInput' from a 'Script'. This function fails if the
 -- script can not be parsed as a standard script input.
 decodeInput :: Script -> Either String ScriptInput
-decodeInput s@(Script ops) = maybeToEither errMsg $
+decodeInput = decodeInputGen False
+
+-- | Like 'decodeInput' but uses strict signature decoding
+decodeInputStrict :: Script -> Either String ScriptInput
+decodeInputStrict = decodeInputGen True
+
+decodeInputGen :: Bool -> Script -> Either String ScriptInput
+decodeInputGen strict s@(Script ops) = maybeToEither errMsg $
     matchSimpleInput <|> matchPayScriptHash
   where
-    matchSimpleInput = RegularInput <$> eitherToMaybe (decodeSimpleInput s)
+    matchSimpleInput = RegularInput <$> eitherToMaybe (decodeSimpleInput strict s)
     matchPayScriptHash = case splitAt (length (scriptOps s) - 1) ops of
         (is, [OP_PUSHDATA bs _]) -> do
             rdm <- eitherToMaybe $ decodeOutputBS bs
-            inp <- eitherToMaybe $ decodeSimpleInput $ Script is
+            inp <- eitherToMaybe $ decodeSimpleInput strict $ Script is
             return $ ScriptHashInput inp rdm
         _ -> Nothing
     errMsg = "decodeInput: Could not decode script input"
 
--- | Similar to 'decodeInput' but decodes from a ByteString
+-- | Like 'decodeInput' but decodes from a ByteString
 decodeInputBS :: ByteString -> Either String ScriptInput
 decodeInputBS = decodeInput <=< decode
+
+-- | Like 'decodeInputStrict' but decodes from a ByteString
+decodeInputStrictBS :: ByteString -> Either String ScriptInput
+decodeInputStrictBS = decodeInputStrict <=< decode
 

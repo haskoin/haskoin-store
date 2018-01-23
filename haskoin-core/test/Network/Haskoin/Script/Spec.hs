@@ -8,7 +8,6 @@ import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BL
 import           Data.Either
 import           Data.List
-import           Data.List
 import           Data.Maybe
 import           Data.Monoid                 ((<>))
 import           Data.Serialize
@@ -21,11 +20,13 @@ import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
 import           Test.Hspec
 import           Test.QuickCheck
+import           Text.Read
 
 spec :: Spec
 spec = do
     standardSpec
     canonicalSigSpec
+    scriptSpec
     sigHashSpec
 
 standardSpec :: Spec
@@ -64,9 +65,79 @@ standardSpec =
                 Right
                     (RegularInput (SpendMulSig $ replicate 3 TxSignatureEmpty))
 
+scriptSpec :: Spec
+scriptSpec =
+    describe "Network.Haskoin.Script Verifier" $
+        it "Can verify standard scripts" $ do
+            xs <- readTestFile "script_tests"
+            let vectors = filter ((== 5) . length) (xs :: [[String]])
+            length vectors `shouldBe` 85
+            forM_ vectors $ \[siStr, soStr, flags, res, _]
+                -- We can disable specific tests by adding a DISABLED flag in the data
+             ->
+                unless ("DISABLED" `isInfixOf` flags) $ do
+                    let strict =
+                            "DERSIG" `isInfixOf` flags ||
+                            "STRICTENC" `isInfixOf` flags ||
+                            "NULLDUMMY" `isInfixOf` flags
+                        scriptSig = parseScript siStr
+                        scriptPubKey = parseScript soStr
+                        decodedOutput =
+                            fromRight
+                                (error $ "Could not decode output: " <> soStr) $
+                            decodeOutputBS scriptPubKey
+                        ver =
+                            verifyStdInput
+                                strict
+                                (spendTx scriptPubKey scriptSig)
+                                0
+                                decodedOutput
+                                0
+                    case res of
+                        "OK" -> ver `shouldBe` True
+                        _    -> ver `shouldBe` False
+
+creditTx :: BS.ByteString -> Tx
+creditTx scriptPubKey =
+    Tx 1 [txI] [txO] 0
+  where
+    txO = TxOut {outValue = 0, scriptOutput = scriptPubKey}
+    txI =
+        TxIn
+        { prevOutput = nullOutPoint
+        , scriptInput = encode $ Script [OP_0, OP_0]
+        , txInSequence = maxBound
+        }
+
+spendTx :: BS.ByteString -> BS.ByteString -> Tx
+spendTx scriptPubKey scriptSig =
+    Tx 1 [txI] [txO] 0
+  where
+    txO = TxOut {outValue = 0, scriptOutput = BS.empty}
+    txI =
+        TxIn
+        { prevOutput = OutPoint (txHash $ creditTx scriptPubKey) 0
+        , scriptInput = scriptSig
+        , txInSequence = maxBound
+        }
+
+parseScript :: String -> BS.ByteString
+parseScript str =
+    BS.concat $ fromMaybe err $ mapM f $ words str
+  where
+    f = decodeHex . cs . dropHex . replaceToken
+    dropHex ('0':'x':xs) = xs
+    dropHex xs           = xs
+    err = error $ "Could not decode script: " <> str
+
+replaceToken :: String -> String
+replaceToken str = case readMaybe $ "OP_" <> str of
+    Just opcode -> "0x" <> cs (encodeHex $ encode (opcode :: ScriptOp))
+    _           -> str
+
 canonicalSigSpec :: Spec
 canonicalSigSpec =
-    describe "Network.Haskoin.Script" $ do
+    describe "Network.Haskoin.Script Canonical" $ do
         it "can decode canonical signatures" $ do
             xs <- readTestFile "sig_canonical"
             let vectors = mapMaybe (decodeHex . cs) (xs :: [String])
@@ -81,7 +152,7 @@ canonicalSigSpec =
                 decodeTxStrictSig sig `shouldSatisfy` isLeft
 
 sigHashSpec :: Spec
-sigHashSpec = do
+sigHashSpec =
     describe "Network.Haskoin.Script.SigHash" $ do
         it "can decode . encode a SigHash" $
             property $

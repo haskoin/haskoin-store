@@ -70,7 +70,7 @@ arbitraryAddrOnlyTx = do
     t    <- arbitrary
     return $ Tx v inps outs t
 
--- | Like `arbitraryAddrOnlyTx` without empty signatures in the inputs
+-- | Like 'arbitraryAddrOnlyTx' without empty signatures in the inputs
 arbitraryAddrOnlyTxFull :: Gen Tx
 arbitraryAddrOnlyTxFull = do
     v    <- arbitrary

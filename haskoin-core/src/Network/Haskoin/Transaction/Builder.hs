@@ -338,7 +338,8 @@ buildInput tx i so val rdmM sig pub = case (so, rdmM) of
         Right (RegularInput    (SpendMulSig xs))   -> xs
         _                                          -> []
     out = encodeOutput so
-    f (TxSignature x sh) = verifySig (txSigHash tx out val i sh) x
+    f (TxSignature x sh) p = verifySig (txSigHash tx out val i sh) x p
+    f TxSignatureEmpty _ = False
 
 {- Merge multisig transactions -}
 
@@ -383,41 +384,56 @@ mergeTxInput txs tx ((so, val), i) = do
         Right (RegularInput (SpendMulSig sigs)) -> Right (sigs, Nothing)
         Right (ScriptHashInput (SpendMulSig sigs) rdm) -> Right (sigs, Just rdm)
         _ -> Left "Invalid script input type"
-    f out (TxSignature x sh) =
-        verifySig (txSigHash tx (encodeOutput out) val i sh) x
+    f out (TxSignature x sh) p =
+        verifySig (txSigHash tx (encodeOutput out) val i sh) x p
+    f _ TxSignatureEmpty _ = False
 
 {- Tx verification -}
 
 -- | Verify if a transaction is valid and all of its inputs are standard.
 verifyStdTx :: Tx -> [(ScriptOutput, Word64, OutPoint)] -> Bool
-verifyStdTx tx xs =
+verifyStdTx = verifyStdTxGen False
+
+-- | Like 'verifyStdTx' but using strict signature decoding
+verifyStdTxStrict :: Tx -> [(ScriptOutput, Word64, OutPoint)] -> Bool
+verifyStdTxStrict = verifyStdTxGen True
+    
+verifyStdTxGen :: Bool -> Tx -> [(ScriptOutput, Word64, OutPoint)] -> Bool
+verifyStdTxGen strict tx xs =
     all go $ zip (matchTemplate xs (txIn tx) f) [0..]
   where
     f (_,_,o) txin        = o == prevOutput txin
-    go (Just (so,val,_), i) = verifyStdInput tx i so val
-    go _                = False
+    go (Just (so,val,_), i) = verifyStdInput strict tx i so val
+    go _                    = False
 
 -- | Verify if a transaction input is valid and standard.
-verifyStdInput :: Tx -> Int -> ScriptOutput -> Word64 -> Bool
-verifyStdInput tx i =
-    go (scriptInput $ txIn tx !! i)
+verifyStdInput :: Bool -> Tx -> Int -> ScriptOutput -> Word64 -> Bool
+verifyStdInput strict tx i = go (scriptInput $ txIn tx !! i)
   where
-    go inp so val = case decodeInputBS inp of
-        Right (RegularInput (SpendPK (TxSignature sig sh))) ->
-            let pub = getOutputPubKey so
-            in  verifySig (txSigHash tx out val i sh) sig pub
-        Right (RegularInput (SpendPKHash (TxSignature sig sh) pub)) ->
-            let a = PubKeyAddress (getOutputHash so)
-            in pubKeyAddr pub == a &&
-                verifySig (txSigHash tx out val i sh) sig pub
-        Right (RegularInput (SpendMulSig sigs)) ->
-            let pubs = getOutputMulSigKeys so
-                r    = getOutputMulSigRequired so
-            in  countMulSig tx out val i pubs sigs == r
-        Right (ScriptHashInput si rdm) ->
-            p2shAddr rdm == ScriptAddress (getOutputHash so) &&
-            go (encodeInputBS $ RegularInput si) rdm val
-        _ -> False
+    dec = if strict then decodeInputStrictBS else decodeInputBS
+    go inp so val =
+        case dec inp of
+            Right (RegularInput (SpendPK (TxSignature sig sh))) ->
+                case so of
+                    PayPK pub -> verifySig (txSigHash tx out val i sh) sig pub
+                    _ -> False
+            Right (RegularInput (SpendPKHash (TxSignature sig sh) pub)) ->
+                case so of
+                    PayPKHash h ->
+                        pubKeyAddr pub == PubKeyAddress h &&
+                        verifySig (txSigHash tx out val i sh) sig pub
+                    _ -> False
+            Right (RegularInput (SpendMulSig sigs)) ->
+                case so of
+                    PayMulSig pubs r -> countMulSig tx out val i pubs sigs == r
+                    _ -> False
+            Right (ScriptHashInput si rdm) ->
+                case so of
+                    PayScriptHash h ->
+                        p2shAddr rdm == ScriptAddress h &&
+                        go (encodeInputBS $ RegularInput si) rdm val
+                    _ -> False
+            _ -> False
       where
         out = encodeOutput so
 
@@ -425,6 +441,8 @@ verifyStdInput tx i =
 countMulSig :: Tx -> Script -> Word64 -> Int -> [PubKey] -> [TxSignature] -> Int
 countMulSig _ _ _ _ [] _  = 0
 countMulSig _ _ _ _ _  [] = 0
+countMulSig tx out val i (_:pubs) (TxSignatureEmpty:rest) =
+    countMulSig tx out val i pubs rest
 countMulSig tx out val i (pub:pubs) sigs@(TxSignature sig sh:rest)
     | verifySig (txSigHash tx out val i sh) sig pub =
          1 + countMulSig tx out val i pubs rest
