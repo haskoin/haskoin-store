@@ -16,13 +16,13 @@ module Network.Haskoin.Store
     , Unspent(..)
     , AddressBalance(..)
     , store
-    , blockGetBest
-    , blockGetHeight
-    , blockGet
-    , blockGetTx
-    , blockGetAddrTxs
-    , blockGetAddrUnspent
-    , blockGetAddrBalance
+    , getBestBlock
+    , getBlockAtHeight
+    , getBlock
+    , getTx
+    , getAddrTxs
+    , getUnspent
+    , getBalance
     ) where
 
 import           Control.Concurrent.NQE
@@ -34,7 +34,6 @@ import           Control.Monad.Trans.Control
 import           Data.Monoid
 import           Data.String.Conversions
 import           Data.Text                   (Text)
-import           Data.Word
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
@@ -44,23 +43,12 @@ import           Network.Socket              (SockAddr (..))
 import           System.Directory
 import           System.FilePath
 
-newtype StoreEvent =
-    BlockEvent BlockEvent
-
-type StoreSupervisor = Inbox SupervisorMessage
-
-data StoreConfig = StoreConfig
-    { storeConfDir        :: !FilePath
-    , storeConfBlocks     :: !BlockStore
-    , storeConfSupervisor :: !StoreSupervisor
-    , storeConfChain      :: !Chain
-    , storeConfListener   :: !(Listen StoreEvent)
-    , storeConfMaxPeers   :: !Int
-    , storeConfInitPeers  :: ![HostPort]
-    , storeConfNoNewPeers :: !Bool
-    , storeConfCacheNo    :: !Word32
-    , storeConfBlockNo    :: !Word32
-    }
+type MonadStore m
+     = ( MonadBase IO m
+       , MonadThrow m
+       , MonadBaseControl IO m
+       , MonadLoggerIO m
+       , MonadReader StoreRead m)
 
 data StoreRead = StoreRead
     { myMailbox    :: !(Inbox NodeEvent)
@@ -70,13 +58,6 @@ data StoreRead = StoreRead
     , myDir        :: !FilePath
     , myListener   :: !(Listen StoreEvent)
     }
-
-type MonadStore m
-     = ( MonadBase IO m
-       , MonadThrow m
-       , MonadBaseControl IO m
-       , MonadLoggerIO m
-       , MonadReader StoreRead m)
 
 store ::
        (MonadLoggerIO m, MonadBaseControl IO m, MonadMask m, Forall (Pure m))
@@ -118,6 +99,7 @@ store StoreConfig {..} = do
             , blockConfListener = storeConfListener . BlockEvent
             , blockConfCacheNo = storeConfCacheNo
             , blockConfBlockNo = storeConfBlockNo
+            , blockConfDB = storeConfDB
             }
     supervisor
         KillAll

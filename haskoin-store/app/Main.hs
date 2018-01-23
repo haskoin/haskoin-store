@@ -15,6 +15,7 @@ import           Data.String.Conversions
 import           Data.Word
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
+import qualified Database.RocksDB as RocksDB
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Store
 import           Network.Haskoin.Transaction
@@ -151,42 +152,50 @@ main =
             _ -> error "Network must be \"bitcoin\", \"testnet\" or \"regtest\""
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
-        supervisor KillAll s [runWeb port b, runStore cache blocks dir b]
+        let wdir = dir </> networkName
+        liftIO $ createDirectoryIfMissing True wdir
+        db <-
+            RocksDB.open
+                (wdir </> "blocks")
+                def
+                { RocksDB.createIfMissing = True
+                , RocksDB.compression = RocksDB.NoCompression
+                , RocksDB.writeBufferSize = 512 * 1024 * 1024
+                }
+        supervisor KillAll s [runWeb port db, runStore cache blocks wdir b db]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port b =
+    runWeb port db =
         scottyT port id $ do
             defaultHandler defHandler
-            get "/block/best" $ blockGetBest b >>= json
+            get "/block/best" $ getBestBlock db Nothing >>= json
             get "/block/hash/:block" $ do
                 block <- param "block"
-                block `blockGet` b >>= maybeJSON
+                getBlock block db Nothing >>= maybeJSON
             get "/block/height/:height" $ do
                 height <- param "height"
-                height `blockGetHeight` b >>= maybeJSON
+                getBlockAtHeight height db Nothing >>= maybeJSON
             get "/transaction/:txid" $ do
                 txid <- param "txid"
-                txid `blockGetTx` b >>= maybeJSON
+                getTx txid db Nothing >>= maybeJSON
             get "/address/transactions/:address" $ do
                 address <- param "address"
-                address `blockGetAddrTxs` b >>= json
+                getAddrTxs address db Nothing >>= json
             get "/address/unspent/:address" $ do
                 address <- param "address"
-                address `blockGetAddrUnspent` b >>= json
+                getUnspent address db Nothing >>= json
             get "/address/balance/:address" $ do
                 address <- param "address"
-                address `blockGetAddrBalance` b >>= maybeJSON
+                getBalance address db Nothing >>= maybeJSON
             notFound $ raise NotFound
-    runStore cache blocks dir b =
+    runStore cache blocks wdir b db =
         runStderrLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO
-            let wdir = dir </> networkName
-            liftIO $ createDirectoryIfMissing True wdir
             let cfg =
                     StoreConfig
                     { storeConfDir = wdir
@@ -199,5 +208,6 @@ main =
                     , storeConfNoNewPeers = False
                     , storeConfCacheNo = cache
                     , storeConfBlockNo = blocks
+                    , storeConfDB = db
                     }
             store cfg

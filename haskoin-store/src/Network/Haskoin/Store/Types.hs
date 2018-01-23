@@ -3,52 +3,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
-module Network.Haskoin.Store.Types
-( BlockConfig(..)
-, BlockStore
-, BlockEvent(..)
-, BlockMessage(..)
-, BlockValue(..)
-, DetailedTx(..)
-, SpentKey(..)
-, SpentValue(..)
-, TxKey(..)
-, TxValue(..)
-, OutputKey(..)
-, OutputValue(..)
-, BaseTxKey(..)
-, MultiTxKey(..)
-, MultiTxValue(..)
-, AddressTx(..)
-, MultiAddrSpentKey(..)
-, MultiAddrUnspentKey(..)
-, AddrSpentKey(..)
-, AddrUnspentKey(..)
-, AddrSpentValue(..)
-, AddrUnspentValue(..)
-, AddressBalance(..)
-, BalanceKey(..)
-, BalanceValue(..)
-, Immature(..)
-, MultiBalance(..)
-, UnspentCache(..)
-, BestBlockKey(..)
-, BlockKey(..)
-, HeightKey(..)
-, BlockRef(..)
-, BlockRead(..)
-, Unspent(..)
-, MonadBlock
-) where
+module Network.Haskoin.Store.Types where
 
 import           Control.Applicative
 import           Control.Concurrent.NQE
-import           Control.Monad.Base
-import           Control.Monad.Catch
-import           Control.Monad.Logger
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Control
-import           Control.Monad.Trans.Resource
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
@@ -76,31 +35,19 @@ data BlockConfig = BlockConfig
     , blockConfListener :: !(Listen BlockEvent)
     , blockConfCacheNo  :: !Word32
     , blockConfBlockNo  :: !Word32
+    , blockConfDB       :: !DB
     }
 
 newtype BlockEvent = BestBlock BlockHash
 
 data BlockMessage
     = BlockChainNew !BlockNode
-    | BlockGetBest !(Reply BlockValue)
-    | BlockGetHeight !BlockHeight
-                     !(Reply (Maybe BlockValue))
     | BlockPeerConnect !Peer
     | BlockPeerDisconnect !Peer
     | BlockReceived !Peer
                     !Block
     | BlockNotReceived !Peer
                        !BlockHash
-    | BlockGet !BlockHash
-               !(Reply (Maybe BlockValue))
-    | BlockGetTx !TxHash
-                 !(Reply (Maybe DetailedTx))
-    | BlockGetAddrSpent !Address
-                        !(Reply [(AddrSpentKey, AddrSpentValue)])
-    | BlockGetAddrUnspent !Address
-                          !(Reply [(AddrUnspentKey, AddrUnspentValue)])
-    | BlockGetAddrBalance !Address
-                          !(Reply (Maybe AddressBalance))
     | BlockProcess
 
 type BlockStore = Inbox BlockMessage
@@ -108,21 +55,6 @@ type BlockStore = Inbox BlockMessage
 data UnspentCache = UnspentCache
     { unspentCache       :: !(Map OutputKey OutputValue)
     , unspentCacheBlocks :: !(Map BlockHeight [OutputKey])
-    }
-
-data BlockRead = BlockRead
-    { myBlockDB      :: !DB
-    , mySelf         :: !BlockStore
-    , myDir          :: !FilePath
-    , myChain        :: !Chain
-    , myManager      :: !Manager
-    , myListener     :: !(Listen BlockEvent)
-    , myPending      :: !(TVar [BlockHash])
-    , myDownloaded   :: !(TVar [Block])
-    , myPeer         :: !(TVar (Maybe Peer))
-    , myUnspentCache :: !(TVar UnspentCache)
-    , myCacheNo      :: !Word32
-    , myBlockNo      :: !Word32
     }
 
 newtype MultiAddrSpentKey =
@@ -695,10 +627,21 @@ instance Serialize TxKey where
         guard . (== 0x00) =<< getWord8
         return (TxKey hash)
 
-type MonadBlock m
-     = ( MonadBase IO m
-       , MonadThrow m
-       , MonadBaseControl IO m
-       , MonadLoggerIO m
-       , MonadReader BlockRead m
-       , MonadResource m)
+newtype StoreEvent =
+    BlockEvent BlockEvent
+
+type StoreSupervisor = Inbox SupervisorMessage
+
+data StoreConfig = StoreConfig
+    { storeConfDir        :: !FilePath
+    , storeConfBlocks     :: !BlockStore
+    , storeConfSupervisor :: !StoreSupervisor
+    , storeConfChain      :: !Chain
+    , storeConfListener   :: !(Listen StoreEvent)
+    , storeConfMaxPeers   :: !Int
+    , storeConfInitPeers  :: ![HostPort]
+    , storeConfNoNewPeers :: !Bool
+    , storeConfCacheNo    :: !Word32
+    , storeConfBlockNo    :: !Word32
+    , storeConfDB         :: !DB
+    }

@@ -7,14 +7,14 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TemplateHaskell            #-}
 module Network.Haskoin.Store.Block
-    ( blockGetBest
-    , blockGetHeight
-    , blockGet
-    , blockGetTx
-    , blockGetAddrTxs
-    , blockGetAddrUnspent
-    , blockGetAddrBalance
-    , blockStore
+    ( blockStore
+    , getBestBlock
+    , getBlockAtHeight
+    , getBlock
+    , getUnspent
+    , getAddrTxs
+    , getBalance
+    , getTx
     ) where
 
 import           Control.Applicative
@@ -26,7 +26,6 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
-import           Control.Monad.Trans.Resource
 import qualified Data.ByteString              as BS
 import           Data.Default
 import           Data.Function
@@ -39,6 +38,7 @@ import           Data.Serialize               as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
 import           Data.Word
+import           Database.RocksDB             (DB, Snapshot)
 import qualified Database.RocksDB             as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
@@ -48,6 +48,28 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
+
+data BlockRead = BlockRead
+    { myBlockDB      :: !DB
+    , mySelf         :: !BlockStore
+    , myDir          :: !FilePath
+    , myChain        :: !Chain
+    , myManager      :: !Manager
+    , myListener     :: !(Listen BlockEvent)
+    , myPending      :: !(TVar [BlockHash])
+    , myDownloaded   :: !(TVar [Block])
+    , myPeer         :: !(TVar (Maybe Peer))
+    , myUnspentCache :: !(TVar UnspentCache)
+    , myCacheNo      :: !Word32
+    , myBlockNo      :: !Word32
+    }
+
+type MonadBlock m
+     = ( MonadBase IO m
+       , MonadThrow m
+       , MonadBaseControl IO m
+       , MonadLoggerIO m
+       , MonadReader BlockRead m)
 
 blockStore ::
        ( MonadBase IO m
@@ -59,40 +81,30 @@ blockStore ::
        )
     => BlockConfig
     -> m ()
-blockStore BlockConfig {..} =
-    runResourceT $ do
-        let opts =
-                def
-                { RocksDB.createIfMissing = True
-                , RocksDB.compression = RocksDB.NoCompression
-                , RocksDB.writeBufferSize = 512 * 1024 * 1024
-                }
-        db <- RocksDB.open blockConfDir opts
-        $(logDebug) $ logMe <> "Database opened"
-        pbox <- liftIO $ newTVarIO []
-        dbox <- liftIO $ newTVarIO []
-        ubox <-
-            liftIO $
-            newTVarIO
-                UnspentCache
-                {unspentCache = M.empty, unspentCacheBlocks = M.empty}
-        peerbox <- liftIO $ newTVarIO Nothing
-        runReaderT
-            (syncBlocks >> run)
-            BlockRead
-            { mySelf = blockConfMailbox
-            , myBlockDB = db
-            , myDir = blockConfDir
-            , myChain = blockConfChain
-            , myManager = blockConfManager
-            , myListener = blockConfListener
-            , myPending = pbox
-            , myDownloaded = dbox
-            , myPeer = peerbox
-            , myUnspentCache = ubox
-            , myCacheNo = blockConfCacheNo
-            , myBlockNo = blockConfBlockNo
-            }
+blockStore BlockConfig {..} = do
+    pbox <- liftIO $ newTVarIO []
+    dbox <- liftIO $ newTVarIO []
+    ubox <-
+        liftIO $
+        newTVarIO
+            UnspentCache {unspentCache = M.empty, unspentCacheBlocks = M.empty}
+    peerbox <- liftIO $ newTVarIO Nothing
+    runReaderT
+        (loadBest >> syncBlocks >> run)
+        BlockRead
+        { mySelf = blockConfMailbox
+        , myBlockDB = blockConfDB
+        , myDir = blockConfDir
+        , myChain = blockConfChain
+        , myManager = blockConfManager
+        , myListener = blockConfListener
+        , myPending = pbox
+        , myDownloaded = dbox
+        , myPeer = peerbox
+        , myUnspentCache = ubox
+        , myCacheNo = blockConfCacheNo
+        , myBlockNo = blockConfBlockNo
+        }
   where
     stats = do
         cache <- liftIO . readTVarIO =<< asks myUnspentCache
@@ -113,6 +125,13 @@ blockStore BlockConfig {..} =
             stats
             $(logDebug) $ logMe <> "Awaiting message"
             processBlockMessage =<< receive blockConfMailbox
+    loadBest =
+        retrieveValue BestBlockKey blockConfDB Nothing >>= \case
+            Nothing -> do
+                importBlock genesisBlock
+                $(logDebug) $ logMe <> "Stored Genesis block in database"
+            Just _ -> return ()
+
 
 spendAddr ::
        AddrUnspentKey
@@ -148,68 +167,83 @@ unspendAddr sk sv = (uk, uv)
          }
 
 
-getBestBlockHash :: MonadBlock m => m BlockHash
-getBestBlockHash = do
-    $(logDebug) $ logMe <> "Processing best block request from database"
-    db <- asks myBlockDB
-    BestBlockKey `retrieveValue` db >>= \case
-        Nothing -> do
-            importBlock genesisBlock
-            $(logDebug) $ logMe <> "Stored genesis"
-            return (headerHash genesisHeader)
-        Just bb -> return bb
+getBestBlockHash :: MonadIO m => DB -> Maybe Snapshot -> m (Maybe BlockHash)
+getBestBlockHash = retrieveValue BestBlockKey
 
-getBlockAtHeight :: MonadBlock m => BlockHeight -> m (Maybe BlockValue)
-getBlockAtHeight height = do
-    $(logDebug) $
-        logMe <> "Processing block request at height: " <> cs (show height)
-    db <- asks myBlockDB
-    runMaybeT $ do
-        h <- MaybeT $ HeightKey height `retrieveValue` db
-        MaybeT $ BlockKey h `retrieveValue` db
+getBestBlock :: MonadIO m => DB -> Maybe Snapshot -> m (Maybe BlockValue)
+getBestBlock db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _ -> f s
+  where
+    f s' =
+        runMaybeT $ do
+            h <- MaybeT (getBestBlockHash db s')
+            MaybeT (getBlock h db s')
 
-getBlockValue :: MonadBlock m => BlockHash -> m (Maybe BlockValue)
-getBlockValue bh = do
-    db <- asks myBlockDB
-    BlockKey bh `retrieveValue` db
+getBlockAtHeight ::
+       MonadIO m => BlockHeight -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
+getBlockAtHeight height db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _ -> f s
+  where
+    f s' =
+        runMaybeT $ do
+            h <- MaybeT (retrieveValue (HeightKey height) db s')
+            MaybeT (retrieveValue (BlockKey h) db s')
 
-getAddrSpent :: MonadBlock m => Address -> m [(AddrSpentKey, AddrSpentValue)]
-getAddrSpent addr = do
-    db <- asks myBlockDB
-    MultiAddrSpentKey addr `valuesForKey` db
+getBlock ::
+       MonadIO m => BlockHash -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
+getBlock = retrieveValue . BlockKey
+
+getAddrSpent ::
+       MonadIO m
+    => Address
+    -> DB
+    -> Maybe Snapshot
+    -> m [(AddrSpentKey, AddrSpentValue)]
+getAddrSpent = valuesForKey . MultiAddrSpentKey
 
 getAddrUnspent ::
-       MonadBlock m => Address -> m [(AddrUnspentKey, AddrUnspentValue)]
-getAddrUnspent addr = do
-    db <- asks myBlockDB
-    MultiAddrUnspentKey addr `valuesForKey` db
+       MonadIO m
+    => Address
+    -> DB
+    -> Maybe Snapshot
+    -> m [(AddrUnspentKey, AddrUnspentValue)]
+getAddrUnspent = valuesForKey . MultiAddrUnspentKey
 
-getAddrBalance ::
-    MonadBlock m => Address -> m (Maybe AddressBalance)
-getAddrBalance addr =
-    runMaybeT $ do
-        db <- asks myBlockDB
-        bal <- MaybeT . fmap listToMaybe $ MultiBalance addr `valuesForKey` db
-        best <- fmap (fromMaybe e) $ BestBlockKey `retrieveValue` db
-        block <- fmap (fromMaybe e) $ BlockKey best `retrieveValue` db
-        let h = blockValueHeight block
-            bs = second (i h) bal
-            is = sum (map immatureValue (balanceImmature (snd bs)))
-            ub = balanceValue (snd bs)
-        return
-            AddressBalance
-            { addressBalAddress = addr
-            , addressBalConfirmed = ub
-            , addressBalUnconfirmed = ub
-            , addressBalImmature = is
-            , addressBalBlock =
-                  BlockRef
-                  { blockRefHeight = blockValueHeight block
-                  , blockRefHash = best
-                  , blockRefMainChain = True
-                  }
-            }
+getBalance ::
+       MonadIO m => Address -> DB -> Maybe Snapshot -> m (Maybe AddressBalance)
+getBalance addr db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ g . Just
+        Just _ -> g s
   where
+    g s' =
+        runMaybeT $ do
+            bal <-
+                MaybeT
+                    (fmap listToMaybe (valuesForKey (MultiBalance addr) db s'))
+            best <- fmap (fromMaybe e) (getBestBlockHash db s')
+            block <- fmap (fromMaybe e) (getBlock best db s')
+            let h = blockValueHeight block
+                bs = second (i h) bal
+                is = sum (map immatureValue (balanceImmature (snd bs)))
+                ub = balanceValue (snd bs)
+            return
+                AddressBalance
+                { addressBalAddress = addr
+                , addressBalConfirmed = ub
+                , addressBalUnconfirmed = ub
+                , addressBalImmature = is
+                , addressBalBlock =
+                      BlockRef
+                      { blockRefHeight = blockValueHeight block
+                      , blockRefHash = best
+                      , blockRefMainChain = True
+                      }
+                }
     e = error "Colud not retrieve best block from database"
     i h BalanceValue {..} =
         let f Immature {..} = blockRefHeight immatureBlock <= h - 99
@@ -219,11 +253,11 @@ getAddrBalance addr =
            , balanceImmature = is
            }
 
-getStoredTx :: MonadBlock m => TxHash -> m (Maybe DetailedTx)
-getStoredTx th =
+getTx ::
+       MonadIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
+getTx th db s =
     runMaybeT $ do
-        db <- asks myBlockDB
-        xs <- valuesForKey (BaseTxKey th) db
+        xs <- valuesForKey (BaseTxKey th) db s
         TxValue {..} <- MaybeT (return (findTx xs))
         let ss = filterSpents xs
         return (DetailedTx txValue txValueBlock ss txValueOuts)
@@ -231,26 +265,27 @@ getStoredTx th =
     findTx xs =
         listToMaybe
             [ v
-            | (f, s) <- xs
+            | (f, s') <- xs
             , case f of
                   MultiTxKey {} -> True
                   _             -> False
-            , let MultiTx v = s
+            , let MultiTx v = s'
             ]
     filterSpents xs =
         [ (k, v)
-        | (f, s) <- xs
+        | (f, s') <- xs
         , case f of
               MultiTxKeySpent {} -> True
               _                  -> False
         , let MultiTxKeySpent k = f
-        , let MultiTxSpent v = s
+        , let MultiTxSpent v = s'
         ]
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock =
     void . runMaybeT $ do
-        best <- getBestBlockHash
+        db <- asks myBlockDB
+        best <- fromMaybe e <$> getBestBlockHash db Nothing
         guard (best /= headerHash genesisHeader)
         $(logDebug) $ logMe <> "Reverting block " <> logShow best
         ch <- asks myChain
@@ -262,16 +297,17 @@ revertBestBlock =
                         logMe <> "Could not obtain best block from chain"
                     error "BUG: Could not obtain best block from chain"
         BlockValue {..} <-
-            getBlockValue best >>= \case
+            getBlock best db Nothing >>= \case
                 Just b -> return b
                 Nothing -> do
                     $(logError) $ logMe <> "Could not retrieve best block"
                     error "BUG: Could not retrieve best block"
-        txs <- mapMaybe (fmap txValue) <$> getBlockTxs blockValueTxs
-        db <- asks myBlockDB
+        txs <- mapMaybe (fmap txValue) <$> getBlockTxs blockValueTxs db Nothing
         let block = Block blockValueHeader txs
         blockOps <- blockBatchOps block (nodeHeight bn) (nodeWork bn) False
         RocksDB.write db def blockOps
+  where
+    e = error "Could not get best block from database"
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
@@ -280,7 +316,8 @@ syncBlocks = do
     ch <- asks myChain
     chainBest <- chainGetBest ch
     let bestHash = headerHash (nodeHeader chainBest)
-    myBestHash <- getBestBlockHash
+    db <- asks myBlockDB
+    myBestHash <- fromMaybe e <$> getBestBlockHash db Nothing
     void . runMaybeT $ do
         guard (myBestHash /= bestHash)
         guard =<< do
@@ -311,11 +348,13 @@ syncBlocks = do
         liftIO . atomically $ writeTVar peerbox (Just p)
         downloadBlocks p (map (headerHash . nodeHeader) requestBlocks)
   where
+    e = error "Colud not get best block from database"
     revertUntil myBest splitBlock
         | myBest == splitBlock = return ()
         | otherwise = do
             revertBestBlock
-            newBestHash <- getBestBlockHash
+            db <- asks myBlockDB
+            newBestHash <- fromMaybe e <$> getBestBlockHash db Nothing
             $(logDebug) $ logMe <> "Reverted to block " <> logShow newBestHash
             ch <- asks myChain
             newBest <- MaybeT (chainGetBlock newBestHash ch)
@@ -330,7 +369,8 @@ syncBlocks = do
 importBlocks :: MonadBlock m => m ()
 importBlocks = do
     dbox <- asks myDownloaded
-    best <- getBestBlockHash
+    db <- asks myBlockDB
+    best <- fromMaybe e <$> getBestBlockHash db Nothing
     m <-
         liftIO . atomically $ do
             ds <- readTVar dbox
@@ -346,6 +386,8 @@ importBlocks = do
             mbox <- asks mySelf
             BlockProcess `send` mbox
         Nothing -> syncBlocks
+  where
+    e = error "Could not get best block from database"
 
 importBlock :: MonadBlock m => Block -> m ()
 importBlock block@Block {..} = do
@@ -370,13 +412,17 @@ importBlock block@Block {..} = do
   where
     blockHash = headerHash blockHeader
 
-getBlockTxs :: MonadBlock m => [TxHash] -> m [Maybe TxValue]
-getBlockTxs hs = do
-    db <- asks myBlockDB
-    forM hs (\h -> retrieveValue (TxKey h) db)
+getBlockTxs ::
+       MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [Maybe TxValue]
+getBlockTxs hs db s = forM hs (\h -> retrieveValue (TxKey h) db s)
 
-blockBatchOps :: MonadBlock m =>
-       Block -> BlockHeight -> BlockWork -> Bool -> m [RocksDB.BatchOp]
+blockBatchOps ::
+       MonadBlock m
+    => Block
+    -> BlockHeight
+    -> BlockWork
+    -> Bool
+    -> m [RocksDB.BatchOp]
 blockBatchOps block@Block {..} height work main = do
     outputs <- M.fromList . concat <$> mapM (outputBatchOps blockRef) blockTxns
     let outputOps = map (uncurry insertOp) (M.toList outputs)
@@ -426,7 +472,7 @@ getOutput key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
             when (n /= 0) . $(logDebug) $
             logMe <> "Cache miss for output " <> cs (show hash) <> "/" <>
             cs (show index)
-        MaybeT $ key `retrieveValue` db
+        MaybeT $ retrieveValue key db Nothing
     fromCache = do
         guard . (/= 0) =<< asks myCacheNo
         ubox <- asks myUnspentCache
@@ -528,22 +574,22 @@ balanceBatchOps block spent txs =
     addrs = nub (M.keys creditMap ++ M.keys debitMap ++ M.keys coinbaseMap)
     balance addr = do
         db <- asks myBlockDB
-        MultiBalance addr `firstValue` db
+        firstValue (MultiBalance addr) db Nothing
     creditMap = foldl' credit M.empty (concatMap txOut (tail txs))
     coinbaseMap = foldl' coinbase M.empty (txOut (head txs))
     debitMap = foldl' debit M.empty spent
     debit m OutputValue {..} =
         case scriptToAddressBS outScript of
             Nothing -> m
-            Just a -> M.insertWith (+) a outputValue m
+            Just a  -> M.insertWith (+) a outputValue m
     credit m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a -> M.insertWith (+) a outValue m
+            Just a  -> M.insertWith (+) a outValue m
     coinbase m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a -> M.insertWith (+) a outValue m
+            Just a  -> M.insertWith (+) a outValue m
 
 addrBatchOps ::
        MonadBlock m
@@ -634,13 +680,13 @@ addrBatchOps block spent tx pos = do
                     , addrUnspentHeight = height'
                     , addrUnspentOutPoint = ok
                     }
-            uv <- MaybeT $ uk `retrieveValue` db
+            uv <- MaybeT (retrieveValue uk db Nothing)
             let (sk, sv) = spendAddr uk uv s
             return [deleteOp uk, insertOp sk sv]
     unspend TxIn {..} =
         fmap (concat . maybeToList) . runMaybeT $ do
             let (ok, _s, maddr, height') = getSpent prevOutput
-            addr <- MaybeT $ return maddr
+            addr <- MaybeT (return maddr)
             db <- asks myBlockDB
             let sk =
                     AddrSpentKey
@@ -648,7 +694,7 @@ addrBatchOps block spent tx pos = do
                     , addrSpentHeight = height'
                     , addrSpentOutPoint = ok
                     }
-            sv <- MaybeT $ sk `retrieveValue` db
+            sv <- MaybeT (retrieveValue sk db Nothing)
             let (uk, uv) = unspendAddr sk sv
             return [deleteOp sk, insertOp uk uv]
     getSpent po =
@@ -740,46 +786,9 @@ processBlockMessage (BlockChainNew bn) = do
     blockHash = headerHash $ nodeHeader bn
     blockHeight = nodeHeight bn
 
-processBlockMessage (BlockGetHeight height reply) = do
-    $(logDebug) $ logMe <> "Get new block at height " <> cs (show height)
-    getBlockAtHeight height >>= liftIO . atomically . reply
-
-processBlockMessage (BlockGetBest reply) = do
-    $(logDebug) $ logMe <> "Got request for best block"
-    h <- getBestBlockHash
-    b <- fromMaybe e <$> getBlockValue h
-    liftIO . atomically $ reply b
-  where
-    e = error "Could not get best block from database"
-
 processBlockMessage (BlockPeerConnect _) = do
     $(logDebug) $ logMe <> "A peer just connected, syncing blocks"
     syncBlocks
-
-processBlockMessage (BlockGet bh reply) = do
-    $(logDebug) $ logMe <> "Request to get block information"
-    m <- getBlockValue bh
-    liftIO . atomically $ reply m
-
-processBlockMessage (BlockGetTx th reply) = do
-    $(logDebug) $ logMe <> "Request to get transaction: " <> cs (txHashToHex th)
-    m <- getStoredTx th
-    liftIO . atomically $ reply m
-
-processBlockMessage (BlockGetAddrSpent addr reply) = do
-    $(logDebug) $ logMe <> "Get outputs for address " <> cs (show addr)
-    os <- getAddrSpent addr
-    liftIO . atomically $ reply os
-
-processBlockMessage (BlockGetAddrUnspent addr reply) = do
-    $(logDebug) $ logMe <> "Get outputs for address " <> cs (show addr)
-    os <- getAddrUnspent addr
-    liftIO . atomically $ reply os
-
-processBlockMessage (BlockGetAddrBalance addr reply) = do
-    $(logDebug) $ logMe <> "Get balance for address " <> cs (show addr)
-    ab <- getAddrBalance addr
-    liftIO . atomically $ reply ab
 
 processBlockMessage (BlockReceived _p b) = do
     $(logDebug) $ logMe <> "Received a block"
@@ -792,9 +801,12 @@ processBlockMessage (BlockReceived _p b) = do
             modifyTVar dbox (b :)
             modifyTVar pbox (filter (/= hash))
     mbox <- asks mySelf
-    best <- getBestBlockHash
+    db <- asks myBlockDB
+    best <- fromMaybe e <$> getBestBlockHash db Nothing
     -- Only send BlockProcess message if download box has a block to process
     when (prevBlock (blockHeader b) == best) (BlockProcess `send` mbox)
+  where
+    e = error "Could not get best block from database"
 
 processBlockMessage BlockProcess = do
     $(logDebug) $ logMe <> "Processing downloaded block"
@@ -828,75 +840,58 @@ purgePeer p = do
         managerKill (PeerMisbehaving "Peer purged from block store") p mgr
     syncBlocks
 
-blockGetBest :: (MonadBase IO m, MonadIO m) => BlockStore -> m BlockValue
-blockGetBest b = BlockGetBest `query` b
-
-blockGetTx :: (MonadBase IO m, MonadIO m) => TxHash -> BlockStore -> m (Maybe DetailedTx)
-blockGetTx h b = BlockGetTx h `query` b
-
-blockGet :: (MonadBase IO m, MonadIO m) => BlockHash -> BlockStore -> m (Maybe BlockValue)
-blockGet h b = BlockGet h `query` b
-
-blockGetHeight ::
-       (MonadBase IO m, MonadIO m)
-    => BlockHeight
-    -> BlockStore
-    -> m (Maybe BlockValue)
-blockGetHeight h b = BlockGetHeight h `query` b
-
-blockGetAddrTxs ::
-       (MonadBase IO m, MonadIO m) => Address -> BlockStore -> m [AddressTx]
-blockGetAddrTxs addr b = do
-    us <- BlockGetAddrUnspent addr `query` b
-    ss <- BlockGetAddrSpent addr `query` b
-    let utx =
-            [ AddressTx
-            { addressTxAddress = addr
-            , addressTxId = outPointHash (outPoint (addrUnspentOutPoint k))
-            , addressTxAmount = fromIntegral (outputValue (addrUnspentOutput v))
-            , addressTxBlock = outBlock (addrUnspentOutput v)
-            , addressTxPos = addrUnspentPos v
-            }
-            | (k, v) <- us
-            ]
-        stx =
-            [ AddressTx
-            { addressTxAddress = addr
-            , addressTxId = outPointHash (outPoint (addrSpentOutPoint k))
-            , addressTxAmount = fromIntegral (outputValue (addrSpentOutput v))
-            , addressTxBlock = outBlock (addrSpentOutput v)
-            , addressTxPos = addrSpentPos v
-            }
-            | (k, v) <- ss
-            ]
-        itx =
-            [ AddressTx
-            { addressTxAddress = addr
-            , addressTxId = spentInHash s
-            , addressTxAmount = -fromIntegral (outputValue (addrSpentOutput v))
-            , addressTxBlock = spentInBlock s
-            , addressTxPos = spentInPos s
-            }
-            | (_, v) <- ss
-            , let s = addrSpentValue v
-            ]
-        ts = sortBy (flip compare `on` f) (itx ++ stx ++ utx)
-        zs =
-            [ atx {addressTxAmount = amount}
-            | xs@(atx:_) <- groupBy ((==) `on` addressTxId) ts
-            , let amount = sum (map addressTxAmount xs)
-            ]
-    return zs
+getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
+getAddrTxs addr db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ g . Just
+        Just _ -> g s
   where
     f AddressTx {..} = (blockRefHeight addressTxBlock, addressTxPos)
+    g s' = do
+        us <- getAddrUnspent addr db s'
+        ss <- getAddrSpent addr db s'
+        let utx =
+                [ AddressTx
+                { addressTxAddress = addr
+                , addressTxId = outPointHash (outPoint (addrUnspentOutPoint k))
+                , addressTxAmount = fromIntegral (outputValue (addrUnspentOutput v))
+                , addressTxBlock = outBlock (addrUnspentOutput v)
+                , addressTxPos = addrUnspentPos v
+                }
+                | (k, v) <- us
+                ]
+            stx =
+                [ AddressTx
+                { addressTxAddress = addr
+                , addressTxId = outPointHash (outPoint (addrSpentOutPoint k))
+                , addressTxAmount = fromIntegral (outputValue (addrSpentOutput v))
+                , addressTxBlock = outBlock (addrSpentOutput v)
+                , addressTxPos = addrSpentPos v
+                }
+                | (k, v) <- ss
+                ]
+            itx =
+                [ AddressTx
+                { addressTxAddress = addr
+                , addressTxId = spentInHash p
+                , addressTxAmount = -fromIntegral (outputValue (addrSpentOutput v))
+                , addressTxBlock = spentInBlock p
+                , addressTxPos = spentInPos p
+                }
+                | (_, v) <- ss
+                , let p = addrSpentValue v
+                ]
+            ts = sortBy (flip compare `on` f) (itx ++ stx ++ utx)
+            zs =
+                [ atx {addressTxAmount = amount}
+                | xs@(atx:_) <- groupBy ((==) `on` addressTxId) ts
+                , let amount = sum (map addressTxAmount xs)
+                ]
+        return zs
 
-blockGetAddrUnspent ::
-       (MonadBase IO m, MonadIO m)
-    => Address
-    -> BlockStore
-    -> m [Unspent]
-blockGetAddrUnspent addr b = do
-    xs <- BlockGetAddrUnspent addr `query` b
+getUnspent :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [Unspent]
+getUnspent addr db s = do
+    xs <- getAddrUnspent addr db s
     return $ map (uncurry toUnspent) xs
   where
     toUnspent AddrUnspentKey {..} AddrUnspentValue {..} =
@@ -906,13 +901,6 @@ blockGetAddrUnspent addr b = do
         , unspentValue = outputValue addrUnspentOutput
         , unspentBlock = outBlock addrUnspentOutput
         }
-
-blockGetAddrBalance ::
-       (MonadBase IO m, MonadIO m)
-    => Address
-    -> BlockStore
-    -> m (Maybe AddressBalance)
-blockGetAddrBalance addr b = BlockGetAddrBalance addr `query` b
 
 logMe :: Text
 logMe = "[Block] "

@@ -19,9 +19,10 @@ class (Eq mk, Serialize mk, Record k v) =>
 decodeMaybe :: Serialize a => ByteString -> Maybe a
 decodeMaybe = either (const Nothing) Just . decode
 
-retrieveValue :: (Record k v, MonadIO m) => k -> DB -> m (Maybe v)
-retrieveValue k db = runMaybeT $ do
-    bs <- MaybeT (get db def (encode k))
+retrieveValue ::
+       (Record k v, MonadIO m) => k -> DB -> Maybe Snapshot -> m (Maybe v)
+retrieveValue k db s = runMaybeT $ do
+    bs <- MaybeT (get db def {useSnapshot = s} (encode k))
     MaybeT (return (decodeMaybe bs))
 
 deleteKey :: (Record k v, MonadIO m) => k -> DB -> m ()
@@ -51,14 +52,25 @@ valueFromIter mk it =
         v <- MaybeT (return (decodeMaybe bs))
         return (k, v)
 
-firstValue :: (MultiRecord mk k v, MonadIO m) => mk -> DB -> m (Maybe (k, v))
-firstValue mk db = withIter db def $ \it -> do
-    iterSeek it (encode mk)
-    valueFromIter mk it
+firstValue ::
+       (MultiRecord mk k v, MonadIO m)
+    => mk
+    -> DB
+    -> Maybe Snapshot
+    -> m (Maybe (k, v))
+firstValue mk db s =
+    withIter db def {useSnapshot = s} $ \it -> do
+        iterSeek it (encode mk)
+        valueFromIter mk it
 
-valuesForKey :: (MultiRecord mk k v, MonadIO m) => mk -> DB -> m [(k, v)]
-valuesForKey mk db =
-    withIter db def $ \it -> do
+valuesForKey ::
+       (MultiRecord mk k v, MonadIO m)
+    => mk
+    -> DB
+    -> Maybe Snapshot
+    -> m [(k, v)]
+valuesForKey mk db s =
+    withIter db def {useSnapshot = s} $ \it -> do
         iterSeek it (encode mk)
         reverse <$> go [] it
   where

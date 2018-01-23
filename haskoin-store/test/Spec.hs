@@ -4,13 +4,17 @@ import           Control.Concurrent.NQE
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
+import           Data.Default
 import           Data.Maybe
 import           Data.Monoid
+import           Database.RocksDB            (DB)
+import qualified Database.RocksDB            as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store
 import           Network.Haskoin.Transaction
+import           System.FilePath
 import           System.IO.Temp
 import           Test.Hspec
 
@@ -18,14 +22,9 @@ main :: IO ()
 main = do
     setTestnet
     hspec $ do
-        describe "Bootstrap" $
-            it "successfully starts actors and communicates" $
-            withTestStore "start" $ \(b, _c, _e) -> do
-                _ <- blockGetBest b
-                return ()
         describe "Download" $ do
             it "gets 8 blocks" $
-                withTestStore "eight-blocks" $ \(_b, c, e) -> do
+                withTestStore "eight-blocks" $ \(_db, _b, c, e) -> do
                     bs <-
                         replicateM 9 $ do
                             BlockEvent (BestBlock b) <- receive e
@@ -38,14 +37,14 @@ main = do
                             bestHeight = nodeHeight bestNode
                         bestHeight `shouldBe` 8
             it "get a block and its transactions" $
-                withTestStore "get-block-txs" $ \(b, _c, e) -> do
+                withTestStore "get-block-txs" $ \(db, _b, _c, e) -> do
                     bs <-
                         replicateM 382 $ do
                             BlockEvent (BestBlock bb) <- receive e
                             return bb
                     withAsync (dummyEventHandler e) $ \_ -> do
                         let blockHash = last bs
-                        m <- blockGet blockHash b
+                        m <- getBlock blockHash db Nothing
                         let BlockValue {..} =
                                 fromMaybe (error "Could not get block") m
                         blockValueHeight `shouldBe` 381
@@ -56,10 +55,10 @@ main = do
                                 "7e621eeb02874ab039a8566fd36f4591e65eca65313875221842c53de6907d6c"
                         head blockValueTxs `shouldBe` h1
                         last blockValueTxs `shouldBe` h2
-                        t1 <- blockGetTx h1 b
+                        t1 <- getTx h1 db Nothing
                         t1 `shouldSatisfy` isJust
                         txHash (detailedTx (fromJust t1)) `shouldBe` h1
-                        t2 <- blockGetTx h2 b
+                        t2 <- getTx h2 db Nothing
                         t2 `shouldSatisfy` isJust
                         txHash (detailedTx (fromJust t2)) `shouldBe` h2
 
@@ -67,7 +66,7 @@ dummyEventHandler :: (MonadIO m, Mailbox b) => b a -> m ()
 dummyEventHandler = forever . void . receive
 
 withTestStore ::
-       String -> ((BlockStore, Chain, Inbox StoreEvent) -> IO ()) -> IO ()
+       String -> ((DB, BlockStore, Chain, Inbox StoreEvent) -> IO ()) -> IO ()
 withTestStore t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
         runNoLoggingT $ do
@@ -75,6 +74,14 @@ withTestStore t f =
             c <- Inbox <$> liftIO newTQueueIO
             b <- Inbox <$> liftIO newTQueueIO
             e <- Inbox <$> liftIO newTQueueIO
+            db <-
+                RocksDB.open
+                    (w </> "blocks")
+                    def
+                    { RocksDB.createIfMissing = True
+                    , RocksDB.compression = RocksDB.NoCompression
+                    , RocksDB.writeBufferSize = 512 * 1024 * 1024
+                    }
             let cfg =
                     StoreConfig
                     { storeConfDir = w
@@ -87,10 +94,11 @@ withTestStore t f =
                     , storeConfNoNewPeers = False
                     , storeConfCacheNo = 100000
                     , storeConfBlockNo = 200
+                    , storeConfDB = db
                     }
             withAsync (store cfg) $ \a -> do
                 link a
-                x <- liftIO $ f (b, c, e)
+                x <- liftIO $ f (db, b, c, e)
                 stopSupervisor s
                 wait a
                 return x
