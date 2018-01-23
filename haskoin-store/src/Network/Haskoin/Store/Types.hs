@@ -110,11 +110,14 @@ data DetailedTx = DetailedTx
     } deriving (Show, Eq)
 
 data AddressBalance = AddressBalance
-    { addressBalAddress     :: !Address
-    , addressBalConfirmed   :: !Word64
-    , addressBalUnconfirmed :: !Word64
-    , addressBalImmature    :: !Word64
-    , addressBalBlock       :: !BlockRef
+    { addressBalAddress      :: !Address
+    , addressBalConfirmed    :: !Word64
+    , addressBalUnconfirmed  :: !Word64
+    , addressBalImmature     :: !Word64
+    , addressBalBlock        :: !BlockRef
+    , addressBalTxCount      :: !Word64
+    , addressBalUnspentCount :: !Word64
+    , addressBalSpentCount   :: !Word64
     } deriving (Show, Eq)
 
 data TxValue = TxValue
@@ -183,8 +186,11 @@ data BalanceKey = BalanceKey
     } deriving (Show, Eq, Ord)
 
 data BalanceValue = BalanceValue
-    { balanceValue    :: !Word64
-    , balanceImmature :: ![Immature]
+    { balanceValue        :: !Word64
+    , balanceImmature     :: ![Immature]
+    , balanceTxCount      :: !Word64
+    , balanceUnspentCount :: !Word64
+    , balanceSpentCount   :: Word64
     } deriving (Show, Eq)
 
 newtype MultiBalance = MultiBalance
@@ -257,9 +263,15 @@ instance Serialize BalanceValue where
     put BalanceValue {..} = do
         put balanceValue
         put balanceImmature
+        put balanceTxCount
+        put balanceUnspentCount
+        put balanceSpentCount
     get = do
         balanceValue <- get
         balanceImmature <- get
+        balanceTxCount <- get
+        balanceUnspentCount <- get
+        balanceSpentCount <- get
         return BalanceValue {..}
 
 instance Serialize Immature where
@@ -592,6 +604,9 @@ addressBalancePairs AddressBalance {..} =
     , "confirmed" .= addressBalConfirmed
     , "unconfirmed" .= addressBalUnconfirmed
     , "immature" .= addressBalImmature
+    , "transactions" .= addressBalTxCount
+    , "unspent" .= addressBalUnspentCount
+    , "spent" .= addressBalSpentCount
     ]
 
 instance ToJSON AddressBalance where

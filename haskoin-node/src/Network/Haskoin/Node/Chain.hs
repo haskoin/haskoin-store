@@ -19,6 +19,7 @@ import           Control.Monad.Catch
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
+import           Control.Monad.Trans.Maybe
 import           Control.Monad.Trans.Resource
 import qualified Data.ByteString              as BS
 import           Data.Default
@@ -33,6 +34,7 @@ import qualified Database.RocksDB             as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node.Common
+import           Network.Haskoin.Util
 
 type MonadChain m
      = ( BlockHeaders m
@@ -66,18 +68,17 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
         return $
             fromRight (error "Could not decode block header") . decode <$> bsM
     getBestBlockHeader = do
-        db <- asks headerDB
-        bsM <- RocksDB.get db def "best"
-        case bsM of
+        best <-
+            runMaybeT $ do
+                db <- asks headerDB
+                bs <- MaybeT (RocksDB.get db def "best")
+                MaybeT (return (eitherToMaybe (decode bs)))
+        case best of
             Nothing -> do
-                let gs = encode genesisNode
-                addBlockHeader genesisNode
-                RocksDB.put db def "best" gs
-                $(logDebug) $ logMe <> "Added genesis block node"
-                return genesisNode
-            Just bs ->
-                return . fromRight (error "Could not decode best block") $
-                decode bs
+                let msg = "Could not get best block from database"
+                $(logError) $ logMe <> cs msg
+                error msg
+            Just b -> return b
     setBestBlockHeader bn = do
         db <- asks headerDB
         let bs = encode bn
@@ -111,6 +112,7 @@ chain cfg =
                 , RocksDB.compression = RocksDB.NoCompression
                 }
         hdb <- RocksDB.open (chainConfDbFile cfg) opts
+        $(logDebug) $ logMe <> "Added genesis block node"
         st <-
             liftIO $
             newTVarIO
@@ -119,7 +121,11 @@ chain cfg =
         let rd = ChainReader {myConfig = cfg, headerDB = hdb, chainState = st}
         run `runReaderT` rd
   where
-    run =
+    run = do
+        let gs = encode genesisNode
+        addBlockHeader genesisNode
+        db <- asks headerDB
+        RocksDB.put db def "best" gs
         forever $ do
             stats
             $(logDebug) $ logMe <> "Awaiting message"

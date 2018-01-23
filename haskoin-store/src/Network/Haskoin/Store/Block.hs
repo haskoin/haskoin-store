@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE TupleSections              #-}
 module Network.Haskoin.Store.Block
     ( blockStore
     , getBestBlock
@@ -172,7 +173,7 @@ getBestBlock :: MonadIO m => DB -> Maybe Snapshot -> m (Maybe BlockValue)
 getBestBlock db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ f . Just
-        Just _ -> f s
+        Just _  -> f s
   where
     f s' =
         runMaybeT $ do
@@ -184,7 +185,7 @@ getBlockAtHeight ::
 getBlockAtHeight height db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ f . Just
-        Just _ -> f s
+        Just _  -> f s
   where
     f s' =
         runMaybeT $ do
@@ -216,13 +217,11 @@ getBalance ::
 getBalance addr db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
-        Just _ -> g s
+        Just _  -> g s
   where
     g s' =
         runMaybeT $ do
-            bal <-
-                MaybeT
-                    (fmap listToMaybe (valuesForKey (MultiBalance addr) db s'))
+            bal <- MaybeT (firstValue (MultiBalance addr) db s')
             best <- getBestBlockHash db s' >>= me
             block <- getBlock best db s' >>= me
             let h = blockValueHeight block
@@ -241,8 +240,11 @@ getBalance addr db s =
                       , blockRefHash = best
                       , blockRefMainChain = True
                       }
+                , addressBalTxCount = balanceTxCount (snd bal)
+                , addressBalUnspentCount = balanceUnspentCount (snd bal)
+                , addressBalSpentCount = balanceSpentCount (snd bal)
                 }
-    me Nothing = error "Could not retrieve best block from database"
+    me Nothing  = error "Could not retrieve best block from database"
     me (Just x) = return x
     i h BalanceValue {..} =
         let f Immature {..} = blockRefHeight immatureBlock <= h - 99
@@ -250,6 +252,9 @@ getBalance addr db s =
         in BalanceValue
            { balanceValue = balanceValue + sum (map immatureValue ms)
            , balanceImmature = is
+           , balanceTxCount = balanceTxCount
+           , balanceUnspentCount = balanceUnspentCount
+           , balanceSpentCount = balanceSpentCount
            }
 
 getTx ::
@@ -428,12 +433,13 @@ blockBatchOps ::
 blockBatchOps block@Block {..} height work main = do
     outputs <- M.fromList . concat <$> mapM (outputBatchOps blockRef) blockTxns
     let outputOps = map (uncurry insertOp) (M.toList outputs)
-    spent <- concat <$> zipWithM (spentOutputs blockRef outputs) blockTxns [0 ..]
+    spent <-
+        M.unions <$> zipWithM (spentOutputs blockRef outputs) blockTxns [0 ..]
     spentOps <- concat <$> zipWithM (spentBatchOps blockRef) blockTxns [0 ..]
     txOps <- forM blockTxns (txBatchOp blockRef spent)
     addrOps <-
         concat <$> zipWithM (addrBatchOps blockRef spent) blockTxns [0 ..]
-    balOps <- balanceBatchOps blockRef (map (fst . snd) spent) blockTxns
+    balOps <- balanceBatchOps blockRef spent blockTxns
     unspentCachePrune
     return $
         concat
@@ -525,9 +531,9 @@ spentOutputs ::
     -> Map OutputKey OutputValue
     -> Tx
     -> Word32 -- ^ position in block
-    -> m [(OutputKey, (OutputValue, SpentValue))]
+    -> m (Map OutputKey (OutputValue, SpentValue))
 spentOutputs block os tx pos =
-    fmap catMaybes . forM (zip [0 ..] (txIn tx)) $ \(i, TxIn {..}) ->
+    fmap (M.fromList . catMaybes) . forM (zip [0 ..] (txIn tx)) $ \(i, TxIn {..}) ->
         if outPointHash prevOutput == zero
             then return Nothing
             else do
@@ -536,14 +542,17 @@ spentOutputs block os tx pos =
                 let spent = SpentValue (txHash tx) i block pos
                 return $ Just (key, (val, spent))
   where
-    zero = "0000000000000000000000000000000000000000000000000000000000000000"
     me msg Nothing = do
         $(logError) $ logMe <> cs msg
         error msg
     me _ (Just x) = return x
 
 balanceBatchOps ::
-       MonadBlock m => BlockRef -> [OutputValue] -> [Tx] -> m [RocksDB.BatchOp]
+       MonadBlock m
+    => BlockRef
+    -> Map OutputKey (OutputValue, SpentValue)
+    -> [Tx]
+    -> m [RocksDB.BatchOp]
 balanceBatchOps block spent txs =
     if blockRefMainChain block
         then do
@@ -557,11 +566,16 @@ balanceBatchOps block spent txs =
                           BalanceKey {balanceAddress = a, balanceBlock = block})
                  addrs
   where
-    f (BalanceKey {..}, BalanceValue {..}) =
-        (balanceAddress, (balanceValue, balanceImmature))
+    f (BalanceKey {..}, bv) = (balanceAddress, bv)
     g cur addr =
-        let bal = maybe 0 fst (M.lookup addr cur)
-            imms = concat (maybeToList (snd <$> M.lookup addr cur))
+        let bal = maybe 0 balanceValue (M.lookup addr cur)
+            imms = concat (maybeToList (balanceImmature <$> M.lookup addr cur))
+            tc = maybe 0 balanceTxCount (M.lookup addr cur)
+            tc' = fromMaybe 0 (M.lookup addr txCountMap)
+            sc = maybe 0 balanceSpentCount (M.lookup addr cur)
+            sc' = fromMaybe 0 (M.lookup addr debitCountMap)
+            uc = maybe 0 balanceUnspentCount (M.lookup addr cur)
+            uc' = fromMaybe 0 (M.lookup addr creditCountMap)
             cred = fromMaybe 0 (M.lookup addr creditMap)
             deb = fromMaybe 0 (M.lookup addr debitMap)
             (mts, imms') = partition mature imms
@@ -573,33 +587,61 @@ balanceBatchOps block spent txs =
                 ] ++
                 imms'
             k = BalanceKey {balanceAddress = addr, balanceBlock = block}
-            v = BalanceValue {balanceValue = bal', balanceImmature = imms''}
+            v =
+                BalanceValue
+                { balanceValue = bal'
+                , balanceImmature = imms''
+                , balanceTxCount = tc + tc'
+                , balanceUnspentCount = uc + uc' - sc'
+                , balanceSpentCount = sc + sc'
+                }
         in (k, v)
     mature = (<= blockRefHeight block - 99) . blockRefHeight . immatureBlock
     addrs = nub (M.keys creditMap ++ M.keys debitMap ++ M.keys coinbaseMap)
     balance addr = do
         db <- asks myBlockDB
         firstValue (MultiBalance addr) db Nothing
-    creditMap = foldl' credit M.empty (concatMap txOut (tail txs))
     coinbaseMap = foldl' coinbase M.empty (txOut (head txs))
-    debitMap = foldl' debit M.empty spent
+    debitMap = foldl' debit M.empty (map fst (M.elems spent))
     debit m OutputValue {..} =
         case scriptToAddressBS outScript of
             Nothing -> m
-            Just a  -> M.insertWith (+) a outputValue m
+            Just a -> M.insertWith (+) a outputValue m
+    debitCountMap = foldl' debitCount M.empty (map fst (M.elems spent))
+    debitCount m OutputValue {..} =
+        case scriptToAddressBS outScript of
+            Nothing -> m
+            Just a -> M.insertWith (+) a 1 m
+    creditMap = foldl' credit M.empty (concatMap txOut (tail txs))
     credit m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a  -> M.insertWith (+) a outValue m
+            Just a -> M.insertWith (+) a outValue m
+    creditCountMap = foldl' creditCount M.empty (concatMap txOut txs)
+    creditCount m TxOut {..} =
+        case scriptToAddressBS scriptOutput of
+            Nothing -> m
+            Just a -> M.insertWith (+) a 1 m
     coinbase m TxOut {..} =
         case scriptToAddressBS scriptOutput of
             Nothing -> m
-            Just a  -> M.insertWith (+) a outValue m
+            Just a -> M.insertWith (+) a outValue m
+    txCountMap = M.unionsWith (+) (map countTx txs)
+    countTx tx = M.fromList (map (, 1) (txAddrs tx))
+    txAddrs tx =
+        nub (mapMaybe getInAddr (txIn tx) ++ mapMaybe getOutAddr (txOut tx))
+    getInAddr TxIn {..} =
+        if outPointHash prevOutput == zero
+            then Nothing
+            else do
+                (OutputValue {..}, _) <- OutputKey prevOutput `M.lookup` spent
+                scriptToAddressBS outScript
+    getOutAddr TxOut {..} = scriptToAddressBS scriptOutput
 
 addrBatchOps ::
        MonadBlock m
     => BlockRef
-    -> [(OutputKey, (OutputValue, SpentValue))]
+    -> Map OutputKey (OutputValue, SpentValue)
     -> Tx
     -> Word32
     -> m [RocksDB.BatchOp]
@@ -624,7 +666,7 @@ addrBatchOps block spent tx pos = do
                 , outBlock = block
                 , outScript = scriptOutput
                 }
-            m = ok `lookup` spent
+            m = ok `M.lookup` spent
         in case scriptToAddressBS scriptOutput of
                Just addr ->
                    if mainchain
@@ -672,7 +714,6 @@ addrBatchOps block spent tx pos = do
                         , addrSpentPos = pos
                         }
                 in [insertOp sk sv]
-    zero = "0000000000000000000000000000000000000000000000000000000000000000"
     spend TxIn {..} =
         fmap (concat . maybeToList) . runMaybeT $ do
             let (ok, s, maddr, height') = getSpent prevOutput
@@ -705,7 +746,7 @@ addrBatchOps block spent tx pos = do
         let ok = OutputKey po
             (ov, s) =
                 fromMaybe (error "Colud not find spent output") $
-                ok `lookup` spent
+                ok `M.lookup` spent
             maddr = scriptToAddressBS (outScript ov)
             height' = blockRefHeight (outBlock ov)
         in (ok, s, maddr, height')
@@ -713,13 +754,12 @@ addrBatchOps block spent tx pos = do
 txBatchOp ::
        MonadBlock m
     => BlockRef
-    -> [(OutputKey, (OutputValue, SpentValue))]
+    -> Map OutputKey (OutputValue, SpentValue)
     -> Tx
     -> m RocksDB.BatchOp
 txBatchOp block spent tx =
     return $ insertOp (TxKey (txHash tx)) (TxValue block tx vs)
   where
-    zero = "0000000000000000000000000000000000000000000000000000000000000000"
     e = error "Could not find spent output information"
     vs =
         [ (k, v)
@@ -727,7 +767,7 @@ txBatchOp block spent tx =
         , let output = prevOutput ti
         , outPointHash output /= zero
         , let k = OutputKey output
-        , let (v, _) = fromMaybe e (k `lookup` spent)
+        , let (v, _) = fromMaybe e (k `M.lookup` spent)
         ]
 
 
@@ -771,7 +811,6 @@ spentBatchOps ::
     -> m [RocksDB.BatchOp]
 spentBatchOps block tx pos = return . catMaybes $ zipWith f (txIn tx) [0 ..]
   where
-    zero = "0000000000000000000000000000000000000000000000000000000000000000"
     f TxIn {..} index =
         if outPointHash prevOutput == zero
             then Nothing
@@ -850,7 +889,7 @@ getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrTxs addr db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
-        Just _ -> g s
+        Just _  -> g s
   where
     f AddressTx {..} = (blockRefHeight addressTxBlock, addressTxPos)
     g s' = do
@@ -911,3 +950,6 @@ getUnspent addr db s = do
 
 logMe :: Text
 logMe = "[Block] "
+
+zero :: TxHash
+zero = "0000000000000000000000000000000000000000000000000000000000000000"
