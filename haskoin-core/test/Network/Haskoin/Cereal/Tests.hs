@@ -44,7 +44,6 @@ tests =
     , testGroup "Binary encoding and decoding of script types"
         [ testProperty "ScriptOp" $ forAll arbitraryScriptOp testId
         , testProperty "Script" $ forAll arbitraryScript testId
-        , testProperty "SigHash" $ forAll arbitrarySigHash testId
         ]
     , testGroup "Binary encoding and decoding of transaction types"
         [ testProperty "TxIn" $ forAll arbitraryTxIn testId

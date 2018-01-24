@@ -3,14 +3,14 @@
 -}
 module Network.Haskoin.Test.Script where
 
-import           Data.Bits
+import           Data.Word
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Test.Crypto
 import           Network.Haskoin.Test.Util
 import           Network.Haskoin.Transaction.Types
 import           Network.Haskoin.Util
-import           Test.QuickCheck                   hiding ((.&.))
+import           Test.QuickCheck
 
 -- | Arbitrary Script with random script ops
 arbitraryScript :: Gen Script
@@ -157,25 +157,17 @@ arbitraryIntScriptOp =
 arbitraryPushDataType :: Gen PushDataType
 arbitraryPushDataType = elements [OPCODE, OPDATA1, OPDATA2, OPDATA4]
 
-arbitrarySigHashType :: Gen SigHashType
-arbitrarySigHashType =
-    oneof
-        [ return SigAll
-        , return SigNone
-        , return SigSingle
-        , SigUnknown . (.&. 0x1c) <$> arbitrary
-        ]
-
 -- | Arbitrary SigHash (including invalid/unknown sighash codes)
 arbitrarySigHash :: Gen SigHash
-arbitrarySigHash = SigHash <$> arbitrarySigHashType <*> arbitrary <*> arbitrary
+arbitrarySigHash = fromIntegral <$> (arbitrary :: Gen Word32)
 
 -- | Arbitrary valid SigHash
 arbitraryValidSigHash :: Gen SigHash
-arbitraryValidSigHash =
-    SigHash <$> elements [SigAll, SigNone, SigSingle]
-            <*> arbitrary
-            <*> return False
+arbitraryValidSigHash = do
+    sh <- elements [sigHashAll, sigHashNone, sigHashSingle]
+    f1 <- elements [id, setForkIdFlag]
+    f2 <- elements [id, setAnyoneCanPayFlag]
+    return $ f1 $ f2 sh
 
 -- | Arbitrary message hash, private key and corresponding TxSignature. The
 -- signature is generated deterministically using a random message and a
@@ -183,7 +175,7 @@ arbitraryValidSigHash =
 arbitraryTxSignature :: Gen (TxHash, PrvKey, TxSignature)
 arbitraryTxSignature = do
     (msg, key, sig) <- arbitrarySignature
-    sh <- arbitrarySigHash
+    sh <- fromIntegral <$> (arbitrary :: Gen Word8)
     let txsig = TxSignature sig sh
     return (TxHash msg, key, txsig)
 
@@ -192,7 +184,7 @@ arbitraryTxSignatureEmpty :: Gen TxSignature
 arbitraryTxSignatureEmpty =
     frequency [ (1, return TxSignatureEmpty)
               , (10, lst3 <$> arbitraryTxSignature)
-              ] 
+              ]
 
 -- | Arbitrary m of n parameters
 arbitraryMSParam :: Gen (Int, Int)

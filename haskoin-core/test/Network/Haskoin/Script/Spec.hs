@@ -11,6 +11,7 @@ import           Data.List
 import           Data.Maybe
 import           Data.Monoid                 ((<>))
 import           Data.Serialize
+import           Data.String
 import           Data.String.Conversions     (cs)
 import           Data.Word
 import           Network.Haskoin.Crypto
@@ -28,6 +29,7 @@ spec = do
     canonicalSigSpec
     scriptSpec
     sigHashSpec
+    txSigHashSpec
 
 standardSpec :: Spec
 standardSpec =
@@ -68,7 +70,7 @@ standardSpec =
 scriptSpec :: Spec
 scriptSpec =
     describe "Network.Haskoin.Script Verifier" $
-        it "Can verify standard scripts" $ do
+        it "Can verify standard scripts from script_tests.json file" $ do
             xs <- readTestFile "script_tests"
             let vectors = filter ((== 5) . length) (xs :: [[String]])
             length vectors `shouldBe` 85
@@ -151,40 +153,85 @@ canonicalSigSpec =
             forM_ vectors $ \sig ->
                 decodeTxStrictSig sig `shouldSatisfy` isLeft
 
+txSigHashSpec :: Spec
+txSigHashSpec =
+    describe "Network.Haskoin.Script txSigHash" $
+    it "can produce valid sighashes from sighash.json test vectors" $ do
+        xs <- readTestFile "sighash" :: IO [J.Value]
+        let vectors =
+                mapMaybe (J.decode . J.encode) xs :: [( String
+                                                      , String
+                                                      , Int
+                                                      , Integer
+                                                      , String)]
+        length vectors `shouldBe` 500
+        forM_ vectors $ \(txStr, scpStr, i, shI, resStr) -> do
+            let tx = fromString txStr
+                s =
+                    fromMaybe (error $ "Could not decode script: " <> cs scpStr) $
+                    eitherToMaybe . decode =<< decodeHex (cs scpStr)
+                sh = fromIntegral shI
+                res =
+                    eitherToMaybe . decode . BS.reverse =<<
+                    decodeHex (cs resStr)
+            Just (txSigHash tx s 0 i sh) `shouldBe` res
+
 sigHashSpec :: Spec
 sigHashSpec =
     describe "Network.Haskoin.Script.SigHash" $ do
-        it "can decode . encode a SigHash" $
+        it "can fromString . show a SigHash" $
             property $
-            forAll arbitrarySigHash $ \sh ->
-                decode (encode sh) `shouldBe` Right (sh :: SigHash)
-        it "can decode some SigHash vectors" $ do
-            decode (BS.singleton 0x00) `shouldBe`
-                Right (SigHash (SigUnknown 0x00) False False)
-            decode (BS.singleton 0x01) `shouldBe`
-                Right (SigHash SigAll False False)
-            decode (BS.singleton 0x02) `shouldBe`
-                Right (SigHash SigNone False False)
-            decode (BS.singleton 0x03) `shouldBe`
-                Right (SigHash SigSingle False False)
-            decode (BS.singleton 0x41) `shouldBe`
-                Right (SigHash SigAll False True)
-            decode (BS.singleton 0x81) `shouldBe`
-                Right (SigHash SigAll True False)
-            decode (BS.singleton 0xc1) `shouldBe`
-                Right (SigHash SigAll True True)
-            decode (BS.singleton 0xe1) `shouldBe`
-                Right (SigHash SigAll True True)
-            decode (BS.singleton 0xff) `shouldBe`
-                Right (SigHash (SigUnknown 0x1f) True True)
-        it "can decodeTxDerSig . encode a TxSignature" $
+            forAll arbitrarySigHash $
+                \sh -> fromString (show sh) `shouldBe` sh
+        it "can correctly show a SigHash" $ do
+            show (0x00 :: SigHash) `shouldBe` "00000000"
+            show (0x01 :: SigHash) `shouldBe` "00000001"
+            show (0xff :: SigHash) `shouldBe` "000000ff"
+            show (0xabac3344 :: SigHash) `shouldBe` "abac3344"
+        it "can add a forkid to a SigHash" $ do
+            0x00 `sigHashAddForkId` 0x00 `shouldBe` 0x00
+            0xff `sigHashAddForkId` 0x00ffffff `shouldBe` 0xffffffff
+            0xffff `sigHashAddForkId` 0x00aaaaaa `shouldBe` 0xaaaaaaff
+            0xffff `sigHashAddForkId` 0xaaaaaaaa `shouldBe` 0xaaaaaaff
+            0xffff `sigHashAddForkId` 0x00004444 `shouldBe` 0x004444ff
+            0xff01 `sigHashAddForkId` 0x44440000 `shouldBe` 0x44000001
+            0xff03 `sigHashAddForkId` 0x00550000 `shouldBe` 0x55000003
+        it "can extract a forkid from a sighash" $ do
+            sigHashGetForkId 0x00000000 `shouldBe` 0x00000000
+            sigHashGetForkId 0x80000000 `shouldBe` 0x00800000
+            sigHashGetForkId 0xffffffff `shouldBe` 0x00ffffff
+            sigHashGetForkId 0xabac3403 `shouldBe` 0x00abac34
+        it "can build some SigHash vectors" $ do
+            sigHashAll `shouldBe` 0x01
+            sigHashNone `shouldBe` 0x02
+            sigHashSingle `shouldBe` 0x03
+            setForkIdFlag sigHashAll `shouldBe` 0x41
+            setAnyoneCanPayFlag sigHashAll `shouldBe` 0x81
+            setAnyoneCanPayFlag (setForkIdFlag sigHashAll) `shouldBe` 0xc1
+        it "can test the SigHash flags" $ do
+            hasForkIdFlag sigHashAll `shouldBe` False
+            hasForkIdFlag (setForkIdFlag sigHashAll) `shouldBe` True
+            hasAnyoneCanPayFlag sigHashAll `shouldBe` False
+            hasAnyoneCanPayFlag (setAnyoneCanPayFlag sigHashAll) `shouldBe` True
+            isSigHashAll sigHashNone `shouldBe` False
+            isSigHashAll sigHashAll `shouldBe` True
+            isSigHashNone sigHashSingle `shouldBe` False
+            isSigHashNone sigHashNone `shouldBe` True
+            isSigHashSingle sigHashAll `shouldBe` False
+            isSigHashSingle sigHashSingle `shouldBe` True
+            isSigHashUnknown sigHashAll `shouldBe` False
+            isSigHashUnknown sigHashNone `shouldBe` False
+            isSigHashUnknown sigHashSingle `shouldBe` False
+            isSigHashUnknown 0x00 `shouldBe` True
+            isSigHashUnknown 0x04 `shouldBe` True
+        it "can decodeTxLaxSig . encode a TxSignature" $
             property $
             forAll arbitraryTxSignature $ \(_, _, ts) ->
-                decodeTxDerSig (encodeTxSig ts) `shouldBe` Right ts
+                decodeTxLaxSig (encodeTxSig ts) `shouldBe` Right ts
         it "can decodeTxStrictSig . encode a TxSignature" $
             property $
             forAll arbitraryTxSignature $ \(_, _, ts@(TxSignature _ sh)) ->
-                if isSigUnknown sh || forkIdFlag sh
+                if isSigHashUnknown sh || hasForkIdFlag sh
                     then decodeTxStrictSig (encodeTxSig ts) `shouldSatisfy`
                          isLeft
                     else decodeTxStrictSig (encodeTxSig ts) `shouldBe` Right ts
@@ -193,13 +240,18 @@ sigHashSpec =
             forAll arbitraryTx $ forAll arbitraryScript . testSigHashOne
 
 testSigHashOne :: Tx -> Script -> Word64 -> Bool -> Property
-testSigHashOne tx s val acp = not (null $ txIn tx) ==>
+testSigHashOne tx s val acp =
+    not (null $ txIn tx) ==>
     if length (txIn tx) > length (txOut tx)
         then res `shouldBe` one
         else res `shouldNotBe` one
   where
-    res = txSigHash tx s val (length (txIn tx) - 1) (SigHash SigSingle acp False)
+    res = txSigHash tx s val (length (txIn tx) - 1) (f sigHashSingle)
     one = "0100000000000000000000000000000000000000000000000000000000000000"
+    f =
+        if acp
+            then setAnyoneCanPayFlag
+            else id
 
 {-- Test Utilities --}
 

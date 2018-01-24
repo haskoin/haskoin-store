@@ -2,8 +2,7 @@
 module Network.Haskoin.Script.Units (tests) where
 
 import           Data.ByteString                (ByteString)
-import           Data.Either                    (fromLeft, fromRight, isLeft,
-                                                 isRight)
+import           Data.Either                    (fromLeft, fromRight, isRight)
 import           Data.Maybe                     (fromJust)
 import           Data.Serialize                 (decode)
 import           Network.Haskoin.Crypto
@@ -44,7 +43,7 @@ sigDecodeMap (_, i) =
 testSigDecode :: ByteString -> Assertion
 testSigDecode str =
     let bs = fromJust $ decodeHex str
-        eitherSig = decodeTxDerSig bs
+        eitherSig = decodeTxLaxSig bs
     in assertBool
            (unwords
                 [ "Decode failed:"

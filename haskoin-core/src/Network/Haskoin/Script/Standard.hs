@@ -325,7 +325,7 @@ decodeSimpleInput strict (Script ops) =
     f (OP_PUSHDATA "" OPCODE) = f OP_0
     f (OP_PUSHDATA bs _)
         | strict = eitherToMaybe $ decodeTxStrictSig bs
-        | otherwise = eitherToMaybe $ decodeTxDerSig bs
+        | otherwise = eitherToMaybe $ decodeTxLaxSig bs
     f _ = Nothing
     errMsg = "decodeInput: Could not decode script input"
 

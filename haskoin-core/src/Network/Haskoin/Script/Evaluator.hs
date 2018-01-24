@@ -410,7 +410,7 @@ checkMultiSig :: SigCheck -- ^ Signature checking function
               -> Bool
 checkMultiSig f encPubKeys encSigs hOps =
   let pubKeys = mapMaybe (eitherToMaybe . decode . opToSv) encPubKeys
-      sigs = rights $ map ( decodeTxDerSig . opToSv ) encSigs
+      sigs = rights $ map ( decodeTxLaxSig . opToSv ) encSigs
       cleanHashOps = findAndDelete encSigs hOps
   in (length sigs == length encSigs) && -- check for bad signatures
      orderedSatisfy (f cleanHashOps) sigs pubKeys
@@ -788,9 +788,9 @@ runStack = stack
 verifySigWithType ::
        Tx -> Int -> Word64 -> [ScriptOp] -> TxSignature -> PubKey -> Bool
 verifySigWithType tx i val outOps txSig pubKey =
-  let outScript = Script outOps
-      h = txSigHash tx outScript val i ( txSignatureSigHash txSig ) in
-  verifySig h ( txSignature txSig ) pubKey
+    let outScript = Script outOps
+        h = txSigHash tx outScript val i (txSignatureSigHash txSig)
+    in verifySig h (txSignature txSig) pubKey
 
 -- | Uses `evalScript` to check that the input script of a spending
 -- transaction satisfies the output script.

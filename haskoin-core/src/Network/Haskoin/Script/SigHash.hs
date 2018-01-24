@@ -1,32 +1,38 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 module Network.Haskoin.Script.SigHash
-( SigHashType(..)
-, SigHash(..)
-, sigHashToWord32
-, sigHashToWord8
-, word8ToSigHash
-, isSigAll
-, isSigNone
-, isSigSingle
-, isSigUnknown
+( SigHash
+, sigHashAll
+, sigHashNone
+, sigHashSingle
+, hasAnyoneCanPayFlag
+, hasForkIdFlag
+, setAnyoneCanPayFlag
+, setForkIdFlag
+, isSigHashAll
+, isSigHashNone
+, isSigHashSingle
+, isSigHashUnknown
+, sigHashAddForkId
+, sigHashGetForkId
+, sigHashAddNetworkId
 , txSigHash
 , TxSignature(..)
 , encodeTxSig
-, decodeTxDerSig
+, decodeTxLaxSig
 , decodeTxStrictSig
 ) where
 
 import           Control.DeepSeq                   (NFData, rnf)
 import           Control.Monad
-import           Data.Aeson                        (FromJSON, ToJSON,
-                                                    Value (String), parseJSON,
-                                                    toJSON, withText)
+import qualified Data.Aeson                        as J
 import           Data.Bits
 import           Data.ByteString                   (ByteString)
 import qualified Data.ByteString                   as BS
 import           Data.Maybe
 import           Data.Serialize
 import           Data.Serialize.Put                (runPut)
+import           Data.String                       (IsString, fromString)
 import           Data.String.Conversions           (cs)
 import           Data.Word
 import           Network.Haskoin.Constants
@@ -35,22 +41,6 @@ import           Network.Haskoin.Crypto.Hash
 import           Network.Haskoin.Script.Types
 import           Network.Haskoin.Transaction.Types
 import           Network.Haskoin.Util
-
-data SigHashType
-    -- | Sign all of the outputs of a transaction (This is the default value).
-    -- Changing any of the outputs of the transaction will invalidate the
-    -- signature.
-    = SigAll
-    -- | Sign none of the outputs of a transaction. This allows anyone to
-    -- change any of the outputs of the transaction.
-    | SigNone
-    -- | Sign only the output corresponding the the current transaction input.
-    -- You care about your own output in the transaction but you don't
-    -- care about any of the other outputs.
-    | SigSingle
-    -- | Unrecognized sighash types will decode to SigUnknown.
-    | SigUnknown { getSigCode :: !Word8 }
-    deriving (Eq, Show)
 
 -- | Data type representing the different ways a transaction can be signed.
 -- When producing a signature, a hash of the transaction is used as the message
@@ -63,88 +53,70 @@ data SigHashType
 -- If the anyoneCanPay flag is True, then only the current input is signed.
 -- Otherwise, all of the inputs of a transaction are signed. The default value
 -- for anyoneCanPay is False.
-data SigHash = SigHash
-    { sigHashType      :: !SigHashType
-    , anyoneCanPayFlag :: !Bool
-    , forkIdFlag       :: !Bool
-    } deriving (Eq, Show)
+newtype SigHash = SigHash Word32
+    deriving (Eq, Ord, Enum, Bits, Num, Real, Integral, NFData)
 
-instance NFData SigHashType where
-    rnf (SigUnknown c) = rnf c
-    rnf _              = ()
+instance Show SigHash where
+    show sh = cs $ encodeHex $ runPut $ putWord32be $ fromIntegral sh
 
-instance NFData SigHash where
-    rnf (SigHash t a f) = rnf t `seq` rnf a `seq` rnf f
+instance IsString SigHash where
+    fromString s =
+        let e = error "Could not read sighash from hex string"
+        in fromIntegral $
+           fromMaybe e $ eitherToMaybe . runGet getWord32be =<< decodeHex (cs s)
 
-instance ToJSON SigHash where
-    toJSON = String . cs . encodeHex . encode
+instance J.FromJSON SigHash where
+    parseJSON = J.withText "sighash" $ \t -> return $ fromString $ cs t
 
-instance FromJSON SigHash where
-    parseJSON = withText "sighash" $
-        maybe mzero return . (eitherToMaybe . decode <=< decodeHex) . cs
+instance J.ToJSON SigHash where
+    toJSON = J.String . cs . show
+
+sigHashAll :: SigHash
+sigHashAll = 0x01
+
+sigHashNone :: SigHash
+sigHashNone = 0x02
+
+sigHashSingle :: SigHash
+sigHashSingle = 0x03
+
+setForkIdFlag :: SigHash -> SigHash
+setForkIdFlag = (.|. 0x40)
+
+setAnyoneCanPayFlag :: SigHash -> SigHash
+setAnyoneCanPayFlag = (.|. 0x80)
+
+hasForkIdFlag :: SigHash -> Bool
+hasForkIdFlag = (/= 0) . (.&. 0x40)
+
+hasAnyoneCanPayFlag :: SigHash -> Bool
+hasAnyoneCanPayFlag = (/= 0) . (.&. 0x80)
 
 -- | Returns True if the 'SigHash' has the value SigAll.
-isSigAll :: SigHash -> Bool
-isSigAll sh =
-    case sigHashType sh of
-        SigAll -> True
-        _      -> False
+isSigHashAll :: SigHash -> Bool
+isSigHashAll = (== sigHashAll) . (.&. 0x1f)
 
 -- | Returns True if the 'SigHash' has the value SigNone.
-isSigNone :: SigHash -> Bool
-isSigNone sh =
-    case sigHashType sh of
-        SigNone -> True
-        _       -> False
+isSigHashNone :: SigHash -> Bool
+isSigHashNone = (== sigHashNone) . (.&. 0x1f)
 
 -- | Returns True if the 'SigHash' has the value SigSingle.
-isSigSingle :: SigHash -> Bool
-isSigSingle sh =
-    case sigHashType sh of
-        SigSingle -> True
-        _         -> False
+isSigHashSingle :: SigHash -> Bool
+isSigHashSingle = (== sigHashSingle) . (.&. 0x1f)
 
 -- | Returns True if the 'SigHash' has the value SigUnknown.
-isSigUnknown :: SigHash -> Bool
-isSigUnknown sh =
-    case sigHashType sh of
-        SigUnknown _ -> True
-        _            -> False
+isSigHashUnknown :: SigHash -> Bool
+isSigHashUnknown =
+    (`notElem` [sigHashAll, sigHashNone, sigHashSingle]) . (.&. 0x1f)
 
-instance Serialize SigHash where
-    get = word8ToSigHash <$> getWord8
-    put = putWord8 . sigHashToWord8
+sigHashAddForkId :: SigHash -> Word32 -> SigHash
+sigHashAddForkId sh w = (fromIntegral w `shiftL` 8) .|. (sh .&. 0x000000ff)
 
-sigHashToWord8 :: SigHash -> Word8
-sigHashToWord8 sh =
-    f1 . f2 $ w .&. 0x1f
-  where
-    w = case sigHashType sh of
-            SigAll       -> 1
-            SigNone      -> 2
-            SigSingle    -> 3
-            SigUnknown n -> n
-    f1 | forkIdFlag sh = (`setBit` 6)
-       | otherwise = id
-    f2 | anyoneCanPayFlag sh = (`setBit` 7)
-       | otherwise = id
+sigHashAddNetworkId :: SigHash -> SigHash
+sigHashAddNetworkId = (`sigHashAddForkId` fromMaybe 0 sigHashForkValue)
 
-word8ToSigHash :: Word8 -> SigHash
-word8ToSigHash w =
-    SigHash
-    { sigHashType =
-          case w .&. 0x1f of
-              1 -> SigAll
-              2 -> SigNone
-              3 -> SigSingle
-              n -> SigUnknown n
-    , anyoneCanPayFlag = w `testBit` 7
-    , forkIdFlag = w `testBit` 6
-    }
-
-sigHashToWord32 :: SigHash -> Word32
-sigHashToWord32 sh =
-    fromMaybe 0 sigHashForkValue `shiftL` 8 .|. fromIntegral (sigHashToWord8 sh)
+sigHashGetForkId :: SigHash -> Word32
+sigHashGetForkId = fromIntegral . (`shiftR` 8)
 
 -- | Computes the hash that will be used for signing a transaction.
 txSigHash :: Tx      -- ^ Transaction to sign.
@@ -154,30 +126,34 @@ txSigHash :: Tx      -- ^ Transaction to sign.
           -> SigHash -- ^ What parts of the transaction should be signed.
           -> Hash256 -- ^ Result hash to be signed.
 txSigHash tx out v i sh
-    | forkIdFlag sh = txSigHashForkId tx out v i sh
+    | hasForkIdFlag sh && isJust sigHashForkValue =
+        txSigHashForkId tx out v i sh
     | otherwise = do
-        let newIn = buildInputs (txIn tx) out i sh
+        let newIn = buildInputs (txIn tx) fout i sh
         -- When SigSingle and input index > outputs, then sign integer 1
         fromMaybe one $ do
             newOut <- buildOutputs (txOut tx) i sh
             let newTx = Tx (txVersion tx) newIn newOut (txLockTime tx)
-            return $ doubleSHA256 $ runPut $ do
-                put newTx
-                putWord32le $ sigHashToWord32 sh
+            return $
+                doubleSHA256 $
+                runPut $ do
+                    put newTx
+                    putWord32le $ fromIntegral sh
   where
+    fout = Script $ filter (/= OP_CODESEPARATOR) $ scriptOps out
     one = "0100000000000000000000000000000000000000000000000000000000000000"
 
 -- Builds transaction inputs for computing SigHashes
 buildInputs :: [TxIn] -> Script -> Int -> SigHash -> [TxIn]
 buildInputs txins out i sh
-    | anyoneCanPayFlag sh =
+    | hasAnyoneCanPayFlag sh =
         [ (txins !! i) { scriptInput = encode out } ]
-    | isSigAll sh || isSigUnknown sh = single
+    | isSigHashAll sh || isSigHashUnknown sh = single
     | otherwise = zipWith noSeq single [0 ..]
   where
-    empty = map (\ti -> ti { scriptInput = BS.empty }) txins
+    emptyIn = map (\ti -> ti { scriptInput = BS.empty }) txins
     single =
-        updateIndex i empty $ \ti -> ti { scriptInput = encode out }
+        updateIndex i emptyIn $ \ti -> ti { scriptInput = encode out }
     noSeq ti j =
         if i == j
         then ti
@@ -186,8 +162,8 @@ buildInputs txins out i sh
 -- Build transaction outputs for computing SigHashes
 buildOutputs :: [TxOut] -> Int -> SigHash -> Maybe [TxOut]
 buildOutputs txos i sh
-    | isSigAll sh || isSigUnknown sh = return txos
-    | isSigNone sh = return []
+    | isSigHashAll sh || isSigHashUnknown sh = return txos
+    | isSigHashNone sh = return []
     | i >= length txos = Nothing
     | otherwise = return $ buffer ++ [txos !! i]
   where
@@ -215,21 +191,22 @@ txSigHashForkId tx out v i sh
             putWord32be $ txInSequence $ txIn tx !! i
             put hashOutputs
             putWord32be $ txLockTime tx
-            putWord32le $ sigHashToWord32 sh
+            putWord32le $ fromIntegral sh
   where
     hashPrevouts
-        | not $ anyoneCanPayFlag sh =
+        | not $ hasAnyoneCanPayFlag sh =
             doubleSHA256 $ runPut $ mapM_ (put . prevOutput) $ txIn tx
         | otherwise = zeros
     hashSequence
-        | not (anyoneCanPayFlag sh) &&
-              sigHashType sh `notElem` [SigSingle, SigNone] =
+        | not (hasAnyoneCanPayFlag sh) &&
+          not (isSigHashSingle sh) &&
+          not (isSigHashNone sh) =
             doubleSHA256 $ runPut $ mapM_ (putWord32be . txInSequence) $ txIn tx
         | otherwise = zeros
     hashOutputs
-        | sigHashType sh `notElem` [SigSingle, SigNone] =
+        | not (isSigHashSingle sh) && not (isSigHashNone sh) =
             doubleSHA256 $ runPut $ mapM_ put $ txOut tx
-        | sigHashType sh == SigSingle && i < length (txOut tx) =
+        | isSigHashSingle sh && i < length (txOut tx) =
             doubleSHA256 $ encode $ txOut tx !! i
         | otherwise = zeros
     zeros :: Hash256
@@ -247,27 +224,28 @@ data TxSignature
 
 instance NFData TxSignature where
     rnf (TxSignature s h) = rnf s `seq` rnf h
-    rnf TxSignatureEmpty = ()
+    rnf TxSignatureEmpty  = ()
 
 -- | Serialize a 'TxSignature' to a ByteString.
 encodeTxSig :: TxSignature -> ByteString
 encodeTxSig TxSignatureEmpty = error "Can not encode an empty signature"
-encodeTxSig (TxSignature sig sh) = runPut $ put sig >> put sh
+encodeTxSig (TxSignature sig sh) = runPut $ put sig >> putWord8 (fromIntegral sh)
 
 -- | Decode a 'TxSignature' from a ByteString.
-decodeTxDerSig :: ByteString -> Either String TxSignature
-decodeTxDerSig bs = do
-    let (h, l) = BS.splitAt (BS.length bs - 1) bs
-    liftM2 TxSignature (decode h) (decode l)
+decodeTxLaxSig :: ByteString -> Either String TxSignature
+decodeTxLaxSig "" = Left "decodeTxLaxSig: empty bytestring"
+decodeTxLaxSig bs =
+    TxSignature <$> decode (BS.init bs)
+                <*> return (fromIntegral $ BS.last bs)
 
 decodeTxStrictSig :: ByteString -> Either String TxSignature
 decodeTxStrictSig bs =
     case decodeStrictSig $ BS.init bs of
         Just sig -> do
-            sh <- decode $ BS.singleton $ BS.last bs
-            when (isSigUnknown sh) $
+            let sh = fromIntegral $ BS.last bs
+            when (isSigHashUnknown sh) $
                 Left "Non-canonical signature: unknown hashtype byte"
-            when (isNothing sigHashForkValue && forkIdFlag sh) $
+            when (isNothing sigHashForkValue && hasForkIdFlag sh) $
                 Left "Non-canonical signature: invalid network for forkId"
             return $ TxSignature sig sh
         Nothing -> Left "Non-canonical signature: could not parse signature"
