@@ -119,13 +119,8 @@ data AddrOutputValue = AddrOutputValue
     , addrOutputValueSpent :: !(Maybe SpentValue)
     } deriving (Show, Eq, Ord)
 
-data TxOutputValue = TxOutputValue
-    { txOutputValue      :: !OutputValue
-    , txOutputValueSpent :: !(Maybe SpentValue)
-    } deriving (Show, Eq, Ord)
-
 type PrevOutMap = Map OutPoint OutputValue
-type OutputMap = Map OutPoint TxOutputValue
+type OutputMap = Map OutPoint OutputValue
 type AddressMap = Map Address AddressDelta
 type AddrOutputMap = Map AddrOutputKey AddrOutputValue
 type SpentMap = Map OutPoint SpentValue
@@ -257,7 +252,7 @@ getBalance ::
 getBalance addr db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
-        Just _ -> g s
+        Just _  -> g s
   where
     g s' =
         runMaybeT $ do
@@ -284,7 +279,7 @@ getBalance addr db s =
                 , addressBalUnspentCount = balanceUnspentCount (snd bal)
                 , addressBalSpentCount = balanceSpentCount (snd bal)
                 }
-    me Nothing = error "Could not retrieve best block from database"
+    me Nothing  = error "Could not retrieve best block from database"
     me (Just x) = return x
     i h bal@BalanceValue {..} =
         let minHeight =
@@ -568,18 +563,14 @@ blockOp ::
     -> BlockData
     -> m [RocksDB.BatchOp]
 blockOp block header height work main txs BlockData {..} = do
-    let blop = blockHashOp
-        bhop = blockHeightOp
-        btop = bestOp
-        txops = txOps
-        outops = outOps
     addrops <- addrOps
     cache
-    return (blop : bhop : btop : txops ++ outops ++ addrops)
+    return $
+        [blockHashOp, blockHeightOp, bestOp] <>
+        concat [txOps, outOps, spentOps, addrops]
   where
     cache = do
-        let f (k, v) = [(k, txOutputValue v) | isNothing (txOutputValueSpent v)]
-            entries = concatMap f (M.toList blockNewOutMap)
+        let entries = M.toList blockNewOutMap
         addToCache block entries
     blockHashOp =
         let key = BlockKey (headerHash header)
@@ -616,16 +607,16 @@ blockOp block header height work main txs BlockData {..} = do
         in map f txs
     outOps =
         let os = M.toList blockNewOutMap
-            xs =
-                filter ((== headerHash header) . blockRefHash . outBlock . snd) $
-                map (first OutputKey >>> second txOutputValue) os
-            ys =
-                mapMaybe
-                    (\(k, v) -> fmap (SpentKey k, ) (txOutputValueSpent v))
-                    os
+            xs = map (first OutputKey) os
         in if main
-               then map (uncurry insertOp) xs ++ map (uncurry insertOp) ys
-               else map (deleteOp . fst) ys ++ map (deleteOp . fst) ys
+               then map (uncurry insertOp) xs
+               else map (deleteOp . fst) xs
+    spentOps =
+        let ss = M.toList blockSpentMap
+            xs = map (first SpentKey) ss
+        in if main
+               then map (uncurry insertOp) xs
+               else map (deleteOp . fst) xs
     addrOps = do
         let ls = M.toList blockAddrMap
         fmap concat . forM ls $ \(addr, AddressDelta {..}) -> do
@@ -690,27 +681,35 @@ blockBatchOps Block {..} height work main = do
             , blockNewOutMap = M.empty
             }
     bd <- foldM f start (zip [0 ..] blockTxns)
+    stats bd
     blockOp b blockHeader height work main blockTxns bd
   where
+    stats BlockData {..} = do
+        let logBlock =
+                logMe <> "Block " <> logShow (headerHash blockHeader) <> ": "
+            unspentCount = M.size blockNewOutMap
+            spentCount = M.size blockSpentMap
+        $(logDebug) $ logBlock <> "Unspent: " <> logShow unspentCount
+        $(logDebug) $ logBlock <> "Spent: " <> logShow spentCount
     b =
         BlockRef
         { blockRefHash = headerHash blockHeader
         , blockRefHeight = height
         , blockRefMainChain = main
         }
-    f BlockData {..} (pos, tx) = do
-        prevOutMap <- getPrevOutputs tx blockPrevOutMap
-        let newOutMap = getNewOutputs b pos tx
-            prevOutMap' = M.map txOutputValue newOutMap
-            prevOutMap'' = prevOutMap' <> prevOutMap
-            spentMap = getSpentOutputs b pos tx
-            addrMap = getAddrDelta b pos spentMap newOutMap prevOutMap''
-        return BlockData
-            { blockPrevOutMap = prevOutMap''
-            , blockAddrMap = addrMap
-            , blockSpentMap = spentMap
-            , blockNewOutMap = newOutMap
-            }
+    f blockData (pos, tx) = do
+        prevOutMap <- getPrevOutputs tx (blockPrevOutMap blockData)
+        let spentMap = getSpentOutputs b pos tx
+            addrMap = getAddrDelta b pos spentMap newOutMap prevOutMap
+            newOutMap = getNewOutputs b pos tx
+            txData =
+                BlockData
+                { blockPrevOutMap = prevOutMap <> newOutMap
+                , blockNewOutMap = newOutMap
+                , blockAddrMap = addrMap
+                , blockSpentMap = spentMap
+                }
+        return (blockData <> txData)
 
 getAddrDelta ::
        BlockRef -> Word32 -> SpentMap -> OutputMap -> PrevOutMap -> AddressMap
@@ -744,10 +743,10 @@ getAddrDelta block@BlockRef {..} pos spentMap outputMap prevMap =
         let key = AddrOutputKey blockRefHeight outpoint
             value = AddrOutputValue output (Just spent)
         return (address, M.singleton key value)
-    unspent outpoint TxOutputValue {..} = do
-        address <- scriptToAddressBS (outScript txOutputValue)
+    unspent outpoint output = do
+        address <- scriptToAddressBS (outScript output)
         let key = AddrOutputKey blockRefHeight outpoint
-            value = AddrOutputValue txOutputValue Nothing
+            value = AddrOutputValue output Nothing
         return (address, M.singleton key value)
 
 getSpentOutputs :: BlockRef -> Word32 -> Tx -> SpentMap
@@ -772,30 +771,33 @@ getNewOutputs block pos tx = foldl' f M.empty (zip [0 ..] (txOut tx))
     f m (i, TxOut {..}) =
         let key = OutPoint (txHash tx) i
             val =
-                TxOutputValue
-                { txOutputValue =
-                      OutputValue
-                      { outputValue = outValue
-                      , outBlock = block
-                      , outScript = scriptOutput
-                      , outPos = pos
-                      }
-                , txOutputValueSpent = Nothing
+                OutputValue
+                { outputValue = outValue
+                , outBlock = block
+                , outScript = scriptOutput
+                , outPos = pos
                 }
         in M.insert key val m
 
 getPrevOutputs :: MonadBlock m => Tx -> PrevOutMap -> m PrevOutMap
-getPrevOutputs tx prevOutMap = foldM f prevOutMap (map prevOutput (txIn tx))
+getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
   where
     f m outpoint@OutPoint {..} = do
         let key = outpoint
-        om <-
-            runMaybeT $ do
-                guard (outPointHash /= zero)
-                MaybeT (getOutput key m)
-        case om of
+        maybeOutput <-
+            if outPointHash == zero
+                then return Nothing
+                else do
+                    maybeOutput <- getOutput key prevOutMap
+                    case maybeOutput of
+                        Just output -> return (Just output)
+                        Nothing -> do
+                            let msg = "Could not get previous output"
+                            $(logError) $ logMe <> cs msg
+                            error msg
+        case maybeOutput of
             Nothing -> return m
-            Just o  -> return (M.insert key o m)
+            Just output -> return (M.insert key output m)
 
 getOutput ::
        MonadBlock m
@@ -820,7 +822,7 @@ getOutput key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
         cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
         m <- MaybeT . return $ M.lookup key unspentCache
         $(logDebug) $
-            logMe <> "Cache hit for output " <> cs (show hash) <> " " <>
+            logMe <> "Cache hit for output " <> cs (show hash) <> "/" <>
             cs (show index)
         liftIO . atomically $
             writeTVar ubox cache {unspentCache = M.delete key unspentCache}
