@@ -120,7 +120,7 @@ data BlockHeader =
                   -- randomness is included in the coinbase transaction of
                   -- this block.
                 , bhNonce        :: !Word32      -- 16 bytes
-                } deriving (Eq, Show)            -- 208 bytes (above + 16 bytes)
+                } deriving (Eq, Show, Ord)       -- 208 bytes (above + 16 bytes)
 
 headerHash :: BlockHeader -> BlockHash
 headerHash = BlockHash . doubleSHA256 . encode

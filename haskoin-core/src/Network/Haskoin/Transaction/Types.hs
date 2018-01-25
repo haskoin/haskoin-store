@@ -84,7 +84,7 @@ data Tx = Tx
     , txWitness  :: !WitnessData
       -- | The block number or timestamp at which this transaction is locked
     , txLockTime :: !Word32
-    } deriving (Eq)
+    } deriving (Eq, Ord)
 
 txHash :: Tx -> TxHash
 txHash = TxHash . doubleSHA256 . encode
@@ -195,7 +195,7 @@ data TxIn =
            -- | BIP-68:
            -- Relative lock-time using consensus-enforced sequence numbers
          , txInSequence :: !Word32
-         } deriving (Eq, Show)
+         } deriving (Eq, Show, Ord)
 
 instance NFData TxIn where
     rnf (TxIn p i s) = rnf p `seq` rnf i `seq` rnf s
@@ -219,7 +219,7 @@ data TxOut =
             outValue     :: !Word64
             -- | Script specifying the conditions to spend this output.
           , scriptOutput :: !ByteString
-          } deriving (Eq, Show, Read)
+          } deriving (Eq, Show, Ord)
 
 instance NFData TxOut where
     rnf (TxOut v o) = rnf v `seq` rnf o
@@ -243,7 +243,7 @@ data OutPoint = OutPoint
       -- | The position of the specific output in the transaction.
       -- The first output position is 0.
     , outPointIndex :: !Word32
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 instance NFData OutPoint where
     rnf (OutPoint h i) = rnf h `seq` rnf i

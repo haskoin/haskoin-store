@@ -11,9 +11,7 @@ import           Control.Monad.Reader
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
-import           Data.Function
 import           Data.Int
-import           Data.Map.Strict              (Map)
 import           Data.Maybe
 import           Data.Serialize               as S
 import           Data.String.Conversions
@@ -51,41 +49,34 @@ data BlockMessage
 
 type BlockStore = Inbox BlockMessage
 
-data UnspentCache = UnspentCache
-    { unspentCache       :: !(Map OutputKey OutputValue)
-    , unspentCacheBlocks :: !(Map BlockHeight [OutputKey])
-    }
-
 newtype MultiAddrSpentKey =
     MultiAddrSpentKey Address
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 newtype MultiAddrUnspentKey =
     MultiAddrUnspentKey Address
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data AddrUnspentKey = AddrUnspentKey
     { addrUnspentKey      :: !Address
     , addrUnspentHeight   :: !BlockHeight
     , addrUnspentOutPoint :: !OutputKey
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
-data AddrUnspentValue = AddrUnspentValue
-    { addrUnspentOutput :: !OutputValue
-    , addrUnspentPos    :: !Word32
-    } deriving (Show, Eq)
+newtype AddrUnspentValue = AddrUnspentValue
+    { addrUnspentOutput :: OutputValue
+    } deriving (Show, Eq, Ord)
 
 data AddrSpentKey = AddrSpentKey
     { addrSpentKey      :: !Address
     , addrSpentHeight   :: !BlockHeight
     , addrSpentOutPoint :: !OutputKey
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data AddrSpentValue = AddrSpentValue
     { addrSpentValue  :: !SpentValue
     , addrSpentOutput :: !OutputValue
-    , addrSpentPos    :: !Word32
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data BlockValue = BlockValue
     { blockValueHeight    :: !BlockHeight
@@ -94,7 +85,7 @@ data BlockValue = BlockValue
     , blockValueSize      :: !Word32
     , blockValueMainChain :: !Bool
     , blockValueTxs       :: ![TxHash]
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data BlockRef = BlockRef
     { blockRefHash      :: !BlockHash
@@ -107,7 +98,7 @@ data DetailedTx = DetailedTx
     , detailedTxBlock :: !BlockRef
     , detailedTxSpent :: ![(SpentKey, SpentValue)]
     , detailedTxOuts  :: ![(OutputKey, OutputValue)]
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data AddressBalance = AddressBalance
     { addressBalAddress      :: !Address
@@ -118,67 +109,68 @@ data AddressBalance = AddressBalance
     , addressBalTxCount      :: !Word64
     , addressBalUnspentCount :: !Word64
     , addressBalSpentCount   :: !Word64
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data TxValue = TxValue
     { txValueBlock :: !BlockRef
     , txValue      :: !Tx
     , txValueOuts  :: [(OutputKey, OutputValue)]
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 newtype OutputKey = OutputKey
     { outPoint :: OutPoint
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data OutputValue = OutputValue
     { outputValue :: !Word64
     , outBlock    :: !BlockRef
+    , outPos      :: !Word32
     , outScript   :: !ByteString
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 newtype SpentKey = SpentKey
     { spentOutPoint :: OutPoint
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data SpentValue = SpentValue
     { spentInHash  :: !TxHash
     , spentInIndex :: !Word32
     , spentInBlock :: !BlockRef
     , spentInPos   :: !Word32
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 newtype BaseTxKey =
     BaseTxKey TxHash
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data MultiTxKey
     = MultiTxKey !TxKey
     | MultiTxKeyOutput !OutputKey
     | MultiTxKeySpent !SpentKey
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data MultiTxValue
     = MultiTx !TxValue
     | MultiTxOut !OutputValue
     | MultiTxSpent !SpentValue
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 newtype TxKey =
     TxKey TxHash
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 newtype BlockKey =
     BlockKey BlockHash
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 newtype HeightKey =
     HeightKey BlockHeight
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data Immature = Immature
     { immatureBlock :: !BlockRef
     , immatureValue :: !Word64
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
 data BalanceKey = BalanceKey
     { balanceAddress :: !Address
@@ -190,14 +182,14 @@ data BalanceValue = BalanceValue
     , balanceImmature     :: ![Immature]
     , balanceTxCount      :: !Word64
     , balanceUnspentCount :: !Word64
-    , balanceSpentCount   :: Word64
-    } deriving (Show, Eq)
+    , balanceSpentCount   :: !Word64
+    } deriving (Show, Eq, Ord)
 
 newtype MultiBalance = MultiBalance
     { multiAddress :: Address
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Ord)
 
-data BestBlockKey = BestBlockKey deriving (Show, Eq)
+data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
 
 data AddressTx = AddressTx
     { addressTxAddress :: !Address
@@ -205,7 +197,7 @@ data AddressTx = AddressTx
     , addressTxAmount  :: !Int64
     , addressTxBlock   :: !BlockRef
     , addressTxPos     :: !Word32
-    } deriving (Eq, Show)
+    } deriving (Eq, Show, Ord)
 
 data Unspent = Unspent
     { unspentTxId  :: !TxHash
@@ -213,7 +205,7 @@ data Unspent = Unspent
     , unspentValue :: !Word64
     , unspentBlock :: !BlockRef
     , unspentPos   :: !Word32
-    }
+    } deriving (Eq, Show, Ord)
 
 instance Record BlockKey BlockValue
 instance Record TxKey TxValue
@@ -229,11 +221,6 @@ instance MultiRecord MultiBalance BalanceKey BalanceValue
 instance MultiRecord MultiAddrSpentKey AddrSpentKey AddrSpentValue
 instance MultiRecord MultiAddrUnspentKey AddrUnspentKey AddrUnspentValue
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
-
-instance Ord OutputKey where
-    compare = compare `on` f
-      where
-        f (OutputKey (OutPoint hash index)) = (hash, index)
 
 instance Serialize MultiBalance where
     put MultiBalance {..} = do
@@ -329,21 +316,14 @@ instance Serialize AddrSpentValue where
     put AddrSpentValue {..} = do
         put addrSpentValue
         put addrSpentOutput
-        put addrSpentPos
     get = do
         addrSpentValue <- get
         addrSpentOutput <- get
-        addrSpentPos <- get
         return AddrSpentValue {..}
 
 instance Serialize AddrUnspentValue where
-    put AddrUnspentValue {..} = do
-        put addrUnspentOutput
-        put addrUnspentPos
-    get = do
-        addrUnspentOutput <- get
-        addrUnspentPos <- get
-        return AddrUnspentValue {..}
+    put AddrUnspentValue {..} = put addrUnspentOutput
+    get = AddrUnspentValue <$> get
 
 instance Serialize MultiTxKey where
     put (MultiTxKey k)       = put k
@@ -419,11 +399,13 @@ instance Serialize OutputValue where
         putWord8 0x01
         put outputValue
         put outBlock
+        put outPos
         put outScript
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
+        outPos <- get
         outScript <- get
         return OutputValue {..}
 

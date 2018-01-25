@@ -123,9 +123,11 @@ chain cfg =
   where
     run = do
         let gs = encode genesisNode
-        addBlockHeader genesisNode
         db <- asks headerDB
-        RocksDB.put db def "best" gs
+        m <- RocksDB.get db def "best"
+        when (isNothing m) $ do
+            addBlockHeader genesisNode
+            RocksDB.put db def "best" gs
         forever $ do
             stats
             $(logDebug) $ logMe <> "Awaiting message"
