@@ -554,29 +554,33 @@ addrOutputOps False addr AddrOutputKey {..} AddrOutputValue {..} =
 
 blockOp ::
     MonadBlock m
-    => BlockRef
-    -> BlockHeader
+    => Block
     -> BlockHeight
     -> BlockWork
     -> Bool
-    -> [Tx]
     -> BlockData
     -> m [RocksDB.BatchOp]
-blockOp block header height work main txs BlockData {..} = do
+blockOp block height work main BlockData {..} = do
     addrops <- addrOps
     cache
     return $
         [blockHashOp, blockHeightOp, bestOp] <>
         concat [txOps, outOps, spentOps, addrops]
   where
+    header = blockHeader block
+    hash = headerHash header
+    blockRef =
+        BlockRef
+        {blockRefHash = hash, blockRefHeight = height, blockRefMainChain = main}
+    txs = blockTxns block
     cache = do
         let entries = M.toList blockNewOutMap
-        addToCache block entries
+        addToCache blockRef entries
     blockHashOp =
         let key = BlockKey (headerHash header)
             value =
                 BlockValue
-                { blockValueHeight = blockRefHeight block
+                { blockValueHeight = height
                 , blockValueWork = work
                 , blockValueHeader = header
                 , blockValueSize = fromIntegral (BS.length (encode block))
@@ -603,7 +607,7 @@ blockOp block header height work main txs BlockData {..} = do
             f tx =
                 insertOp
                     (TxKey (txHash tx))
-                    (TxValue block tx (outs (map prevOutput (txIn tx))))
+                    (TxValue blockRef tx (outs (map prevOutput (txIn tx))))
         in map f txs
     outOps =
         let os = M.toList blockNewOutMap
@@ -623,7 +627,7 @@ blockOp block header height work main txs BlockData {..} = do
             db <- asks myBlockDB
             maybeBal <- firstValue (MultiBalance addr) db Nothing
             let balKey =
-                    BalanceKey {balanceAddress = addr, balanceBlock = block}
+                    BalanceKey {balanceAddress = addr, balanceBlock = blockRef}
                 balVal =
                     case maybeBal of
                         Nothing ->
@@ -636,8 +640,8 @@ blockOp block header height work main txs BlockData {..} = do
                             }
                         Just (_, BalanceValue {..}) ->
                             let minHeight =
-                                    if blockRefHeight block >= 99
-                                        then blockRefHeight block - 99
+                                    if height >= 99
+                                        then height - 99
                                         else 0
                                 immature =
                                     filter
@@ -672,7 +676,7 @@ blockBatchOps ::
     -> BlockWork
     -> Bool
     -> m [RocksDB.BatchOp]
-blockBatchOps Block {..} height work main = do
+blockBatchOps block@Block {..} height work main = do
     let start =
             BlockData
             { blockPrevOutMap = M.empty
@@ -682,7 +686,7 @@ blockBatchOps Block {..} height work main = do
             }
     bd <- foldM f start (zip [0 ..] blockTxns)
     stats bd
-    blockOp b blockHeader height work main blockTxns bd
+    blockOp block height work main bd
   where
     stats BlockData {..} = do
         let logBlock =
@@ -691,7 +695,7 @@ blockBatchOps Block {..} height work main = do
             spentCount = M.size blockSpentMap
         $(logDebug) $ logBlock <> "Unspent: " <> logShow unspentCount
         $(logDebug) $ logBlock <> "Spent: " <> logShow spentCount
-    b =
+    blockRef =
         BlockRef
         { blockRefHash = headerHash blockHeader
         , blockRefHeight = height
@@ -699,9 +703,9 @@ blockBatchOps Block {..} height work main = do
         }
     f blockData (pos, tx) = do
         prevOutMap <- getPrevOutputs tx (blockPrevOutMap blockData)
-        let spentMap = getSpentOutputs b pos tx
-            addrMap = getAddrDelta b pos spentMap newOutMap prevOutMap
-            newOutMap = getNewOutputs b pos tx
+        let spentMap = getSpentOutputs blockRef pos tx
+            addrMap = getAddrDelta blockRef pos spentMap newOutMap prevOutMap
+            newOutMap = getNewOutputs blockRef pos tx
             txData =
                 BlockData
                 { blockPrevOutMap = prevOutMap <> newOutMap
