@@ -103,7 +103,6 @@ data DetailedTx = DetailedTx
 data AddressBalance = AddressBalance
     { addressBalAddress      :: !Address
     , addressBalConfirmed    :: !Word64
-    , addressBalUnconfirmed  :: !Word64
     , addressBalImmature     :: !Word64
     , addressBalBlock        :: !BlockRef
     , addressBalTxCount      :: !Word64
@@ -584,7 +583,6 @@ addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "block" .= addressBalBlock
     , "confirmed" .= addressBalConfirmed
-    , "unconfirmed" .= addressBalUnconfirmed
     , "immature" .= addressBalImmature
     , "transactions" .= addressBalTxCount
     , "unspent" .= addressBalUnspentCount

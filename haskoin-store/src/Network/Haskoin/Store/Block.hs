@@ -267,7 +267,6 @@ getBalance addr db s =
                 AddressBalance
                 { addressBalAddress = addr
                 , addressBalConfirmed = ub
-                , addressBalUnconfirmed = ub
                 , addressBalImmature = is
                 , addressBalBlock =
                       BlockRef
