@@ -20,7 +20,7 @@ import           Test.Hspec
 
 main :: IO ()
 main = do
-    setTestnet
+    setBitcoinTestnet3Network
     hspec $ do
         describe "Download" $ do
             it "gets 8 blocks" $

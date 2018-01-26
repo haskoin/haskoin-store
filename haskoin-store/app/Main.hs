@@ -146,9 +146,9 @@ main =
             dir = fromJust $ configDir conf
             net = fromJust $ configNetwork conf
         case net of
-            "testnet" -> setTestnet
-            "regtest" -> setRegtest
-            "bitcoin" -> setProdnet
+            "testnet" -> setBitcoinTestnet3Network
+            "regtest" -> setBitcoinRegtestNetwork
+            "bitcoin" -> setBitcoinNetwork
             _ -> error "Network must be \"bitcoin\", \"testnet\" or \"regtest\""
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO

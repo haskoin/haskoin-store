@@ -29,7 +29,7 @@ import           Test.HUnit                     hiding (Node, Test)
 
 main :: IO ()
 main = do
-    setTestnet
+    setBitcoinTestnet3Network
     defaultMain
         [ testCase "Connect to a peer" connectToPeer
         , testCase "Get a block" getTestBlocks
@@ -38,11 +38,11 @@ main = do
         , testCase "Connect and sync some headers" nodeConnectSync
         , testCase "Download a block" downloadBlock
         , testCase "Try to download inexistent things" downloadSomeFailures
-        , testCase "Get parents" getParents
+        , testCase "Get parents" getParentsTest
         ]
 
-getParents :: Assertion
-getParents =
+getParentsTest :: Assertion
+getParentsTest =
     runStderrLoggingT . withTestNode "parents" $ \(_mgr, ch, mbox) -> do
         $(logDebug) "[Test] Preparing to receive from mailbox"
         bn <-
