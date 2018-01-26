@@ -2,6 +2,7 @@ resolver: lts-10.1
 flags: {}
 packages:
 - haskoin-core
+- haskoin-wallet
 extra-deps:
 - pbkdf-1.1.1.1
 - murmur3-1.0.3
