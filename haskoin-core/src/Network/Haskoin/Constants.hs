@@ -194,7 +194,7 @@ sigHashForkId = getSigHashForkValue getNetwork
 bitcoinNetwork :: Network
 bitcoinNetwork =
     Network
-    { getNetworkName = "Bitcoin"
+    { getNetworkName = "bitcoin"
     , getAddrPrefix = 0
     , getScriptPrefix = 5
     , getSecretPrefix = 128
@@ -272,7 +272,7 @@ bitcoinNetwork =
 bitcoinTestnet3Network :: Network
 bitcoinTestnet3Network =
     Network
-    { getNetworkName = "Bitcoin Testnet3"
+    { getNetworkName = "testnet3"
     , getAddrPrefix = 111
     , getScriptPrefix = 196
     , getSecretPrefix = 239
@@ -321,7 +321,7 @@ bitcoinTestnet3Network =
 bitcoinRegtestNetwork :: Network
 bitcoinRegtestNetwork =
     Network
-    { getNetworkName = "Bitcoin Regtest"
+    { getNetworkName = "regtest"
     , getAddrPrefix = 111
     , getScriptPrefix = 196
     , getSecretPrefix = 239
@@ -362,7 +362,7 @@ bitcoinRegtestNetwork =
 bitcoinCashNetwork :: Network
 bitcoinCashNetwork =
     Network
-    { getNetworkName = "Bitcoin Cash"
+    { getNetworkName = "bitcoincash"
     , getAddrPrefix = 0
     , getScriptPrefix = 5
     , getSecretPrefix = 128
