@@ -252,7 +252,7 @@ getBalance ::
 getBalance addr db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
-        Just _  -> g s
+        Just _ -> g s
   where
     g s' =
         runMaybeT $ do
@@ -276,10 +276,11 @@ getBalance addr db s =
                       , blockRefMainChain = True
                       }
                 , addressBalTxCount = balanceTxCount (snd bal)
-                , addressBalUnspentCount = balanceUnspentCount (snd bal)
+                , addressBalUnspentCount =
+                      balanceOutputCount (snd bal) - balanceSpentCount (snd bal)
                 , addressBalSpentCount = balanceSpentCount (snd bal)
                 }
-    me Nothing  = error "Could not retrieve best block from database"
+    me Nothing = error "Could not retrieve best block from database"
     me (Just x) = return x
     i h bal@BalanceValue {..} =
         let minHeight =
@@ -449,7 +450,7 @@ importBlock block@Block {..} = do
         " entries for block " <>
         logShow (nodeHeight bn)
     RocksDB.write db def ops
-    $(logDebug) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
+    $(logInfo) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
     unspentCachePrune
@@ -461,96 +462,38 @@ getBlockTxs ::
 getBlockTxs hs db s = forM hs (\h -> retrieveValue (TxKey h) db s)
 
 addrOutputOps :: Bool -> Address -> AddrOutputKey -> AddrOutputValue -> [RocksDB.BatchOp]
-addrOutputOps True addr AddrOutputKey {..} AddrOutputValue {..} =
-    case addrOutputValueSpent of
-        Nothing ->
-            let key =
-                    AddrUnspentKey
-                    { addrUnspentKey = addr
-                    , addrUnspentHeight = addrOutputKeyHeight
-                    , addrUnspentOutPoint = OutputKey addrOutputKeyOutPoint
-                    }
-                val = AddrUnspentValue {addrUnspentOutput = addrOutputValue}
-            in [insertOp key val]
-        Just spent@SpentValue {..} ->
-            let spentBlockHash = blockRefHash spentInBlock
-                outBlockHash = blockRefHash (outBlock addrOutputValue)
-            in if spentBlockHash == outBlockHash
-                   then let key =
-                                AddrSpentKey
-                                { addrSpentKey = addr
-                                , addrSpentHeight = addrOutputKeyHeight
-                                , addrSpentOutPoint =
-                                      OutputKey addrOutputKeyOutPoint
-                                }
-                            val =
-                                AddrSpentValue
-                                { addrSpentOutput = addrOutputValue
-                                , addrSpentValue = spent
-                                }
-                        in [insertOp key val]
-                   else let ukey =
-                                AddrUnspentKey
-                                { addrUnspentKey = addr
-                                , addrUnspentHeight = addrOutputKeyHeight
-                                , addrUnspentOutPoint =
-                                      OutputKey addrOutputKeyOutPoint
-                                }
-                            key =
-                                AddrSpentKey
-                                { addrSpentKey = addr
-                                , addrSpentHeight = addrOutputKeyHeight
-                                , addrSpentOutPoint =
-                                      OutputKey addrOutputKeyOutPoint
-                                }
-                            val =
-                                AddrSpentValue
-                                { addrSpentOutput = addrOutputValue
-                                , addrSpentValue = spent
-                                }
-                        in [deleteOp ukey, insertOp key val]
-
-addrOutputOps False addr AddrOutputKey {..} AddrOutputValue {..} =
-    case addrOutputValueSpent of
-        Nothing ->
-            let key =
-                    AddrUnspentKey
-                    { addrUnspentKey = addr
-                    , addrUnspentHeight = addrOutputKeyHeight
-                    , addrUnspentOutPoint = OutputKey addrOutputKeyOutPoint
-                    }
-            in [deleteOp key]
-        Just SpentValue {..} ->
-            let spentBlockHash = blockRefHash spentInBlock
-                outBlockHash = blockRefHash (outBlock addrOutputValue)
-            in if spentBlockHash == outBlockHash
-                   then let key =
-                                AddrSpentKey
-                                { addrSpentKey = addr
-                                , addrSpentHeight = addrOutputKeyHeight
-                                , addrSpentOutPoint =
-                                      OutputKey addrOutputKeyOutPoint
-                                }
-                        in [deleteOp key]
-                   else let skey =
-                                AddrSpentKey
-                                { addrSpentKey = addr
-                                , addrSpentHeight = addrOutputKeyHeight
-                                , addrSpentOutPoint =
-                                      OutputKey addrOutputKeyOutPoint
-                                }
-                            key =
-                                AddrUnspentKey
-                                { addrUnspentKey = addr
-                                , addrUnspentHeight = addrOutputKeyHeight
-                                , addrUnspentOutPoint =
-                                      OutputKey addrOutputKeyOutPoint
-                                }
-                            val =
-                                AddrUnspentValue
-                                {addrUnspentOutput = addrOutputValue}
-                        in [deleteOp skey, insertOp key val]
-
+addrOutputOps main addr AddrOutputKey {..} AddrOutputValue {..} =
+    let skey =
+            AddrSpentKey
+            { addrSpentKey = addr
+            , addrSpentHeight = addrOutputKeyHeight
+            , addrSpentOutPoint = OutputKey addrOutputKeyOutPoint
+            }
+        sval s =
+            AddrSpentValue
+            { addrSpentOutput = addrOutputValue
+            , addrSpentValue = s
+            }
+        ukey =
+            AddrUnspentKey
+            { addrUnspentKey = addr
+            , addrUnspentHeight = addrOutputKeyHeight
+            , addrUnspentOutPoint = OutputKey addrOutputKeyOutPoint
+            }
+        uval = AddrUnspentValue {addrUnspentOutput = addrOutputValue}
+        outputInSameBlock s =
+            blockRefHash (outBlock addrOutputValue) ==
+            blockRefHash (spentInBlock s)
+    in if main
+           then case addrOutputValueSpent of
+                    Nothing -> [deleteOp skey, insertOp ukey uval]
+                    Just s -> [deleteOp ukey, insertOp skey (sval s)]
+           else case addrOutputValueSpent of
+                    Nothing -> [deleteOp ukey]
+                    Just s ->
+                        if outputInSameBlock s
+                            then [deleteOp skey]
+                            else [deleteOp skey, insertOp ukey uval]
 
 blockOp ::
     MonadBlock m
@@ -635,7 +578,7 @@ blockOp block height work main BlockData {..} = do
                             { balanceValue = addressDeltaBalance
                             , balanceImmature = addressDeltaImmature
                             , balanceTxCount = addressDeltaTxCount
-                            , balanceUnspentCount = addressDeltaOutputCount
+                            , balanceOutputCount = addressDeltaOutputCount
                             , balanceSpentCount = addressDeltaSpentCount
                             }
                         Just (_, BalanceValue {..}) ->
@@ -654,10 +597,9 @@ blockOp block height work main BlockData {..} = do
                                , balanceImmature = immature
                                , balanceTxCount =
                                      balanceTxCount + addressDeltaTxCount
-                               , balanceUnspentCount =
-                                     balanceUnspentCount +
-                                     addressDeltaOutputCount -
-                                     addressDeltaSpentCount
+                               , balanceOutputCount =
+                                     balanceOutputCount +
+                                     addressDeltaOutputCount
                                , balanceSpentCount =
                                      balanceSpentCount + addressDeltaSpentCount
                                }
@@ -690,11 +632,11 @@ blockBatchOps block@Block {..} height work main = do
   where
     stats BlockData {..} = do
         let logBlock =
-                logMe <> "Block " <> logShow (headerHash blockHeader) <> ": "
-            unspentCount = M.size blockNewOutMap
+                logMe <> "Block " <> logShow (headerHash blockHeader) <> " "
+            newOutCount = M.size blockNewOutMap
             spentCount = M.size blockSpentMap
-        $(logDebug) $ logBlock <> "Unspent: " <> logShow unspentCount
-        $(logDebug) $ logBlock <> "Spent: " <> logShow spentCount
+        $(logDebug) $ logBlock <> "new outputs: " <> logShow newOutCount
+        $(logDebug) $ logBlock <> "spent: " <> logShow spentCount
     blockRef =
         BlockRef
         { blockRefHash = headerHash blockHeader
@@ -704,8 +646,8 @@ blockBatchOps block@Block {..} height work main = do
     f blockData (pos, tx) = do
         prevOutMap <- getPrevOutputs tx (blockPrevOutMap blockData)
         let spentMap = getSpentOutputs blockRef pos tx
-            addrMap = getAddrDelta blockRef pos spentMap newOutMap prevOutMap
             newOutMap = getNewOutputs blockRef pos tx
+            addrMap = getAddrDelta blockRef pos spentMap newOutMap prevOutMap
             txData =
                 BlockData
                 { blockPrevOutMap = prevOutMap <> newOutMap
@@ -717,39 +659,38 @@ blockBatchOps block@Block {..} height work main = do
 
 getAddrDelta ::
        BlockRef -> Word32 -> SpentMap -> OutputMap -> PrevOutMap -> AddressMap
-getAddrDelta block@BlockRef {..} pos spentMap outputMap prevMap =
+getAddrDelta blockRef pos spentMap newOutMap prevMap =
     M.fromList (map (\addr -> (addr, addrDelta addr)) addrs)
   where
     addrDelta addr =
         let sm = fromMaybe M.empty (M.lookup addr addrSpentMap)
-            um = fromMaybe M.empty (M.lookup addr addrUnspentMap)
-            om = um <> sm
-            ub = sum (map (outputValue . addrOutputValue) (M.elems um))
+            om = fromMaybe M.empty (M.lookup addr addrOutputMap)
+            xm = M.union sm om
+            ob = sum (map (outputValue . addrOutputValue) (M.elems om))
             sb = sum (map (outputValue . addrOutputValue) (M.elems sm))
-            tc = length (nub (map (outPointHash . addrOutputKeyOutPoint) (M.keys om)))
-            im = [Immature block sb | pos == 0]
+            im = [Immature blockRef sb | pos == 0]
         in AddressDelta
-           { addressDeltaOutput = om
-           , addressDeltaBalance = fromIntegral ub - fromIntegral sb
+           { addressDeltaOutput = xm
+           , addressDeltaBalance = fromIntegral ob - fromIntegral sb
            , addressDeltaImmature = im
-           , addressDeltaTxCount = fromIntegral tc
-           , addressDeltaOutputCount = fromIntegral (M.size um)
+           , addressDeltaTxCount = 1
+           , addressDeltaOutputCount = fromIntegral (M.size om)
            , addressDeltaSpentCount = fromIntegral (M.size sm)
            }
-    addrs = nub (M.keys addrSpentMap ++ M.keys addrUnspentMap)
+    addrs = nub (M.keys addrSpentMap ++ M.keys addrOutputMap)
     addrSpentMap =
         M.fromListWith (<>) (mapMaybe (uncurry spend) (M.toList spentMap))
-    addrUnspentMap =
-        M.fromListWith (<>) (mapMaybe (uncurry unspent) (M.toList outputMap))
+    addrOutputMap =
+        M.fromListWith (<>) (mapMaybe (uncurry newOutput) (M.toList newOutMap))
     spend outpoint spent@SpentValue {..} = do
         output@OutputValue {..} <- outpoint `M.lookup` prevMap
         address <- scriptToAddressBS outScript
-        let key = AddrOutputKey blockRefHeight outpoint
+        let key = AddrOutputKey (blockRefHeight outBlock) outpoint
             value = AddrOutputValue output (Just spent)
         return (address, M.singleton key value)
-    unspent outpoint output = do
-        address <- scriptToAddressBS (outScript output)
-        let key = AddrOutputKey blockRefHeight outpoint
+    newOutput outpoint output@OutputValue {..} = do
+        address <- scriptToAddressBS outScript
+        let key = AddrOutputKey (blockRefHeight outBlock) outpoint
             value = AddrOutputValue output Nothing
         return (address, M.singleton key value)
 

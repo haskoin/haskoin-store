@@ -178,11 +178,11 @@ data BalanceKey = BalanceKey
     } deriving (Show, Eq, Ord)
 
 data BalanceValue = BalanceValue
-    { balanceValue        :: !Word64
-    , balanceImmature     :: ![Immature]
-    , balanceTxCount      :: !Word64
-    , balanceUnspentCount :: !Word64
-    , balanceSpentCount   :: !Word64
+    { balanceValue       :: !Word64
+    , balanceImmature    :: ![Immature]
+    , balanceTxCount     :: !Word64
+    , balanceOutputCount :: !Word64
+    , balanceSpentCount  :: !Word64
     } deriving (Show, Eq, Ord)
 
 newtype MultiBalance = MultiBalance
@@ -251,13 +251,13 @@ instance Serialize BalanceValue where
         put balanceValue
         put balanceImmature
         put balanceTxCount
-        put balanceUnspentCount
+        put balanceOutputCount
         put balanceSpentCount
     get = do
         balanceValue <- get
         balanceImmature <- get
         balanceTxCount <- get
-        balanceUnspentCount <- get
+        balanceOutputCount <- get
         balanceSpentCount <- get
         return BalanceValue {..}
 
