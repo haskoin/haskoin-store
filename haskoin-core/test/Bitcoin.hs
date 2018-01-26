@@ -1,8 +1,8 @@
 module Main where
 
-import           Network.Haskoin.Constants                 (setProdnet)
-import           Test.Framework                            (defaultMain)
-import           Test.Hspec                                (hspec)
+import           Network.Haskoin.Constants
+import           Test.Framework
+import           Test.Hspec
 
 -- Util tests
 import qualified Network.Haskoin.Util.Tests                (tests)
@@ -45,7 +45,7 @@ import qualified Network.Haskoin.Cereal.Tests              (tests)
 
 main :: IO ()
 main = do
-  setProdnet
+  setBitcoinNetwork
   hspec Network.Haskoin.Script.Spec.spec
   satoshiTxTests <- Network.Haskoin.Transaction.Units.satoshiCoreTxTests
   defaultMain

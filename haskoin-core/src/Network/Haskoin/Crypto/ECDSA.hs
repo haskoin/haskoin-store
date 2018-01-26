@@ -126,11 +126,13 @@ decodeStrictSig :: ByteString -> Maybe Signature
 decodeStrictSig bs = do
     g <- EC.importSig bs
     let compact = EC.exportCompactSig g
+        sig = Signature g
     -- <http://www.secg.org/sec1-v2.pdf Section 4.1.4>
     -- 4.1.4.1 (r and s can not be zero)
     guard $ EC.getCompactSigR compact /= zero
     guard $ EC.getCompactSigS compact /= zero
-    return $ Signature g
+    guard $ isCanonicalHalfOrder sig
+    return sig
   where
     zero = toShort $ BS.replicate 32 0
 

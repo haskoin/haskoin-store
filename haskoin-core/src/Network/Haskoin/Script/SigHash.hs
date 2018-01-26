@@ -17,6 +17,7 @@ module Network.Haskoin.Script.SigHash
 , sigHashGetForkId
 , sigHashAddNetworkId
 , txSigHash
+, txSigHashForkId
 , TxSignature(..)
 , encodeTxSig
 , decodeTxLaxSig
@@ -38,6 +39,7 @@ import           Data.Word
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto.ECDSA
 import           Network.Haskoin.Crypto.Hash
+import           Network.Haskoin.Network
 import           Network.Haskoin.Script.Types
 import           Network.Haskoin.Transaction.Types
 import           Network.Haskoin.Util
@@ -113,7 +115,7 @@ sigHashAddForkId :: SigHash -> Word32 -> SigHash
 sigHashAddForkId sh w = (fromIntegral w `shiftL` 8) .|. (sh .&. 0x000000ff)
 
 sigHashAddNetworkId :: SigHash -> SigHash
-sigHashAddNetworkId = (`sigHashAddForkId` fromMaybe 0 sigHashForkValue)
+sigHashAddNetworkId = (`sigHashAddForkId` fromMaybe 0 sigHashForkId)
 
 sigHashGetForkId :: SigHash -> Word32
 sigHashGetForkId = fromIntegral . (`shiftR` 8)
@@ -126,7 +128,7 @@ txSigHash :: Tx      -- ^ Transaction to sign.
           -> SigHash -- ^ What parts of the transaction should be signed.
           -> Hash256 -- ^ Result hash to be signed.
 txSigHash tx out v i sh
-    | hasForkIdFlag sh && isJust sigHashForkValue =
+    | hasForkIdFlag sh && isJust sigHashForkId =
         txSigHashForkId tx out v i sh
     | otherwise = do
         let newIn = buildInputs (txIn tx) fout i sh
@@ -178,20 +180,18 @@ txSigHashForkId
     -> Int     -- ^ Index of the input that is being signed.
     -> SigHash -- ^ What parts of the transaction should be signed.
     -> Hash256 -- ^ Result hash to be signed.
-txSigHashForkId tx out v i sh
-    | isNothing sigHashForkValue = error "Fork id is set on an invalid network"
-    | otherwise =
-        doubleSHA256 . runPut $ do
-            putWord32le $ txVersion tx
-            put hashPrevouts
-            put hashSequence
-            put $ prevOutput $ txIn tx !! i
-            put out
-            putWord64be v
-            putWord32be $ txInSequence $ txIn tx !! i
-            put hashOutputs
-            putWord32be $ txLockTime tx
-            putWord32le $ fromIntegral sh
+txSigHashForkId tx out v i sh =
+    doubleSHA256 . runPut $ do
+        putWord32le $ txVersion tx
+        put hashPrevouts
+        put hashSequence
+        put $ prevOutput $ txIn tx !! i
+        putScript out
+        putWord64le v
+        putWord32le $ txInSequence $ txIn tx !! i
+        put hashOutputs
+        putWord32le $ txLockTime tx
+        putWord32le $ fromIntegral $ sigHashAddNetworkId sh
   where
     hashPrevouts
         | not $ hasAnyoneCanPayFlag sh =
@@ -199,9 +199,8 @@ txSigHashForkId tx out v i sh
         | otherwise = zeros
     hashSequence
         | not (hasAnyoneCanPayFlag sh) &&
-          not (isSigHashSingle sh) &&
-          not (isSigHashNone sh) =
-            doubleSHA256 $ runPut $ mapM_ (putWord32be . txInSequence) $ txIn tx
+              not (isSigHashSingle sh) && not (isSigHashNone sh) =
+            doubleSHA256 $ runPut $ mapM_ (putWord32le . txInSequence) $ txIn tx
         | otherwise = zeros
     hashOutputs
         | not (isSigHashSingle sh) && not (isSigHashNone sh) =
@@ -209,6 +208,10 @@ txSigHashForkId tx out v i sh
         | isSigHashSingle sh && i < length (txOut tx) =
             doubleSHA256 $ encode $ txOut tx !! i
         | otherwise = zeros
+    putScript s = do
+        let encodedScript = encode s
+        put $ VarInt $ fromIntegral $ BS.length encodedScript
+        putByteString encodedScript
     zeros :: Hash256
     zeros = "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -245,7 +248,7 @@ decodeTxStrictSig bs =
             let sh = fromIntegral $ BS.last bs
             when (isSigHashUnknown sh) $
                 Left "Non-canonical signature: unknown hashtype byte"
-            when (isNothing sigHashForkValue && hasForkIdFlag sh) $
+            when (isNothing sigHashForkId && hasForkIdFlag sh) $
                 Left "Non-canonical signature: invalid network for forkId"
             return $ TxSignature sig sh
         Nothing -> Left "Non-canonical signature: could not parse signature"

@@ -26,10 +26,15 @@ import           Text.Read
 spec :: Spec
 spec = do
     standardSpec
-    canonicalSigSpec
+    strictSigSpec
     scriptSpec
     sigHashSpec
     txSigHashSpec
+
+forkIdSpec :: Spec
+forkIdSpec = do
+    txSigHashForkIdSpec
+    forkIdScriptSpec
 
 standardSpec :: Spec
 standardSpec =
@@ -70,40 +75,83 @@ standardSpec =
 scriptSpec :: Spec
 scriptSpec =
     describe "Network.Haskoin.Script Verifier" $
-        it "Can verify standard scripts from script_tests.json file" $ do
-            xs <- readTestFile "script_tests"
-            let vectors = filter ((== 5) . length) (xs :: [[String]])
-            length vectors `shouldBe` 85
-            forM_ vectors $ \[siStr, soStr, flags, res, _]
-                -- We can disable specific tests by adding a DISABLED flag in the data
-             ->
-                unless ("DISABLED" `isInfixOf` flags) $ do
-                    let strict =
-                            "DERSIG" `isInfixOf` flags ||
-                            "STRICTENC" `isInfixOf` flags ||
-                            "NULLDUMMY" `isInfixOf` flags
-                        scriptSig = parseScript siStr
-                        scriptPubKey = parseScript soStr
-                        decodedOutput =
-                            fromRight
-                                (error $ "Could not decode output: " <> soStr) $
-                            decodeOutputBS scriptPubKey
-                        ver =
-                            verifyStdInput
-                                strict
-                                (spendTx scriptPubKey scriptSig)
-                                0
-                                decodedOutput
-                                0
-                    case res of
-                        "OK" -> ver `shouldBe` True
-                        _    -> ver `shouldBe` False
+    it "Can verify standard scripts from script_tests.json file" $ do
+        xs <- readTestFile "script_tests" :: IO [J.Value]
+        let vectorsA =
+                mapMaybe (J.decode . J.encode) xs :: [( String
+                                                      , String
+                                                      , String
+                                                      , String
+                                                      , String)]
+            vectorsB =
+                mapMaybe (J.decode . J.encode) xs :: [( [Word64]
+                                                      , String
+                                                      , String
+                                                      , String
+                                                      , String
+                                                      , String)]
+            vectors = map (\(a,b,c,d,e) -> ([0],a,b,c,d,e)) vectorsA <> vectorsB
+        length vectors `shouldBe` 86
+        forM_ vectors $ \([val], siStr, soStr, flags, res, _)
+          -- We can disable specific tests by adding a DISABLED flag in the data
+         ->
+            unless ("DISABLED" `isInfixOf` flags) $ do
+                let strict =
+                        "DERSIG" `isInfixOf` flags ||
+                        "STRICTENC" `isInfixOf` flags ||
+                        "NULLDUMMY" `isInfixOf` flags
+                    scriptSig = parseScript siStr
+                    scriptPubKey = parseScript soStr
+                    decodedOutput =
+                        fromRight (error $ "Could not decode output: " <> soStr) $
+                        decodeOutputBS scriptPubKey
+                    ver =
+                        verifyStdInput
+                            strict
+                            (spendTx scriptPubKey 0 scriptSig)
+                            0
+                            decodedOutput
+                            (val * 100000000)
+                case res of
+                    "OK" -> ver `shouldBe` True
+                    _ -> ver `shouldBe` False
 
-creditTx :: BS.ByteString -> Tx
-creditTx scriptPubKey =
+forkIdScriptSpec :: Spec
+forkIdScriptSpec =
+    describe "Network.Haskoin.Script ForkID Verifier" $
+    it "Can verify scripts from forkid_script_tests.json file" $ do
+        xs <- readTestFile "forkid_script_tests" :: IO [J.Value]
+        let vectors =
+                mapMaybe (J.decode . J.encode) xs :: [( [Word64]
+                                                      , String
+                                                      , String
+                                                      , String
+                                                      , String
+                                                      , String )]
+        length vectors `shouldBe` 3
+        forM_ vectors $ \([valBTC], siStr, soStr, _, res, _) -> do
+            let val = valBTC * 100000000
+                scriptSig = parseScript siStr
+                scriptPubKey = parseScript soStr
+                decodedOutput =
+                    fromRight (error $ "Could not decode output: " <> soStr) $
+                    decodeOutputBS scriptPubKey
+                ver =
+                    verifyStdInput
+                        True -- Always strict
+                        (spendTx scriptPubKey val scriptSig)
+                        0
+                        decodedOutput
+                        val
+            case res of
+                "OK" -> ver `shouldBe` True
+                _ -> ver `shouldBe` False
+
+creditTx :: BS.ByteString -> Word64 -> Tx
+creditTx scriptPubKey val =
     Tx 1 [txI] [txO] 0
   where
-    txO = TxOut {outValue = 0, scriptOutput = scriptPubKey}
+    txO = TxOut {outValue = val, scriptOutput = scriptPubKey}
     txI =
         TxIn
         { prevOutput = nullOutPoint
@@ -111,14 +159,14 @@ creditTx scriptPubKey =
         , txInSequence = maxBound
         }
 
-spendTx :: BS.ByteString -> BS.ByteString -> Tx
-spendTx scriptPubKey scriptSig =
+spendTx :: BS.ByteString -> Word64 -> BS.ByteString -> Tx
+spendTx scriptPubKey val scriptSig =
     Tx 1 [txI] [txO] 0
   where
-    txO = TxOut {outValue = 0, scriptOutput = BS.empty}
+    txO = TxOut {outValue = val, scriptOutput = BS.empty}
     txI =
         TxIn
-        { prevOutput = OutPoint (txHash $ creditTx scriptPubKey) 0
+        { prevOutput = OutPoint (txHash $ creditTx scriptPubKey val) 0
         , scriptInput = scriptSig
         , txInSequence = maxBound
         }
@@ -137,19 +185,19 @@ replaceToken str = case readMaybe $ "OP_" <> str of
     Just opcode -> "0x" <> cs (encodeHex $ encode (opcode :: ScriptOp))
     _           -> str
 
-canonicalSigSpec :: Spec
-canonicalSigSpec =
-    describe "Network.Haskoin.Script Canonical" $ do
-        it "can decode canonical signatures" $ do
-            xs <- readTestFile "sig_canonical"
+strictSigSpec :: Spec
+strictSigSpec =
+    describe "Network.Haskoin.Script Strict" $ do
+        it "can decode strict signatures" $ do
+            xs <- readTestFile "sig_strict"
             let vectors = mapMaybe (decodeHex . cs) (xs :: [String])
-            length vectors `shouldBe` 5
+            length vectors `shouldBe` 3
             forM_ vectors $ \sig ->
                 decodeTxStrictSig sig `shouldSatisfy` isRight
-        it "can detect non-canonical signatures" $ do
-            xs <- readTestFile "sig_noncanonical"
+        it "can detect non-strict signatures" $ do
+            xs <- readTestFile "sig_nonstrict"
             let vectors = mapMaybe (decodeHex . cs) (xs :: [String])
-            length vectors `shouldBe` 15
+            length vectors `shouldBe` 17
             forM_ vectors $ \sig ->
                 decodeTxStrictSig sig `shouldSatisfy` isLeft
 
@@ -175,6 +223,28 @@ txSigHashSpec =
                     eitherToMaybe . decode . BS.reverse =<<
                     decodeHex (cs resStr)
             Just (txSigHash tx s 0 i sh) `shouldBe` res
+
+txSigHashForkIdSpec :: Spec
+txSigHashForkIdSpec =
+    describe "Network.Haskoin.Script txSigHashForkId" $
+    it "can produce valid sighashes from forkid_sighash.json test vectors" $ do
+        xs <- readTestFile "forkid_sighash" :: IO [J.Value]
+        let vectors =
+                mapMaybe (J.decode . J.encode) xs :: [( String
+                                                      , String
+                                                      , Int
+                                                      , Word64
+                                                      , Integer
+                                                      , String)]
+        length vectors `shouldBe` 13
+        forM_ vectors $ \(txStr, scpStr, i, val, shI, resStr) -> do
+            let tx = fromString txStr
+                s =
+                    fromMaybe (error $ "Could not decode script: " <> cs scpStr) $
+                    eitherToMaybe . decode =<< decodeHex (cs scpStr)
+                sh = fromIntegral shI
+                res = eitherToMaybe . decode =<< decodeHex (cs resStr)
+            Just (txSigHashForkId tx s val i sh) `shouldBe` res
 
 sigHashSpec :: Spec
 sigHashSpec =

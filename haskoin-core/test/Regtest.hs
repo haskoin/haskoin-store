@@ -21,7 +21,7 @@ chain bh i = do
 
 main :: IO ()
 main = do
-    setRegtest
+    setBitcoinRegtestNetwork
     defaultMain [ testGroup "Regtest network" tests ]
 
 tests :: [F.Test]
