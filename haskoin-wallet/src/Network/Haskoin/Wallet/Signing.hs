@@ -225,9 +225,11 @@ signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
             so
             val
             op
-            (SigHash SigAll False $ isJust sigHashForkValue)
+            (maybeSetForkId sigHashAll)
             Nothing
     g (op, to) = (,,) <$> decodeTxOutSO to <*> return (outValue to) <*> return op
+    maybeSetForkId | isJust sigHashForkId = setForkIdFlag
+                   | otherwise = id
 
 noEmptyInputs :: Tx -> Bool
 noEmptyInputs = all (not . BS.null) . map scriptInput . txIn

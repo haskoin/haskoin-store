@@ -5,5 +5,5 @@ import qualified Network.Haskoin.Wallet.Spec
 import           Test.Hspec                  (hspec)
 
 main :: IO ()
-main = setProdnet >> hspec Network.Haskoin.Wallet.Spec.walletSpec
+main = setBitcoinNetwork >> hspec Network.Haskoin.Wallet.Spec.walletSpec
 

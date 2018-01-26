@@ -50,8 +50,7 @@ library
                  , directory
                  , entropy                       >= 0.3.7
                  , haskeline
-                 , haskoin-core                  >= 0.3       && < 0.5
-                 , haskoin-node                  >= 0.3       && < 0.5
+                 , haskoin-core                  >= 0.5       && < 0.6
                  , lens
                  , pretty
                  , string-conversions
@@ -83,8 +82,7 @@ test-suite test-haskoin-wallet
                  , base                          >= 4.8
                  , bytestring
                  , cereal
-                 , haskoin-core                  >= 0.3       && < 0.5
-                 , haskoin-node                  >= 0.3       && < 0.5
+                 , haskoin-core                  >= 0.5       && < 0.6
                  , haskoin-wallet
                  , hspec
                  , lens

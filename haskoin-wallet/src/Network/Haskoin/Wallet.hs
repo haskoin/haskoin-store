@@ -114,9 +114,9 @@ getPrecision _ _    = PrecisionBitcoin
 
 setOptNet :: Bool -> IO ()
 setOptNet True = do
-    setTestnet
+    setBitcoinTestnet3Network
     renderIO $ formatWarn "--- Testnet ---"
-setOptNet False = setProdnet
+setOptNet False = setBitcoinNetwork
 
 httpNet :: Bool -> HTTPNet
 httpNet t = if t then HTTPTestnet else HTTPProdnet
