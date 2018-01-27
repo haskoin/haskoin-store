@@ -16,6 +16,7 @@ module Network.Haskoin.Constants
 , setBitcoinTestnet3Network
 , setBitcoinRegtestNetwork
 , setBitcoinCashNetwork
+, setBitcoinCashTestNetwork
 , setNetwork
 , getNetwork
   -- ** Network parameters
@@ -94,6 +95,9 @@ setBitcoinRegtestNetwork = setNetwork bitcoinRegtestNetwork
 
 setBitcoinCashNetwork :: IO ()
 setBitcoinCashNetwork = setNetwork bitcoinCashNetwork
+
+setBitcoinCashTestNetwork :: IO ()
+setBitcoinCashTestNetwork = setNetwork bitcoinCashTestNetwork
 
 setNetwork :: Network -> IO ()
 setNetwork net = do
