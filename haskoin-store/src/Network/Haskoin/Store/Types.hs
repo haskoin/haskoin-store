@@ -475,10 +475,7 @@ instance ToJSON BlockValue where
 
 spentValuePairs :: KeyValue kv => SpentValue -> [kv]
 spentValuePairs SpentValue {..} =
-    [ "txid" .= spentInHash
-    , "vin" .= spentInIndex
-    , "block" .= spentInBlock
-    ]
+    ["txid" .= spentInHash, "vin" .= spentInIndex] ++ blockRefPairs spentInBlock
 
 instance ToJSON SpentValue where
     toJSON = object . spentValuePairs
@@ -486,15 +483,13 @@ instance ToJSON SpentValue where
 
 blockRefPairs :: KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
-    [ "hash" .= blockRefHash
-    , "height" .= blockRefHeight
-    , "mainchain" .= blockRefMainChain
-    ]
+    if blockRefMainChain
+        then ["block" .= blockRefHash, "height" .= blockRefHeight]
+        else []
 
 detailedTxPairs :: KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
     [ "txid" .= hash
-    , "block" .= detailedTxBlock
     , "size" .= BS.length (S.encode detailedTx)
     , "version" .= txVersion detailedTx
     , "locktime" .= txLockTime detailedTx
@@ -502,7 +497,8 @@ detailedTxPairs DetailedTx {..} =
     , "vin" .= map input (txIn detailedTx)
     , "vout" .= zipWith output (txOut detailedTx) [0 ..]
     , "hex" .= detailedTx
-    ]
+    ] ++
+    blockRefPairs detailedTxBlock
   where
     hash = txHash detailedTx
     fee =
@@ -540,8 +536,8 @@ detailedTxPairs DetailedTx {..} =
                       , "address" .=
                         eitherToMaybe
                             (decodeOutputBS outScript >>= outputAddress)
-                      , "block" .= outBlock
-                      ]
+                      ] ++
+                      blockRefPairs outBlock
             ]
 
 instance ToJSON DetailedTx where
@@ -557,9 +553,8 @@ addrTxPairs AddressTx {..} =
     [ "address" .= addressTxAddress
     , "txid" .= addressTxId
     , "amount" .= addressTxAmount
-    , "block" .= addressTxBlock
-    , "position" .= addressTxPos
-    ]
+    ] ++
+    blockRefPairs addressTxBlock
 
 instance ToJSON AddressTx where
     toJSON = object . addrTxPairs
@@ -567,12 +562,8 @@ instance ToJSON AddressTx where
 
 unspentPairs :: KeyValue kv => Unspent -> [kv]
 unspentPairs Unspent {..} =
-    [ "txid" .= unspentTxId
-    , "vout" .= unspentIndex
-    , "value" .= unspentValue
-    , "block" .= unspentBlock
-    , "position" .= unspentPos
-    ]
+    ["txid" .= unspentTxId, "vout" .= unspentIndex, "value" .= unspentValue] ++
+    blockRefPairs unspentBlock
 
 instance ToJSON Unspent where
     toJSON = object . unspentPairs
@@ -581,13 +572,13 @@ instance ToJSON Unspent where
 addressBalancePairs :: KeyValue kv => AddressBalance -> [kv]
 addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
-    , "block" .= addressBalBlock
     , "confirmed" .= addressBalConfirmed
     , "immature" .= addressBalImmature
     , "transactions" .= addressBalTxCount
     , "unspent" .= addressBalUnspentCount
     , "spent" .= addressBalSpentCount
-    ]
+    ] ++
+    blockRefPairs addressBalBlock
 
 instance ToJSON AddressBalance where
     toJSON = object . addressBalancePairs
