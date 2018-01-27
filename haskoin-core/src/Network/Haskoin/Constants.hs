@@ -44,6 +44,8 @@ module Network.Haskoin.Constants
 , bip44Coin
 , seeds
 , sigHashForkId
+, edaBlockHeight
+, daaBlockHeight
 ) where
 
 import           Control.Concurrent.MVar
@@ -81,7 +83,9 @@ data Network = Network
     , getCheckpoints              :: ![(BlockHeight, BlockHash)]
     , getBip44Coin                :: !Word32
     , getSeeds                    :: [String]
-    , getSigHashForkId         :: Maybe Word32
+    , getSigHashForkId            :: Maybe Word32
+    , getEDABlockHeight           :: Maybe Word32
+    , getDAABlockHeight           :: Maybe Word32
     } deriving (Eq)
 
 setBitcoinNetwork :: IO ()
@@ -192,9 +196,17 @@ bip44Coin = getBip44Coin getNetwork
 seeds :: [String]
 seeds = getSeeds getNetwork
 
--- | The Fork ID used for producing signatures on different networks
+-- | The Fork ID used for producing signatures on different networks.
 sigHashForkId :: Maybe Word32
 sigHashForkId = getSigHashForkId getNetwork
+
+-- | EDA Block height. Used by Bitcoin Cash network.
+edaBlockHeight :: Maybe Word32
+edaBlockHeight = getEDABlockHeight getNetwork
+
+-- | DAA Block height. Used by Bitcoin Cash network.
+daaBlockHeight :: Maybe Word32
+daaBlockHeight = getDAABlockHeight getNetwork
 
 bitcoinNetwork :: Network
 bitcoinNetwork =
@@ -272,6 +284,8 @@ bitcoinNetwork =
           ]
     , getBip44Coin = 0
     , getSigHashForkId = Nothing
+    , getEDABlockHeight = Nothing
+    , getDAABlockHeight = Nothing
     }
 
 bitcoinTestnet3Network :: Network
@@ -321,6 +335,8 @@ bitcoinTestnet3Network =
           ]
     , getBip44Coin = 1
     , getSigHashForkId = Nothing
+    , getEDABlockHeight = Nothing
+    , getDAABlockHeight = Nothing
     }
 
 bitcoinRegtestNetwork :: Network
@@ -362,6 +378,8 @@ bitcoinRegtestNetwork =
     , getSeeds = ["localhost"]
     , getBip44Coin = 1
     , getSigHashForkId = Nothing
+    , getEDABlockHeight = Nothing
+    , getDAABlockHeight = Nothing
     }
 
 bitcoinCashNetwork :: Network
@@ -383,7 +401,7 @@ bitcoinCashNetwork =
               0x1d00ffff
               2083236893
             -- Hash 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
-    , getMaxBlockSize = 1000000
+    , getMaxBlockSize = 8000000
     , getMaxSatoshi = 2100000000000000
     , getHaskoinUserAgent =
           C8.concat
@@ -444,6 +462,8 @@ bitcoinCashNetwork =
           ]
     , getBip44Coin = 145
     , getSigHashForkId = Just 0
+    , getEDABlockHeight = Just 478559
+    , getDAABlockHeight = Just 404031
     }
 
 bitcoinCashTestNetwork :: Network
@@ -465,7 +485,7 @@ bitcoinCashTestNetwork =
               486604799
               414098458
             -- Hash 000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943
-    , getMaxBlockSize = 1000000
+    , getMaxBlockSize = 8000000
     , getMaxSatoshi = 2100000000000000
     , getHaskoinUserAgent =
           C8.concat
@@ -504,4 +524,6 @@ bitcoinCashTestNetwork =
           ]
     , getBip44Coin = 1
     , getSigHashForkId = Just 0
+    , getEDABlockHeight = Just 1155876
+    , getDAABlockHeight = Just 1188697
     }
