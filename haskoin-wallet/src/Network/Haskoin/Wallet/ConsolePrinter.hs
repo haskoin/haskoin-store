@@ -76,6 +76,8 @@ data ConsoleFormat
     | FormatNegBalance { getFormat :: !String }
     | FormatTrue { getFormat :: !String }
     | FormatFalse { getFormat :: !String }
+    | FormatGreen { getFormat :: !String }
+    | FormatCyan { getFormat :: !String }
     | FormatWarn { getFormat :: !String }
     | FormatError { getFormat :: !String }
 
@@ -121,6 +123,12 @@ formatTrue = text . FormatTrue
 formatFalse :: String -> ConsolePrinter
 formatFalse = text . FormatFalse
 
+formatGreen :: String -> ConsolePrinter
+formatGreen = text . FormatGreen
+
+formatCyan :: String -> ConsolePrinter
+formatCyan = text . FormatCyan
+
 formatWarn :: String -> ConsolePrinter
 formatWarn = text . FormatWarn
 
@@ -158,6 +166,10 @@ formatSGR frm = case frm of
                           ]
     FormatFalse _      -> [ SetConsoleIntensity BoldIntensity
                           , SetColor Foreground Dull Red
+                          ]
+    FormatGreen _      -> [ SetColor Foreground Dull Green
+                          ]
+    FormatCyan _       -> [ SetColor Foreground Dull Cyan
                           ]
     FormatWarn _       -> [ SetColor Foreground Dull Yellow ]
     FormatError _      -> [ SetColor Foreground Dull Red ]

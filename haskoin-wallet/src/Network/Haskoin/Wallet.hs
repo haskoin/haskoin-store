@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards   #-}
 module Network.Haskoin.Wallet where
 
+import           Control.Lens                               ((^.))
 import           Control.Monad
 import qualified Data.Aeson                                 as J
+import           Data.Aeson.Lens
 import qualified Data.ByteString                            as BS
 import qualified Data.ByteString.Char8                      as B8
 import qualified Data.ByteString.Lazy                       as BL
@@ -63,7 +65,7 @@ mnemonic = command "mnemonic" "Generate a mnemonic" $
                     else return Nothing
         mnemE <- genMnemonic (fromIntegral reqEnt) rollsM
         case mnemE of
-            Right (orig, ms) -> 
+            Right (orig, ms) ->
                 renderIO $ vcat
                     [ formatTitle "System Entropy Source"
                     , nest 4 $ formatFilePath orig
@@ -97,6 +99,10 @@ testOpt :: Argument.Option Bool
 testOpt = Argument.option ['t'] ["testnet"] Argument.boolean False
           "Switch to testnet"
 
+cashOpt :: Argument.Option Bool
+cashOpt = Argument.option ['c'] ["cash"] Argument.boolean False
+          "Switch to bitcoin cash"
+
 satOpt :: Argument.Option Bool
 satOpt = Argument.option ['s'] ["satoshi"] Argument.boolean False
           "Use satoshi precision for amounts"
@@ -112,11 +118,19 @@ getPrecision True _ = PrecisionSatoshi
 getPrecision _ True = PrecisionBits
 getPrecision _ _    = PrecisionBitcoin
 
-setOptNet :: Bool -> IO ()
-setOptNet True = do
-    setBitcoinTestnet3Network
-    renderIO $ formatWarn "--- Testnet ---"
-setOptNet False = setBitcoinNetwork
+setOptNet :: Bool -> Bool -> IO ()
+setOptNet True True = consoleError $
+    formatError "Bitcoin cash testnet is not yet spported"
+setOptNet setCash setTest
+    | setCash = do
+        setBitcoinCashNetwork
+        renderIO $ formatGreen "--- Bitcoin Cash ---"
+    | setTest = do
+        setBitcoinTestnet3Network
+        renderIO $ formatWarn "--- Testnet ---"
+    | otherwise = do
+        setBitcoinNetwork
+        renderIO $ formatCyan "--- Bitcoin ---"
 
 httpNet :: Bool -> HTTPNet
 httpNet t = if t then HTTPTestnet else HTTPProdnet
@@ -124,8 +138,9 @@ httpNet t = if t then HTTPTestnet else HTTPProdnet
 pubkey :: Command IO
 pubkey = command "pubkey" "Derive a public key from a mnemonic" $
     withOption derOpt $ \d ->
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t -> io $ do
-        setOptNet t
+        setOptNet c t
         xpub <- deriveXPubKey <$> askSigningKey (fromIntegral d)
         let pref  = if t then "tpub-" else "xpub-"
             fname = pref <> cs (xPubChecksum xpub) <> ".txt"
@@ -133,6 +148,9 @@ pubkey = command "pubkey" "Derive a public key from a mnemonic" $
         renderIO $ vcat
             [ formatTitle "Public Key"
             , nest 4 $ formatPubKey $ cs $ xPubExport xpub
+            , formatTitle "Derivation"
+            , nest 4 $ formatDeriv $ show $
+                ParsedPrv $ toGeneric $ bip44Deriv $ fromIntegral d
             , formatTitle "Public Key File"
             , nest 4 $ formatFilePath path
             ]
@@ -140,9 +158,10 @@ pubkey = command "pubkey" "Derive a public key from a mnemonic" $
 watch :: Command IO
 watch = command "watch" "Create a new read-only account from an xpub file" $
     withOption testOpt $ \t ->
+    withOption cashOpt $ \c ->
     withNonOption Argument.file $ \fp -> io $ do
-        setOptNet t
-        bs <- BL.readFile fp
+        setOptNet c t
+        bs <- readDoc fp
         let xpub = fromMaybe err $ xPubImport $ head $ B8.lines $ cs bs
             store = AccountStore xpub 0 0 (bip44Deriv $ xPubChild xpub)
         name <- newAccountStore store
@@ -152,7 +171,8 @@ watch = command "watch" "Create a new read-only account from an xpub file" $
                 [ formatKey (block 13 "Name:") <>
                   formatAccount (cs name)
                 , formatKey (block 13 "Derivation:") <>
-                  formatDeriv (show $ accountStoreDeriv store)
+                  formatDeriv
+                     (show $ ParsedPrv $ toGeneric $ accountStoreDeriv store)
                 ]
             ]
   where
@@ -160,10 +180,11 @@ watch = command "watch" "Create a new read-only account from an xpub file" $
 
 rename :: Command IO
 rename = command "rename" "Rename an account" $
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t ->
     withNonOption Argument.string $ \oldName ->
     withNonOption Argument.string $ \newName -> io $ do
-        setOptNet t
+        setOptNet c t
         renameAccountStore (cs oldName) (cs newName)
         renderIO $
             formatStatic "Account" <+> formatAccount oldName <+>
@@ -176,19 +197,21 @@ accOpt = Argument.option ['a'] ["account"] Argument.string ""
 receive :: Command IO
 receive = command "receive" "Generate a new address to receive coins" $
     withOption accOpt $ \acc ->
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t -> io $ do
-        setOptNet t
-        withAccountStore (cs acc) $ \(key, store) -> do
+        setOptNet c t
+        withAccountStore (cs acc) $ \(k, store) -> do
             let (addr, store') = nextExtAddress store
-            updateAccountStore key $ const store'
+            updateAccountStore k $ const store'
             renderIO $ addressFormat [(lst3 addr, fst3 addr)]
 
 history :: Command IO
 history = command "history" "Display historical addresses" $
     withOption accOpt $ \acc ->
     withOption cntOpt $ \cnt ->
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t -> io $ do
-        setOptNet t
+        setOptNet c t
         withAccountStore (cs acc) $ \(_, store) -> do
             let xpub = accountStoreXPubKey store
                 idx  = accountStoreExternal store
@@ -221,10 +244,11 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
     withOption dustOpt $ \dust ->
     withOption satOpt $ \s ->
     withOption bitsOpt $ \b ->
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t ->
     withNonOptions Argument.string $ \as -> io $ do
-        setOptNet t
-        withAccountStore (cs acc) $ \(key, store) -> do
+        setOptNet c t
+        withAccountStore (cs acc) $ \(k, store) -> do
             let pr = getPrecision s b
                 rcps = fromMaybe rcptErr $ mapM (toRecipient pr) $ groupIn 2 as
                 feeW = fromIntegral feeByte
@@ -234,7 +258,7 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
             let (signDat, store') = either (consoleError . formatError) id resE
                 infoE = pubSignInfo signDat (accountStoreXPubKey store)
                 info = either (consoleError . formatError) id infoE
-            when (store /= store') $ updateAccountStore key $ const store'
+            when (store /= store') $ updateAccountStore k $ const store'
             let chsum = txChksum $ txSignDataTx signDat
                 fname = "tx-" <> cs chsum <> "-unsigned.json"
             path <- writeDoc fname $ cs $ Pretty.encodePretty signDat
@@ -267,10 +291,11 @@ sign = command "sign" "Sign the output of the \"send\" command" $
     withOption derOpt $ \d ->
     withOption satOpt $ \s ->
     withOption bitsOpt $ \b ->
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t ->
     withNonOption Argument.file $ \fp -> io $ do
-        setOptNet t
-        bs <- BL.readFile fp
+        setOptNet c t
+        bs <- readDoc fp
         case J.decode bs of
             Just dat -> do
                 signKey <- askSigningKey $ fromIntegral d
@@ -381,8 +406,9 @@ balance = command "balance" "Display the account balance" $
     withOption accOpt $ \acc ->
     withOption satOpt $ \s ->
     withOption bitsOpt $ \b ->
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t -> io $ do
-        setOptNet t
+        setOptNet c t
         withAccountStore (cs acc) $ \(_, store) -> do
             let addrs = allExtAddresses store <> allIntAddresses store
                 pr    = getPrecision s b
@@ -406,10 +432,11 @@ formatBalanceI pr bal =
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
+    withOption cashOpt $ \c ->
     withOption testOpt $ \t ->
     withNonOption Argument.file $ \fp -> io $ do
-        setOptNet t
-        bs' <- BL.readFile fp
+        setOptNet c t
+        bs' <- readDoc fp
         let bs = head $ B8.lines $ cs bs'
         case S.decode =<< maybeToEither "" (decodeHex bs) of
             Right tx -> do
@@ -429,8 +456,23 @@ writeDoc :: FilePath -> BL.ByteString -> IO FilePath
 writeDoc fileName dat = do
     dir <- D.getUserDocumentsDirectory
     let path = dir <> "/" <> fileName
-    BL.writeFile path $ dat <> "\n"
+        val = Pretty.encodePretty $ J.object [ "network" J..= networkName
+                                             , "payload" J..= J.String (cs dat)
+                                             ]
+    BL.writeFile path $ val <> "\n"
     return path
+
+readDoc :: FilePath -> IO BL.ByteString
+readDoc fileName = do
+    bs <- BL.readFile fileName
+    case J.decode bs of
+        Just v ->
+            if ((v :: J.Value) ^. key "network" . _String) == cs networkName
+                then return $ cs $ v ^. key "payload" . _String
+                else consoleError $ formatError $
+                     "Bad network. This file has to be used in " <>
+                     cs (v ^. key "network" . _String)
+        _ -> consoleError $ formatError $ "Could not read file " <> fileName
 
 withAccountStore :: Text -> ((Text, AccountStore) -> IO ()) -> IO ()
 withAccountStore name f
@@ -440,12 +482,12 @@ withAccountStore name f
             [val] -> f val
             _ -> case M.lookup "main" accMap of
                     Just val -> f ("main", val)
-                    _ -> err $ M.keys accMap
+                    _        -> err $ M.keys accMap
     | otherwise = do
         accM <- getAccountStore name
         case accM of
             Just acc -> f (name, acc)
-            _ -> err . M.keys =<< readAccountsFile
+            _        -> err . M.keys =<< readAccountsFile
   where
     err :: [Text] -> IO ()
     err [] = consoleError $ formatError "No accounts have been created"
