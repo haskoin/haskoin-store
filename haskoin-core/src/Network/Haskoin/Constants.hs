@@ -7,16 +7,16 @@ module Network.Haskoin.Constants
 ( -- ** Data
   Network(..)
 , bitcoinNetwork
-, bitcoinTestnet3Network
-, bitcoinRegtestNetwork
+, testnet3Network
+, regTestNetwork
 , bitcoinCashNetwork
-, bitcoinCashTestNetwork
+, cashTestNetwork
   -- ** Functions
 , setBitcoinNetwork
-, setBitcoinTestnet3Network
-, setBitcoinRegtestNetwork
+, setTestnet3Network
+, setRegTestNetwork
 , setBitcoinCashNetwork
-, setBitcoinCashTestNetwork
+, setCashTestNetwork
 , setNetwork
 , getNetwork
   -- ** Network parameters
@@ -91,17 +91,17 @@ data Network = Network
 setBitcoinNetwork :: IO ()
 setBitcoinNetwork = setNetwork bitcoinNetwork
 
-setBitcoinTestnet3Network :: IO ()
-setBitcoinTestnet3Network = setNetwork bitcoinTestnet3Network
+setTestnet3Network :: IO ()
+setTestnet3Network = setNetwork testnet3Network
 
-setBitcoinRegtestNetwork :: IO ()
-setBitcoinRegtestNetwork = setNetwork bitcoinRegtestNetwork
+setRegTestNetwork :: IO ()
+setRegTestNetwork = setNetwork regTestNetwork
 
 setBitcoinCashNetwork :: IO ()
 setBitcoinCashNetwork = setNetwork bitcoinCashNetwork
 
-setBitcoinCashTestNetwork :: IO ()
-setBitcoinCashTestNetwork = setNetwork bitcoinCashTestNetwork
+setCashTestNetwork :: IO ()
+setCashTestNetwork = setNetwork cashTestNetwork
 
 setNetwork :: Network -> IO ()
 setNetwork net = do
@@ -288,8 +288,8 @@ bitcoinNetwork =
     , getDAABlockHeight = Nothing
     }
 
-bitcoinTestnet3Network :: Network
-bitcoinTestnet3Network =
+testnet3Network :: Network
+testnet3Network =
     Network
     { getNetworkName = "testnet3"
     , getAddrPrefix = 111
@@ -339,8 +339,8 @@ bitcoinTestnet3Network =
     , getDAABlockHeight = Nothing
     }
 
-bitcoinRegtestNetwork :: Network
-bitcoinRegtestNetwork =
+regTestNetwork :: Network
+regTestNetwork =
     Network
     { getNetworkName = "regtest"
     , getAddrPrefix = 111
@@ -466,10 +466,10 @@ bitcoinCashNetwork =
     , getDAABlockHeight = Just 404031
     }
 
-bitcoinCashTestNetwork :: Network
-bitcoinCashTestNetwork =
+cashTestNetwork :: Network
+cashTestNetwork =
     Network
-    { getNetworkName = "bitcoincash-testnet"
+    { getNetworkName = "cashtest"
     , getAddrPrefix = 111
     , getScriptPrefix = 196
     , getSecretPrefix = 239
@@ -489,7 +489,7 @@ bitcoinCashTestNetwork =
     , getMaxSatoshi = 2100000000000000
     , getHaskoinUserAgent =
           C8.concat
-              [ "/haskoin-bitcoincash-testnet:"
+              [ "/haskoin-cashtest:"
               , C8.pack $ showVersion version
               , "/"
               ]
