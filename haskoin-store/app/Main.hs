@@ -13,9 +13,9 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.String.Conversions
 import           Data.Word
+import qualified Database.RocksDB            as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
-import qualified Database.RocksDB as RocksDB
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Store
 import           Network.Haskoin.Transaction
@@ -120,7 +120,7 @@ config =
              str
              (metavar "NETWORK" <> long "network" <> short 'n' <>
               help
-                  ("Network to use: bitcoin|cash|testnet|cashtest|regtest (default: " <>
+                  ("Network to use: bitcoin|bitcoincash|testnet3|cashtest|regtest (default: " <>
                    fromJust (configNetwork def) <>
                    ")")))
 
@@ -146,12 +146,12 @@ main =
             dir = fromJust $ configDir conf
             net = fromJust $ configNetwork conf
         case net of
-            "testnet" -> setBitcoinTestnet3Network
-            "regtest" -> setBitcoinRegtestNetwork
-            "bitcoin" -> setBitcoinNetwork
-            "cash" -> setBitcoinCashNetwork
-            "cashtest" -> setBitcoinCashTestNetwork
-            _ -> error "Wrong network"
+            "testnet3"    -> setTestnet3Network
+            "regtest"     -> setRegTestNetwork
+            "bitcoin"     -> setBitcoinNetwork
+            "bitcoincash" -> setBitcoinCashNetwork
+            "cashtest"    -> setCashTestNetwork
+            _             -> error "Wrong network"
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
         let wdir = dir </> networkName

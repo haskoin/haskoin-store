@@ -29,7 +29,7 @@ import           Test.HUnit                     hiding (Node, Test)
 
 main :: IO ()
 main = do
-    setBitcoinTestnet3Network
+    setTestnet3Network
     defaultMain
         [ testCase "Connect to a peer" connectToPeer
         , testCase "Get a block" getTestBlocks
