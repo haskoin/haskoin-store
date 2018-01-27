@@ -120,7 +120,7 @@ config =
              str
              (metavar "NETWORK" <> long "network" <> short 'n' <>
               help
-                  ("Network to use: bitcoin, cash, testnet or regtest (default: " <>
+                  ("Network to use: bitcoin|cash|testnet|cashtest|regtest (default: " <>
                    fromJust (configNetwork def) <>
                    ")")))
 
@@ -150,6 +150,7 @@ main =
             "regtest" -> setBitcoinRegtestNetwork
             "bitcoin" -> setBitcoinNetwork
             "cash" -> setBitcoinCashNetwork
+            "cashtest" -> setBitcoinCashTestNetwork
             _ -> error "Wrong network"
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
