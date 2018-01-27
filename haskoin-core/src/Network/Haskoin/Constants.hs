@@ -10,6 +10,7 @@ module Network.Haskoin.Constants
 , bitcoinTestnet3Network
 , bitcoinRegtestNetwork
 , bitcoinCashNetwork
+, bitcoinCashTestNetwork
   -- ** Functions
 , setBitcoinNetwork
 , setBitcoinTestnet3Network
@@ -79,7 +80,7 @@ data Network = Network
     , getCheckpoints              :: ![(BlockHeight, BlockHash)]
     , getBip44Coin                :: !Word32
     , getSeeds                    :: [String]
-    , getSigHashForkValue         :: Maybe Word32
+    , getSigHashForkId         :: Maybe Word32
     } deriving (Eq)
 
 setBitcoinNetwork :: IO ()
@@ -189,7 +190,7 @@ seeds = getSeeds getNetwork
 
 -- | The Fork ID used for producing signatures on different networks
 sigHashForkId :: Maybe Word32
-sigHashForkId = getSigHashForkValue getNetwork
+sigHashForkId = getSigHashForkId getNetwork
 
 bitcoinNetwork :: Network
 bitcoinNetwork =
@@ -266,7 +267,7 @@ bitcoinNetwork =
           , "seed.bitcoin.jonasschnelli.ch" -- Jonas Schnelli
           ]
     , getBip44Coin = 0
-    , getSigHashForkValue = Nothing
+    , getSigHashForkId = Nothing
     }
 
 bitcoinTestnet3Network :: Network
@@ -315,7 +316,7 @@ bitcoinTestnet3Network =
           , "testnet-seed.bitcoin.schildbach.de"
           ]
     , getBip44Coin = 1
-    , getSigHashForkValue = Nothing
+    , getSigHashForkId = Nothing
     }
 
 bitcoinRegtestNetwork :: Network
@@ -356,7 +357,7 @@ bitcoinRegtestNetwork =
     , getCheckpoints = []
     , getSeeds = ["localhost"]
     , getBip44Coin = 1
-    , getSigHashForkValue = Nothing
+    , getSigHashForkId = Nothing
     }
 
 bitcoinCashNetwork :: Network
@@ -382,7 +383,7 @@ bitcoinCashNetwork =
     , getMaxSatoshi = 2100000000000000
     , getHaskoinUserAgent =
           C8.concat
-              ["/haskoin-bitcoin-cash:", C8.pack $ showVersion version, "/"]
+              ["/haskoin-bitcoincash:", C8.pack $ showVersion version, "/"]
     , getDefaultPort = 8333
     , getAllowMinDifficultyBlocks = False
     , getPowNoRetargetting = False
@@ -438,5 +439,65 @@ bitcoinCashNetwork =
           , "seeder.criptolayer.net"
           ]
     , getBip44Coin = 145
-    , getSigHashForkValue = Just 0
+    , getSigHashForkId = Just 0
+    }
+
+bitcoinCashTestNetwork :: Network
+bitcoinCashTestNetwork =
+    Network
+    { getNetworkName = "bitcoincash-testnet"
+    , getAddrPrefix = 111
+    , getScriptPrefix = 196
+    , getSecretPrefix = 239
+    , getExtPubKeyPrefix = 0x043587cf
+    , getExtSecretPrefix = 0x04358394
+    , getNetworkMagic = 0x0b110907
+    , getGenesisHeader =
+          BlockHeader
+              0x01
+              "0000000000000000000000000000000000000000000000000000000000000000"
+              "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a"
+              1296688602
+              486604799
+              414098458
+            -- Hash 000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943
+    , getMaxBlockSize = 1000000
+    , getMaxSatoshi = 2100000000000000
+    , getHaskoinUserAgent =
+          C8.concat
+              [ "/haskoin-bitcoincash-testnet:"
+              , C8.pack $ showVersion version
+              , "/"
+              ]
+    , getDefaultPort = 18333
+    , getAllowMinDifficultyBlocks = True
+    , getPowNoRetargetting = False
+    , getPowLimit =
+          0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    , getBip34Block =
+          ( 21111
+          , "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8")
+    , getBip65Height = 581885
+    , getBip66Height = 330776
+    , getTargetTimespan = 14 * 24 * 60 * 60
+    , getTargetSpacing = 10 * 60
+    , getCheckpoints =
+          [ ( 546
+            , "000000002a936ca763904c3c35fce2f3556c559c0214345d31b1bcebf76acb70")
+            -- UAHF fork block.
+          , ( 1155876
+            , "00000000000e38fef93ed9582a7df43815d5c2ba9fd37ef70c9a0ea4a285b8f5")
+            -- Nov, 13. DAA activation block.
+          , ( 1188697
+            , "0000000000170ed0918077bde7b4d36cc4c91be69fa09211f748240dabe047fb")
+          ]
+    , getSeeds =
+          [ "testnet-seed.bitcoinabc.org"
+          , "testnet-seed-abc.bitcoinforks.org"
+          , "testnet-seed.bitprim.org"
+          , "testnet-seed.deadalnix.me"
+          , "testnet-seeder.criptolayer.net"
+          ]
+    , getBip44Coin = 1
+    , getSigHashForkId = Just 0
     }
