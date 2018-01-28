@@ -205,7 +205,7 @@ main =
                 getUnspent address db Nothing >>= json
             get "/address/:address/balance" $ do
                 address <- param "address"
-                getBalance address db Nothing >>= maybeJSON
+                getBalance address db Nothing >>= json
             post "/transaction" $ do
                 txHex <- jsonData
                 postTransaction db mgr txHex >>= \case

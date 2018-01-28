@@ -265,37 +265,55 @@ getOutput op db s =
         return (out, maybeSpent)
 
 getBalance ::
-       MonadIO m => Address -> DB -> Maybe Snapshot -> m (Maybe AddressBalance)
+       MonadIO m => Address -> DB -> Maybe Snapshot -> m AddressBalance
 getBalance addr db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
         Just _  -> g s
   where
     g s' =
-        runMaybeT $ do
-            bal <- MaybeT (firstValue (MultiBalance addr) db s')
+        do
             best <- getBestBlockHash db s' >>= me
             block <- getBlock best db s' >>= me
             let h = blockValueHeight block
-                bs = second (i h) bal
-                is = sum (map immatureValue (balanceImmature (snd bs)))
-                ub = balanceValue (snd bs)
-            return
-                AddressBalance
-                { addressBalAddress = addr
-                , addressBalConfirmed = ub
-                , addressBalImmature = is
-                , addressBalBlock =
-                      BlockRef
-                      { blockRefHeight = blockValueHeight block
-                      , blockRefHash = best
-                      , blockRefMainChain = True
-                      }
-                , addressBalTxCount = balanceTxCount (snd bal)
-                , addressBalUnspentCount =
-                      balanceOutputCount (snd bal) - balanceSpentCount (snd bal)
-                , addressBalSpentCount = balanceSpentCount (snd bal)
-                }
+            m <- firstValue (MultiBalance addr) db s'
+            case m of
+                Just bal -> do
+                    let bs = second (i h) bal
+                        is = sum (map immatureValue (balanceImmature (snd bs)))
+                        ub = balanceValue (snd bs)
+                    return
+                        AddressBalance
+                        { addressBalAddress = addr
+                        , addressBalConfirmed = ub
+                        , addressBalImmature = is
+                        , addressBalBlock =
+                              BlockRef
+                              { blockRefHeight = h
+                              , blockRefHash = best
+                              , blockRefMainChain = True
+                              }
+                        , addressBalTxCount = balanceTxCount (snd bal)
+                        , addressBalUnspentCount =
+                              balanceOutputCount (snd bal) - balanceSpentCount (snd bal)
+                        , addressBalSpentCount = balanceSpentCount (snd bal)
+                        }
+                Nothing ->
+                    return
+                    AddressBalance
+                    { addressBalAddress = addr
+                    , addressBalConfirmed = 0
+                    , addressBalImmature = 0
+                    , addressBalBlock =
+                            BlockRef
+                            { blockRefHeight = h
+                            , blockRefHash = best
+                            , blockRefMainChain = True
+                            }
+                    , addressBalTxCount = 0
+                    , addressBalUnspentCount = 0
+                    , addressBalSpentCount = 0
+                    }
     me Nothing  = error "Could not retrieve best block from database"
     me (Just x) = return x
     i h bal@BalanceValue {..} =
