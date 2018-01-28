@@ -264,23 +264,37 @@ getNewPeer = do
             $(logDebug) $ logMe <> "Attempting to get a new peer from database"
             pdb <- asks myPeerDB
             now <- computeTime
-            RocksDB.withIterator pdb def $ \it -> do
-                RocksDB.iterSeek it (BS.singleton 0x00)
-                runMaybeT $ go now it onlinePeers
+            peers <-
+                RocksDB.withIterator pdb def $ \it -> do
+                    RocksDB.iterSeek it (BS.singleton 0x00)
+                    go [] now it onlinePeers
+            if null peers
+                then return Nothing
+                -- Return a random element
+                else fmap
+                         (Just . (peers !!))
+                         (liftIO (randomRIO (0, length peers - 1)))
   where
-    go now it onlinePeers = do
-        guard =<< RocksDB.iterValid it
-        kbs <- MaybeT (RocksDB.iterKey it)
-        k <- MaybeT (return (eitherToMaybe (decode kbs)))
-        vbs <- MaybeT (RocksDB.iterValue it)
-        v <- MaybeT (return (eitherToMaybe (decode vbs)))
-        let a = getPeerAddress v
-        guard (getPeerNextConnect k <= now)
-        if a `elem` onlinePeers
-            then do
-                RocksDB.iterNext it
-                go now it onlinePeers
-            else return a
+    go acc now it onlinePeers = do
+        maybePeer <-
+            runMaybeT $ do
+                guard =<< RocksDB.iterValid it
+                kbs <- MaybeT (RocksDB.iterKey it)
+                k <- MaybeT (return (eitherToMaybe (decode kbs)))
+                vbs <- MaybeT (RocksDB.iterValue it)
+                v <- MaybeT (return (eitherToMaybe (decode vbs)))
+                guard (getPeerNextConnect k <= now)
+                return (getPeerAddress v)
+        case maybePeer of
+            Just a ->
+                if a `elem` onlinePeers
+                    then do
+                        RocksDB.iterNext it
+                        go acc now it onlinePeers
+                    else do
+                        RocksDB.iterNext it
+                        go (a : acc) now it onlinePeers
+            Nothing -> return acc
 
 getConnectedPeers :: MonadManager m => m [OnlinePeer]
 getConnectedPeers = filter onlinePeerConnected <$> getOnlinePeers
