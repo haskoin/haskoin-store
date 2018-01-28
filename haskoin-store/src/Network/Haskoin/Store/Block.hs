@@ -257,7 +257,7 @@ getOutput ::
 getOutput op db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ f . Just
-        Just _ -> f s
+        Just _  -> f s
   where
     f s' = runMaybeT $ do
         out <- MaybeT (retrieveValue (OutputKey op) db s')
@@ -269,7 +269,7 @@ getBalance ::
 getBalance addr db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
-        Just _ -> g s
+        Just _  -> g s
   where
     g s' =
         runMaybeT $ do
@@ -296,7 +296,7 @@ getBalance addr db s =
                       balanceOutputCount (snd bal) - balanceSpentCount (snd bal)
                 , addressBalSpentCount = balanceSpentCount (snd bal)
                 }
-    me Nothing = error "Could not retrieve best block from database"
+    me Nothing  = error "Could not retrieve best block from database"
     me (Just x) = return x
     i h bal@BalanceValue {..} =
         let minHeight =
@@ -503,7 +503,7 @@ addrOutputOps main addr AddrOutputKey {..} AddrOutputValue {..} =
     in if main
            then case addrOutputValueSpent of
                     Nothing -> [deleteOp skey, insertOp ukey uval]
-                    Just s -> [deleteOp ukey, insertOp skey (sval s)]
+                    Just s  -> [deleteOp ukey, insertOp skey (sval s)]
            else case addrOutputValueSpent of
                     Nothing -> [deleteOp ukey]
                     Just s ->
@@ -757,7 +757,7 @@ getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
                             $(logError) $ logMe <> cs msg
                             error msg
         case maybeOutput of
-            Nothing -> return m
+            Nothing     -> return m
             Just output -> return (M.insert key output m)
 
 getOutPointData ::
@@ -959,7 +959,9 @@ getUnspent addr db s = do
   where
     toUnspent AddrUnspentKey {..} AddrUnspentValue {..} =
         Unspent
-        { unspentTxId = outPointHash (outPoint addrUnspentOutPoint)
+        { unspentAddress = addrUnspentKey
+        , unspentPkScript = outScript addrUnspentOutput
+        , unspentTxId = outPointHash (outPoint addrUnspentOutPoint)
         , unspentIndex = outPointIndex (outPoint addrUnspentOutPoint)
         , unspentValue = outputValue addrUnspentOutput
         , unspentBlock = outBlock addrUnspentOutput

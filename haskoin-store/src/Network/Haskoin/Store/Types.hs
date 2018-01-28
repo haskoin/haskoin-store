@@ -219,11 +219,13 @@ data AddressTx = AddressTx
     } deriving (Eq, Show, Ord)
 
 data Unspent = Unspent
-    { unspentTxId  :: !TxHash
-    , unspentIndex :: !Word32
-    , unspentValue :: !Word64
-    , unspentBlock :: !BlockRef
-    , unspentPos   :: !Word32
+    { unspentAddress  :: !Address
+    , unspentPkScript :: !ByteString
+    , unspentTxId     :: !TxHash
+    , unspentIndex    :: !Word32
+    , unspentValue    :: !Word64
+    , unspentBlock    :: !BlockRef
+    , unspentPos      :: !Word32
     } deriving (Eq, Show, Ord)
 
 instance Record BlockKey BlockValue
@@ -582,7 +584,12 @@ instance ToJSON AddressTx where
 
 unspentPairs :: KeyValue kv => Unspent -> [kv]
 unspentPairs Unspent {..} =
-    ["txid" .= unspentTxId, "vout" .= unspentIndex, "value" .= unspentValue] ++
+    [ "address" .= unspentAddress
+    , "pkscrpt" .= String (cs (encodeHex unspentPkScript))
+    , "txid" .= unspentTxId
+    , "vout" .= unspentIndex
+    , "value" .= unspentValue
+    ] ++
     blockRefPairs unspentBlock
 
 instance ToJSON Unspent where
