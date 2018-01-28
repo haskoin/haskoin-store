@@ -21,6 +21,7 @@ import           Network.Haskoin.Wallet.Arbitrary           ()
 import           Network.Haskoin.Wallet.Entropy
 import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
+import           Network.Haskoin.Wallet.HTTP.Insight
 import           Network.Haskoin.Wallet.Signing
 import           Numeric
 import           Test.Hspec
@@ -35,6 +36,7 @@ walletSpec = do
     buildSpec
     signingSpec
     blockchainServiceSpec
+    insightServiceSpec
 
 diceSpec :: Spec
 diceSpec = describe "Dice base 6 API" $ do
@@ -429,12 +431,12 @@ buildSpec = describe "Transaction builder" $
 blockchainServiceSpec :: Spec
 blockchainServiceSpec = describe "Blockchain.info service (online test)" $ do
     it "can receive balance (online test)" $ do
-        res <- httpBalance blockchainInfo HTTPProdnet
+        res <- httpBalance blockchainInfo
             [ "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" ]
         res `shouldSatisfy` (>= 5000000000)
 
     it "can receive coins (online test)" $ do
-        res <- httpUnspent blockchainInfo HTTPProdnet
+        res <- httpUnspent blockchainInfo
             [ "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" ]
         head res `shouldBe`
             ( OutPoint "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b" 0
@@ -444,8 +446,28 @@ blockchainServiceSpec = describe "Blockchain.info service (online test)" $ do
 
     it "can receive a transaction (online test)" $ do
         let tid =  "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-        res <- httpTx blockchainInfo HTTPProdnet tid
+        res <- httpTx blockchainInfo tid
         txHash res `shouldBe` tid
+
+insightServiceSpec :: Spec
+insightServiceSpec =
+    describe "Bitpay Insight service (online test)" $ do
+        it "can receive balance (online test)" $ do
+            res <- httpBalance insight ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            res `shouldSatisfy` (>= 1600000000)
+        it "can receive coins (online test)" $ do
+            res <- httpUnspent insight ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            res `shouldSatisfy`
+                (( OutPoint
+                       "5609df21a76484bfd4a890e624723f87465916f0036b1fa8a06b9c2e8e63be30"
+                       12
+                 , PayPKHash "62e907b15cbf27d5425399ebf6f0fb50ebb88f18"
+                 , 333000) `elem`)
+        it "can receive a transaction (online test)" $ do
+            let tid =
+                    "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
+            res <- httpTx insight tid
+            txHash res `shouldBe` tid
 
 {- Test Constants -}
 

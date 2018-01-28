@@ -39,20 +39,19 @@ toWalletCoin :: (OutPoint, ScriptOutput, Word64) -> WalletCoin
 toWalletCoin (op, so, v) = WalletCoin op so v
 
 buildTxSignData :: BlockchainService
-                -> HTTPNet
                 -> AccountStore
                 -> [(Address, Word64)]
                 -> Word64
                 -> Word64
                 -> IO (Either String (TxSignData, AccountStore))
-buildTxSignData service net store rcps feeByte dust
+buildTxSignData service store rcps feeByte dust
     | null rcps = return $ Left "No recipients provided"
     | otherwise = do
         allCoins <-
-            map toWalletCoin <$> httpUnspent service net (map fst allAddrs)
+            map toWalletCoin <$> httpUnspent service (map fst allAddrs)
         case buildWalletTx allAddrs allCoins change rcps feeByte dust of
             Right (tx, depTxHash, inDeriv, outDeriv) -> do
-                depTxs <- mapM (httpTx service net) depTxHash
+                depTxs <- mapM (httpTx service) depTxHash
                 return $
                     Right
                         ( TxSignData

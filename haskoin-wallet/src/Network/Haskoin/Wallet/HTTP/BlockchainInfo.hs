@@ -10,6 +10,7 @@ import           Data.Monoid                           ((<>))
 import qualified Data.Serialize                        as S
 import           Data.String.Conversions               (cs)
 import           Data.Word
+import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
@@ -18,9 +19,12 @@ import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.HTTP
 import qualified Network.Wreq                          as HTTP
 
-toURL :: HTTPNet -> String
-toURL HTTPProdnet = "https://blockchain.info"
-toURL HTTPTestnet = "https://testnet.blockchain.info"
+getURL :: String
+getURL
+    | getNetwork == bitcoinNetwork = "https://blockchain.info"
+    | getNetwork == bitcoinTestnet3Network = "https://testnet.blockchain.info"
+    | otherwise = consoleError $ formatError $
+           "blockchain.info does not support the network " <> networkName
 
 blockchainInfo :: BlockchainService
 blockchainInfo =
@@ -31,24 +35,24 @@ blockchainInfo =
     , httpBroadcast = broadcastTx
     }
 
-getBalance :: HTTPNet -> [Address] -> IO Word64
-getBalance net addrs = do
+getBalance :: [Address] -> IO Word64
+getBalance addrs = do
     r <- HTTP.asValue =<< HTTP.getWith opts url
     let v = r ^. HTTP.responseBody
     return $ fromIntegral $ sum $ v ^.. members . key "final_balance" . _Integer
   where
-    url = toURL net <> "/balance"
+    url = getURL <> "/balance"
     opts = HTTP.defaults & HTTP.param "active" .~ [cs aList]
     aList = intercalate "|" $ map (cs . addrToBase58) addrs
 
-getUnspent :: HTTPNet -> [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
-getUnspent net addrs = do
+getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
+getUnspent addrs = do
     r <- HTTP.asValue =<< HTTP.getWith opts url
     let v = r ^. HTTP.responseBody
         resM = mapM parseCoin $ v ^.. key "unspent_outputs" . values
     maybe (consoleError $ formatError "Could not parse coin") return resM
   where
-    url = toURL net <> "/unspent"
+    url = getURL <> "/unspent"
     opts =
         HTTP.defaults & HTTP.param "active" .~ [cs aList] &
         HTTP.param "confirmations" .~
@@ -62,22 +66,22 @@ getUnspent net addrs = do
         scp <- eitherToMaybe . decodeOutputBS =<< decodeHex (cs scpHex)
         return (OutPoint tid pos, scp, val)
 
-getTx :: HTTPNet -> TxHash -> IO Tx
-getTx net tid = do
+getTx :: TxHash -> IO Tx
+getTx tid = do
     r <- HTTP.getWith opts url
     let bsM = decodeHex . cs $ r ^. HTTP.responseBody
     maybe (consoleError $ formatError "Could not decode tx") return $
         eitherToMaybe . S.decode =<< bsM
   where
-    url  = toURL net <> "/rawtx/" <> cs (txHashToHex tid)
+    url  = getURL <> "/rawtx/" <> cs (txHashToHex tid)
     opts = HTTP.defaults & HTTP.param "format" .~ ["hex"]
 
-broadcastTx :: HTTPNet -> Tx -> IO ()
-broadcastTx net tx = do
+broadcastTx :: Tx -> IO ()
+broadcastTx tx = do
     _ <- HTTP.post url $ HTTP.partBS "tx" dat
     return ()
   where
-    url = toURL net <> "/pushtx"
+    url = getURL <> "/pushtx"
     dat = encodeHex $ S.encode tx
 
 hexToTxHash' :: BS.ByteString -> Maybe TxHash

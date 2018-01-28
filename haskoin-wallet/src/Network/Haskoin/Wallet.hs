@@ -27,6 +27,7 @@ import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.Entropy
 import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
+import           Network.Haskoin.Wallet.HTTP.Insight
 import qualified Network.Haskoin.Wallet.PrettyJson          as Pretty
 import           Network.Haskoin.Wallet.Signing
 import qualified System.Console.Argument                    as Argument
@@ -112,16 +113,18 @@ bitsOpt = Argument.option ['b'] ["bits"] Argument.boolean False
           "Use bits precision for amounts"
 
 getPrecision :: Bool -> Bool -> Precision
-getPrecision True True =
-    consoleError $ formatError "Can not set both satoshi and bits flags"
-getPrecision True _ = PrecisionSatoshi
-getPrecision _ True = PrecisionBits
-getPrecision _ _    = PrecisionBitcoin
+getPrecision setSat setBits
+    | setSat && setBits =
+        consoleError $ formatError "Can not set both satoshi and bits flags"
+    | setSat = PrecisionSatoshi
+    | setBits = PrecisionBits
+    | otherwise = PrecisionBitcoin
 
 setOptNet :: Bool -> Bool -> IO ()
-setOptNet True True = consoleError $
-    formatError "Bitcoin cash testnet is not yet spported"
 setOptNet setCash setTest
+    | setCash && setTest = do
+        setBitcoinCashTestNetwork
+        renderIO $ formatWarn "--- Bitcoin Cash Testnet ---"
     | setCash = do
         setBitcoinCashNetwork
         renderIO $ formatGreen "--- Bitcoin Cash ---"
@@ -132,8 +135,14 @@ setOptNet setCash setTest
         setBitcoinNetwork
         renderIO $ formatCyan "--- Bitcoin ---"
 
-httpNet :: Bool -> HTTPNet
-httpNet t = if t then HTTPTestnet else HTTPProdnet
+defaultBlockchainService :: BlockchainService
+defaultBlockchainService
+    | getNetwork == bitcoinNetwork = blockchainInfo
+    | getNetwork == bitcoinTestnet3Network = blockchainInfo
+    | getNetwork == bitcoinCashNetwork = insight
+    | getNetwork == bitcoinCashTestNetwork = insight
+    | otherwise = consoleError $ formatError $
+        "No blockchain service for network " <> networkName
 
 pubkey :: Command IO
 pubkey = command "pubkey" "Derive a public key from a mnemonic" $
@@ -253,8 +262,8 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
                 rcps = fromMaybe rcptErr $ mapM (toRecipient pr) $ groupIn 2 as
                 feeW = fromIntegral feeByte
                 dustW = fromIntegral dust
-            resE <- buildTxSignData blockchainInfo (httpNet t)
-                                    store rcps feeW dustW
+                service = defaultBlockchainService
+            resE <- buildTxSignData service store rcps feeW dustW
             let (signDat, store') = either (consoleError . formatError) id resE
                 infoE = pubSignInfo signDat (accountStoreXPubKey store)
                 info = either (consoleError . formatError) id infoE
@@ -411,8 +420,9 @@ balance = command "balance" "Display the account balance" $
         setOptNet c t
         withAccountStore (cs acc) $ \(_, store) -> do
             let addrs = allExtAddresses store <> allIntAddresses store
-                pr    = getPrecision s b
-            bal <- httpBalance blockchainInfo (httpNet t) $ map fst addrs
+                pr = getPrecision s b
+                service = defaultBlockchainService
+            bal <- httpBalance service $ map fst addrs
             renderIO $ vcat
                 [ formatTitle "Account Balance"
                 , nest 4 $ formatBalance pr bal
@@ -440,7 +450,8 @@ broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
         let bs = head $ B8.lines $ cs bs'
         case S.decode =<< maybeToEither "" (decodeHex bs) of
             Right tx -> do
-                httpBroadcast blockchainInfo (httpNet t) tx
+                let service = defaultBlockchainService
+                httpBroadcast service tx
                 renderIO $
                     formatStatic "Tx" <+>
                     formatTxHash (cs $ txHashToHex $ txHash tx) <+>
