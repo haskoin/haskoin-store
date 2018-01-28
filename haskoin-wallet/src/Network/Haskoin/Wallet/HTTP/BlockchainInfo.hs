@@ -22,7 +22,7 @@ import qualified Network.Wreq                          as HTTP
 getURL :: String
 getURL
     | getNetwork == bitcoinNetwork = "https://blockchain.info"
-    | getNetwork == bitcoinTestnet3Network = "https://testnet.blockchain.info"
+    | getNetwork == testnet3Network = "https://testnet.blockchain.info"
     | otherwise = consoleError $ formatError $
            "blockchain.info does not support the network " <> networkName
 
@@ -42,7 +42,7 @@ getBalance addrs = do
     return $ fromIntegral $ sum $ v ^.. members . key "final_balance" . _Integer
   where
     url = getURL <> "/balance"
-    opts = HTTP.defaults & HTTP.param "active" .~ [cs aList]
+    opts = options & HTTP.param "active" .~ [cs aList]
     aList = intercalate "|" $ map (cs . addrToBase58) addrs
 
 getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
@@ -54,9 +54,8 @@ getUnspent addrs = do
   where
     url = getURL <> "/unspent"
     opts =
-        HTTP.defaults & HTTP.param "active" .~ [cs aList] &
-        HTTP.param "confirmations" .~
-        ["1"]
+        options & HTTP.param "active" .~ [cs aList] &
+                  HTTP.param "confirmations" .~ ["1"]
     aList = intercalate "|" $ map (cs . addrToBase58) addrs
     parseCoin v = do
         tid <- hexToTxHash' . cs =<< v ^? key "tx_hash" . _String
@@ -74,11 +73,11 @@ getTx tid = do
         eitherToMaybe . S.decode =<< bsM
   where
     url  = getURL <> "/rawtx/" <> cs (txHashToHex tid)
-    opts = HTTP.defaults & HTTP.param "format" .~ ["hex"]
+    opts = options & HTTP.param "format" .~ ["hex"]
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do
-    _ <- HTTP.post url $ HTTP.partBS "tx" dat
+    _ <- HTTP.postWith options url $ HTTP.partBS "tx" dat
     return ()
   where
     url = getURL <> "/pushtx"

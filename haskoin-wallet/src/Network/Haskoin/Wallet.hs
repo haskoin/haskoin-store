@@ -1,13 +1,13 @@
+{-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 module Network.Haskoin.Wallet where
 
-import           Control.Lens                               ((^.))
+import           Control.Lens                               ((^?))
 import           Control.Monad
 import qualified Data.Aeson                                 as J
 import           Data.Aeson.Lens
 import qualified Data.ByteString                            as BS
-import qualified Data.ByteString.Char8                      as B8
 import qualified Data.ByteString.Lazy                       as BL
 import qualified Data.Map.Strict                            as M
 import           Data.Maybe
@@ -96,104 +96,111 @@ derOpt :: Argument.Option Integer
 derOpt = Argument.option ['d'] ["deriv"] Argument.integer 0
          "Bip44 account derivation"
 
-testOpt :: Argument.Option Bool
-testOpt = Argument.option ['t'] ["testnet"] Argument.boolean False
-          "Switch to testnet"
+netOpt :: Argument.Option String
+netOpt = Argument.option ['n'] ["network"] Argument.string "bitcoin"
+          "Set the network (=bitcoin|testnet3|bitcoincash|cashtest)"
 
-cashOpt :: Argument.Option Bool
-cashOpt = Argument.option ['c'] ["cash"] Argument.boolean False
-          "Switch to bitcoin cash"
+unitOpt :: Argument.Option String
+unitOpt = Argument.option ['u'] ["unit"] Argument.string "bitcoin"
+           "Set the units for amounts (=bitcoin|bit|satoshi)"
 
-satOpt :: Argument.Option Bool
-satOpt = Argument.option ['s'] ["satoshi"] Argument.boolean False
-          "Use satoshi precision for amounts"
+parseUnit :: String -> AmountUnit
+parseUnit unit =
+    case unit of
+        "bitcoin" -> UnitBitcoin
+        "bit" -> UnitBit
+        "satoshi" -> UnitSatoshi
+        _ ->
+            consoleError $
+            vcat
+                [ formatError "Invalid unit value. Choose one of:"
+                , nest 4 $ vcat $ map formatStatic ["bitcoin", "bit", "satoshi"]
+                ]
 
-bitsOpt :: Argument.Option Bool
-bitsOpt = Argument.option ['b'] ["bits"] Argument.boolean False
-          "Use bits precision for amounts"
-
-getPrecision :: Bool -> Bool -> Precision
-getPrecision setSat setBits
-    | setSat && setBits =
-        consoleError $ formatError "Can not set both satoshi and bits flags"
-    | setSat = PrecisionSatoshi
-    | setBits = PrecisionBits
-    | otherwise = PrecisionBitcoin
-
-setOptNet :: Bool -> Bool -> IO ()
-setOptNet setCash setTest
-    | setCash && setTest = do
-        setBitcoinCashTestNetwork
-        renderIO $ formatWarn "--- Bitcoin Cash Testnet ---"
-    | setCash = do
-        setBitcoinCashNetwork
-        renderIO $ formatGreen "--- Bitcoin Cash ---"
-    | setTest = do
-        setBitcoinTestnet3Network
-        renderIO $ formatWarn "--- Testnet ---"
-    | otherwise = do
+setOptNet :: String -> IO ()
+setOptNet name
+    | name == getNetworkName bitcoinNetwork = do
         setBitcoinNetwork
         renderIO $ formatCyan "--- Bitcoin ---"
+    | name == getNetworkName bitcoinCashNetwork = do
+        setBitcoinCashNetwork
+        renderIO $ formatGreen "--- Bitcoin Cash ---"
+    | name == getNetworkName testnet3Network = do
+        setTestnet3Network
+        renderIO $ formatWarn "--- Testnet ---"
+    | name == getNetworkName cashTestNetwork = do
+        setCashTestNetwork
+        renderIO $ formatWarn "--- Bitcoin Cash Testnet ---"
+    | otherwise =
+        consoleError $
+        vcat
+            [ formatError "Invalid network name. Select one of the following:"
+            , nest 4 $
+              vcat $
+              map
+                  formatStatic
+                  [ getNetworkName bitcoinNetwork
+                  , getNetworkName bitcoinCashNetwork
+                  , getNetworkName testnet3Network
+                  , getNetworkName cashTestNetwork
+                  ]
+            ]
 
 defaultBlockchainService :: BlockchainService
 defaultBlockchainService
     | getNetwork == bitcoinNetwork = blockchainInfo
-    | getNetwork == bitcoinTestnet3Network = blockchainInfo
+    | getNetwork == testnet3Network = blockchainInfo
     | getNetwork == bitcoinCashNetwork = insight
-    | getNetwork == bitcoinCashTestNetwork = insight
+    | getNetwork == cashTestNetwork = insight
     | otherwise = consoleError $ formatError $
         "No blockchain service for network " <> networkName
 
 pubkey :: Command IO
 pubkey = command "pubkey" "Derive a public key from a mnemonic" $
-    withOption derOpt $ \d ->
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t -> io $ do
-        setOptNet c t
-        xpub <- deriveXPubKey <$> askSigningKey (fromIntegral d)
-        let pref  = if t then "tpub-" else "xpub-"
-            fname = pref <> cs (xPubChecksum xpub) <> ".txt"
-        path <- writeDoc fname $ cs $ xPubExport xpub
+    withOption derOpt $ \deriv ->
+    withOption netOpt $ \network -> io $ do
+        setOptNet network
+        xpub <- deriveXPubKey <$> askSigningKey (fromIntegral deriv)
+        let fname = "key-" <> cs (xPubChecksum xpub)
+        path <- writeDoc fname $ J.String $ cs $ xPubExport xpub
         renderIO $ vcat
             [ formatTitle "Public Key"
             , nest 4 $ formatPubKey $ cs $ xPubExport xpub
             , formatTitle "Derivation"
             , nest 4 $ formatDeriv $ show $
-                ParsedPrv $ toGeneric $ bip44Deriv $ fromIntegral d
+                ParsedPrv $ toGeneric $ bip44Deriv $ fromIntegral deriv
             , formatTitle "Public Key File"
             , nest 4 $ formatFilePath path
             ]
 
 watch :: Command IO
 watch = command "watch" "Create a new read-only account from an xpub file" $
-    withOption testOpt $ \t ->
-    withOption cashOpt $ \c ->
+    withOption netOpt $ \network ->
     withNonOption Argument.file $ \fp -> io $ do
-        setOptNet c t
-        bs <- readDoc fp
-        let xpub = fromMaybe err $ xPubImport $ head $ B8.lines $ cs bs
-            store = AccountStore xpub 0 0 (bip44Deriv $ xPubChild xpub)
-        name <- newAccountStore store
-        renderIO $ vcat
-            [ formatTitle "New Account Created"
-            , nest 4 $ vcat
-                [ formatKey (block 13 "Name:") <>
-                  formatAccount (cs name)
-                , formatKey (block 13 "Derivation:") <>
-                  formatDeriv
-                     (show $ ParsedPrv $ toGeneric $ accountStoreDeriv store)
-                ]
-            ]
-  where
-    err = consoleError $ formatError "Could not parse the public key"
+        setOptNet network
+        val <- readDoc fp
+        case J.fromJSON val of
+            J.Success xpub -> do
+                let store = AccountStore xpub 0 0 (bip44Deriv $ xPubChild xpub)
+                name <- newAccountStore store
+                renderIO $ vcat
+                    [ formatTitle "New Account Created"
+                    , nest 4 $ vcat
+                        [ formatKey (block 13 "Name:") <>
+                          formatAccount (cs name)
+                        , formatKey (block 13 "Derivation:") <>
+                          formatDeriv
+                            (show $ ParsedPrv $ toGeneric $ accountStoreDeriv store)
+                        ]
+                    ]
+            _ -> consoleError $ formatError "Could not parse the public key"
 
 rename :: Command IO
 rename = command "rename" "Rename an account" $
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t ->
+    withOption netOpt $ \network ->
     withNonOption Argument.string $ \oldName ->
     withNonOption Argument.string $ \newName -> io $ do
-        setOptNet c t
+        setOptNet network
         renameAccountStore (cs oldName) (cs newName)
         renderIO $
             formatStatic "Account" <+> formatAccount oldName <+>
@@ -206,9 +213,8 @@ accOpt = Argument.option ['a'] ["account"] Argument.string ""
 receive :: Command IO
 receive = command "receive" "Generate a new address to receive coins" $
     withOption accOpt $ \acc ->
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t -> io $ do
-        setOptNet c t
+    withOption netOpt $ \network -> io $ do
+        setOptNet network
         withAccountStore (cs acc) $ \(k, store) -> do
             let (addr, store') = nextExtAddress store
             updateAccountStore k $ const store'
@@ -218,9 +224,8 @@ history :: Command IO
 history = command "history" "Display historical addresses" $
     withOption accOpt $ \acc ->
     withOption cntOpt $ \cnt ->
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t -> io $ do
-        setOptNet c t
+    withOption netOpt $ \network -> io $ do
+        setOptNet network
         withAccountStore (cs acc) $ \(_, store) -> do
             let xpub = accountStoreXPubKey store
                 idx  = accountStoreExternal store
@@ -251,28 +256,26 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
     withOption accOpt $ \acc ->
     withOption feeOpt $ \feeByte ->
     withOption dustOpt $ \dust ->
-    withOption satOpt $ \s ->
-    withOption bitsOpt $ \b ->
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t ->
+    withOption unitOpt $ \u ->
+    withOption netOpt $ \network ->
     withNonOptions Argument.string $ \as -> io $ do
-        setOptNet c t
+        setOptNet network
         withAccountStore (cs acc) $ \(k, store) -> do
-            let pr = getPrecision s b
-                rcps = fromMaybe rcptErr $ mapM (toRecipient pr) $ groupIn 2 as
+            let !unit = parseUnit u
+                !rcps = fromMaybe rcptErr $ mapM (toRecipient unit) $ groupIn 2 as
                 feeW = fromIntegral feeByte
                 dustW = fromIntegral dust
                 service = defaultBlockchainService
             resE <- buildTxSignData service store rcps feeW dustW
-            let (signDat, store') = either (consoleError . formatError) id resE
+            let (!signDat, !store') = either (consoleError . formatError) id resE
                 infoE = pubSignInfo signDat (accountStoreXPubKey store)
-                info = either (consoleError . formatError) id infoE
+                !info = either (consoleError . formatError) id infoE
             when (store /= store') $ updateAccountStore k $ const store'
             let chsum = txChksum $ txSignDataTx signDat
-                fname = "tx-" <> cs chsum <> "-unsigned.json"
-            path <- writeDoc fname $ cs $ Pretty.encodePretty signDat
+                fname = "tx-" <> cs chsum <> "-unsigned"
+            path <- writeDoc fname $ J.toJSON signDat
             renderIO $ vcat
-                [ signingInfoFormat (accountStoreDeriv store) pr info Nothing
+                [ signingInfoFormat (accountStoreDeriv store) unit info Nothing
                 , formatTitle "Unsigned Tx Data File"
                 , nest 4 $ formatFilePath path
                 ]
@@ -291,36 +294,34 @@ groupIn n xs
     | length xs <= n = [xs]
     | otherwise = [take n xs] <> groupIn n (drop n xs)
 
-toRecipient :: Precision -> [String] -> Maybe (Address, Word64)
-toRecipient pr [a, v] = (,) <$> base58ToAddr (cs a) <*> readBalance pr v
-toRecipient _  _      = Nothing
+toRecipient :: AmountUnit -> [String] -> Maybe (Address, Word64)
+toRecipient unit [a, v] = (,) <$> base58ToAddr (cs a) <*> readAmount unit v
+toRecipient _  _        = Nothing
 
 sign :: Command IO
 sign = command "sign" "Sign the output of the \"send\" command" $
     withOption derOpt $ \d ->
-    withOption satOpt $ \s ->
-    withOption bitsOpt $ \b ->
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t ->
+    withOption unitOpt $ \u ->
+    withOption netOpt $ \network ->
     withNonOption Argument.file $ \fp -> io $ do
-        setOptNet c t
-        bs <- readDoc fp
-        case J.decode bs of
-            Just dat -> do
+        setOptNet network
+        val <- readDoc fp
+        case J.fromJSON val of
+            J.Success dat -> do
                 signKey <- askSigningKey $ fromIntegral d
                 let resE = signWalletTx dat signKey
-                    pr   = getPrecision s b
+                    !unit = parseUnit u
                 case resE of
                     Right (info, signedTx) -> do
                         renderIO $
                             signingInfoFormat
-                                (bip44Deriv $ fromIntegral d) pr info
+                                (bip44Deriv $ fromIntegral d) unit info
                                 (Just $ BS.length $ S.encode signedTx)
-                        confirmAmount pr $ signingInfoAmount info
+                        confirmAmount unit $ signingInfoAmount info
                         let signedHex = encodeHex $ S.encode signedTx
                             chsum = cs $ txChksum signedTx
-                            fname = "tx-" <> chsum <> "-signed.txt"
-                        path <- writeDoc fname $ cs signedHex
+                            fname = "tx-" <> chsum <> "-signed"
+                        path <- writeDoc fname $ J.String $ cs signedHex
                         renderIO $ vcat
                             [ formatTitle "Signed Tx File"
                             , nest 4 $ formatFilePath path
@@ -328,18 +329,18 @@ sign = command "sign" "Sign the output of the \"send\" command" $
                     Left err -> consoleError $ formatError err
             _ -> consoleError $ formatError "Could not decode transaction data"
   where
-    confirmAmount pr txAmnt = do
+    confirmAmount unit txAmnt = do
         userAmnt <- askInputLine "Type the tx amount to continue signing: "
-        when (readBalanceI pr userAmnt /= Just txAmnt) $ do
+        when (readIntegerAmount unit userAmnt /= Just txAmnt) $ do
             renderIO $ formatError "Invalid tx amount"
-            confirmAmount pr txAmnt
+            confirmAmount unit txAmnt
 
 signingInfoFormat :: HardPath
-                  -> Precision
+                  -> AmountUnit
                   -> SigningInfo
                   -> Maybe Int
                   -> ConsolePrinter
-signingInfoFormat accDeriv pr SigningInfo{..} sizeM =
+signingInfoFormat accDeriv unit SigningInfo{..} sizeM =
     vcat [ summary, recips, change, mycoins ]
   where
     summary = vcat
@@ -351,16 +352,16 @@ signingInfoFormat accDeriv pr SigningInfo{..} sizeM =
                     formatTxHash (cs $ txHashToHex tid)
                 _ -> mempty
             , formatKey (block 12 "Amount:") <>
-              formatBalanceI pr signingInfoAmount
+              formatIntegerAmount unit signingInfoAmount
             , formatKey (block 12 "Fee:") <>
-              formatBalance pr signingInfoFee
+              formatAmount unit signingInfoFee
             , case sizeM of
                 Just size ->
                   formatKey (block 12 "Tx size:") <>
                   formatStatic (show size <> " bytes")
                 _ -> mempty
             , formatKey (block 12 "Fee/byte:") <>
-              formatBalance PrecisionSatoshi signingInfoFeeByte
+              formatAmount UnitSatoshi signingInfoFeeByte
             , formatKey (block 12 "Signed:") <>
               if signingInfoIsSigned
                  then formatTrue "Yes"
@@ -399,7 +400,7 @@ signingInfoFormat accDeriv pr SigningInfo{..} sizeM =
     templ f v pM = vcat
         [ f
         , nest 4 $ vcat
-            [ formatKey (block 8 "Value:") <> formatBalance pr v
+            [ formatKey (block 8 "Value:") <> formatAmount unit v
             , case pM of
                 Just p -> mconcat
                     [ formatKey $ block 8 "Deriv:"
@@ -413,43 +414,27 @@ signingInfoFormat accDeriv pr SigningInfo{..} sizeM =
 balance :: Command IO
 balance = command "balance" "Display the account balance" $
     withOption accOpt $ \acc ->
-    withOption satOpt $ \s ->
-    withOption bitsOpt $ \b ->
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t -> io $ do
-        setOptNet c t
+    withOption unitOpt $ \u ->
+    withOption netOpt $ \network -> io $ do
+        setOptNet network
         withAccountStore (cs acc) $ \(_, store) -> do
             let addrs = allExtAddresses store <> allIntAddresses store
-                pr = getPrecision s b
+                !unit = parseUnit u
                 service = defaultBlockchainService
             bal <- httpBalance service $ map fst addrs
             renderIO $ vcat
                 [ formatTitle "Account Balance"
-                , nest 4 $ formatBalance pr bal
+                , nest 4 $ formatAmount unit bal
                 ]
-
-formatBalance :: Precision -> Word64 -> ConsolePrinter
-formatBalance pr bal =
-    formatPosBalance (showBalance pr bal) <+>
-    formatStatic (showPrecision pr)
-
-formatBalanceI :: Precision -> Integer -> ConsolePrinter
-formatBalanceI pr bal =
-    format (showBalanceI pr bal) <+>
-    formatStatic (showPrecision pr)
-  where
-    format = if bal >= 0 then formatPosBalance else formatNegBalance
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
-    withOption cashOpt $ \c ->
-    withOption testOpt $ \t ->
+    withOption netOpt $ \network ->
     withNonOption Argument.file $ \fp -> io $ do
-        setOptNet c t
-        bs' <- readDoc fp
-        let bs = head $ B8.lines $ cs bs'
-        case S.decode =<< maybeToEither "" (decodeHex bs) of
-            Right tx -> do
+        setOptNet network
+        val <- readDoc fp
+        case J.fromJSON val of
+            J.Success tx -> do
                 let service = defaultBlockchainService
                 httpBroadcast service tx
                 renderIO $
@@ -463,27 +448,34 @@ help = command "help" "Show usage info" $ io $ showUsage hwCommands
 
 {- Command Line Helpers -}
 
-writeDoc :: FilePath -> BL.ByteString -> IO FilePath
+writeDoc :: FilePath -> J.Value -> IO FilePath
 writeDoc fileName dat = do
     dir <- D.getUserDocumentsDirectory
-    let path = dir <> "/" <> fileName
+    let path = dir <> "/" <> networkName <> "-" <> fileName <> ".json"
         val = Pretty.encodePretty $ J.object [ "network" J..= networkName
-                                             , "payload" J..= J.String (cs dat)
+                                             , "payload" J..= dat
                                              ]
     BL.writeFile path $ val <> "\n"
     return path
 
-readDoc :: FilePath -> IO BL.ByteString
+readDoc :: FilePath -> IO J.Value
 readDoc fileName = do
     bs <- BL.readFile fileName
-    case J.decode bs of
-        Just v ->
-            if ((v :: J.Value) ^. key "network" . _String) == cs networkName
-                then return $ cs $ v ^. key "payload" . _String
-                else consoleError $ formatError $
-                     "Bad network. This file has to be used in " <>
-                     cs (v ^. key "network" . _String)
+    case J.decode bs :: Maybe J.Value of
+        Just v -> do
+            let !net = fromMaybe noName $ v ^? key "network" . _String
+                !payload = fromMaybe noPayload $ v ^? key "payload" . _Value
+            if net == cs networkName
+                then return payload
+                else badNet $ cs net
         _ -> consoleError $ formatError $ "Could not read file " <> fileName
+  where
+    noName = consoleError $ formatError "The file did not contain a network"
+    noPayload = consoleError $ formatError "The file did not contain a payload"
+    badNet net =
+        consoleError $ formatError $
+        "Bad network. This file has to be used in the network " <>
+        net
 
 withAccountStore :: Text -> ((Text, AccountStore) -> IO ()) -> IO ()
 withAccountStore name f

@@ -3,62 +3,82 @@ module Network.Haskoin.Wallet.Amounts where
 
 import           Control.Monad
 import           Data.List
-import           Data.Monoid   ((<>))
+import           Data.Monoid                           ((<>))
 import           Data.Word
+import           Network.Haskoin.Wallet.ConsolePrinter
 import           Text.Read
 
-data Precision = PrecisionSatoshi
-               | PrecisionBits
-               | PrecisionBitcoin
+data AmountUnit
+    = UnitBitcoin
+    | UnitBit
+    | UnitSatoshi
+    deriving (Eq)
 
-showPrecision :: Precision -> String
-showPrecision PrecisionSatoshi = "satoshi"
-showPrecision PrecisionBits = "bits"
-showPrecision PrecisionBitcoin = "bitcoin"
+instance Show AmountUnit where
+    show unit = case unit of
+        UnitBitcoin -> "bitcoin"
+        UnitBit     -> "bit"
+        UnitSatoshi -> "satoshi"
 
-showBalanceI :: Precision -> Integer -> String
-showBalanceI pr i
-    | i < 0 = "-" <> showBalance' pr (fromIntegral $ abs i)
-    | otherwise = showBalance pr $ fromIntegral i
+formatAmount :: AmountUnit -> Word64 -> ConsolePrinter
+formatAmount unit = formatIntegerAmount unit . fromIntegral
 
-showBalanceI' :: Precision -> Integer -> String
-showBalanceI' pr i = showBalanceI pr i <> " " <> showPrecision pr
+formatIntegerAmount :: AmountUnit -> Integer -> ConsolePrinter
+formatIntegerAmount unit amnt =
+    f (showIntegerAmount unit amnt) <+> formatStatic (showUnit unit amnt)
+  where
+    f
+        | amnt >= 0 = formatPosBalance
+        | otherwise = formatNegBalance
 
-readBalanceI :: Precision -> String -> Maybe Integer
-readBalanceI pr ('-':str) = ((-1) *) . fromIntegral <$> readBalance pr str
-readBalanceI pr str = fromIntegral <$> readBalance pr str
+showUnit :: AmountUnit -> Integer -> String
+showUnit unit amnt
+    | unit == UnitSatoshi = show unit -- satoshi is always singular
+    | abs amnt == 1 = show unit
+    | otherwise = show unit <> "s" -- plural form bitcoins and bits
 
-showBalance' :: Precision -> Word64 -> String
-showBalance' pr val = showBalance pr val <> " " <> showPrecision pr
+-- | Like 'showAmount' but will display a minus sign for negative amounts
+showIntegerAmount :: AmountUnit -> Integer -> String
+showIntegerAmount unit i
+    | i < 0 = "-" <> showAmount unit (fromIntegral $ abs i)
+    | otherwise = showAmount unit $ fromIntegral i
 
-showBalance :: Precision -> Word64 -> String
-showBalance pr val =
-    case pr of
-        PrecisionSatoshi -> addSep (show val)
-        PrecisionBits ->
-            let (q, r) = val `quotRem` 100
-            in addSep (show q) <> "." <> padWith 2 '0' (<> show r)
-        PrecisionBitcoin ->
-            let (q, r) = val `quotRem` 100000000
+
+-- | Like 'readAmount' but can parse a negative amount
+readIntegerAmount :: AmountUnit -> String -> Maybe Integer
+readIntegerAmount unit s =
+    case s of
+        ('-':str) -> ((-1) *) . fromIntegral <$> readAmount unit str
+        str       -> fromIntegral <$> readAmount unit str
+
+showAmount :: AmountUnit -> Word64 -> String
+showAmount unit amnt =
+    case unit of
+        UnitBitcoin ->
+            let (q, r) = amnt `quotRem` 100000000
             in addSep (show q) <> "." <> stripEnd (padWith 8 '0' (<> show r))
+        UnitBit ->
+            let (q, r) = amnt `quotRem` 100
+            in addSep (show q) <> "." <> padWith 2 '0' (<> show r)
+        UnitSatoshi -> addSep (show amnt)
   where
     stripEnd = dropPatternEnd "0000" . dropPatternEnd "000000"
     addSep = intercalate "'" . groupEnd 3
 
-readBalance :: Precision -> String -> Maybe Word64
-readBalance pr str' =
-    case pr of
-        PrecisionSatoshi -> readMaybe str
-        PrecisionBits -> do
-            guard $ length r <= 2
-            a <- readMaybe q
-            b <- readMaybe $ padWith 2 '0' (r <>)
-            return $ a * 100 + b
-        PrecisionBitcoin -> do
+readAmount :: AmountUnit -> String -> Maybe Word64
+readAmount unit str' =
+    case unit of
+        UnitBitcoin -> do
             guard $ length r <= 8
             a <- readMaybe q
             b <- readMaybe $ padWith 8 '0' (r <>)
             return $ a * 100000000 + b
+        UnitBit -> do
+            guard $ length r <= 2
+            a <- readMaybe q
+            b <- readMaybe $ padWith 2 '0' (r <>)
+            return $ a * 100 + b
+        UnitSatoshi -> readMaybe str
   where
     str = dropSep str'
     dropSep = filter (not . (`elem` (" _'" :: String)))

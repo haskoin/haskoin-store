@@ -51,6 +51,7 @@ library
                  , entropy                       >= 0.3.7
                  , haskeline
                  , haskoin-core                  >= 0.5       && < 0.6
+                 , http-types                    >= 0.9
                  , lens
                  , lens-aeson
                  , pretty

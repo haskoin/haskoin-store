@@ -23,13 +23,13 @@ import qualified Network.Wreq                          as HTTP
 getURL :: String
 getURL
     | getNetwork == bitcoinNetwork =
-        "https://insight.bitpay.com/api"
-    | getNetwork == bitcoinTestnet3Network =
-        "https://test-insight.bitpay.com/api"
+        "https://bch.blockdozer.com/insight-api/"
+    | getNetwork == testnet3Network =
+        "https://tbtc.blockdozer.com/insight-api/"
     | getNetwork == bitcoinCashNetwork =
-        "https://bch-insight.bitpay.com/api"
-    | getNetwork == bitcoinCashTestNetwork =
-        "https://test-bch-insight.bitpay.com/api"
+        "https://bch.blockdozer.com/insight-api/"
+    | getNetwork == cashTestNetwork =
+        "https://tbch.blockdozer.com/insight-api/"
     | otherwise =
         consoleError $
         formatError $
@@ -51,7 +51,7 @@ getBalance addrs = do
 
 getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
 getUnspent addrs = do
-    r <- HTTP.asValue . setJSON =<< HTTP.getWith HTTP.defaults url
+    r <- HTTP.asValue . setJSON =<< HTTP.getWith options url
     let v = r ^. HTTP.responseBody
         resM = mapM parseCoin $ v ^.. values
     maybe (consoleError $ formatError "Could not parse coin") return resM
@@ -72,7 +72,7 @@ getUnspent addrs = do
 
 getTx :: TxHash -> IO Tx
 getTx tid = do
-    r <- HTTP.asValue =<< HTTP.getWith HTTP.defaults url
+    r <- HTTP.asValue =<< HTTP.getWith options url
     let v = r ^. HTTP.responseBody
         txHexM = v ^? key "rawtx" . _String
         txM = eitherToMaybe . S.decode =<< decodeHex . cs =<< txHexM
@@ -82,7 +82,7 @@ getTx tid = do
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do
-    _ <- HTTP.post url val
+    _ <- HTTP.postWith options url val
     return ()
   where
     url = getURL <> "/tx/send"
