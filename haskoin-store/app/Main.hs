@@ -218,6 +218,9 @@ main =
                     Left InputNotFound -> do
                         status status400
                         json (StringError "Input not found")
+                    Left NotEnoughCoins -> do
+                        status status400
+                        json (StringError "Not enough coins")
                     Left NoPeers -> do
                         status status500
                         json (StringError "No peers connected to send transaction")

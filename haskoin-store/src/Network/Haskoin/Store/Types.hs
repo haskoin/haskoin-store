@@ -31,6 +31,7 @@ data BroadcastExcept
     | NonStandard
     | InputSpent
     | InputNotFound
+    | NotEnoughCoins
     | NoPeers
     deriving (Show, Eq, Ord)
 

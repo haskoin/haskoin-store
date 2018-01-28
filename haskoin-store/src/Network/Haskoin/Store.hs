@@ -165,6 +165,9 @@ postTransaction db mgr (NewTx tx) =
                         Left _ -> throwError NonStandard
                         Right pkScript -> return pkScript
                 return (pkScript, outputValue, prevOutput)
+        let inVal = sum $ map (\(_, val, _) -> val) outputs
+            outVal = sum $ map outValue (txOut tx)
+        when (outVal > inVal) $ throwError NotEnoughCoins
         unless (verifyStdTx tx outputs) $ throwError BadSignature
         peers <- managerGetPeers mgr
         when (null peers) $ throwError NoPeers
