@@ -74,6 +74,7 @@ withTestStore t f =
             c <- Inbox <$> liftIO newTQueueIO
             b <- Inbox <$> liftIO newTQueueIO
             e <- Inbox <$> liftIO newTQueueIO
+            m <- Inbox <$> liftIO newTQueueIO
             db <-
                 RocksDB.open
                     (w </> "blocks")
@@ -95,6 +96,7 @@ withTestStore t f =
                     , storeConfCacheNo = 100000
                     , storeConfBlockNo = 200
                     , storeConfDB = db
+                    , storeConfManager = m
                     }
             withAsync (store cfg) $ \a -> do
                 link a

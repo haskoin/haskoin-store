@@ -16,6 +16,7 @@ module Network.Haskoin.Store.Block
     , getAddrTxs
     , getBalance
     , getTx
+    , getOutput
     ) where
 
 import           Control.Applicative
@@ -246,6 +247,22 @@ getAddrUnspent ::
     -> Maybe Snapshot
     -> m [(AddrUnspentKey, AddrUnspentValue)]
 getAddrUnspent = valuesForKey . MultiAddrUnspentKey
+
+getOutput ::
+       MonadIO m
+    => OutPoint
+    -> DB
+    -> Maybe Snapshot
+    -> m (Maybe (OutputValue, Maybe SpentValue))
+getOutput op db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _ -> f s
+  where
+    f s' = runMaybeT $ do
+        out <- MaybeT (retrieveValue (OutputKey op) db s')
+        maybeSpent <- retrieveValue (SpentKey op) db s'
+        return (out, maybeSpent)
 
 getBalance ::
        MonadIO m => Address -> DB -> Maybe Snapshot -> m (Maybe AddressBalance)
@@ -732,7 +749,7 @@ getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
             if outPointHash == zero
                 then return Nothing
                 else do
-                    maybeOutput <- getOutput key prevOutMap
+                    maybeOutput <- getOutPointData key prevOutMap
                     case maybeOutput of
                         Just output -> return (Just output)
                         Nothing -> do
@@ -743,12 +760,12 @@ getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
             Nothing -> return m
             Just output -> return (M.insert key output m)
 
-getOutput ::
+getOutPointData ::
        MonadBlock m
     => OutPoint
     -> PrevOutMap
     -> m (Maybe OutputValue)
-getOutput key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
+getOutPointData key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
   where
     hash = outPointHash key
     index = outPointIndex key

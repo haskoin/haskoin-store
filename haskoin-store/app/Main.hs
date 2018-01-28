@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE GADTs             #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Control.Concurrent.NQE
@@ -58,7 +59,12 @@ instance Parsable Address where
     parseParam =
         maybe (Left "Could not decode address") Right . base58ToAddr . cs
 
-data Except = NotFound | ServerError | StringError String deriving (Show, Eq)
+data Except
+    = NotFound
+    | ServerError
+    | BadRequest
+    | StringError String
+    deriving (Show, Eq)
 
 instance Exception Except
 
@@ -68,7 +74,8 @@ instance ScottyError Except where
 
 instance ToJSON Except where
     toJSON NotFound = object ["error" .= String "Not Found"]
-    toJSON ServerError = object ["error" .= String "You made me kill a unicorn"]
+    toJSON BadRequest = object ["error" .= String "Bad Request"]
+    toJSON ServerError = object ["error" .= String "You Made Me Kill A Unicorn"]
     toJSON (StringError s) = object ["error" .= s]
 
 instance Default Config where
@@ -120,13 +127,15 @@ config =
              str
              (metavar "NETWORK" <> long "network" <> short 'n' <>
               help
-                  ("Network to use: bitcoin|bitcoincash|testnet3|cashtest|regtest (default: " <>
+                  ("Network to use: " <>
+                   "bitcoin|bitcoincash|testnet3|cashtest|regtest (default: " <>
                    fromJust (configNetwork def) <>
                    ")")))
 
 defHandler :: Except -> StoreM ()
 defHandler ServerError = json ServerError
 defHandler NotFound    = status status404 >> json NotFound
+defHandler BadRequest  = status status400 >> json BadRequest
 defHandler e           = json e
 
 maybeJSON :: ToJSON a => Maybe a -> StoreM ()
@@ -164,14 +173,15 @@ main =
                 , RocksDB.compression = RocksDB.NoCompression
                 , RocksDB.writeBufferSize = 512 * 1024 * 1024
                 }
-        supervisor KillAll s [runWeb port db, runStore cache blocks wdir b db]
+        mgr <- Inbox <$> liftIO newTQueueIO
+        supervisor KillAll s [runWeb port db mgr, runStore mgr cache blocks wdir b db]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port db =
+    runWeb port db mgr =
         scottyT port id $ do
             defaultHandler defHandler
             get "/block/best" $ getBestBlock db Nothing >>= json
@@ -193,8 +203,27 @@ main =
             get "/address/balance/:address" $ do
                 address <- param "address"
                 getBalance address db Nothing >>= maybeJSON
+            post "/transaction" $ do
+                txHex <- jsonData
+                postTransaction db mgr txHex >>= \case
+                    Left NonStandard -> do
+                        status status400
+                        json (StringError "Non-standard output not supported")
+                    Left InputSpent -> do
+                        status status400
+                        json (StringError "Input has already been spent")
+                    Left BadSignature -> do
+                        status status400
+                        json (StringError "Invalid signature")
+                    Left InputNotFound -> do
+                        status status400
+                        json (StringError "Input not found")
+                    Left NoPeers -> do
+                        status status500
+                        json (StringError "No peers connected to send transaction")
+                    Right j -> json j
             notFound $ raise NotFound
-    runStore cache blocks wdir b db =
+    runStore mgr cache blocks wdir b db =
         runStderrLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO
@@ -204,6 +233,7 @@ main =
                     , storeConfBlocks = b
                     , storeConfSupervisor = s
                     , storeConfChain = c
+                    , storeConfManager = mgr
                     , storeConfListener = const (return ())
                     , storeConfMaxPeers = 20
                     , storeConfInitPeers = []

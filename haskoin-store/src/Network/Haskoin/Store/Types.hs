@@ -7,6 +7,7 @@ module Network.Haskoin.Store.Types where
 
 import           Control.Applicative
 import           Control.Concurrent.NQE
+import           Control.Exception
 import           Control.Monad.Reader
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
@@ -24,6 +25,24 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
+
+data BroadcastExcept
+    = BadSignature
+    | NonStandard
+    | InputSpent
+    | InputNotFound
+    | NoPeers
+    deriving (Show, Eq, Ord)
+
+instance Exception BroadcastExcept
+
+newtype NewTx = NewTx
+    { newTx :: Tx
+    } deriving (Show, Eq, Ord)
+
+newtype SentTx = SentTx
+    { sentTx :: TxHash
+    } deriving (Show, Eq, Ord)
 
 data BlockConfig = BlockConfig
     { blockConfMailbox  :: !BlockStore
@@ -580,6 +599,13 @@ addressBalancePairs AddressBalance {..} =
     ] ++
     blockRefPairs addressBalBlock
 
+instance FromJSON NewTx where
+    parseJSON = withObject "Transaction" $ \v -> NewTx <$> v .: "transaction"
+
+instance ToJSON SentTx where
+    toJSON (SentTx txid) = object ["txid" .= txid]
+    toEncoding (SentTx txid) = pairs ("txid" .= txid)
+
 instance ToJSON AddressBalance where
     toJSON = object . addressBalancePairs
     toEncoding = pairs . mconcat . addressBalancePairs
@@ -623,6 +649,7 @@ data StoreConfig = StoreConfig
     { storeConfDir        :: !FilePath
     , storeConfBlocks     :: !BlockStore
     , storeConfSupervisor :: !StoreSupervisor
+    , storeConfManager    :: !Manager
     , storeConfChain      :: !Chain
     , storeConfListener   :: !(Listen StoreEvent)
     , storeConfMaxPeers   :: !Int

@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -15,6 +16,7 @@ module Network.Haskoin.Store
     , AddressTx(..)
     , Unspent(..)
     , AddressBalance(..)
+    , BroadcastExcept(..)
     , store
     , getBestBlock
     , getBlockAtHeight
@@ -23,22 +25,27 @@ module Network.Haskoin.Store
     , getAddrTxs
     , getUnspent
     , getBalance
+    , postTransaction
     ) where
 
 import           Control.Concurrent.NQE
 import           Control.Monad.Base
 import           Control.Monad.Catch
+import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Data.Monoid
 import           Data.String.Conversions
 import           Data.Text                   (Text)
+import           Database.RocksDB            (DB)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
+import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Types
+import           Network.Haskoin.Transaction
 import           Network.Socket              (SockAddr (..))
 import           System.Directory
 import           System.FilePath
@@ -68,7 +75,6 @@ store StoreConfig {..} = do
     let nodeDir = storeConfDir </> "node"
     liftIO $ createDirectoryIfMissing False nodeDir
     ns <- Inbox <$> liftIO newTQueueIO
-    mgr <- Inbox <$> liftIO newTQueueIO
     sm <- Inbox <$> liftIO newTQueueIO
     let nodeCfg =
             NodeConfig
@@ -80,20 +86,20 @@ store StoreConfig {..} = do
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeSupervisor = ns
             , nodeChain = storeConfChain
-            , nodeManager = mgr
+            , nodeManager = storeConfManager
             }
     let storeRead = StoreRead
             { myMailbox = sm
             , myBlockStore = storeConfBlocks
             , myChain = storeConfChain
-            , myManager = mgr
+            , myManager = storeConfManager
             , myDir = storeConfDir
             , myListener = storeConfListener
             }
     let blockCfg = BlockConfig
             { blockConfMailbox = storeConfBlocks
             , blockConfChain = storeConfChain
-            , blockConfManager = mgr
+            , blockConfManager = storeConfManager
             , blockConfListener = storeConfListener . BlockEvent
             , blockConfCacheNo = storeConfCacheNo
             , blockConfBlockNo = storeConfBlockNo
@@ -142,6 +148,28 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
     BlockNotReceived p hash `send` b
 
 storeDispatch (PeerEvent _) = $(logDebug) $ logMe <> "Ignoring peer event"
+
+postTransaction ::
+       MonadIO m => DB -> Manager -> NewTx -> m (Either BroadcastExcept SentTx)
+postTransaction db mgr (NewTx tx) =
+    runExceptT $ do
+        outputs <-
+            forM (txIn tx) $ \TxIn {..} -> do
+                OutputValue {..} <-
+                    getOutput prevOutput db Nothing >>= \case
+                        Nothing -> throwError InputNotFound
+                        Just (_, Just _) -> throwError InputSpent
+                        Just (output, Nothing) -> return output
+                pkScript <-
+                    case decodeOutputBS outScript of
+                        Left _ -> throwError NonStandard
+                        Right pkScript -> return pkScript
+                return (pkScript, outputValue, prevOutput)
+        unless (verifyStdTx tx outputs) $ throwError BadSignature
+        peers <- managerGetPeers mgr
+        when (null peers) $ throwError NoPeers
+        forM_ peers $ sendMessage (MTx tx)
+        return (SentTx (txHash tx))
 
 logMe :: Text
 logMe = "[Store] "
