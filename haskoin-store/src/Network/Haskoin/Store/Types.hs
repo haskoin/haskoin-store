@@ -585,7 +585,7 @@ instance ToJSON AddressTx where
 unspentPairs :: KeyValue kv => Unspent -> [kv]
 unspentPairs Unspent {..} =
     [ "address" .= unspentAddress
-    , "pkscrpt" .= String (cs (encodeHex unspentPkScript))
+    , "pkscript" .= String (cs (encodeHex unspentPkScript))
     , "txid" .= unspentTxId
     , "vout" .= unspentIndex
     , "value" .= unspentValue
