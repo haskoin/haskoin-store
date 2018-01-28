@@ -197,13 +197,13 @@ main =
             get "/transaction/:txid" $ do
                 txid <- param "txid"
                 getTx txid db Nothing >>= maybeJSON
-            get "/address/transactions/:address" $ do
+            get "/address/:address/transactions" $ do
                 address <- param "address"
                 getAddrTxs address db Nothing >>= json
-            get "/address/unspent/:address" $ do
+            get "/address/:address/unspent" $ do
                 address <- param "address"
                 getUnspent address db Nothing >>= json
-            get "/address/balance/:address" $ do
+            get "/address/:address/balance" $ do
                 address <- param "address"
                 getBalance address db Nothing >>= maybeJSON
             post "/transaction" $ do

@@ -26,6 +26,7 @@ import           Data.Bits
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
 import           Data.Default
+import           Data.Either
 import           Data.Function
 import           Data.List
 import           Data.Maybe
@@ -43,6 +44,7 @@ import           Network.Haskoin.Constants
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node.Common
 import           Network.Haskoin.Node.Peer
+import           Network.Haskoin.Util
 import           Network.Socket               (SockAddr (..))
 import           System.FilePath
 import           System.Random
@@ -94,7 +96,7 @@ instance Serialize PeerAddress where
         encodeSockAddr $ getPeerAddress pa
 
 data PeerTimeAddress = PeerTimeAddress
-    { getPeerTime        :: !Word32
+    { getPeerNextConnect :: !Word32
     , getPeerTimeAddress :: !PeerAddress
     } deriving (Eq, Show)
 
@@ -107,7 +109,7 @@ instance Serialize PeerTimeAddress where
         return $ PeerTimeAddress t a
     put pta = do
         S.putWord8 0x00
-        S.put (getPeerTime pta)
+        S.put (getPeerNextConnect pta)
         S.put (getPeerTimeAddress pta)
 
 manager ::
@@ -192,61 +194,92 @@ decodeSockAddr = do
             p <- S.getWord16be
             return $ SockAddrInet6 (fromIntegral p) 0 (a, b, c, d) 0
 
-storePeer :: MonadManager m => Word32 -> SockAddr -> m ()
-storePeer t sa = do
-    pdb <- asks myPeerDB
+storePeer :: MonadManager m => SockAddr -> m ()
+storePeer sa = do
+    db <- asks myPeerDB
+    now <- computeTime
     let p = PeerAddress sa
         k = encode p
-        v = encode $ PeerTimeAddress t p
-    m <- RocksDB.get pdb def k
-    case m of
-        Nothing -> RocksDB.write pdb def [RocksDB.Put v k, RocksDB.Put k v]
-        Just x ->
-            RocksDB.write
-                pdb
-                def
-                [RocksDB.Del x, RocksDB.Put v k, RocksDB.Put k v]
+    m <- RocksDB.get db def k
+    when (isNothing m) $ do
+        $(logDebug) $ logMe <> "Storing peer " <> logShow sa
+        let v = encode (PeerTimeAddress now p)
+        RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
 
-deletePeer :: MonadManager m => SockAddr -> m ()
-deletePeer sa = do
-    $(logDebug) $ logMe <> "Deleting peer address " <> logShow sa
-    pdb <- asks myPeerDB
+banPeer :: MonadManager m => SockAddr -> m ()
+banPeer sa = do
+    $(logDebug) $ logMe <> "Banning peer " <> logShow sa
+    db <- asks myPeerDB
     let p = PeerAddress sa
         k = encode p
-    m <- RocksDB.get pdb def k
+    m <- RocksDB.get db def k
+    now <- computeTime
+    let v = encode (PeerTimeAddress (now + 3600 * 6) p)
     case m of
-        Nothing -> return ()
-        Just v ->
+        Nothing -> RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
+        Just bs ->
             RocksDB.write
-                pdb
+                db
                 def
-                [RocksDB.Del k, RocksDB.Del v]
+                [RocksDB.Del bs, RocksDB.Put k v, RocksDB.Put v k]
+
+backoffPeer :: MonadManager m => SockAddr -> m ()
+backoffPeer sa = do
+    db <- asks myPeerDB
+    onlinePeers <- map onlinePeerAddress <$> getOnlinePeers
+    let p = PeerAddress sa
+        k = encode p
+    m <- RocksDB.get db def k
+    now <- computeTime
+    r <-
+        liftIO . randomRIO $
+        if null onlinePeers
+            then (90, 300)
+            else (900, 1800)
+    case m of
+        Nothing -> do
+            let v = encode (PeerTimeAddress (now + r) p)
+            RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
+        Just bs -> do
+            let v = fromRight err (decode bs)
+                t = max (now + r) (getPeerNextConnect v)
+                v' = encode (PeerTimeAddress t p)
+            when (t == now + r) $ do
+                $(logDebug) $ logMe <> "Backing off peer " <> logShow sa
+                RocksDB.write
+                    db
+                    def
+                    [RocksDB.Del bs, RocksDB.Put k v', RocksDB.Put v' k]
+  where
+    err = error "Could not decode PeerTimeAddress from database"
 
 getNewPeer :: MonadManager m => m (Maybe SockAddr)
 getNewPeer = do
     ManagerConfig {..} <- asks myConfig
-    ops <- map onlinePeerAddress <$> getOnlinePeers
-    cps <- concat <$> mapM toSockAddr mgrConfPeers
+    onlinePeers <- map onlinePeerAddress <$> getOnlinePeers
+    configPeers <- concat <$> mapM toSockAddr mgrConfPeers
     if mgrConfNoNewPeers
-        then return $ find (not . (`elem` ops)) cps
+        then return $ find (not . (`elem` onlinePeers)) configPeers
         else do
             $(logDebug) $ logMe <> "Attempting to get a new peer from database"
             pdb <- asks myPeerDB
-            RocksDB.withIterator pdb def $ \i -> do
-                RocksDB.iterSeek i (BS.singleton 0x01)
-                RocksDB.iterPrev i
-                runMaybeT $ go i ops
+            now <- computeTime
+            RocksDB.withIterator pdb def $ \it -> do
+                RocksDB.iterSeek it (BS.singleton 0x00)
+                runMaybeT $ go now it onlinePeers
   where
-    go i ops = do
-        valid <- RocksDB.iterValid i
-        guard valid
-        val <- MaybeT $ RocksDB.iterValue i
-        e <- MaybeT . return . either (const Nothing) Just $ decode val
-        let a = getPeerAddress e
-        if a `elem` ops
+    go now it onlinePeers = do
+        guard =<< RocksDB.iterValid it
+        kbs <- MaybeT (RocksDB.iterKey it)
+        k <- MaybeT (return (eitherToMaybe (decode kbs)))
+        vbs <- MaybeT (RocksDB.iterValue it)
+        v <- MaybeT (return (eitherToMaybe (decode vbs)))
+        let a = getPeerAddress v
+        guard (getPeerNextConnect k <= now)
+        if a `elem` onlinePeers
             then do
-                RocksDB.iterPrev i
-                go i ops
+                RocksDB.iterNext it
+                go now it onlinePeers
             else return a
 
 getConnectedPeers :: MonadManager m => m [OnlinePeer]
@@ -265,8 +298,8 @@ withConnectLoop mgr f = withAsync go $ const f
     go =
         forever $ do
             ManagerPing `send` mgr
-            i <- liftIO $ randomRIO (30 * 1000 * 1000, 90 * 1000 * 1000)
-            threadDelay i
+            i <- liftIO (randomRIO (30, 90))
+            threadDelay (i * 1000 * 1000)
 
 managerLoop :: (MonadManager m, MonadMask m) => m ()
 managerLoop =
@@ -304,22 +337,15 @@ processManagerMessage (ManagerNewPeers p as) =
         $(logDebug) $
             logMe <> "Received " <> logShow (length as) <> " new peers from " <>
             cs pn
-        cur <- computeTime
-        forM_ as $ \(t, na) ->
+        forM_ as $ \(_, na) ->
             let sa = naAddress na
-                t' = res cur t
-            in storePeer t' sa
-  where
-    res cur t =
-        if t > cur
-            then cur
-            else t
+            in storePeer sa
 
 processManagerMessage (ManagerKill e p) =
     void . runMaybeT $ do
         $(logError) $ logMe <> "Killing a peer"
         op <- MaybeT $ findPeer p
-        deletePeer $ onlinePeerAddress op
+        banPeer $ onlinePeerAddress op
         onlinePeerAsync op `cancelWith` e
 
 processManagerMessage (ManagerSetPeerBest p bn) = do
@@ -339,10 +365,9 @@ processManagerMessage (ManagerSetPeerVersion p v) =
         op <- MaybeT $ findPeer p
         runExceptT testVersion >>= \case
             Left ex -> do
-                deletePeer $ onlinePeerAddress op
+                banPeer $ onlinePeerAddress op
                 onlinePeerAsync op `cancelWith` ex
             Right () -> do
-                computeTime >>= (`storePeer` onlinePeerAddress op)
                 loadFilter
                 askForPeers
                 announcePeer
@@ -412,7 +437,9 @@ processManagerMessage (PeerStopped (p, _ex)) = do
         when (isJust m) $ removePeer p opb
         return m
     case m of
-        Just op -> processPeerOffline op
+        Just op -> do
+            backoffPeer (onlinePeerAddress op)
+            processPeerOffline op
         Nothing -> return ()
 
 processPeerOffline :: MonadManager m => OnlinePeer -> m ()
@@ -444,12 +471,10 @@ connectNewPeers = do
     case ps of
         [] -> do
             $(logDebug) $ logMe <> "Not connected to any peer"
-            getNewPeer >>= \m ->
-                when (isNothing m) $ do
-                    ps' <- resolvePeers
-                    $(logDebug) $
-                        logMe <> "Resolved " <> logShow (length ps') <> " peers"
-                    mapM_ (storePeer 0) ps'
+            ps' <- resolvePeers
+            $(logDebug) $
+                logMe <> "Resolved " <> logShow (length ps') <> " peers"
+            mapM_ storePeer ps'
         _ ->
             $(logDebug) $
             logMe <> "Connected to " <> logShow (length ps) <> "/" <> logShow mo <>
@@ -525,7 +550,7 @@ setFilter bl = do
                 bl `peerSetFilter` onlinePeerMailbox op
             else do
                 $(logError) $ logMe <> "Peer does not support bloom filters"
-                deletePeer (onlinePeerAddress op)
+                banPeer (onlinePeerAddress op)
                 onlinePeerAsync op `cancelWith` BloomFiltersNotSupported
 
 logMe :: Text
