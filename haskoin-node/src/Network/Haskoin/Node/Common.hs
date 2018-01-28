@@ -179,6 +179,7 @@ data PeerEvent
     | GotBlock !Block
     | GotMerkleBlock !MerkleBlock
     | GotTx !Tx
+    | GotPong !Word64
     | SendBlocks !GetBlocks
     | SendHeaders !GetHeaders
     | SendData ![InvVector]

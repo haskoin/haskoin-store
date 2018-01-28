@@ -63,6 +63,7 @@ data Except
     = NotFound
     | ServerError
     | BadRequest
+    | UserError String
     | StringError String
     deriving (Show, Eq)
 
@@ -73,10 +74,11 @@ instance ScottyError Except where
     showError = cs . show
 
 instance ToJSON Except where
-    toJSON NotFound = object ["error" .= String "Not Found"]
-    toJSON BadRequest = object ["error" .= String "Bad Request"]
-    toJSON ServerError = object ["error" .= String "You Made Me Kill A Unicorn"]
-    toJSON (StringError s) = object ["error" .= s]
+    toJSON NotFound = object ["error" .= String "Not found"]
+    toJSON BadRequest = object ["error" .= String "Bad request"]
+    toJSON ServerError = object ["error" .= String "You made me kill a unicorn"]
+    toJSON (StringError _) = object ["error" .= String "You made me kill a unicorn"]
+    toJSON (UserError s) = object ["error" .= s]
 
 instance Default Config where
     def =
@@ -133,10 +135,11 @@ config =
                    ")")))
 
 defHandler :: Except -> StoreM ()
-defHandler ServerError = json ServerError
-defHandler NotFound    = status status404 >> json NotFound
-defHandler BadRequest  = status status400 >> json BadRequest
-defHandler e           = json e
+defHandler ServerError   = json ServerError
+defHandler NotFound      = status status404 >> json NotFound
+defHandler BadRequest    = status status400 >> json BadRequest
+defHandler (UserError s) = status status400 >> json (UserError s)
+defHandler e             = json e
 
 maybeJSON :: ToJSON a => Maybe a -> StoreM ()
 maybeJSON Nothing  = raise NotFound
@@ -208,22 +211,22 @@ main =
                 postTransaction db mgr txHex >>= \case
                     Left NonStandard -> do
                         status status400
-                        json (StringError "Non-standard output not supported")
+                        json (UserError "Non-standard output not supported")
                     Left InputSpent -> do
                         status status400
-                        json (StringError "Input has already been spent")
+                        json (UserError "Input has already been spent")
                     Left BadSignature -> do
                         status status400
-                        json (StringError "Invalid signature")
+                        json (UserError "Invalid signature")
                     Left InputNotFound -> do
                         status status400
-                        json (StringError "Input not found")
+                        json (UserError "Input not found")
                     Left NotEnoughCoins -> do
                         status status400
-                        json (StringError "Not enough coins")
+                        json (UserError "Not enough coins")
                     Left NoPeers -> do
                         status status500
-                        json (StringError "No peers connected to send transaction")
+                        json (UserError "No peers connected to send transaction")
                     Right j -> json j
             notFound $ raise NotFound
     runStore mgr cache blocks wdir b db =

@@ -34,6 +34,7 @@ import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node.Common
 import           Network.Haskoin.Transaction
+import           Network.Socket              (SockAddr)
 import           System.Random
 
 type MonadPeer m = (MonadBase IO m, MonadLoggerIO m, MonadReader PeerReader m)
@@ -48,6 +49,7 @@ data Pending
 data PeerReader = PeerReader
     { mySelf     :: !Peer
     , myConfig   :: !PeerConfig
+    , mySockAddr :: !SockAddr
     , myHostPort :: !(Host, Port)
     , myPending  :: !(TVar [(Pending, Word32)])
     }
@@ -58,8 +60,8 @@ time = 15 * 1000 * 1000
 logMsg :: Message -> Text
 logMsg = cs . msgType
 
-logPeer :: HostPort -> Text
-logPeer (host, port) = "[" <> cs host <> ":" <> cs (show port) <> "] "
+logPeer :: SockAddr -> Text
+logPeer sa = "[" <> logShow sa <> "] "
 
 peer ::
        (MonadBaseControl IO m, MonadLoggerIO m, Forall (Pure m))
@@ -67,15 +69,16 @@ peer ::
     -> Peer
     -> m ()
 peer pc p =
-    fromSockAddr (naAddress $ peerConfConnect pc) >>= \case
+    fromSockAddr na >>= \case
         Nothing -> do
-            $(logError) $ "[Peer] Address invalid"
+            $(logError) $ logPeer na <> "Invalid network address"
             throwIO PeerAddressInvalid
         Just (host, port) -> do
-            $(logInfo) $ logPeer (host, port) <> "Establishing TCP connection"
+            $(logInfo) $ logPeer na <> "Establishing TCP connection"
             let cset = clientSettings port (cs host)
             runGeneralTCPClient cset (peerSession (host, port))
   where
+    na = naAddress (peerConfConnect pc)
     go = handshake >> exchangePing >> peerLoop
     peerSession hp ad = do
         let src = appSource ad =$= inPeerConduit
@@ -87,6 +90,7 @@ peer pc p =
                     { myConfig = pc
                     , mySelf = p
                     , myHostPort = hp
+                    , mySockAddr = na
                     , myPending = pbox
                     }
             runReaderT (go $$ snk) rd
@@ -138,7 +142,7 @@ peerLoop =
         $(logDebug) $ lp <> "Awaiting message"
         m <- liftIO $ timeout (2 * 60 * 1000 * 1000) (receive me)
         case m of
-            Nothing -> exchangePing
+            Nothing  -> exchangePing
             Just msg -> processMessage msg
   where
     stats = do
@@ -257,7 +261,7 @@ processMessage m = do
             incoming msg
 
 logMe :: MonadPeer m => m Text
-logMe = logPeer <$> asks myHostPort
+logMe = logPeer <$> asks mySockAddr
 
 incoming :: MonadPeer m => Message -> Source m Message
 incoming m = do
@@ -280,6 +284,9 @@ incoming m = do
         MPing (Ping n) -> do
             $(logDebug) $ lp <> "Responding to " <> logMsg m
             yield $ MPong (Pong n)
+        MPong (Pong n) -> do
+            $(logDebug) $ lp <> "Relaying pong " <> logShow n
+            liftIO . atomically $ l (p, GotPong n)
         MSendHeaders {} -> do
             $(logDebug) $ lp <> "Relaying sendheaders to chain actor"
             ChainSendHeaders p `send` ch
