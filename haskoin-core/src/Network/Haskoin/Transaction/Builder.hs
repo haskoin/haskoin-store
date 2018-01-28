@@ -397,10 +397,10 @@ verifyStdTx = verifyStdTxGen False
 -- | Like 'verifyStdTx' but using strict signature decoding
 verifyStdTxStrict :: Tx -> [(ScriptOutput, Word64, OutPoint)] -> Bool
 verifyStdTxStrict = verifyStdTxGen True
-    
+
 verifyStdTxGen :: Bool -> Tx -> [(ScriptOutput, Word64, OutPoint)] -> Bool
 verifyStdTxGen strict tx xs =
-    all go $ zip (matchTemplate xs (txIn tx) f) [0..]
+    not (null (txIn tx)) && all go (zip (matchTemplate xs (txIn tx) f) [0..])
   where
     f (_,_,o) txin        = o == prevOutput txin
     go (Just (so,val,_), i) = verifyStdInput strict tx i so val
