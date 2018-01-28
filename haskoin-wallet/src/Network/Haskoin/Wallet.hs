@@ -28,6 +28,7 @@ import           Network.Haskoin.Wallet.Entropy
 import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
 import           Network.Haskoin.Wallet.HTTP.Insight
+import           Network.Haskoin.Wallet.HTTP.Haskoin
 import qualified Network.Haskoin.Wallet.PrettyJson          as Pretty
 import           Network.Haskoin.Wallet.Signing
 import qualified System.Console.Argument                    as Argument
@@ -148,10 +149,10 @@ setOptNet name
 
 defaultBlockchainService :: BlockchainService
 defaultBlockchainService
-    | getNetwork == bitcoinNetwork = blockchainInfo
-    | getNetwork == testnet3Network = blockchainInfo
-    | getNetwork == bitcoinCashNetwork = insight
-    | getNetwork == cashTestNetwork = insight
+    | getNetwork == bitcoinNetwork = blockchainInfoService
+    | getNetwork == testnet3Network = haskoinService
+    | getNetwork == bitcoinCashNetwork = insightService
+    | getNetwork == cashTestNetwork = insightService
     | otherwise = consoleError $ formatError $
         "No blockchain service for network " <> networkName
 
@@ -237,7 +238,7 @@ history = command "history" "Display historical addresses" $
                 addrs = take count $ derivePathAddrs xpub extDeriv start
             renderIO $ addressFormat $ map (\(a,_,i) -> (i,a)) addrs
   where
-    cntOpt = Argument.option ['n'] ["number"] Argument.natural 5
+    cntOpt = Argument.option ['i'] ["number"] Argument.natural 5
              "Number of addresses to display"
 
 addressFormat :: [(Word32, Address)] -> ConsolePrinter

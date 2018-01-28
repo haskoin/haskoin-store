@@ -22,6 +22,7 @@ import           Network.Haskoin.Wallet.Entropy
 import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
 import           Network.Haskoin.Wallet.HTTP.Insight
+import           Network.Haskoin.Wallet.HTTP.Haskoin
 import           Network.Haskoin.Wallet.Signing
 import           Numeric
 import           Test.Hspec
@@ -37,6 +38,7 @@ walletSpec = do
     signingSpec
     blockchainServiceSpec
     insightServiceSpec
+    -- haskoinServiceSpec -- Activate this when it's ready in prodnet
 
 diceSpec :: Spec
 diceSpec = describe "Dice base 6 API" $ do
@@ -150,69 +152,69 @@ serializeSpec = describe "Binary encoding and decoding" $
         Right t == S.decode (S.encode (t :: TxSignData))
 
 balanceSpec :: Spec
-balanceSpec = describe "Balance parser" $ do
-    it "can read and show a satoshi balance" $ property $ \w -> do
-        let pr = PrecisionSatoshi
-        readBalance pr (showBalance pr w) `shouldBe` Just w
+balanceSpec = describe "Amount parser" $ do
+    it "can read and show a satoshi amounts" $ property $ \w -> do
+        let unit = UnitSatoshi
+        readAmount unit (showAmount unit w) `shouldBe` Just w
 
-    it "can read and show a bits balance" $ property $ \w -> do
-        let pr = PrecisionBits
-        readBalance pr (showBalance pr w) `shouldBe` Just w
+    it "can read and show a bit amounts" $ property $ \w -> do
+        let unit = UnitBit
+        readAmount unit (showAmount unit w) `shouldBe` Just w
 
-    it "can read and show a bitcoin balance" $ property $ \w -> do
-        let pr = PrecisionBitcoin
-        readBalance pr (showBalance pr w) `shouldBe` Just w
+    it "can read and show a bitcoin amounts" $ property $ \w -> do
+        let unit = UnitBitcoin
+        readAmount unit (showAmount unit w) `shouldBe` Just w
 
     it "can parse example balances" $ do
         -- Satoshi Balances
-        readBalance PrecisionSatoshi "0" `shouldBe` Just 0
-        readBalance PrecisionSatoshi "0000" `shouldBe` Just 0
-        readBalance PrecisionSatoshi "0.0" `shouldBe` Nothing
-        readBalance PrecisionSatoshi "8" `shouldBe` Just 8
-        readBalance PrecisionSatoshi "100" `shouldBe` Just 100
-        readBalance PrecisionSatoshi "1234567890" `shouldBe` Just 1234567890
-        readBalance PrecisionSatoshi "1'234'567'890" `shouldBe` Just 1234567890
-        readBalance PrecisionSatoshi "1 234 567 890" `shouldBe` Just 1234567890
-        readBalance PrecisionSatoshi "1_234_567_890" `shouldBe` Just 1234567890
+        readAmount UnitSatoshi "0" `shouldBe` Just 0
+        readAmount UnitSatoshi "0000" `shouldBe` Just 0
+        readAmount UnitSatoshi "0.0" `shouldBe` Nothing
+        readAmount UnitSatoshi "8" `shouldBe` Just 8
+        readAmount UnitSatoshi "100" `shouldBe` Just 100
+        readAmount UnitSatoshi "1234567890" `shouldBe` Just 1234567890
+        readAmount UnitSatoshi "1'234'567'890" `shouldBe` Just 1234567890
+        readAmount UnitSatoshi "1 234 567 890" `shouldBe` Just 1234567890
+        readAmount UnitSatoshi "1_234_567_890" `shouldBe` Just 1234567890
         -- Bits Balances
-        readBalance PrecisionBits "0" `shouldBe` Just 0
-        readBalance PrecisionBits "0000" `shouldBe` Just 0
-        readBalance PrecisionBits "0.0" `shouldBe` Just 0
-        readBalance PrecisionBits "0.00" `shouldBe` Just 0
-        readBalance PrecisionBits "0.000" `shouldBe` Nothing
-        readBalance PrecisionBits "0.10" `shouldBe` Just 10
-        readBalance PrecisionBits "0.1" `shouldBe` Just 10
-        readBalance PrecisionBits "0.01" `shouldBe` Just 1
-        readBalance PrecisionBits "1" `shouldBe` Just 100
-        readBalance PrecisionBits "100" `shouldBe` Just 10000
-        readBalance PrecisionBits "100.00" `shouldBe` Just 10000
-        readBalance PrecisionBits "100.01" `shouldBe` Just 10001
-        readBalance PrecisionBits "1234567890.9" `shouldBe` Just 123456789090
-        readBalance PrecisionBits "1'234'567'890.90"
+        readAmount UnitBit "0" `shouldBe` Just 0
+        readAmount UnitBit "0000" `shouldBe` Just 0
+        readAmount UnitBit "0.0" `shouldBe` Just 0
+        readAmount UnitBit "0.00" `shouldBe` Just 0
+        readAmount UnitBit "0.000" `shouldBe` Nothing
+        readAmount UnitBit "0.10" `shouldBe` Just 10
+        readAmount UnitBit "0.1" `shouldBe` Just 10
+        readAmount UnitBit "0.01" `shouldBe` Just 1
+        readAmount UnitBit "1" `shouldBe` Just 100
+        readAmount UnitBit "100" `shouldBe` Just 10000
+        readAmount UnitBit "100.00" `shouldBe` Just 10000
+        readAmount UnitBit "100.01" `shouldBe` Just 10001
+        readAmount UnitBit "1234567890.9" `shouldBe` Just 123456789090
+        readAmount UnitBit "1'234'567'890.90"
             `shouldBe` Just 123456789090
-        readBalance PrecisionBits "1 234 567 890.90"
+        readAmount UnitBit "1 234 567 890.90"
             `shouldBe` Just 123456789090
-        readBalance PrecisionBits "1_234_567_890.90"
+        readAmount UnitBit "1_234_567_890.90"
             `shouldBe` Just 123456789090
         -- BitcoinBalances
-        readBalance PrecisionBitcoin "0" `shouldBe` Just 0
-        readBalance PrecisionBitcoin "0000" `shouldBe` Just 0
-        readBalance PrecisionBitcoin "0.0" `shouldBe` Just 0
-        readBalance PrecisionBitcoin "0.00000000" `shouldBe` Just 0
-        readBalance PrecisionBitcoin "0.000000000" `shouldBe` Nothing
-        readBalance PrecisionBitcoin "0.1" `shouldBe` Just 10000000
-        readBalance PrecisionBitcoin "0.1000" `shouldBe` Just 10000000
-        readBalance PrecisionBitcoin "0.10000000" `shouldBe` Just 10000000
-        readBalance PrecisionBitcoin "0.100000000" `shouldBe` Nothing
-        readBalance PrecisionBitcoin "1" `shouldBe` Just 100000000
-        readBalance PrecisionBitcoin "100" `shouldBe` Just 10000000000
-        readBalance PrecisionBitcoin "1234567890.9"
+        readAmount UnitBitcoin "0" `shouldBe` Just 0
+        readAmount UnitBitcoin "0000" `shouldBe` Just 0
+        readAmount UnitBitcoin "0.0" `shouldBe` Just 0
+        readAmount UnitBitcoin "0.00000000" `shouldBe` Just 0
+        readAmount UnitBitcoin "0.000000000" `shouldBe` Nothing
+        readAmount UnitBitcoin "0.1" `shouldBe` Just 10000000
+        readAmount UnitBitcoin "0.1000" `shouldBe` Just 10000000
+        readAmount UnitBitcoin "0.10000000" `shouldBe` Just 10000000
+        readAmount UnitBitcoin "0.100000000" `shouldBe` Nothing
+        readAmount UnitBitcoin "1" `shouldBe` Just 100000000
+        readAmount UnitBitcoin "100" `shouldBe` Just 10000000000
+        readAmount UnitBitcoin "1234567890.9"
             `shouldBe` Just 123456789090000000
-        readBalance PrecisionBitcoin "1'234'567'890.9009"
+        readAmount UnitBitcoin "1'234'567'890.9009"
             `shouldBe` Just 123456789090090000
-        readBalance PrecisionBitcoin "1 234 567 890.9009"
+        readAmount UnitBitcoin "1 234 567 890.9009"
             `shouldBe` Just 123456789090090000
-        readBalance PrecisionBitcoin "1_234_567_890.9009"
+        readAmount UnitBitcoin "1_234_567_890.9009"
             `shouldBe` Just 123456789090090000
 
 signingSpec :: Spec
@@ -431,12 +433,12 @@ buildSpec = describe "Transaction builder" $
 blockchainServiceSpec :: Spec
 blockchainServiceSpec = describe "Blockchain.info service (online test)" $ do
     it "can receive balance (online test)" $ do
-        res <- httpBalance blockchainInfo
+        res <- httpBalance blockchainInfoService
             [ "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" ]
         res `shouldSatisfy` (>= 5000000000)
 
     it "can receive coins (online test)" $ do
-        res <- httpUnspent blockchainInfo
+        res <- httpUnspent blockchainInfoService
             [ "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" ]
         head res `shouldBe`
             ( OutPoint "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b" 0
@@ -446,17 +448,17 @@ blockchainServiceSpec = describe "Blockchain.info service (online test)" $ do
 
     it "can receive a transaction (online test)" $ do
         let tid =  "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-        res <- httpTx blockchainInfo tid
+        res <- httpTx blockchainInfoService tid
         txHash res `shouldBe` tid
 
 insightServiceSpec :: Spec
 insightServiceSpec =
-    describe "Bitpay Insight service (online test)" $ do
+    describe "Insight service (online test)" $ do
         it "can receive balance (online test)" $ do
-            res <- httpBalance insight ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            res <- httpBalance insightService ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
             res `shouldSatisfy` (>= 1600000000)
         it "can receive coins (online test)" $ do
-            res <- httpUnspent insight ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            res <- httpUnspent insightService ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
             res `shouldSatisfy`
                 (( OutPoint
                        "5609df21a76484bfd4a890e624723f87465916f0036b1fa8a06b9c2e8e63be30"
@@ -466,8 +468,29 @@ insightServiceSpec =
         it "can receive a transaction (online test)" $ do
             let tid =
                     "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
-            res <- httpTx insight tid
+            res <- httpTx insightService tid
             txHash res `shouldBe` tid
+    
+haskoinServiceSpec :: Spec
+haskoinServiceSpec = describe "Haskoin service (online test)" $ do
+    it "can receive balance (online test)" $ do
+        res <- httpBalance haskoinService
+            [ "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" ]
+        res `shouldSatisfy` (>= 5000000000)
+
+    it "can receive coins (online test)" $ do
+        res <- httpUnspent haskoinService
+            [ "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" ]
+        head res `shouldBe`
+            ( OutPoint "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b" 0
+            , PayPK "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
+            , 5000000000
+            )
+
+    it "can receive a transaction (online test)" $ do
+        let tid =  "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+        res <- httpTx haskoinService tid
+        txHash res `shouldBe` tid
 
 {- Test Constants -}
 

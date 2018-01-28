@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Wallet.HTTP.BlockchainInfo (blockchainInfo) where
+module Network.Haskoin.Wallet.HTTP.BlockchainInfo
+( blockchainInfoService
+) where
 
 import           Control.Lens                          ((&), (.~), (^.), (^..),
                                                         (^?))
@@ -26,8 +28,8 @@ getURL
     | otherwise = consoleError $ formatError $
            "blockchain.info does not support the network " <> networkName
 
-blockchainInfo :: BlockchainService
-blockchainInfo =
+blockchainInfoService :: BlockchainService
+blockchainInfoService =
     BlockchainService
     { httpBalance = getBalance
     , httpUnspent = getUnspent

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Wallet.HTTP.Insight (insight) where
+module Network.Haskoin.Wallet.HTTP.Insight (insightService) where
 
 import           Control.Lens                          ((&), (<>~), (^.), (^..),
                                                         (^?))
@@ -23,7 +23,7 @@ import qualified Network.Wreq                          as HTTP
 getURL :: String
 getURL
     | getNetwork == bitcoinNetwork =
-        "https://bch.blockdozer.com/insight-api/"
+        "https://btc.blockdozer.com/insight-api/"
     | getNetwork == testnet3Network =
         "https://tbtc.blockdozer.com/insight-api/"
     | getNetwork == bitcoinCashNetwork =
@@ -35,8 +35,8 @@ getURL
         formatError $
         "insight does not support the network " <> networkName
 
-insight :: BlockchainService
-insight =
+insightService :: BlockchainService
+insightService =
     BlockchainService
     { httpBalance = getBalance
     , httpUnspent = getUnspent
