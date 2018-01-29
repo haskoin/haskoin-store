@@ -460,7 +460,7 @@ processPeerOffline :: MonadManager m => OnlinePeer -> m ()
 processPeerOffline op
     | onlinePeerConnected op = do
         let p = onlinePeerMailbox op
-        $(logWarn) $
+        $(logDebug) $
             logMe <> "Notifying listeners of disconnected peer " <>
             logShow (onlinePeerAddress op)
         asks myChain >>= chainRemovePeer p

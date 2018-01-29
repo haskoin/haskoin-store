@@ -112,7 +112,6 @@ chain cfg =
                 , RocksDB.compression = RocksDB.NoCompression
                 }
         hdb <- RocksDB.open (chainConfDbFile cfg) opts
-        $(logDebug) $ logMe <> "Added genesis block node"
         st <-
             liftIO $
             newTVarIO
@@ -128,6 +127,7 @@ chain cfg =
         when (isNothing m) $ do
             addBlockHeader genesisNode
             RocksDB.put db def "best" gs
+            $(logDebug) $ logMe <> "Added genesis block node"
         forever $ do
             stats
             $(logDebug) $ logMe <> "Awaiting message"
@@ -218,7 +218,7 @@ processChainMessage (ChainNewPeer p) = do
         Just _  -> return ()
 
 processChainMessage (ChainRemovePeer p) = do
-    $(logWarn) $ logMe <> "Got peer disconnection"
+    $(logDebug) $ logMe <> "Got peer disconnection"
     st <- asks chainState
     sp <-
         liftIO . atomically $ do
