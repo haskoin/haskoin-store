@@ -74,7 +74,7 @@ peer pc p =
             $(logError) $ logPeer na <> "Invalid network address"
             throwIO PeerAddressInvalid
         Just (host, port) -> do
-            $(logInfo) $ logPeer na <> "Establishing TCP connection"
+            $(logDebug) $ logPeer na <> "Establishing TCP connection"
             let cset = clientSettings port (cs host)
             runGeneralTCPClient cset (peerSession (host, port))
   where
@@ -290,7 +290,7 @@ incoming m = do
         MSendHeaders {} -> do
             $(logDebug) $ lp <> "Relaying sendheaders to chain actor"
             ChainSendHeaders p `send` ch
-        MAlert {} -> $(logInfo) $ lp <> "Deprecated " <> logMsg m
+        MAlert {} -> $(logDebug) $ lp <> "Deprecated " <> logMsg m
         MAddr (Addr as) -> do
             $(logDebug) $ lp <> "Sending addresses to peer manager"
             managerNewPeers p as mgr
@@ -342,7 +342,7 @@ incoming m = do
         MGetAddr -> do
             $(logDebug) $ lp <> "Asking manager for peers"
             managerGetAddr p mgr
-        _ -> $(logInfo) $ lp <> "Ignoring received " <> logMsg m
+        _ -> $(logDebug) $ lp <> "Ignoring received " <> logMsg m
 
 inPeerConduit :: Monad m => Conduit ByteString m PeerMessage
 inPeerConduit = do
