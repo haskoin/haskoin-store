@@ -149,7 +149,7 @@ processChainMessage (ChainNewHeaders p hcs) = do
     case bhsE of
         Right bhs -> conn bb bhs spM
         Left e -> do
-            $(logInfo) $ logMe <> "Could not connect headers: " <> cs e
+            $(logWarn) $ logMe <> "Could not connect headers: " <> cs e
             case spM of
                 Nothing -> do
                     bb' <- getBestBlockHeader

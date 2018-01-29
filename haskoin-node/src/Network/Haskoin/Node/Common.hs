@@ -112,7 +112,6 @@ data ManagerMessage
                             !Version
     | ManagerGetPeerVersion !Peer
                             !(Reply (Maybe Word32))
-    | ManagerGetChain !(Reply Chain)
     | ManagerGetPeers !(Reply [Peer])
     | ManagerPeerPing !Peer
                       !NominalDiffTime
@@ -246,9 +245,6 @@ managerSetPeerBest p bn mgr = ManagerSetPeerBest p bn `send` mgr
 
 managerGetPeers :: MonadIO m => Manager -> m [Peer]
 managerGetPeers mgr = ManagerGetPeers `query` mgr
-
-managerGetChain :: MonadIO m => Manager -> m Chain
-managerGetChain mgr = ManagerGetChain `query` mgr
 
 managerGetAddr :: MonadIO m => Peer -> Manager -> m ()
 managerGetAddr p mgr = ManagerGetAddr p `send` mgr
