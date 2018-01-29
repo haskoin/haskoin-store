@@ -20,11 +20,16 @@ module Network.Haskoin.Store
     , store
     , getBestBlock
     , getBlockAtHeight
+    , getBlocksAtHeights
     , getBlock
     , getTx
+    , getTxs
     , getAddrTxs
+    , getAddrsTxs
     , getUnspent
+    , getUnspents
     , getBalance
+    , getBalances
     , postTransaction
     ) where
 

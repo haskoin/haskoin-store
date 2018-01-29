@@ -10,12 +10,17 @@
 module Network.Haskoin.Store.Block
     ( blockStore
     , getBestBlock
+    , getBlocksAtHeights
     , getBlockAtHeight
     , getBlock
     , getUnspent
     , getAddrTxs
+    , getAddrsTxs
     , getBalance
+    , getBalances
     , getTx
+    , getTxs
+    , getUnspents
     , getOutput
     ) where
 
@@ -30,7 +35,6 @@ import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString              as BS
 import           Data.Default
-import           Data.Function
 import           Data.List
 import           Data.Map                     (Map)
 import qualified Data.Map.Strict              as M
@@ -216,6 +220,17 @@ getBestBlock db s =
             h <- MaybeT (getBestBlockHash db s')
             MaybeT (getBlock h db s')
 
+getBlocksAtHeights ::
+    MonadIO m => [BlockHeight] -> DB -> Maybe Snapshot -> m [BlockValue]
+getBlocksAtHeights bhs db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _  -> f s
+  where
+    f s' =
+        fmap catMaybes . forM bhs $ \bh ->
+            getBlockAtHeight bh db s'
+
 getBlockAtHeight ::
        MonadIO m => BlockHeight -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
 getBlockAtHeight height db s =
@@ -232,6 +247,19 @@ getBlock ::
        MonadIO m => BlockHash -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
 getBlock = retrieveValue . BlockKey
 
+getAddrsSpent ::
+       MonadIO m
+    => [Address]
+    -> DB
+    -> Maybe Snapshot
+    -> m [(AddrSpentKey, AddrSpentValue)]
+getAddrsSpent as db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _  -> f s
+  where
+    f s' = concat <$> mapM (\a -> getAddrSpent a db s') as
+
 getAddrSpent ::
        MonadIO m
     => Address
@@ -239,6 +267,19 @@ getAddrSpent ::
     -> Maybe Snapshot
     -> m [(AddrSpentKey, AddrSpentValue)]
 getAddrSpent = valuesForKey . MultiAddrSpentKey
+
+getAddrsUnspent ::
+       MonadIO m
+    => [Address]
+    -> DB
+    -> Maybe Snapshot
+    -> m [(AddrUnspentKey, AddrUnspentValue)]
+getAddrsUnspent as db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _  -> f s
+  where
+    f s' = concat <$> mapM (\a -> getAddrUnspent a db s') as
 
 getAddrUnspent ::
        MonadIO m
@@ -263,6 +304,15 @@ getOutput op db s =
         out <- MaybeT (retrieveValue (OutputKey op) db s')
         maybeSpent <- retrieveValue (SpentKey op) db s'
         return (out, maybeSpent)
+
+getBalances ::
+    MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressBalance]
+getBalances addrs db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _ -> f s
+  where
+    f s' = forM addrs $ \a -> getBalance a db s'
 
 getBalance ::
        MonadIO m => Address -> DB -> Maybe Snapshot -> m AddressBalance
@@ -327,6 +377,14 @@ getBalance addr db s =
                      ((>= minHeight) . blockRefHeight . immatureBlock)
                      balanceImmature
            }
+
+getTxs :: MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
+getTxs ths db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _  -> f s
+  where
+    f s' = fmap catMaybes . forM ths $ \th -> getTx th db s'
 
 getTx ::
        MonadIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
@@ -437,7 +495,7 @@ syncBlocks = do
     downloadBlocks p bhs = do
         $(logDebug) $
             logMe <> "Downloading " <> logShow (length bhs) <> " blocks"
-        getBlocks p bhs
+        peerGetBlocks p bhs
         pbox <- asks myPending
         liftIO . atomically $ writeTVar pbox bhs
 
@@ -922,53 +980,60 @@ purgePeer p = do
     syncBlocks
 
 getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
-getAddrTxs addr db s =
+getAddrTxs addr = getAddrsTxs [addr]
+
+getAddrsTxs :: MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressTx]
+getAddrsTxs addrs db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
         Just _  -> g s
   where
-    f AddressTx {..} = (blockRefHeight addressTxBlock, addressTxPos)
     g s' = do
-        us <- getAddrUnspent addr db s'
-        ss <- getAddrSpent addr db s'
+        us <- getAddrsUnspent addrs db s'
+        ss <- getAddrsSpent addrs db s'
         let utx =
-                [ AddressTx
-                { addressTxAddress = addr
+                [ AddressTxOut
+                { addressTxAddress = addrUnspentKey k
                 , addressTxId = outPointHash (outPoint (addrUnspentOutPoint k))
                 , addressTxAmount = fromIntegral (outputValue (addrUnspentOutput v))
                 , addressTxBlock = outBlock (addrUnspentOutput v)
                 , addressTxPos = outPos (addrUnspentOutput v)
+                , addressTxVout = outPointIndex (outPoint (addrUnspentOutPoint k))
                 }
                 | (k, v) <- us
                 ]
             stx =
-                [ AddressTx
-                { addressTxAddress = addr
+                [ AddressTxOut
+                { addressTxAddress = addrSpentKey k
                 , addressTxId = outPointHash (outPoint (addrSpentOutPoint k))
                 , addressTxAmount = fromIntegral (outputValue (addrSpentOutput v))
                 , addressTxBlock = outBlock (addrSpentOutput v)
                 , addressTxPos = outPos (addrSpentOutput v)
+                , addressTxVout = outPointIndex (outPoint (addrSpentOutPoint k))
                 }
                 | (k, v) <- ss
                 ]
             itx =
-                [ AddressTx
-                { addressTxAddress = addr
+                [ AddressTxIn
+                { addressTxAddress = addrSpentKey k
                 , addressTxId = spentInHash p
                 , addressTxAmount = -fromIntegral (outputValue (addrSpentOutput v))
                 , addressTxBlock = spentInBlock p
                 , addressTxPos = spentInPos p
+                , addressTxVin = spentInIndex p
                 }
-                | (_, v) <- ss
+                | (k, v) <- ss
                 , let p = addrSpentValue v
                 ]
-            ts = sortBy (flip compare `on` f) (itx ++ stx ++ utx)
-            zs =
-                [ atx {addressTxAmount = amount}
-                | xs@(atx:_) <- groupBy ((==) `on` addressTxId) ts
-                , let amount = sum (map addressTxAmount xs)
-                ]
-        return zs
+        return $ sort (itx ++ stx ++ utx)
+
+getUnspents :: MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [Unspent]
+getUnspents addrs db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _ -> f s
+  where
+    f s' = fmap (sort . concat) $ forM addrs $ \addr -> getUnspent addr db s'
 
 getUnspent :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [Unspent]
 getUnspent addr db s = do

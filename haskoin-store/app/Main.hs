@@ -2,50 +2,89 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+import           Control.Arrow
 import           Control.Concurrent.NQE
 import           Control.Exception
+import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Aeson                  (ToJSON (..), Value (..), object,
                                               (.=))
-import           Data.Default
+import           Data.Default                (def)
 import           Data.Maybe
 import           Data.Monoid
 import           Data.String.Conversions
+import qualified Data.Text                   as T
 import           Data.Word
 import qualified Database.RocksDB            as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
+import           Network.Haskoin.Node
 import           Network.Haskoin.Store
 import           Network.Haskoin.Transaction
 import           Network.HTTP.Types
 import           Options.Applicative
 import           System.Directory
+import           System.Exit                 (die)
 import           System.FilePath
 import           System.IO.Unsafe
+import           Text.Read                   (readMaybe)
 import           Web.Scotty.Trans
 
 type StoreM = ActionT Except IO
 
-data Config = Config
-    { configDir     :: !(Maybe FilePath)
-    , configCache   :: !(Maybe Word32)
-    , configBlocks  :: !(Maybe Word32)
-    , configPort    :: !(Maybe Int)
-    , configNetwork :: !(Maybe String)
-    } deriving (Show, Eq)
+data OptConfig = OptConfig
+    { optConfigDir       :: !(Maybe FilePath)
+    , optConfigCache     :: !(Maybe Word32)
+    , optConfigBlocks    :: !(Maybe Word32)
+    , optConfigPort      :: !(Maybe Int)
+    , optConfigNetwork   :: !(Maybe Network)
+    , optConfigDiscovery :: !(Maybe Bool)
+    , optConfigPeers     :: !(Maybe [(Host, Maybe Port)])
+    }
 
-instance Monoid Config where
-    mempty = def
-    one `mappend` two =
-        Config
-            (configDir two <|> configDir one)
-            (configCache two <|> configCache one)
-            (configBlocks two <|> configBlocks one)
-            (configPort two <|> configPort one)
-            (configNetwork two <|> configNetwork one)
+data Config = Config
+    { configDir       :: !FilePath
+    , configCache     :: !Word32
+    , configBlocks    :: !Word32
+    , configPort      :: !Int
+    , configNetwork   :: !Network
+    , configDiscovery :: !Bool
+    , configPeers     :: ![(Host, Maybe Port)]
+    }
+
+defBlocks :: Word32
+defBlocks = 200
+
+defCache :: Word32
+defCache = 250000
+
+defPort :: Int
+defPort = 3000
+
+defNetwork :: Network
+defNetwork = bitcoinNetwork
+
+defDiscovery :: Bool
+defDiscovery = False
+
+defPeers :: [(Host, Maybe Port)]
+defPeers = []
+
+optToConfig :: OptConfig -> Config
+optToConfig OptConfig {..} =
+    Config
+    { configDir = fromMaybe myDirectory optConfigDir
+    , configCache = fromMaybe defCache optConfigCache
+    , configBlocks = fromMaybe defBlocks optConfigBlocks
+    , configPort = fromMaybe defPort optConfigPort
+    , configNetwork = fromMaybe defNetwork optConfigNetwork
+    , configDiscovery = fromMaybe defDiscovery optConfigDiscovery
+    , configPeers = fromMaybe defPeers optConfigPeers
+    }
 
 instance Parsable BlockHash where
     parseParam =
@@ -80,26 +119,16 @@ instance ToJSON Except where
     toJSON (StringError _) = object ["error" .= String "You made me kill a unicorn"]
     toJSON (UserError s) = object ["error" .= s]
 
-instance Default Config where
-    def =
-        Config
-        { configDir = Just $ unsafePerformIO myDirectory
-        , configCache = Just 250000
-        , configBlocks = Just 200
-        , configPort = Just 3000
-        , configNetwork = Just "bitcoin"
-        }
-
-config :: Parser Config
+config :: Parser OptConfig
 config =
-    Config <$>
+    OptConfig <$>
     optional
         (option
              str
              (metavar "DIR" <> long "dir" <> short 'd' <>
               help
                   ("Directory to store blockchain data (default: " <>
-                   fromJust (configDir def) <>
+                   myDirectory <>
                    ")"))) <*>
     optional
         (option
@@ -107,7 +136,7 @@ config =
              (metavar "COUNT" <> long "cache" <> short 'c' <>
               help
                   ("Number of entries in UTXO cache for faster synchronisation (default: " <>
-                   show (fromJust (configCache def)) <>
+                   show defCache <>
                    ")"))) <*>
     optional
         (option
@@ -115,24 +144,56 @@ config =
              (metavar "BLOCKS" <> long "blocks" <> short 'b' <>
               help
                   ("Number of blocks to download per request to peer (default: " <>
-                   show (fromJust (configBlocks def)) <>
+                   show defBlocks <>
                    ")"))) <*>
     optional
         (option
              auto
              (metavar "PORT" <> long "port" <> short 'p' <>
-              help
-                  ("Port number (default: " <> show (fromJust (configPort def)) <>
-                   ")"))) <*>
+              help ("Port number (default: " <> show defPort <> ")"))) <*>
     optional
         (option
-             str
+             (eitherReader networkReader)
              (metavar "NETWORK" <> long "network" <> short 'n' <>
               help
                   ("Network to use: " <>
                    "bitcoin|bitcoincash|testnet3|cashtest|regtest (default: " <>
-                   fromJust (configNetwork def) <>
-                   ")")))
+                   getNetworkName defNetwork <>
+                   ")"))) <*>
+    optional (switch (long "discover" <> help "Enable peer discovery")) <*>
+    optional
+        (option
+             (eitherReader peerReader)
+             (metavar "PEERS" <> long "peers" <>
+              help
+                  ("Comma-separated list of peers to connect to " <>
+                   "(i.e. localhost,peer.example.com:8333)")))
+
+networkReader :: String -> Either String Network
+networkReader s
+    | s == getNetworkName bitcoinNetwork = Right bitcoinNetwork
+    | s == getNetworkName testnet3Network = Right testnet3Network
+    | s == getNetworkName bitcoinCashNetwork = Right bitcoinCashNetwork
+    | s == getNetworkName regTestNetwork = Right regTestNetwork
+    | s == getNetworkName cashTestNetwork = Right cashTestNetwork
+    | otherwise = Left "Network name invalid"
+
+peerReader :: String -> Either String [(Host, Maybe Port)]
+peerReader = mapM hp . ls
+  where
+    hp s = do
+        let (host, p) = span (/= ':') s
+        when (null host) (Left "Peer name or address not defined")
+        port <-
+            case p of
+                [] -> return Nothing
+                ':':p' ->
+                    case readMaybe p' of
+                        Nothing -> Left "Peer port number cannot be read"
+                        Just n  -> return (Just n)
+                _ -> Left "Peer information could not be parsed"
+        return (host, port)
+    ls = map T.unpack . T.split (== ',') . T.pack
 
 defHandler :: Except -> StoreM ()
 defHandler ServerError   = json ServerError
@@ -145,28 +206,20 @@ maybeJSON :: ToJSON a => Maybe a -> StoreM ()
 maybeJSON Nothing  = raise NotFound
 maybeJSON (Just x) = json x
 
-myDirectory :: IO FilePath
-myDirectory = getAppUserDataDirectory "haskoin-store"
+myDirectory :: FilePath
+myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
+{-# NOINLINE myDirectory #-}
 
 main :: IO ()
 main =
-    execParser opts >>= \conf' -> do
-        let conf = def <> conf'
-            port = fromJust $ configPort conf
-            blocks = fromJust $ configBlocks conf
-            cache = fromJust $ configCache conf
-            dir = fromJust $ configDir conf
-            net = fromJust $ configNetwork conf
-        case net of
-            "testnet3"    -> setTestnet3Network
-            "regtest"     -> setRegTestNetwork
-            "bitcoin"     -> setBitcoinNetwork
-            "bitcoincash" -> setBitcoinCashNetwork
-            "cashtest"    -> setCashTestNetwork
-            _             -> error "Wrong network"
+    execParser opts >>= \opt -> do
+        let conf = optToConfig opt
+        when (null (configPeers conf) && not (configDiscovery conf)) $
+            die "Set peer discovery or trusted peers"
+        setNetwork $ configNetwork conf
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
-        let wdir = dir </> networkName
+        let wdir = configDir conf </> networkName
         liftIO $ createDirectoryIfMissing True wdir
         db <-
             RocksDB.open
@@ -177,7 +230,12 @@ main =
                 , RocksDB.writeBufferSize = 512 * 1024 * 1024
                 }
         mgr <- Inbox <$> liftIO newTQueueIO
-        supervisor KillAll s [runWeb port db mgr, runStore mgr cache blocks wdir b db]
+        supervisor
+            KillAll
+            s
+            [ runWeb (configPort conf) db mgr
+            , runStore conf mgr wdir b db
+            ]
   where
     opts =
         info
@@ -194,18 +252,33 @@ main =
             get "/block/height/:height" $ do
                 height <- param "height"
                 getBlockAtHeight height db Nothing >>= maybeJSON
+            get "/block/heights" $ do
+                heights <- param "heights"
+                getBlocksAtHeights heights db Nothing >>= json
             get "/transaction/:txid" $ do
                 txid <- param "txid"
                 getTx txid db Nothing >>= maybeJSON
+            get "/transactions" $ do
+                txids <- param "txids"
+                getTxs txids db Nothing >>= json
             get "/address/:address/transactions" $ do
                 address <- param "address"
                 getAddrTxs address db Nothing >>= json
+            get "/address/transactions" $ do
+                addresses <- param "addresses"
+                getAddrsTxs addresses db Nothing >>= json
             get "/address/:address/unspent" $ do
                 address <- param "address"
                 getUnspent address db Nothing >>= json
+            get "/address/unspent" $ do
+                addresses <- param "address"
+                getUnspents addresses db Nothing >>= json
             get "/address/:address/balance" $ do
                 address <- param "address"
                 getBalance address db Nothing >>= json
+            get "/address/balances" $ do
+                addresses <- param "address"
+                getBalances addresses db Nothing >>= json
             post "/transaction" $ do
                 txHex <- jsonData
                 postTransaction db mgr txHex >>= \case
@@ -226,10 +299,11 @@ main =
                         json (UserError "Not enough coins")
                     Left NoPeers -> do
                         status status500
-                        json (UserError "No peers connected to send transaction")
+                        json
+                            (UserError "No peers connected to send transaction")
                     Right j -> json j
             notFound $ raise NotFound
-    runStore mgr cache blocks wdir b db =
+    runStore conf mgr wdir b db =
         runStderrLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO
@@ -242,10 +316,13 @@ main =
                     , storeConfManager = mgr
                     , storeConfListener = const (return ())
                     , storeConfMaxPeers = 20
-                    , storeConfInitPeers = []
-                    , storeConfNoNewPeers = False
-                    , storeConfCacheNo = cache
-                    , storeConfBlockNo = blocks
+                    , storeConfInitPeers =
+                          map
+                              (second (fromMaybe defaultPort))
+                              (configPeers conf)
+                    , storeConfNoNewPeers = not (configDiscovery conf)
+                    , storeConfCacheNo = configCache conf
+                    , storeConfBlockNo = configBlocks conf
                     , storeConfDB = db
                     }
             store cfg

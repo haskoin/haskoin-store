@@ -12,6 +12,7 @@ import           Control.Monad.Reader
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
+import           Data.Function
 import           Data.Int
 import           Data.Maybe
 import           Data.Serialize               as S
@@ -210,13 +211,26 @@ newtype MultiBalance = MultiBalance
 
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
 
-data AddressTx = AddressTx
-    { addressTxAddress :: !Address
-    , addressTxId      :: !TxHash
-    , addressTxAmount  :: !Int64
-    , addressTxBlock   :: !BlockRef
-    , addressTxPos     :: !Word32
-    } deriving (Eq, Show, Ord)
+data AddressTx
+    = AddressTxIn { addressTxAddress :: !Address
+                  , addressTxId      :: !TxHash
+                  , addressTxAmount  :: !Int64
+                  , addressTxBlock   :: !BlockRef
+                  , addressTxPos     :: !Word32
+                  , addressTxVin     :: !Word32 }
+    | AddressTxOut { addressTxAddress :: !Address
+                   , addressTxId      :: !TxHash
+                   , addressTxAmount  :: !Int64
+                   , addressTxBlock   :: !BlockRef
+                   , addressTxPos     :: !Word32
+                   , addressTxVout    :: !Word32 }
+    deriving (Eq, Show)
+
+instance Ord AddressTx where
+    compare = compare `on` f
+      where
+        f AddressTxIn {..}  = (blockRefHeight addressTxBlock, addressTxPos, False)
+        f AddressTxOut {..} = (blockRefHeight addressTxBlock, addressTxPos, True)
 
 data Unspent = Unspent
     { unspentAddress  :: !Address
@@ -226,7 +240,12 @@ data Unspent = Unspent
     , unspentValue    :: !Word64
     , unspentBlock    :: !BlockRef
     , unspentPos      :: !Word32
-    } deriving (Eq, Show, Ord)
+    } deriving (Eq, Show)
+
+instance Ord Unspent where
+    compare = compare `on` f
+      where
+        f Unspent {..} = (blockRefHeight unspentBlock, unspentPos, unspentIndex)
 
 instance Record BlockKey BlockValue
 instance Record TxKey TxValue
@@ -571,10 +590,18 @@ instance ToJSON BlockRef where
     toEncoding = pairs . mconcat . blockRefPairs
 
 addrTxPairs :: KeyValue kv => AddressTx -> [kv]
-addrTxPairs AddressTx {..} =
+addrTxPairs AddressTxIn {..} =
     [ "address" .= addressTxAddress
     , "txid" .= addressTxId
     , "amount" .= addressTxAmount
+    , "vin" .= addressTxVin
+    ] ++
+    blockRefPairs addressTxBlock
+addrTxPairs AddressTxOut {..} =
+    [ "address" .= addressTxAddress
+    , "txid" .= addressTxId
+    , "amount" .= addressTxAmount
+    , "vout" .= addressTxVout
     ] ++
     blockRefPairs addressTxBlock
 
