@@ -147,6 +147,26 @@ setOptNet name
                   ]
             ]
 
+serOpt :: Argument.Option String
+serOpt = Argument.option ['s'] ["service"] Argument.string ""
+          "Blockchain service (=haskoin|blockchain|insight)"
+
+parseBlockchainService :: String -> BlockchainService
+parseBlockchainService service =
+    case service of
+        "" -> defaultBlockchainService
+        "haskoin" -> haskoinService
+        "blockchain" -> blockchainInfoService
+        "insight" -> insightService
+        _ ->
+            consoleError $
+            vcat
+                [ formatError
+                      "Invalid service name. Select one of the following:"
+                , nest 4 $
+                  vcat $ map formatStatic ["haskoin", "blockchain", "insight"]
+                ]
+
 defaultBlockchainService :: BlockchainService
 defaultBlockchainService
     | getNetwork == bitcoinNetwork = blockchainInfoService
@@ -259,6 +279,7 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
     withOption dustOpt $ \dust ->
     withOption unitOpt $ \u ->
     withOption netOpt $ \network ->
+    withOption serOpt $ \s ->
     withNonOptions Argument.string $ \as -> io $ do
         setOptNet network
         withAccountStore (cs acc) $ \(k, store) -> do
@@ -266,7 +287,7 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
                 !rcps = fromMaybe rcptErr $ mapM (toRecipient unit) $ groupIn 2 as
                 feeW = fromIntegral feeByte
                 dustW = fromIntegral dust
-                service = defaultBlockchainService
+                service = parseBlockchainService s
             resE <- buildTxSignData service store rcps feeW dustW
             let (!signDat, !store') = either (consoleError . formatError) id resE
                 infoE = pubSignInfo signDat (accountStoreXPubKey store)
@@ -416,12 +437,13 @@ balance :: Command IO
 balance = command "balance" "Display the account balance" $
     withOption accOpt $ \acc ->
     withOption unitOpt $ \u ->
-    withOption netOpt $ \network -> io $ do
+    withOption netOpt $ \network ->
+    withOption serOpt $ \s -> io $ do
         setOptNet network
         withAccountStore (cs acc) $ \(_, store) -> do
             let addrs = allExtAddresses store <> allIntAddresses store
                 !unit = parseUnit u
-                service = defaultBlockchainService
+                service = parseBlockchainService s
             bal <- httpBalance service $ map fst addrs
             renderIO $ vcat
                 [ formatTitle "Account Balance"
@@ -431,12 +453,13 @@ balance = command "balance" "Display the account balance" $
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
     withOption netOpt $ \network ->
+    withOption serOpt $ \s ->
     withNonOption Argument.file $ \fp -> io $ do
         setOptNet network
         val <- readDoc fp
         case J.fromJSON val of
             J.Success tx -> do
-                let service = defaultBlockchainService
+                let service = parseBlockchainService s
                 httpBroadcast service tx
                 renderIO $
                     formatStatic "Tx" <+>
