@@ -61,7 +61,7 @@ logMsg :: Message -> Text
 logMsg = cs . msgType
 
 logPeer :: SockAddr -> Text
-logPeer sa = "[" <> logShow sa <> "] "
+logPeer sa = "[Peer " <> logShow sa <> "] "
 
 peer ::
        (MonadBaseControl IO m, MonadLoggerIO m, Forall (Pure m))
