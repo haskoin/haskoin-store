@@ -3,12 +3,14 @@
 {-# LANGUAGE RecordWildCards   #-}
 module Network.Haskoin.Wallet where
 
+import           Control.Arrow                              ((&&&))
 import           Control.Lens                               ((^?))
 import           Control.Monad
 import qualified Data.Aeson                                 as J
 import           Data.Aeson.Lens
 import qualified Data.ByteString                            as BS
 import qualified Data.ByteString.Lazy                       as BL
+import           Data.List
 import qualified Data.Map.Strict                            as M
 import           Data.Maybe
 import           Data.Monoid                                ((<>))
@@ -27,8 +29,8 @@ import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.Entropy
 import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
-import           Network.Haskoin.Wallet.HTTP.Insight
 import           Network.Haskoin.Wallet.HTTP.Haskoin
+import           Network.Haskoin.Wallet.HTTP.Insight
 import qualified Network.Haskoin.Wallet.PrettyJson          as Pretty
 import           Network.Haskoin.Wallet.Signing
 import qualified System.Console.Argument                    as Argument
@@ -47,10 +49,11 @@ hwCommands =
             , Node watch []
             , Node rename []
             , Node receive []
-            , Node history []
+            , Node addresses []
+            , Node balance []
+            , Node transactions []
             , Node send []
             , Node sign []
-            , Node balance []
             , Node broadcast []
             , Node help []
             ]
@@ -241,8 +244,8 @@ receive = command "receive" "Generate a new address to receive coins" $
             updateAccountStore k $ const store'
             renderIO $ addressFormat [(lst3 addr, fst3 addr)]
 
-history :: Command IO
-history = command "history" "Display historical addresses" $
+addresses :: Command IO
+addresses = command "addresses" "Display historical addresses" $
     withOption accOpt $ \acc ->
     withOption cntOpt $ \cnt ->
     withOption netOpt $ \network -> io $ do
@@ -362,75 +365,104 @@ signingInfoFormat :: HardPath
                   -> SigningInfo
                   -> Maybe Int
                   -> ConsolePrinter
-signingInfoFormat accDeriv unit SigningInfo{..} sizeM =
-    vcat [ summary, recips, change, mycoins ]
+signingInfoFormat accDeriv unit SigningInfo {..} sizeM =
+    vcat [summary, recips, change, mycoins]
   where
-    summary = vcat
-        [ formatTitle "Tx Summary"
-        , nest 4 $ vcat
-            [ case signingInfoTxHash of
-                Just tid ->
-                    formatKey (block 12 "Tx hash:") <>
-                    formatTxHash (cs $ txHashToHex tid)
-                _ -> mempty
-            , formatKey (block 12 "Amount:") <>
-              formatIntegerAmount unit signingInfoAmount
-            , formatKey (block 12 "Fee:") <>
-              formatAmount unit signingInfoFee
-            , case sizeM of
-                Just size ->
-                  formatKey (block 12 "Tx size:") <>
-                  formatStatic (show size <> " bytes")
-                _ -> mempty
-            , formatKey (block 12 "Fee/byte:") <>
-              formatAmount UnitSatoshi signingInfoFeeByte
-            , formatKey (block 12 "Signed:") <>
-              if signingInfoIsSigned
-                 then formatTrue "Yes"
-                 else formatFalse "No"
+    summary =
+        vcat
+            [ formatTitle "Tx Summary"
+            , nest 4 $
+              vcat
+                  [ case signingInfoTxHash of
+                        Just tid ->
+                            formatKey (block 12 "Tx hash:") <>
+                            formatTxHash (cs $ txHashToHex tid)
+                        _ -> mempty
+                  , formatKey (block 12 "Amount:") <>
+                    formatIntegerAmount unit signingInfoAmount
+                  , formatKey (block 12 "Fee:") <>
+                    formatAmount unit signingInfoFee
+                  , case sizeM of
+                        Just size ->
+                            formatKey (block 12 "Tx size:") <>
+                            formatStatic (show size <> " bytes")
+                        _ -> mempty
+                  , formatKey (block 12 "Fee/byte:") <>
+                    formatAmount UnitSatoshi signingInfoFeeByte
+                  , formatKey (block 12 "Signed:") <>
+                    if signingInfoIsSigned
+                        then formatTrue "Yes"
+                        else formatFalse "No"
+                  ]
             ]
-        ]
     recips
         | signingInfoNonStd == 0 && null signingInfoRecipients = mempty
-        | otherwise = vcat
-            [ formatTitle "Tx Recipients"
-            , nest 4 $ vcat $
-                map addrFormat signingInfoRecipients <>
-                [nonStdRcp]
-            ]
+        | otherwise =
+            vcat
+                [ formatTitle "Tx Recipients"
+                , nest 4 $
+                  vcat $ map addrFormat signingInfoRecipients <> [nonStdRcp]
+                ]
     nonStdRcp
         | signingInfoNonStd == 0 = mempty
-        | otherwise = templ (formatStatic "Non-standard recipients")
-                        signingInfoNonStd Nothing
+        | otherwise =
+            formatAddrVal
+                unit
+                accDeriv
+                (formatStatic "Non-standard recipients")
+                Nothing
+                (fromIntegral signingInfoNonStd)
     change
         | null signingInfoChange = mempty
-        | otherwise = vcat
-            [ formatTitle "Your Tx Change"
-            , nest 4 $ vcat $ map addrFormat' signingInfoChange
-            ]
+        | otherwise =
+            vcat
+                [ formatTitle "Your Tx Change"
+                , nest 4 $ vcat $ map addrFormat' signingInfoChange
+                ]
     mycoins
         | null signingInfoMyCoins = mempty
-        | otherwise = vcat
-            [ formatTitle "Your Tx Input Coins"
-            , nest 4 $ vcat $ map addrFormat' signingInfoMyCoins
-            ]
+        | otherwise =
+            vcat
+                [ formatTitle "Your Tx Input Coins"
+                , nest 4 $ vcat $ map addrFormat' signingInfoMyCoins
+                ]
     addrFormat' (a, (v, p)) =
-        templ (formatAddress $ cs $ addrToBase58 a) v (Just p)
+        formatAddrVal
+            unit
+            accDeriv
+            (formatAddress $ cs $ addrToBase58 a)
+            (Just p)
+            (fromIntegral v)
     addrFormat (a, v) =
-        templ (formatAddress $ cs $ addrToBase58 a) v Nothing
-    templ :: ConsolePrinter -> Word64 -> Maybe SoftPath -> ConsolePrinter
-    templ f v pM = vcat
-        [ f
-        , nest 4 $ vcat
-            [ formatKey (block 8 "Value:") <> formatAmount unit v
-            , case pM of
-                Just p -> mconcat
-                    [ formatKey $ block 8 "Deriv:"
-                    , formatDeriv $ show $ ParsedPrv $
-                        toGeneric $ accDeriv ++/ p
-                    ]
-                _ -> mempty
-            ]
+        formatAddrVal
+            unit
+            accDeriv
+            (formatAddress $ cs $ addrToBase58 a)
+            Nothing
+            (fromIntegral v)
+
+formatAddrVal ::
+       AmountUnit
+    -> HardPath
+    -> ConsolePrinter
+    -> Maybe SoftPath
+    -> Integer
+    -> ConsolePrinter
+formatAddrVal unit accDeriv cp pathM amnt =
+    vcat
+        [ cp
+        , nest 4 $
+          vcat
+              [ formatKey (block 8 "Amount:") <> formatIntegerAmount unit amnt
+              , case pathM of
+                    Just p ->
+                        mconcat
+                            [ formatKey $ block 8 "Deriv:"
+                            , formatDeriv $
+                              show $ ParsedPrv $ toGeneric $ accDeriv ++/ p
+                            ]
+                    _ -> mempty
+              ]
         ]
 
 balance :: Command IO
@@ -441,14 +473,81 @@ balance = command "balance" "Display the account balance" $
     withOption serOpt $ \s -> io $ do
         setOptNet network
         withAccountStore (cs acc) $ \(_, store) -> do
-            let addrs = allExtAddresses store <> allIntAddresses store
-                !unit = parseUnit u
+            let !unit = parseUnit u
                 service = parseBlockchainService s
+                addrs = allExtAddresses store <> allIntAddresses store
             bal <- httpBalance service $ map fst addrs
             renderIO $ vcat
                 [ formatTitle "Account Balance"
                 , nest 4 $ formatAmount unit bal
                 ]
+
+transactions :: Command IO
+transactions = command "transactions" "Display the account transactions" $
+    withOption accOpt $ \acc ->
+    withOption unitOpt $ \u ->
+    withOption netOpt $ \network ->
+    withOption serOpt $ \s -> io $ do
+        setOptNet network
+        withAccountStore (cs acc) $ \(_, store) -> do
+            let !unit = parseUnit u
+                service = parseBlockchainService s
+                allAddrs = allExtAddresses store <> allIntAddresses store
+                aMap = M.fromList allAddrs
+            mvts <- mergeAddressTxs <$> httpAddressTxs service (map fst allAddrs)
+            forM_ mvts $ \mvt -> do
+                tsd <- mvtToTxSignData service aMap mvt
+                case pubSignInfo tsd $ accountStoreXPubKey store of
+                    Right info ->
+                        renderIO $
+                            signingInfoFormat
+                                (accountStoreDeriv store)
+                                unit
+                                info
+                                (Just $ BS.length $ S.encode $ txSignDataTx tsd)
+                    Left err -> consoleError $ formatError err
+
+mvtToTxSignData ::
+       BlockchainService
+    -> M.Map Address SoftPath
+    -> TxMovement
+    -> IO TxSignData
+mvtToTxSignData service aMap TxMovement{..} = do
+    tx <- httpTx service txMovementTxHash
+    let txHashIn = nub $ map (outPointHash . prevOutput) $ txIn tx
+    inputs <- mapM (httpTx service) txHashIn
+    let inPath = map (snd . joinAddrDeriv aMap . fst) txMovementInAddress
+        outPath = map (snd . joinAddrDeriv aMap . fst) txMovementOutAddress
+    return $ TxSignData tx inputs inPath outPath
+
+joinAddrDeriv :: M.Map Address SoftPath -> Address -> (Address, SoftPath)
+joinAddrDeriv aMap = id &&& (aMap M.!)
+
+-- formatTxMovement ::
+--        AmountUnit -> M.Map Address SoftPath -> TxMovement -> ConsolePrinter
+-- formatTxMovement u aMap TxMovement {..} =
+--     vcat
+--         [ formatTxHash $ cs $ txHashToHex txMovementTxHash
+--         , nest 4 $
+--           vcat
+--               [ formatTitle "Amount"
+--               , nest 4 $ formatIntegerAmount u txMovementAmount
+--               , if null txMovementOutAddress
+--                     then mempty
+--                     else vcat
+--                              [ formatTitle "Outgoing Addresses"
+--                              , nest 4 $
+--                                vcat $ map (formatAddrVal u) txMovementOutAddress
+--                              ]
+--               , if null txMovementInAddress
+--                     then mempty
+--                     else vcat
+--                              [ formatTitle "Incoming Addresses"
+--                              , nest 4 $
+--                                vcat $ map (formatAddrVal u) txMovementInAddress
+--                              ]
+--               ]
+--         ]
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $

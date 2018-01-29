@@ -9,6 +9,7 @@ import           Data.Monoid                           ((<>))
 import qualified Data.Serialize                        as S
 import           Data.String.Conversions               (cs)
 import           Data.Word
+import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
@@ -22,13 +23,14 @@ getURL :: String
 getURL
     | getNetwork == testnet3Network = "http://nuc.haskoin.com:7053"
     | otherwise = consoleError $ formatError $
-        "blockchain.info does not support the network " <> networkName
+        "Haskoin does not support the network " <> networkName
 
 haskoinService :: BlockchainService
 haskoinService =
     BlockchainService
     { httpBalance = getBalance
     , httpUnspent = getUnspent
+    , httpAddressTxs = getAddressTxs
     , httpTx = getTx
     , httpBroadcast = broadcastTx
     }
@@ -66,6 +68,33 @@ getAddressUnspent a = do
         scpHex <- v ^? key "pkscript" . _String
         scp <- eitherToMaybe . decodeOutputBS =<< decodeHex (cs scpHex)
         return (OutPoint tid pos, scp, val)
+
+getAddressTxs :: [Address] -> IO [AddressTx]
+getAddressTxs as = concat <$> mapM getAddressTx as
+
+getAddressTx :: Address -> IO [AddressTx]
+getAddressTx a = do
+    r <- HTTP.asValue =<< HTTP.getWith options url
+    let v = r ^. HTTP.responseBody
+        resM = mapM parseAddrTx $ v ^.. values
+    maybe (consoleError $ formatError "Could not parse addrTx") return resM
+  where
+    url = getURL <> "/address/" <> cs (addrToBase58 a) <> "/transactions"
+    parseAddrTx v = do
+        tid <- hexToTxHash . cs =<< v ^? key "txid" . _String
+        bid <- hexToBlockHash . cs =<< v ^? key "block" . _String
+        addrB58 <- v ^? key "address" . _String
+        addr <- base58ToAddr $ cs addrB58
+        height <- v ^? key "height" . _Integer
+        amnt <- v ^? key "amount" . _Integer
+        return
+            AddressTx
+            { addrTxAddress = addr
+            , addrTxTxHash = tid
+            , addrTxBlock = bid
+            , addrTxAmount = amnt
+            , addrTxHeight = height
+            }
 
 getTx :: TxHash -> IO Tx
 getTx tid = do

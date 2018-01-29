@@ -178,7 +178,7 @@ pubSignInfo tsd@(TxSignData tx _ inPaths outPaths) pubKey
                 }
   where
     -- Outputs
-    outAddrs = nub $ map (\p -> (xPubAddr $ derivePubPath p pubKey, p)) outPaths
+    outAddrs = nub $ map (xPubAddr . (`derivePubPath` pubKey) &&& id) outPaths
     (outMap, outNonStdValue) = parseOutAddrs $ txOut tx
     (recipientAddrs, changeAddrs) =
         M.mapEitherWithKey (isMyAddr outAddrs) outMap
