@@ -200,7 +200,7 @@ defHandler ServerError   = json ServerError
 defHandler NotFound      = status status404 >> json NotFound
 defHandler BadRequest    = status status400 >> json BadRequest
 defHandler (UserError s) = status status400 >> json (UserError s)
-defHandler e             = json e
+defHandler e             = status status400 >> json e
 
 maybeJSON :: ToJSON a => Maybe a -> StoreM ()
 maybeJSON Nothing  = raise NotFound
@@ -233,9 +233,7 @@ main =
         supervisor
             KillAll
             s
-            [ runWeb (configPort conf) db mgr
-            , runStore conf mgr wdir b db
-            ]
+            [runWeb (configPort conf) db mgr, runStore conf mgr wdir b db]
   where
     opts =
         info
@@ -287,10 +285,10 @@ main =
                 postTransaction db mgr txHex >>= \case
                     Left NonStandard -> do
                         status status400
-                        json (UserError "Non-standard output not supported")
+                        json (UserError "Non-standard output")
                     Left InputSpent -> do
                         status status400
-                        json (UserError "Input has already been spent")
+                        json (UserError "Input already spent")
                     Left BadSignature -> do
                         status status400
                         json (UserError "Invalid signature")
@@ -302,8 +300,7 @@ main =
                         json (UserError "Not enough coins")
                     Left NoPeers -> do
                         status status500
-                        json
-                            (UserError "No peers connected to send transaction")
+                        json (UserError "No peers connected")
                     Right j -> json j
             notFound $ raise NotFound
     runStore conf mgr wdir b db =
