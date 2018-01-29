@@ -252,7 +252,7 @@ main =
             get "/block/height/:height" $ do
                 height <- param "height"
                 getBlockAtHeight height db Nothing >>= maybeJSON
-            get "/blocks/heights" $ do
+            get "/block/heights" $ do
                 heights <- param "heights"
                 getBlocksAtHeights heights db Nothing >>= json
             get "/blocks" $ do
