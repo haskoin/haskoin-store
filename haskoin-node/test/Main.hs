@@ -43,7 +43,7 @@ main = do
 
 getParentsTest :: Assertion
 getParentsTest =
-    runStderrLoggingT . withTestNode "parents" $ \(_mgr, ch, mbox) -> do
+    runNoLoggingT . withTestNode "parents" $ \(_mgr, ch, mbox) -> do
         $(logDebug) "[Test] Preparing to receive from mailbox"
         bn <-
             receiveMatch mbox $ \case
@@ -68,7 +68,7 @@ getParentsTest =
 
 nodeConnectSync :: Assertion
 nodeConnectSync =
-    runStderrLoggingT . withTestNode "connect-sync" $ \(_mgr, ch, mbox) -> do
+    runNoLoggingT . withTestNode "connect-sync" $ \(_mgr, ch, mbox) -> do
         bns <-
             replicateM 3 . receiveMatch mbox $ \case
                 ChainEvent (ChainNewBest bn) -> Just bn
@@ -81,7 +81,7 @@ nodeConnectSync =
 
 connectToPeers :: Assertion
 connectToPeers =
-    runStderrLoggingT . withTestNode "connect-peers" $ \(mgr, _ch, mbox) -> do
+    runNoLoggingT . withTestNode "connect-peers" $ \(mgr, _ch, mbox) -> do
         replicateM_ 3 $ do
             pc <- receive mbox
             case pc of
@@ -93,12 +93,12 @@ connectToPeers =
 
 downloadBlock :: Assertion
 downloadBlock =
-    runStderrLoggingT . withTestNode "download-block" $ \(_mgr, _ch, mbox) -> do
+    runNoLoggingT . withTestNode "download-block" $ \(_mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        getBlocks p [h]
+        peerGetBlocks p [h]
         b <-
             receiveMatch mbox $ \case
                 PeerEvent (p', GotBlock b)
@@ -111,12 +111,12 @@ downloadBlock =
 
 downloadSomeFailures :: Assertion
 downloadSomeFailures =
-    runStderrLoggingT . withTestNode "download-fail" $ \(_mgr, _ch, mbox) -> do
+    runNoLoggingT . withTestNode "download-fail" $ \(_mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        getTxs p [h]
+        peerGetTxs p [h]
         n <-
             receiveMatch mbox $ \case
                 PeerEvent (p', TxNotFound n)
@@ -148,7 +148,7 @@ testSyncedHeaders bns bb an = do
 
 connectToPeer :: Assertion
 connectToPeer =
-    runStderrLoggingT . withTestNode "connect-one-peer" $ \(mgr, _ch, mbox) -> do
+    runNoLoggingT . withTestNode "connect-one-peer" $ \(mgr, _ch, mbox) -> do
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
@@ -166,13 +166,13 @@ connectToPeer =
 
 getTestBlocks :: Assertion
 getTestBlocks =
-    runStderrLoggingT . withTestNode "get-blocks" $ \(_mgr, _ch, mbox) -> do
+    runNoLoggingT . withTestNode "get-blocks" $ \(_mgr, _ch, mbox) -> do
         $(logDebug) $ "[Test] Waiting for a peer"
         p <-
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
-        getBlocks p hs
+        peerGetBlocks p hs
         b1 <-
             receiveMatch mbox $ \case
                 PeerEvent (p', GotBlock b)
@@ -202,7 +202,7 @@ getTestBlocks =
 
 getTestMerkleBlocks :: Assertion
 getTestMerkleBlocks =
-    runStderrLoggingT . withTestNode "get-merkle-blocks" $ \(mgr, _ch, mbox) -> do
+    runNoLoggingT . withTestNode "get-merkle-blocks" $ \(mgr, _ch, mbox) -> do
         n <- liftIO randomIO
         let f0 = bloomCreate 2 0.001 n BloomUpdateAll
             f1 = bloomInsert f0 $ encode k

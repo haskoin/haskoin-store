@@ -278,18 +278,18 @@ getMerkleBlocks p bhs = PeerOutgoing (MGetData (GetData ivs)) `send` p
   where
     ivs = map (InvVector InvMerkleBlock . getBlockHash) bhs
 
-getBlocks ::
+peerGetBlocks ::
        MonadIO m => Peer -> [BlockHash] -> m ()
-getBlocks p bhs = PeerOutgoing (MGetData (GetData ivs)) `send` p
+peerGetBlocks p bhs = PeerOutgoing (MGetData (GetData ivs)) `send` p
   where
     ivs = map (InvVector InvBlock . getBlockHash) bhs
 
-getTxs ::
+peerGetTxs ::
        MonadIO m
     => Peer
     -> [TxHash]
     -> m ()
-getTxs p ths = PeerOutgoing (MGetData (GetData ivs)) `send` p
+peerGetTxs p ths = PeerOutgoing (MGetData (GetData ivs)) `send` p
   where
     ivs = map (InvVector InvTx . getTxHash) ths
 
