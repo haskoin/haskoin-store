@@ -228,7 +228,7 @@ getBlocksAtHeights bhs db s =
         Just _  -> f s
   where
     f s' =
-        fmap catMaybes . forM bhs $ \bh ->
+        fmap catMaybes . forM (nub bhs) $ \bh ->
             getBlockAtHeight bh db s'
 
 getBlockAtHeight ::
@@ -258,7 +258,7 @@ getAddrsSpent as db s =
         Nothing -> RocksDB.withSnapshot db $ f . Just
         Just _  -> f s
   where
-    f s' = concat <$> mapM (\a -> getAddrSpent a db s') as
+    f s' = concat <$> mapM (\a -> getAddrSpent a db s') (nub as)
 
 getAddrSpent ::
        MonadIO m
@@ -279,7 +279,7 @@ getAddrsUnspent as db s =
         Nothing -> RocksDB.withSnapshot db $ f . Just
         Just _  -> f s
   where
-    f s' = concat <$> mapM (\a -> getAddrUnspent a db s') as
+    f s' = concat <$> mapM (\a -> getAddrUnspent a db s') (nub as)
 
 getAddrUnspent ::
        MonadIO m
@@ -312,7 +312,7 @@ getBalances addrs db s =
         Nothing -> RocksDB.withSnapshot db $ f . Just
         Just _ -> f s
   where
-    f s' = forM addrs $ \a -> getBalance a db s'
+    f s' = forM (nub addrs) $ \a -> getBalance a db s'
 
 getBalance ::
        MonadIO m => Address -> DB -> Maybe Snapshot -> m AddressBalance
@@ -384,7 +384,7 @@ getTxs ths db s =
         Nothing -> RocksDB.withSnapshot db $ f . Just
         Just _  -> f s
   where
-    f s' = fmap catMaybes . forM ths $ \th -> getTx th db s'
+    f s' = fmap catMaybes . forM (nub ths) $ \th -> getTx th db s'
 
 getTx ::
        MonadIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
