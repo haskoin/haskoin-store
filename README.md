@@ -2,45 +2,63 @@
 
 [![Build Status](https://travis-ci.org/haskoin/haskoin.svg?branch=master)](https://travis-ci.org/haskoin/haskoin)
 
-Haskoin is an implementation of the Bitcoin protocol in Haskell. There are
-currently 2 main packages in Haskoin, namely haskoin-core and haskoin-node.
+Haskoin is an implementation of the Bitcoin protocol in Haskell. There are currently three packages in the Haskoin main repository.
 
-## haskoin-core
+Supported networks:
 
-haskoin-core is a package implementing the core functionalities of the Bitcoin
-protocol specifications. The following features are provided:
+- Bitcoin
+- Bitcoin Cash
+- Testnet3
+- Bitcoin Cash Testnet
+- RegTest
 
-- Hashing functions (sha-256, ripemd-160)
-- Block validation
-- Base58 encoding
+## Packages
+
+### haskoin-core
+
+Pure code related to the Bitcoin protocol.
+
+- Hashing functions
+- Block header validation
+- Base58 addresses
 - BIP32 extended key derivation and parsing (m/1'/2/3)
 - BIP39 mnemonic keys
-- ECDSA cryptographic primitives (using the C library libsecp256k1)
-- Script parsing and evaluation
-- Building and signing of standard transactions (regular, multisig, p2sh)
-- Parsing and manipulation of all Bitcoin protocol types
-- Bloom filters and partial merkle tree library (used in SPV wallets)
+- ECDSA cryptographic primitives (using external libsecp256k1 library)
+- Building and signing standard transactions (regular, multisig, p2sh)
+- Script parsing and evaluation (experimental)
+- Bitcoin protocol messages
+- Bloom filters and partial merkle tree manipulations for SPV wallets
 - Comprehensive test suite
 
-A wallet implementation is available in haskoin-wallet which uses both this
-package and the node implementation in haskoin-node.
+### haskoin-node
 
-[haskoin-core hackage documentation](http://hackage.haskell.org/package/haskoin-core)
+Network Server Node Library supporting:
 
-## haskoin-node
+- Peer Discovery & Management
+- Headers-first synchronisation
+- Regular and Merkle block download
+- Transaction download & upload
+- Persistent storage for headers and peers using RocksDB
+- Hooks for other features
 
-haskoin-node is the network server node. It
-implements the Bitcoin protocol in Haskell and allows the
-synchronization of headers and the download of blocks and transactions. haskoin-node is
-not a full node, but a node library, and provides:
+### haskoin-store
 
-- Implementation of the Bitcoin network protocol
-- Header proof-of-work validation
-- Headers-first synchronization
-- Peer discovery and management
-- Full block download
-- Merkle block download
-- Transaction download
-- Hooks for extra features
+Full blockchain index & store supporting:
 
-[haskoin-node hackage documentation](http://hackage.haskell.org/package/haskoin-node)
+- Address index
+- Persistent storage using RocksDB
+- UTXO cache for faster indexing
+- RESTful endpoints for blockchain data
+
+[API Documentation and example server](https://app.swaggerhub.com/apis/haskoin/blockchain-api/0.0.1)
+
+## Installation Instructions
+
+To install `haskoin-store`:
+
+- Get [Stack](https://haskell-lang.org/get-started)
+- Get [RocksDB](http://rocksdb.org/)
+- Clone this repository `git clone https://github.com/xenog/haskoin`
+- From the root of the repository run `stack install`
+
+You may need to get additional libraries if installation fails.
