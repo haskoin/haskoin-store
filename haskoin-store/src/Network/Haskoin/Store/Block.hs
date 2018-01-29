@@ -13,6 +13,7 @@ module Network.Haskoin.Store.Block
     , getBlocksAtHeights
     , getBlockAtHeight
     , getBlock
+    , getBlocks
     , getUnspent
     , getAddrTxs
     , getAddrsTxs
@@ -242,6 +243,15 @@ getBlockAtHeight height db s =
         runMaybeT $ do
             h <- MaybeT (retrieveValue (HeightKey height) db s')
             MaybeT (retrieveValue (BlockKey h) db s')
+
+getBlocks :: MonadIO m => [BlockHash] -> DB -> Maybe Snapshot -> m [BlockValue]
+getBlocks bids db s =
+    case s of
+        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Just _ -> f s
+  where
+    f s' =
+        fmap catMaybes . forM (nub bids) $ \bid -> getBlock bid db s'
 
 getBlock ::
        MonadIO m => BlockHash -> DB -> Maybe Snapshot -> m (Maybe BlockValue)

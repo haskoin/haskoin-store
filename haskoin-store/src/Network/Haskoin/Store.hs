@@ -22,6 +22,7 @@ module Network.Haskoin.Store
     , getBlockAtHeight
     , getBlocksAtHeights
     , getBlock
+    , getBlocks
     , getTx
     , getTxs
     , getAddrTxs

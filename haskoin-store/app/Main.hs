@@ -246,15 +246,18 @@ main =
         scottyT port id $ do
             defaultHandler defHandler
             get "/block/best" $ getBestBlock db Nothing >>= json
-            get "/block/hash/:block" $ do
+            get "/block/:block" $ do
                 block <- param "block"
                 getBlock block db Nothing >>= maybeJSON
             get "/block/height/:height" $ do
                 height <- param "height"
                 getBlockAtHeight height db Nothing >>= maybeJSON
-            get "/block/heights" $ do
+            get "/blocks/heights" $ do
                 heights <- param "heights"
                 getBlocksAtHeights heights db Nothing >>= json
+            get "/blocks" $ do
+                blocks <- param "blocks"
+                getBlocks blocks db Nothing >>= json
             get "/transaction/:txid" $ do
                 txid <- param "txid"
                 getTx txid db Nothing >>= maybeJSON
@@ -271,13 +274,13 @@ main =
                 address <- param "address"
                 getUnspent address db Nothing >>= json
             get "/address/unspent" $ do
-                addresses <- param "address"
+                addresses <- param "addresses"
                 getUnspents addresses db Nothing >>= json
             get "/address/:address/balance" $ do
                 address <- param "address"
                 getBalance address db Nothing >>= json
             get "/address/balances" $ do
-                addresses <- param "address"
+                addresses <- param "addresses"
                 getBalances addresses db Nothing >>= json
             post "/transaction" $ do
                 txHex <- jsonData
