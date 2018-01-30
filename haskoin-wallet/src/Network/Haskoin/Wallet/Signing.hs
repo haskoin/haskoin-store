@@ -144,7 +144,8 @@ instance S.Serialize TxSignData where
             forM_ ls $ S.put . toGeneric
 
 data TxSummary = TxSummary
-    { txSummaryTxHash   :: Maybe TxHash
+    { txSummaryType     :: !String
+    , txSummaryTxHash   :: Maybe TxHash
     , txSummaryOutbound :: M.Map Address Word64
     , txSummaryNonStd   :: !Word64
     , txSummaryInbound  :: M.Map Address (Word64, SoftPath)
@@ -167,7 +168,8 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     | otherwise =
         return
             TxSummary
-            { txSummaryTxHash = Nothing
+            { txSummaryType = txType
+            , txSummaryTxHash = Nothing
             , txSummaryOutbound = outboundAddrs
             , txSummaryInbound = inboundAddrs
             , txSummaryNonStd = outNonStdValue
@@ -200,6 +202,10 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     inboundSum = sum $ map fst $ M.elems inboundAddrs
     myCoinsSum = sum $ map (outValue . snd) myCoins
     amount = toInteger inboundSum - toInteger myCoinsSum
+    txType | length (txIn tx) == length myCoins &&
+             length (txOut tx) == length inboundAddrs = "Self"
+           | amount > 0 = "Inbound"
+           | otherwise  = "Outbound"
     -- Guess the signed transaction size
     guessLen = guessTxSize (length $ txIn tx) [] (length $ txOut tx) 0
 

@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Wallet.HTTP.Haskoin (haskoinService) where
 
-import           Control.Lens                          ((^.), (^..), (^?))
+import           Control.Lens                          ((&), (.~), (^.), (^..),
+                                                        (^?))
 import qualified Data.Aeson                            as J
 import           Data.Aeson.Lens
+import           Data.List
 import           Data.Maybe
 import           Data.Monoid                           ((<>))
 import qualified Data.Serialize                        as S
@@ -36,31 +38,25 @@ haskoinService =
     }
 
 getBalance :: [Address] -> IO Word64
-getBalance addrs = sum <$> mapM getAddressBalance addrs
-
-getAddressBalance :: Address -> IO Word64
-getAddressBalance a = do
-    r <- HTTP.asValue =<< HTTP.getWith options url
+getBalance addrs = do
+    r <- HTTP.asValue =<< HTTP.getWith opts url
     let v = r ^. HTTP.responseBody
-    return $ fromIntegral $ fromMaybe err $ v ^? key "confirmed" . _Integer
+    return $ fromIntegral $ sum $ v ^.. values . key "confirmed" . _Integer
   where
-    url = getURL <> "/address/" <> cs (addrToBase58 a) <> "/balance"
-    err =
-        consoleError $
-        formatError
-            "Invalid JSON response. Could not find the \"confirmed\" key"
+    url = getURL <> "/address/balances"
+    opts = options & HTTP.param "addresses" .~ [cs aList]
+    aList = intercalate "," $ map (cs . addrToBase58) addrs
 
 getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
-getUnspent addrs = concat <$> mapM getAddressUnspent addrs
-
-getAddressUnspent :: Address -> IO [(OutPoint, ScriptOutput, Word64)]
-getAddressUnspent a = do
-    r <- HTTP.asValue =<< HTTP.getWith options url
+getUnspent addrs = do
+    r <- HTTP.asValue =<< HTTP.getWith opts url
     let v = r ^. HTTP.responseBody
         resM = mapM parseCoin $ v ^.. values
     maybe (consoleError $ formatError "Could not parse coin") return resM
   where
-    url = getURL <> "/address/" <> cs (addrToBase58 a) <> "/unspent"
+    url = getURL <> "/address/unspent"
+    opts = options & HTTP.param "addresses" .~ [cs aList]
+    aList = intercalate "," $ map (cs . addrToBase58) addrs
     parseCoin v = do
         tid <- hexToTxHash . cs =<< v ^? key "txid" . _String
         pos <- v ^? key "vout" . _Integral
@@ -70,16 +66,15 @@ getAddressUnspent a = do
         return (OutPoint tid pos, scp, val)
 
 getAddressTxs :: [Address] -> IO [AddressTx]
-getAddressTxs as = concat <$> mapM getAddressTx as
-
-getAddressTx :: Address -> IO [AddressTx]
-getAddressTx a = do
-    r <- HTTP.asValue =<< HTTP.getWith options url
+getAddressTxs addrs = do
+    r <- HTTP.asValue =<< HTTP.getWith opts url
     let v = r ^. HTTP.responseBody
         resM = mapM parseAddrTx $ v ^.. values
     maybe (consoleError $ formatError "Could not parse addrTx") return resM
   where
-    url = getURL <> "/address/" <> cs (addrToBase58 a) <> "/transactions"
+    url = getURL <> "/address/transactions"
+    opts = options & HTTP.param "addresses" .~ [cs aList]
+    aList = intercalate "," $ map (cs . addrToBase58) addrs
     parseAddrTx v = do
         tid <- hexToTxHash . cs =<< v ^? key "txid" . _String
         bid <- hexToBlockHash . cs =<< v ^? key "block" . _String

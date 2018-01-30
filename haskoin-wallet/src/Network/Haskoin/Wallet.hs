@@ -402,7 +402,8 @@ transactions = command "transactions" "Display the account transactions" $
 mvtToTxSummary :: M.Map Address SoftPath -> TxMovement -> Tx -> TxSummary
 mvtToTxSummary derivMap TxMovement {..} tx =
     TxSummary
-    { txSummaryTxHash = Just txMovementTxHash
+    { txSummaryType = txType
+    , txSummaryTxHash = Just txMovementTxHash
     , txSummaryOutbound = outbound
     , txSummaryNonStd = nonStd
     , txSummaryInbound = joinWithPath txMovementInbound
@@ -427,6 +428,9 @@ mvtToTxSummary derivMap TxMovement {..} tx =
     fee = inSum - outSum
     feeByte = fee `div` fromIntegral txSize
     txSize = BS.length $ S.encode tx
+    txType | fee > 0 && -txMovementAmount == fee = "Self"
+           | txMovementAmount > 0 = "Inbound"
+           | otherwise = "Outbound"
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
@@ -462,7 +466,9 @@ txSummaryFormat accDeriv unit TxSummary {..} =
             [ formatTitle "Tx Summary"
             , nest 4 $
               vcat
-                  [ case txSummaryTxHash of
+                  [ formatKey (block 12 "Tx Type:") <>
+                    formatStatic txSummaryType
+                  , case txSummaryTxHash of
                         Just tid ->
                             formatKey (block 12 "Tx hash:") <>
                             formatTxHash (cs $ txHashToHex tid)
