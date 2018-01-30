@@ -214,8 +214,13 @@ signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
     return
         ( dat
           { txSummaryFeeByte =
-                (`div` fromIntegral byteSize) <$> txSummaryFee dat
-          , txSummaryTxSize = Just byteSize
+                if isSigned
+                    then (`div` fromIntegral byteSize) <$> txSummaryFee dat
+                    else txSummaryFeeByte dat
+          , txSummaryTxSize =
+                if isSigned
+                    then Just byteSize
+                    else txSummaryTxSize dat
           , txSummaryTxHash = Just $ txHash signedTx
           , txSummaryIsSigned = Just isSigned
           }

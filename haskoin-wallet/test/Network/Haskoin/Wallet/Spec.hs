@@ -240,10 +240,12 @@ signingSpec =
                 , txSummaryNonStd = 0
                 , txSummaryMyInputs =
                       M.fromList [(head extAddrs, (100000000, extDeriv :/ 0))]
-                , txSummaryAmount = 60000000
-                , txSummaryFee = 10000000
-                , txSummaryFeeByte = 44444
-                , txSummaryIsSigned = True
+                , txSummaryAmount = -60000000
+                , txSummaryFee = Just 10000000
+                , txSummaryFeeByte =
+                      Just $ 10000000 `div` fromIntegral (BS.length $ S.encode tx)
+                , txSummaryTxSize = Just $ BS.length $ S.encode tx
+                , txSummaryIsSigned = Just True
                 }
         it "can partially sign a transaction" $ do
             let fundTx =
@@ -265,10 +267,12 @@ signingSpec =
                 , txSummaryNonStd = 0
                 , txSummaryMyInputs =
                       M.fromList [(extAddrs !! 2, (200000000, extDeriv :/ 2))]
-                , txSummaryAmount = 150000000
-                , txSummaryFee = 50000000
-                , txSummaryFeeByte = 187265
-                , txSummaryIsSigned = False
+                , txSummaryAmount = -150000000
+                , txSummaryFee = Just 50000000
+                , txSummaryFeeByte =
+                      Just $ 50000000 `div` fromIntegral (guessTxSize 2 [] 2 0)
+                , txSummaryTxSize = Just $ guessTxSize 2 [] 2 0
+                , txSummaryIsSigned = Just False
                 }
         it "can send coins to your own wallet only" $ do
             let fundTx =
@@ -301,10 +305,12 @@ signingSpec =
                           [ (extAddrs !! 1, (200000000, extDeriv :/ 1))
                           , (head extAddrs, (100000000, extDeriv :/ 0))
                           ]
-                , txSummaryAmount = 50000000
-                , txSummaryFee = 50000000
-                , txSummaryFeeByte = 134408
-                , txSummaryIsSigned = True
+                , txSummaryAmount = -50000000
+                , txSummaryFee = Just 50000000
+                , txSummaryFeeByte =
+                      Just $ 50000000 `div` fromIntegral (BS.length $ S.encode tx)
+                , txSummaryTxSize = Just $ BS.length $ S.encode tx
+                , txSummaryIsSigned = Just True
                 }
         it "can sign a complex transaction" $ do
             let fundTx1 =
@@ -362,10 +368,12 @@ signingSpec =
                           , (extAddrs !! 2, (600000000, extDeriv :/ 2))
                           , (head extAddrs, (600000000, extDeriv :/ 0))
                           ]
-                , txSummaryAmount = 1400000000
-                , txSummaryFee = 100000000
-                , txSummaryFeeByte = 105152
-                , txSummaryIsSigned = True
+                , txSummaryAmount = -1400000000
+                , txSummaryFee = Just 100000000
+                , txSummaryFeeByte =
+                      Just $ 100000000 `div` fromIntegral (BS.length $ S.encode tx)
+                , txSummaryTxSize = Just $ BS.length $ S.encode tx
+                , txSummaryIsSigned = Just True
                 }
         it "can show \"Tx is missing inputs from private keys\" error" $ do
             let fundTx1 = testTx' [(extAddrs !! 1, 100000000)]
@@ -445,7 +453,7 @@ buildSpec =
 mergeAddressTxsSpec :: Spec
 mergeAddressTxsSpec =
     describe "mergeAddressTxs" $ do
-        it "Can merge input addresses" $ do
+        it "Can merge inbound addresses" $ do
             let as =
                     [ AddressTx
                           (head extAddrs)
@@ -475,14 +483,14 @@ mergeAddressTxsSpec =
             mergeAddressTxs as `shouldBe`
                 [ TxMovement
                       (dummyTxHash 1)
-                      M.empty
                       (M.fromList [(head extAddrs, 3000), (extAddrs !! 1, 4000)])
+                      M.empty
                       7000
                       1
                 , TxMovement
                       (dummyTxHash 2)
-                      M.empty
                       (M.fromList [(extAddrs !! 1, 5000)])
+                      M.empty
                       5000
                       2
                 ]
@@ -540,18 +548,18 @@ mergeAddressTxsSpec =
             mergeAddressTxs as `shouldBe`
                 [ TxMovement
                       (dummyTxHash 1)
-                      (M.fromList [(head extAddrs, 1000), (extAddrs !! 2, 5000)])
                       (M.fromList
                            [ (head extAddrs, 1000)
                            , (extAddrs !! 1, 4000)
                            , (extAddrs !! 2, 6000)
                            ])
+                      (M.fromList [(head extAddrs, 1000), (extAddrs !! 2, 5000)])
                       5000
                       1
                 , TxMovement
                       (dummyTxHash 2)
-                      (M.fromList [(extAddrs !! 2, 2000)])
                       (M.fromList [(head extAddrs, 1000)])
+                      (M.fromList [(extAddrs !! 2, 2000)])
                       (-1000)
                       2
                 ]
