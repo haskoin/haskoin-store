@@ -143,101 +143,102 @@ instance S.Serialize TxSignData where
             S.put $ VarInt $ fromIntegral $ length ls
             forM_ ls $ S.put . toGeneric
 
-data SigningInfo = SigningInfo
-    { signingInfoTxHash     :: Maybe TxHash
-    , signingInfoRecipients :: ![(Address, Word64)]
-    , signingInfoNonStd     :: !Word64
-    , signingInfoChange     :: ![(Address, (Word64, SoftPath))]
-    , signingInfoMyCoins    :: ![(Address, (Word64, SoftPath))]
-    , signingInfoAmount     :: !Integer
-    , signingInfoFee        :: !Word64
-    , signingInfoFeeByte    :: !Word64
-    , signingInfoIsSigned   :: !Bool
+data TxSummary = TxSummary
+    { txSummaryTxHash   :: Maybe TxHash
+    , txSummaryOutbound :: M.Map Address Word64
+    , txSummaryNonStd   :: !Word64
+    , txSummaryInbound  :: M.Map Address (Word64, SoftPath)
+    , txSummaryMyInputs :: M.Map Address (Word64, SoftPath)
+    , txSummaryAmount   :: !Integer
+    , txSummaryFee      :: Maybe Word64
+    , txSummaryFeeByte  :: Maybe Word64
+    , txSummaryTxSize   :: Maybe Int
+    , txSummaryIsSigned :: Maybe Bool
     } deriving (Eq, Show)
 
-pubSignInfo :: TxSignData -> XPubKey -> Either String SigningInfo
-pubSignInfo tsd@(TxSignData tx _ inPaths outPaths) pubKey
+pubTxSummary :: TxSignData -> XPubKey -> Either String TxSummary
+pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     | length coins /= length (txIn tx) =
         Left "Referenced input transactions are missing"
-    | length inPaths /= M.size myCoinAddrs =
+    | length inPaths /= M.size myInputAddrs =
         Left "Tx is missing inputs from private keys"
-    | length outPaths /= M.size changeAddrs =
+    | length outPaths /= M.size inboundAddrs =
         Left "Tx is missing change outputs"
     | otherwise =
         return
-            SigningInfo
-                { signingInfoTxHash     = Nothing
-                , signingInfoRecipients = M.assocs recipientAddrs
-                , signingInfoChange     = M.assocs changeAddrs
-                , signingInfoNonStd     = outNonStdValue
-                , signingInfoMyCoins    = M.assocs myCoinAddrs
-                , signingInfoAmount     = -amount
-                , signingInfoFee        = fee
-                , signingInfoFeeByte    = fee `div` fromIntegral guessLen
-                , signingInfoIsSigned   = False
-                }
-  where
+            TxSummary
+            { txSummaryTxHash = Nothing
+            , txSummaryOutbound = outboundAddrs
+            , txSummaryInbound = inboundAddrs
+            , txSummaryNonStd = outNonStdValue
+            , txSummaryMyInputs = myInputAddrs
+            , txSummaryAmount = amount
+            , txSummaryFee = Just fee
+            , txSummaryFeeByte = Just $ fee `div` fromIntegral guessLen
+            , txSummaryTxSize = Just guessLen
+            , txSummaryIsSigned = Just False
+            }
     -- Outputs
+  where
     outAddrs = nub $ map (xPubAddr . (`derivePubPath` pubKey) &&& id) outPaths
-    (outMap, outNonStdValue) = parseOutAddrs $ txOut tx
-    (recipientAddrs, changeAddrs) =
+    (outMap, outNonStdValue) = txOutputAddressValues $ txOut tx
+    (outboundAddrs, inboundAddrs) =
         M.mapEitherWithKey (isMyAddr outAddrs) outMap
-    isMyAddr xs a v = case M.lookup a (M.fromList xs) of
-                      Just p -> Right (v, p)
-                      _      -> Left v
+    isMyAddr xs a v =
+        case M.lookup a (M.fromList xs) of
+            Just p -> Right (v, p)
+            _      -> Left v
     -- Inputs
     inAddrs = nub $ map (\p -> (xPubAddr $ derivePubPath p pubKey, p)) inPaths
-    (coins, myCoins)  = parseTxCoins tsd pubKey
-    (myCoinAddrs', _) = parseOutAddrs $ map snd myCoins
-    (_, myCoinAddrs)  = M.mapEitherWithKey (isMyAddr inAddrs) myCoinAddrs'
+    (coins, myCoins) = parseTxCoins tsd pubKey
+    (myInputAddrs', _) = txOutputAddressValues $ map snd myCoins
+    (_, myInputAddrs) = M.mapEitherWithKey (isMyAddr inAddrs) myInputAddrs'
     -- Amounts and Fees
     inSum = sum $ map (outValue . snd) coins
     outSum = sum $ map outValue $ txOut tx
     fee = inSum - outSum
-    changeSum  = sum $ map fst $ M.elems changeAddrs
+    inboundSum = sum $ map fst $ M.elems inboundAddrs
     myCoinsSum = sum $ map (outValue . snd) myCoins
-    amount     = toInteger changeSum - toInteger myCoinsSum
+    amount = toInteger inboundSum - toInteger myCoinsSum
     -- Guess the signed transaction size
     guessLen = guessTxSize (length $ txIn tx) [] (length $ txOut tx) 0
 
-signWalletTx :: TxSignData -> XPrvKey -> Either String (SigningInfo, Tx)
+signWalletTx :: TxSignData -> XPrvKey -> Either String (TxSummary, Tx)
 signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
     sigDat <- mapM g myCoins
     signedTx <- signTx tx (map f sigDat) prvKeys
-    let byteSize = fromIntegral $ BS.length $ S.encode signedTx
+    let byteSize = BS.length $ S.encode signedTx
         vDat = rights $ map g coins
         isSigned = noEmptyInputs signedTx && verifyStdTx signedTx vDat
-    dat <- pubSignInfo tsd pubKey
+    dat <- pubTxSummary tsd pubKey
     return
         ( dat
-          { signingInfoFeeByte = signingInfoFee dat `div` byteSize
-          , signingInfoTxHash = Just $ txHash signedTx
-          , signingInfoIsSigned = isSigned
+          { txSummaryFeeByte =
+                (`div` fromIntegral byteSize) <$> txSummaryFee dat
+          , txSummaryTxSize = Just byteSize
+          , txSummaryTxHash = Just $ txHash signedTx
+          , txSummaryIsSigned = Just isSigned
           }
         , signedTx)
   where
     pubKey = deriveXPubKey signKey
     (coins, myCoins) = parseTxCoins tsd pubKey
-    prvKeys = map (\p -> toPrvKeyG $ xPrvKey $ derivePath p signKey) inPaths
-    f (so, val, op) =
-        SigInput
-            so
-            val
-            op
-            (maybeSetForkId sigHashAll)
-            Nothing
-    g (op, to) = (,,) <$> decodeTxOutSO to <*> return (outValue to) <*> return op
-    maybeSetForkId | isJust sigHashForkId = setForkIdFlag
-                   | otherwise = id
+    prvKeys = map (toPrvKeyG . xPrvKey . (`derivePath` signKey)) inPaths
+    f (so, val, op) = SigInput so val op (maybeSetForkId sigHashAll) Nothing
+    g (op, to) =
+        (,,) <$> decodeTxOutSO to <*> return (outValue to) <*> return op
+    maybeSetForkId
+        | isJust sigHashForkId = setForkIdFlag
+        | otherwise = id
 
 noEmptyInputs :: Tx -> Bool
 noEmptyInputs = all (not . BS.null) . map scriptInput . txIn
 
-parseOutAddrs :: [TxOut] -> (M.Map Address Word64, Word64)
-parseOutAddrs txOuts =
+txOutputAddressValues :: [TxOut] -> (M.Map Address Word64, Word64)
+txOutputAddressValues txout =
     (M.fromListWith (+) rs, sum ls)
   where
-    xs = map (decodeTxOutAddr &&& outValue) txOuts
+    xs = map (decodeTxOutAddr &&& outValue) txout
     (ls, rs) = partitionEithers $ map partE xs
     partE (Right a, v) = Right (a, v)
     partE (Left _, v)  = Left v
@@ -253,19 +254,20 @@ parseTxCoins :: TxSignData -> XPubKey
 parseTxCoins (TxSignData tx inTxs inPaths _) pubKey =
     (coins, myCoins)
   where
-    inAddrs = nub $ map (\p -> xPubAddr $ derivePubPath p pubKey) inPaths
+    inAddrs = nub $ map (xPubAddr . (`derivePubPath` pubKey)) inPaths
     coins = mapMaybe (findCoin inTxs . prevOutput) $ txIn tx
     myCoins = filter (isMyCoin . snd) coins
-    isMyCoin to = case decodeTxOutAddr to of
-                     Right a -> a `elem` inAddrs
-                     _       -> False
+    isMyCoin to =
+        case decodeTxOutAddr to of
+            Right a -> a `elem` inAddrs
+            _ -> False
 
 findCoin :: [Tx] -> OutPoint -> Maybe (OutPoint, TxOut)
 findCoin txs op@(OutPoint h i) = do
     matchTx <- listToMaybe $ filter ((== h) . txHash) txs
-    to      <- txOut matchTx `safeIndex` fromIntegral i
+    to <- txOut matchTx `safeIndex` fromIntegral i
     return (op, to)
   where
-    safeIndex xs n | n >= length xs = Nothing
-                   | otherwise      = Just $ xs !! n
-
+    safeIndex xs n
+        | n >= length xs = Nothing
+        | otherwise = Just $ xs !! n

@@ -72,13 +72,14 @@ data ConsoleFormat
     | FormatMnemonic { getFormat :: !String }
     | FormatAddress { getFormat :: !String }
     | FormatTxHash { getFormat :: !String }
-    | FormatPosBalance { getFormat :: !String }
-    | FormatNegBalance { getFormat :: !String }
+    | FormatPosAmount { getFormat :: !String }
+    | FormatNegAmount { getFormat :: !String }
+    | FormatFee { getFormat :: !String }
     | FormatTrue { getFormat :: !String }
     | FormatFalse { getFormat :: !String }
-    | FormatGreen { getFormat :: !String }
-    | FormatCyan { getFormat :: !String }
-    | FormatWarn { getFormat :: !String }
+    | FormatCash { getFormat :: !String }
+    | FormatBitcoin { getFormat :: !String }
+    | FormatTestnet { getFormat :: !String }
     | FormatError { getFormat :: !String }
 
 formatTitle :: String -> ConsolePrinter
@@ -111,11 +112,14 @@ formatAddress = text . FormatAddress
 formatTxHash :: String -> ConsolePrinter
 formatTxHash = text . FormatTxHash
 
-formatPosBalance :: String -> ConsolePrinter
-formatPosBalance = text . FormatPosBalance
+formatPosAmount :: String -> ConsolePrinter
+formatPosAmount = text . FormatPosAmount
 
-formatNegBalance :: String -> ConsolePrinter
-formatNegBalance = text . FormatNegBalance
+formatNegAmount :: String -> ConsolePrinter
+formatNegAmount = text . FormatNegAmount
+
+formatFee :: String -> ConsolePrinter
+formatFee = text . FormatFee
 
 formatTrue :: String -> ConsolePrinter
 formatTrue = text . FormatTrue
@@ -123,14 +127,14 @@ formatTrue = text . FormatTrue
 formatFalse :: String -> ConsolePrinter
 formatFalse = text . FormatFalse
 
-formatGreen :: String -> ConsolePrinter
-formatGreen = text . FormatGreen
+formatCash :: String -> ConsolePrinter
+formatCash = text . FormatCash
 
-formatCyan :: String -> ConsolePrinter
-formatCyan = text . FormatCyan
+formatBitcoin :: String -> ConsolePrinter
+formatBitcoin = text . FormatBitcoin
 
-formatWarn :: String -> ConsolePrinter
-formatWarn = text . FormatWarn
+formatTestnet :: String -> ConsolePrinter
+formatTestnet = text . FormatTestnet
 
 formatError :: String -> ConsolePrinter
 formatError = text . FormatError
@@ -155,23 +159,24 @@ formatSGR frm = case frm of
                           , SetColor Foreground Dull Blue
                           ]
     FormatTxHash _     -> [ SetColor Foreground Dull Magenta ]
-    FormatPosBalance _ -> [ SetConsoleIntensity BoldIntensity
+    FormatPosAmount  _ -> [ SetConsoleIntensity BoldIntensity
                           , SetColor Foreground Dull Green
                           ]
-    FormatNegBalance _ -> [ SetConsoleIntensity BoldIntensity
+    FormatNegAmount _  -> [ SetConsoleIntensity BoldIntensity
                           , SetColor Foreground Dull Red
                           ]
+    FormatFee _        -> []
     FormatTrue _       -> [ SetConsoleIntensity BoldIntensity
                           , SetColor Foreground Dull Green
                           ]
     FormatFalse _      -> [ SetConsoleIntensity BoldIntensity
                           , SetColor Foreground Dull Red
                           ]
-    FormatGreen _      -> [ SetColor Foreground Dull Green
+    FormatCash _       -> [ SetColor Foreground Dull Green
                           ]
-    FormatCyan _       -> [ SetColor Foreground Dull Cyan
+    FormatBitcoin _    -> [ SetColor Foreground Dull Cyan
                           ]
-    FormatWarn _       -> [ SetColor Foreground Dull Yellow ]
+    FormatTestnet _    -> [ SetColor Foreground Dull Yellow ]
     FormatError _      -> [ SetColor Foreground Dull Red ]
 
 printFormat :: ConsoleFormat -> IO ()

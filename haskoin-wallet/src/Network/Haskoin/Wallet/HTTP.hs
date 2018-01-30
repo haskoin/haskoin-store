@@ -27,11 +27,11 @@ data AddressTx = AddressTx
     deriving (Eq, Show)
 
 data TxMovement = TxMovement
-    { txMovementTxHash     :: !TxHash
-    , txMovementInAddress  :: [(Address, Word64)]
-    , txMovementOutAddress :: [(Address, Word64)]
-    , txMovementAmount     :: !Integer
-    , txMovementHeight     :: !Integer
+    { txMovementTxHash   :: !TxHash
+    , txMovementInbound  :: M.Map Address Word64
+    , txMovementMyInputs :: M.Map Address Word64
+    , txMovementAmount   :: !Integer
+    , txMovementHeight   :: !Integer
     }
     deriving (Eq, Show)
 
@@ -40,19 +40,19 @@ mergeAddressTxs as =
     sortOn txMovementHeight $ map toMvt $ M.assocs aMap
   where
     aMap :: M.Map TxHash [AddressTx]
-    aMap = M.fromListWith (<>) $ map (addrTxTxHash &&& (:[])) as
+    aMap = M.fromListWith (<>) $ map (addrTxTxHash &&& (: [])) as
     toMvt :: (TxHash, [AddressTx]) -> TxMovement
     toMvt (tid, atxs) =
-        let (is,os) = partition ((< 0) . addrTxAmount) atxs
-         in TxMovement
-            { txMovementTxHash = tid
-            , txMovementInAddress = combineAddrs is
-            , txMovementOutAddress = combineAddrs os
-            , txMovementAmount = sum $ map addrTxAmount atxs
-            , txMovementHeight = addrTxHeight $ head atxs
-            }
-    combineAddrs :: [AddressTx] -> [(Address, Word64)]
-    combineAddrs = sortOn snd . M.assocs . M.fromListWith (+) . map toAddrVal
+        let (os, is) = partition ((< 0) . addrTxAmount) atxs
+        in TxMovement
+           { txMovementTxHash = tid
+           , txMovementInbound = toAddrMap is
+           , txMovementMyInputs = toAddrMap os
+           , txMovementAmount = sum $ map addrTxAmount atxs
+           , txMovementHeight = addrTxHeight $ head atxs
+           }
+    toAddrMap :: [AddressTx] -> M.Map Address Word64
+    toAddrMap = M.fromListWith (+) . map toAddrVal
     toAddrVal :: AddressTx -> (Address, Word64)
     toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
 

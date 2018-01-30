@@ -5,16 +5,17 @@ import           Control.Lens                               ((^.), _1, _2, _3,
                                                              _4)
 import qualified Data.ByteString                            as BS
 import           Data.Either
+import qualified Data.Map.Strict                            as M
 import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Serialize                             as S
 import           Data.String.Conversions                    (cs)
 import qualified Data.Text                                  as T
 import           Data.Word
+import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
-import           Network.Haskoin.Block
 import           Network.Haskoin.Util
 import           Network.Haskoin.Wallet.AccountStore
 import           Network.Haskoin.Wallet.Amounts
@@ -22,8 +23,8 @@ import           Network.Haskoin.Wallet.Arbitrary           ()
 import           Network.Haskoin.Wallet.Entropy
 import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.HTTP.BlockchainInfo
-import           Network.Haskoin.Wallet.HTTP.Insight
 import           Network.Haskoin.Wallet.HTTP.Haskoin
+import           Network.Haskoin.Wallet.HTTP.Insight
 import           Network.Haskoin.Wallet.Signing
 import           Numeric
 import           Test.Hspec
@@ -231,18 +232,18 @@ signingSpec =
                 xPrv = fromRight undefined $ signingKey (cs pwd) (cs mnem) 0
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
-                SigningInfo
-                { signingInfoTxHash = Just $ txHash tx
-                , signingInfoRecipients = [(head othAddrs, 50000000)]
-                , signingInfoChange =
-                      [(head intAddrs, (40000000, intDeriv :/ 0))]
-                , signingInfoNonStd = 0
-                , signingInfoMyCoins =
-                      [(head extAddrs, (100000000, extDeriv :/ 0))]
-                , signingInfoAmount = 60000000
-                , signingInfoFee = 10000000
-                , signingInfoFeeByte = 44444
-                , signingInfoIsSigned = True
+                TxSummary
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryOutbound = M.fromList [(head othAddrs, 50000000)]
+                , txSummaryInbound =
+                      M.fromList [(head intAddrs, (40000000, intDeriv :/ 0))]
+                , txSummaryNonStd = 0
+                , txSummaryMyInputs =
+                      M.fromList [(head extAddrs, (100000000, extDeriv :/ 0))]
+                , txSummaryAmount = 60000000
+                , txSummaryFee = 10000000
+                , txSummaryFeeByte = 44444
+                , txSummaryIsSigned = True
                 }
         it "can partially sign a transaction" $ do
             let fundTx =
@@ -256,18 +257,18 @@ signingSpec =
                 xPrv = fromRight undefined $ signingKey (cs pwd) (cs mnem) 0
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
-                SigningInfo
-                { signingInfoTxHash = Just $ txHash tx
-                , signingInfoRecipients = [(othAddrs !! 1, 200000000)]
-                , signingInfoChange =
-                      [(intAddrs !! 1, (50000000, intDeriv :/ 1))]
-                , signingInfoNonStd = 0
-                , signingInfoMyCoins =
-                      [(extAddrs !! 2, (200000000, extDeriv :/ 2))]
-                , signingInfoAmount = 150000000
-                , signingInfoFee = 50000000
-                , signingInfoFeeByte = 187265
-                , signingInfoIsSigned = False
+                TxSummary
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryOutbound = M.fromList [(othAddrs !! 1, 200000000)]
+                , txSummaryInbound =
+                      M.fromList [(intAddrs !! 1, (50000000, intDeriv :/ 1))]
+                , txSummaryNonStd = 0
+                , txSummaryMyInputs =
+                      M.fromList [(extAddrs !! 2, (200000000, extDeriv :/ 2))]
+                , txSummaryAmount = 150000000
+                , txSummaryFee = 50000000
+                , txSummaryFeeByte = 187265
+                , txSummaryIsSigned = False
                 }
         it "can send coins to your own wallet only" $ do
             let fundTx =
@@ -286,22 +287,24 @@ signingSpec =
                 xPrv = fromRight undefined $ signingKey (cs pwd) (cs mnem) 0
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
-                SigningInfo
-                { signingInfoTxHash = Just $ txHash tx
-                , signingInfoRecipients = []
-                , signingInfoChange =
-                      [ (head intAddrs, (50000000, intDeriv :/ 0))
-                      , (extAddrs !! 2, (200000000, extDeriv :/ 2))
-                      ]
-                , signingInfoNonStd = 0
-                , signingInfoMyCoins =
-                      [ (extAddrs !! 1, (200000000, extDeriv :/ 1))
-                      , (head extAddrs, (100000000, extDeriv :/ 0))
-                      ]
-                , signingInfoAmount = 50000000
-                , signingInfoFee = 50000000
-                , signingInfoFeeByte = 134408
-                , signingInfoIsSigned = True
+                TxSummary
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryOutbound = M.empty
+                , txSummaryInbound =
+                      M.fromList
+                          [ (head intAddrs, (50000000, intDeriv :/ 0))
+                          , (extAddrs !! 2, (200000000, extDeriv :/ 2))
+                          ]
+                , txSummaryNonStd = 0
+                , txSummaryMyInputs =
+                      M.fromList
+                          [ (extAddrs !! 1, (200000000, extDeriv :/ 1))
+                          , (head extAddrs, (100000000, extDeriv :/ 0))
+                          ]
+                , txSummaryAmount = 50000000
+                , txSummaryFee = 50000000
+                , txSummaryFeeByte = 134408
+                , txSummaryIsSigned = True
                 }
         it "can sign a complex transaction" $ do
             let fundTx1 =
@@ -340,24 +343,29 @@ signingSpec =
                 xPrv = fromRight undefined $ signingKey (cs pwd) (cs mnem) 0
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
-                SigningInfo
-                { signingInfoTxHash = Just $ txHash tx
-                , signingInfoRecipients =
-                      [(head othAddrs, 1000000000), (othAddrs !! 1, 300000000)]
-                , signingInfoChange =
-                      [ (head intAddrs, (200000000, intDeriv :/ 0))
-                      , (intAddrs !! 1, (100000000, intDeriv :/ 1))
-                      ]
-                , signingInfoNonStd = 0
-                , signingInfoMyCoins =
-                      [ (extAddrs !! 1, (500000000, extDeriv :/ 1))
-                      , (extAddrs !! 2, (600000000, extDeriv :/ 2))
-                      , (head extAddrs, (600000000, extDeriv :/ 0))
-                      ]
-                , signingInfoAmount = 1400000000
-                , signingInfoFee = 100000000
-                , signingInfoFeeByte = 105152
-                , signingInfoIsSigned = True
+                TxSummary
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryOutbound =
+                      M.fromList
+                          [ (head othAddrs, 1000000000)
+                          , (othAddrs !! 1, 300000000)
+                          ]
+                , txSummaryInbound =
+                      M.fromList
+                          [ (head intAddrs, (200000000, intDeriv :/ 0))
+                          , (intAddrs !! 1, (100000000, intDeriv :/ 1))
+                          ]
+                , txSummaryNonStd = 0
+                , txSummaryMyInputs =
+                      M.fromList
+                          [ (extAddrs !! 1, (500000000, extDeriv :/ 1))
+                          , (extAddrs !! 2, (600000000, extDeriv :/ 2))
+                          , (head extAddrs, (600000000, extDeriv :/ 0))
+                          ]
+                , txSummaryAmount = 1400000000
+                , txSummaryFee = 100000000
+                , txSummaryFeeByte = 105152
+                , txSummaryIsSigned = True
                 }
         it "can show \"Tx is missing inputs from private keys\" error" $ do
             let fundTx1 = testTx' [(extAddrs !! 1, 100000000)]
@@ -467,11 +475,16 @@ mergeAddressTxsSpec =
             mergeAddressTxs as `shouldBe`
                 [ TxMovement
                       (dummyTxHash 1)
-                      []
-                      [(head extAddrs, 3000), (extAddrs !! 1, 4000)]
+                      M.empty
+                      (M.fromList [(head extAddrs, 3000), (extAddrs !! 1, 4000)])
                       7000
                       1
-                , TxMovement (dummyTxHash 2) [] [(extAddrs !! 1, 5000)] 5000 2
+                , TxMovement
+                      (dummyTxHash 2)
+                      M.empty
+                      (M.fromList [(extAddrs !! 1, 5000)])
+                      5000
+                      2
                 ]
         it "Can merge input and output addresses" $ do
             let as =
@@ -527,17 +540,18 @@ mergeAddressTxsSpec =
             mergeAddressTxs as `shouldBe`
                 [ TxMovement
                       (dummyTxHash 1)
-                      [(head extAddrs, 1000), (extAddrs !! 2, 5000)]
-                      [ (head extAddrs, 1000)
-                      , (extAddrs !! 1, 4000)
-                      , (extAddrs !! 2, 6000)
-                      ]
+                      (M.fromList [(head extAddrs, 1000), (extAddrs !! 2, 5000)])
+                      (M.fromList
+                           [ (head extAddrs, 1000)
+                           , (extAddrs !! 1, 4000)
+                           , (extAddrs !! 2, 6000)
+                           ])
                       5000
                       1
                 , TxMovement
                       (dummyTxHash 2)
-                      [(extAddrs !! 2, 2000)]
-                      [(head extAddrs, 1000)]
+                      (M.fromList [(extAddrs !! 2, 2000)])
+                      (M.fromList [(head extAddrs, 1000)])
                       (-1000)
                       2
                 ]
@@ -594,7 +608,7 @@ insightServiceSpec =
                     "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
             res <- httpTx insightService tid
             txHash res `shouldBe` tid
-    
+
 haskoinServiceSpec :: Spec
 haskoinServiceSpec =
     describe "Haskoin service (online test)" $ do
@@ -621,7 +635,7 @@ haskoinServiceSpec =
                     "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
             res <- httpTx haskoinService tid
             txHash res `shouldBe` tid
-            
+
 
 {- Test Constants -}
 

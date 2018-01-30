@@ -24,12 +24,14 @@ formatAmount :: AmountUnit -> Word64 -> ConsolePrinter
 formatAmount unit = formatIntegerAmount unit . fromIntegral
 
 formatIntegerAmount :: AmountUnit -> Integer -> ConsolePrinter
-formatIntegerAmount unit amnt =
+formatIntegerAmount unit amnt
+    | amnt >= 0 = formatAmountWith formatPosAmount unit amnt
+    | otherwise = formatAmountWith formatNegAmount unit amnt
+
+formatAmountWith ::
+       (String -> ConsolePrinter) -> AmountUnit -> Integer -> ConsolePrinter
+formatAmountWith f unit amnt =
     f (showIntegerAmount unit amnt) <+> formatStatic (showUnit unit amnt)
-  where
-    f
-        | amnt >= 0 = formatPosBalance
-        | otherwise = formatNegBalance
 
 showUnit :: AmountUnit -> Integer -> String
 showUnit unit amnt

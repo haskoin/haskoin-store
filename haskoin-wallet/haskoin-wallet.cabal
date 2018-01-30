@@ -85,6 +85,7 @@ test-suite test-haskoin-wallet
                  , base                          >= 4.8
                  , bytestring
                  , cereal
+                 , containers                    >= 0.5
                  , haskoin-core                  >= 0.5       && < 0.6
                  , haskoin-wallet
                  , hspec

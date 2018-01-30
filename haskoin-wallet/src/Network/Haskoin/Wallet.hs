@@ -3,14 +3,12 @@
 {-# LANGUAGE RecordWildCards   #-}
 module Network.Haskoin.Wallet where
 
-import           Control.Arrow                              ((&&&))
 import           Control.Lens                               ((^?))
 import           Control.Monad
 import qualified Data.Aeson                                 as J
 import           Data.Aeson.Lens
 import qualified Data.ByteString                            as BS
 import qualified Data.ByteString.Lazy                       as BL
-import           Data.List
 import qualified Data.Map.Strict                            as M
 import           Data.Maybe
 import           Data.Monoid                                ((<>))
@@ -125,16 +123,16 @@ setOptNet :: String -> IO ()
 setOptNet name
     | name == getNetworkName bitcoinNetwork = do
         setBitcoinNetwork
-        renderIO $ formatCyan "--- Bitcoin ---"
+        renderIO $ formatBitcoin "--- Bitcoin ---"
     | name == getNetworkName bitcoinCashNetwork = do
         setBitcoinCashNetwork
-        renderIO $ formatGreen "--- Bitcoin Cash ---"
+        renderIO $ formatCash "--- Bitcoin Cash ---"
     | name == getNetworkName testnet3Network = do
         setTestnet3Network
-        renderIO $ formatWarn "--- Testnet ---"
+        renderIO $ formatTestnet "--- Testnet ---"
     | name == getNetworkName cashTestNetwork = do
         setCashTestNetwork
-        renderIO $ formatWarn "--- Bitcoin Cash Testnet ---"
+        renderIO $ formatTestnet "--- Bitcoin Cash Testnet ---"
     | otherwise =
         consoleError $
         vcat
@@ -293,14 +291,14 @@ send = command "send" "Send coins (hw send address amount [address amount..])" $
                 service = parseBlockchainService s
             resE <- buildTxSignData service store rcps feeW dustW
             let (!signDat, !store') = either (consoleError . formatError) id resE
-                infoE = pubSignInfo signDat (accountStoreXPubKey store)
+                infoE = pubTxSummary signDat (accountStoreXPubKey store)
                 !info = either (consoleError . formatError) id infoE
             when (store /= store') $ updateAccountStore k $ const store'
             let chsum = txChksum $ txSignDataTx signDat
                 fname = "tx-" <> cs chsum <> "-unsigned"
             path <- writeDoc fname $ J.toJSON signDat
             renderIO $ vcat
-                [ signingInfoFormat (accountStoreDeriv store) unit info Nothing
+                [ txSummaryFormat (accountStoreDeriv store) unit info
                 , formatTitle "Unsigned Tx Data File"
                 , nest 4 $ formatFilePath path
                 ]
@@ -339,10 +337,11 @@ sign = command "sign" "Sign the output of the \"send\" command" $
                 case resE of
                     Right (info, signedTx) -> do
                         renderIO $
-                            signingInfoFormat
-                                (bip44Deriv $ fromIntegral d) unit info
-                                (Just $ BS.length $ S.encode signedTx)
-                        confirmAmount unit $ signingInfoAmount info
+                            txSummaryFormat
+                                (bip44Deriv $ fromIntegral d)
+                                unit
+                                info
+                        confirmAmount unit $ txSummaryAmount info
                         let signedHex = encodeHex $ S.encode signedTx
                             chsum = cs $ txChksum signedTx
                             fname = "tx-" <> chsum <> "-signed"
@@ -360,86 +359,98 @@ sign = command "sign" "Sign the output of the \"send\" command" $
             renderIO $ formatError "Invalid tx amount"
             confirmAmount unit txAmnt
 
-signingInfoFormat :: HardPath
-                  -> AmountUnit
-                  -> SigningInfo
-                  -> Maybe Int
-                  -> ConsolePrinter
-signingInfoFormat accDeriv unit SigningInfo {..} sizeM =
-    vcat [summary, recips, change, mycoins]
+txSummaryFormat :: HardPath
+                -> AmountUnit
+                -> TxSummary
+                -> ConsolePrinter
+txSummaryFormat accDeriv unit TxSummary {..} =
+    vcat [summary, nest 2 $ vcat [outbound, inbound, myInputs]]
   where
     summary =
         vcat
             [ formatTitle "Tx Summary"
             , nest 4 $
               vcat
-                  [ case signingInfoTxHash of
+                  [ case txSummaryTxHash of
                         Just tid ->
                             formatKey (block 12 "Tx hash:") <>
                             formatTxHash (cs $ txHashToHex tid)
                         _ -> mempty
                   , formatKey (block 12 "Amount:") <>
-                    formatIntegerAmount unit signingInfoAmount
-                  , formatKey (block 12 "Fee:") <>
-                    formatAmount unit signingInfoFee
-                  , case sizeM of
+                    formatIntegerAmount unit txSummaryAmount
+                  , case txSummaryFee of
+                        Just fee ->
+                            formatKey (block 12 "Fee:") <>
+                            formatAmountWith formatFee unit (fromIntegral fee)
+                        _ -> mempty
+                  , case txSummaryFeeByte of
+                        Just fee ->
+                            formatKey (block 12 "Fee/byte:") <>
+                            formatAmountWith formatFee UnitSatoshi (fromIntegral fee)
+                        _ -> mempty
+                  , case txSummaryTxSize of
                         Just size ->
                             formatKey (block 12 "Tx size:") <>
                             formatStatic (show size <> " bytes")
                         _ -> mempty
-                  , formatKey (block 12 "Fee/byte:") <>
-                    formatAmount UnitSatoshi signingInfoFeeByte
-                  , formatKey (block 12 "Signed:") <>
-                    if signingInfoIsSigned
-                        then formatTrue "Yes"
-                        else formatFalse "No"
+                  , case txSummaryIsSigned of
+                        Just signed ->
+                            formatKey (block 12 "Signed:") <>
+                            if signed
+                                then formatTrue "Yes"
+                                else formatFalse "No"
+                        _ -> mempty
                   ]
             ]
-    recips
-        | signingInfoNonStd == 0 && null signingInfoRecipients = mempty
+    outbound
+        | txSummaryNonStd == 0 && null txSummaryOutbound = mempty
         | otherwise =
             vcat
-                [ formatTitle "Tx Recipients"
-                , nest 4 $
-                  vcat $ map addrFormat signingInfoRecipients <> [nonStdRcp]
+                [ formatTitle "Outgoing amounts"
+                , nest 2 $
+                  vcat $
+                  map (addrFormat (* (-1))) (M.assocs txSummaryOutbound) <>
+                  [nonStdRcp]
                 ]
     nonStdRcp
-        | signingInfoNonStd == 0 = mempty
+        | txSummaryNonStd == 0 = mempty
         | otherwise =
             formatAddrVal
                 unit
                 accDeriv
                 (formatStatic "Non-standard recipients")
                 Nothing
-                (fromIntegral signingInfoNonStd)
-    change
-        | null signingInfoChange = mempty
+                (-fromIntegral txSummaryNonStd)
+    inbound
+        | null txSummaryInbound = mempty
         | otherwise =
             vcat
-                [ formatTitle "Your Tx Change"
-                , nest 4 $ vcat $ map addrFormat' signingInfoChange
+                [ formatTitle "Inbound amounts and change"
+                , nest 2 $
+                  vcat $ map (addrFormat' id) (M.assocs txSummaryInbound)
                 ]
-    mycoins
-        | null signingInfoMyCoins = mempty
+    myInputs
+        | null txSummaryMyInputs = mempty
         | otherwise =
             vcat
-                [ formatTitle "Your Tx Input Coins"
-                , nest 4 $ vcat $ map addrFormat' signingInfoMyCoins
+                [ formatTitle "My spent input coins"
+                , nest 2 $
+                  vcat $ map (addrFormat' (* (-1))) (M.assocs txSummaryMyInputs)
                 ]
-    addrFormat' (a, (v, p)) =
+    addrFormat' f (a, (v, p)) =
         formatAddrVal
             unit
             accDeriv
             (formatAddress $ cs $ addrToBase58 a)
             (Just p)
-            (fromIntegral v)
-    addrFormat (a, v) =
+            (f $ fromIntegral v)
+    addrFormat f (a, v) =
         formatAddrVal
             unit
             accDeriv
             (formatAddress $ cs $ addrToBase58 a)
             Nothing
-            (fromIntegral v)
+            (f $ fromIntegral v)
 
 formatAddrVal ::
        AmountUnit
@@ -496,58 +507,41 @@ transactions = command "transactions" "Display the account transactions" $
                 aMap = M.fromList allAddrs
             mvts <- mergeAddressTxs <$> httpAddressTxs service (map fst allAddrs)
             forM_ mvts $ \mvt -> do
-                tsd <- mvtToTxSignData service aMap mvt
-                case pubSignInfo tsd $ accountStoreXPubKey store of
-                    Right info ->
-                        renderIO $
-                            signingInfoFormat
-                                (accountStoreDeriv store)
-                                unit
-                                info
-                                (Just $ BS.length $ S.encode $ txSignDataTx tsd)
-                    Left err -> consoleError $ formatError err
+                tx <- httpTx service $ txMovementTxHash mvt
+                renderIO $
+                    txSummaryFormat
+                        (accountStoreDeriv store)
+                        unit
+                        (mvtToTxSummary aMap mvt tx)
 
-mvtToTxSignData ::
-       BlockchainService
-    -> M.Map Address SoftPath
-    -> TxMovement
-    -> IO TxSignData
-mvtToTxSignData service aMap TxMovement{..} = do
-    tx <- httpTx service txMovementTxHash
-    let txHashIn = nub $ map (outPointHash . prevOutput) $ txIn tx
-    inputs <- mapM (httpTx service) txHashIn
-    let inPath = map (snd . joinAddrDeriv aMap . fst) txMovementInAddress
-        outPath = map (snd . joinAddrDeriv aMap . fst) txMovementOutAddress
-    return $ TxSignData tx inputs inPath outPath
-
-joinAddrDeriv :: M.Map Address SoftPath -> Address -> (Address, SoftPath)
-joinAddrDeriv aMap = id &&& (aMap M.!)
-
--- formatTxMovement ::
---        AmountUnit -> M.Map Address SoftPath -> TxMovement -> ConsolePrinter
--- formatTxMovement u aMap TxMovement {..} =
---     vcat
---         [ formatTxHash $ cs $ txHashToHex txMovementTxHash
---         , nest 4 $
---           vcat
---               [ formatTitle "Amount"
---               , nest 4 $ formatIntegerAmount u txMovementAmount
---               , if null txMovementOutAddress
---                     then mempty
---                     else vcat
---                              [ formatTitle "Outgoing Addresses"
---                              , nest 4 $
---                                vcat $ map (formatAddrVal u) txMovementOutAddress
---                              ]
---               , if null txMovementInAddress
---                     then mempty
---                     else vcat
---                              [ formatTitle "Incoming Addresses"
---                              , nest 4 $
---                                vcat $ map (formatAddrVal u) txMovementInAddress
---                              ]
---               ]
---         ]
+mvtToTxSummary :: M.Map Address SoftPath -> TxMovement -> Tx -> TxSummary
+mvtToTxSummary derivMap TxMovement {..} tx =
+    TxSummary
+    { txSummaryTxHash = Just txMovementTxHash
+    , txSummaryOutbound = outbound
+    , txSummaryNonStd = nonStd
+    , txSummaryInbound = joinWithPath txMovementInbound
+    , txSummaryMyInputs = joinWithPath txMovementMyInputs
+    , txSummaryAmount = txMovementAmount
+    , txSummaryFee = guard (fee > 0) >> Just (fromIntegral fee)
+    , txSummaryFeeByte = guard (fee > 0) >> Just (fromIntegral feeByte)
+    , txSummaryTxSize = Just txSize
+    , txSummaryIsSigned = Nothing
+    }
+  where
+    (outAddrMap, nonStd) = txOutputAddressValues $ txOut tx
+    outbound
+        | txMovementAmount > 0 = M.empty
+        | otherwise = M.difference outAddrMap txMovementInbound
+    joinWithPath :: M.Map Address Word64 -> M.Map Address (Word64, SoftPath)
+    joinWithPath = M.intersectionWith (flip (,)) derivMap
+    outSum :: Integer
+    outSum = fromIntegral $ sum $ map outValue $ txOut tx
+    inSum :: Integer
+    inSum = fromIntegral $ sum $ M.elems txMovementMyInputs
+    fee = inSum - outSum
+    feeByte = fee `div` fromIntegral txSize
+    txSize = BS.length $ S.encode tx
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
