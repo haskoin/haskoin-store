@@ -9,6 +9,7 @@ import qualified Data.Aeson                                 as J
 import           Data.Aeson.Lens
 import qualified Data.ByteString                            as BS
 import qualified Data.ByteString.Lazy                       as BL
+import           Data.List
 import qualified Data.Map.Strict                            as M
 import           Data.Maybe
 import           Data.Monoid                                ((<>))
@@ -353,128 +354,12 @@ sign = command "sign" "Sign the output of the \"send\" command" $
                     Left err -> consoleError $ formatError err
             _ -> consoleError $ formatError "Could not decode transaction data"
   where
+    confirmAmount :: AmountUnit -> Integer -> IO ()
     confirmAmount unit txAmnt = do
         userAmnt <- askInputLine "Type the tx amount to continue signing: "
         when (readIntegerAmount unit userAmnt /= Just txAmnt) $ do
             renderIO $ formatError "Invalid tx amount"
             confirmAmount unit txAmnt
-
-txSummaryFormat :: HardPath
-                -> AmountUnit
-                -> TxSummary
-                -> ConsolePrinter
-txSummaryFormat accDeriv unit TxSummary {..} =
-    vcat [summary, nest 2 $ vcat [outbound, inbound, myInputs]]
-  where
-    summary =
-        vcat
-            [ formatTitle "Tx Summary"
-            , nest 4 $
-              vcat
-                  [ case txSummaryTxHash of
-                        Just tid ->
-                            formatKey (block 12 "Tx hash:") <>
-                            formatTxHash (cs $ txHashToHex tid)
-                        _ -> mempty
-                  , formatKey (block 12 "Amount:") <>
-                    formatIntegerAmount unit txSummaryAmount
-                  , case txSummaryFee of
-                        Just fee ->
-                            formatKey (block 12 "Fee:") <>
-                            formatAmountWith formatFee unit (fromIntegral fee)
-                        _ -> mempty
-                  , case txSummaryFeeByte of
-                        Just fee ->
-                            formatKey (block 12 "Fee/byte:") <>
-                            formatAmountWith formatFee UnitSatoshi (fromIntegral fee)
-                        _ -> mempty
-                  , case txSummaryTxSize of
-                        Just size ->
-                            formatKey (block 12 "Tx size:") <>
-                            formatStatic (show size <> " bytes")
-                        _ -> mempty
-                  , case txSummaryIsSigned of
-                        Just signed ->
-                            formatKey (block 12 "Signed:") <>
-                            if signed
-                                then formatTrue "Yes"
-                                else formatFalse "No"
-                        _ -> mempty
-                  ]
-            ]
-    outbound
-        | txSummaryNonStd == 0 && null txSummaryOutbound = mempty
-        | otherwise =
-            vcat
-                [ formatTitle "Outgoing amounts"
-                , nest 2 $
-                  vcat $
-                  map (addrFormat (* (-1))) (M.assocs txSummaryOutbound) <>
-                  [nonStdRcp]
-                ]
-    nonStdRcp
-        | txSummaryNonStd == 0 = mempty
-        | otherwise =
-            formatAddrVal
-                unit
-                accDeriv
-                (formatStatic "Non-standard recipients")
-                Nothing
-                (-fromIntegral txSummaryNonStd)
-    inbound
-        | null txSummaryInbound = mempty
-        | otherwise =
-            vcat
-                [ formatTitle "Inbound amounts and change"
-                , nest 2 $
-                  vcat $ map (addrFormat' id) (M.assocs txSummaryInbound)
-                ]
-    myInputs
-        | null txSummaryMyInputs = mempty
-        | otherwise =
-            vcat
-                [ formatTitle "My spent input coins"
-                , nest 2 $
-                  vcat $ map (addrFormat' (* (-1))) (M.assocs txSummaryMyInputs)
-                ]
-    addrFormat' f (a, (v, p)) =
-        formatAddrVal
-            unit
-            accDeriv
-            (formatAddress $ cs $ addrToBase58 a)
-            (Just p)
-            (f $ fromIntegral v)
-    addrFormat f (a, v) =
-        formatAddrVal
-            unit
-            accDeriv
-            (formatAddress $ cs $ addrToBase58 a)
-            Nothing
-            (f $ fromIntegral v)
-
-formatAddrVal ::
-       AmountUnit
-    -> HardPath
-    -> ConsolePrinter
-    -> Maybe SoftPath
-    -> Integer
-    -> ConsolePrinter
-formatAddrVal unit accDeriv cp pathM amnt =
-    vcat
-        [ cp
-        , nest 4 $
-          vcat
-              [ formatKey (block 8 "Amount:") <> formatIntegerAmount unit amnt
-              , case pathM of
-                    Just p ->
-                        mconcat
-                            [ formatKey $ block 8 "Deriv:"
-                            , formatDeriv $
-                              show $ ParsedPrv $ toGeneric $ accDeriv ++/ p
-                            ]
-                    _ -> mempty
-              ]
-        ]
 
 balance :: Command IO
 balance = command "balance" "Display the account balance" $
@@ -564,6 +449,143 @@ help :: Command IO
 help = command "help" "Show usage info" $ io $ showUsage hwCommands
 
 {- Command Line Helpers -}
+
+txSummaryFormat :: HardPath
+                -> AmountUnit
+                -> TxSummary
+                -> ConsolePrinter
+txSummaryFormat accDeriv unit TxSummary {..} =
+    vcat [summary, nest 2 $ vcat [outbound, inbound, myInputs]]
+  where
+    summary =
+        vcat
+            [ formatTitle "Tx Summary"
+            , nest 4 $
+              vcat
+                  [ case txSummaryTxHash of
+                        Just tid ->
+                            formatKey (block 12 "Tx hash:") <>
+                            formatTxHash (cs $ txHashToHex tid)
+                        _ -> mempty
+                  , formatKey (block 12 "Amount:") <>
+                    formatIntegerAmount unit txSummaryAmount
+                  , case txSummaryFee of
+                        Just fee ->
+                            formatKey (block 12 "Fee:") <>
+                            formatAmountWith formatFee unit (fromIntegral fee)
+                        _ -> mempty
+                  , case txSummaryFeeByte of
+                        Just fee ->
+                            formatKey (block 12 "Fee/byte:") <>
+                            formatAmountWith
+                                formatFee
+                                UnitSatoshi
+                                (fromIntegral fee)
+                        _ -> mempty
+                  , case txSummaryTxSize of
+                        Just size ->
+                            formatKey (block 12 "Tx size:") <>
+                            formatStatic (show size <> " bytes")
+                        _ -> mempty
+                  , case txSummaryIsSigned of
+                        Just signed ->
+                            formatKey (block 12 "Signed:") <>
+                            if signed
+                                then formatTrue "Yes"
+                                else formatFalse "No"
+                        _ -> mempty
+                  ]
+            ]
+    outbound
+        | txSummaryNonStd == 0 && null txSummaryOutbound = mempty
+        | otherwise =
+            vcat
+                [ formatTitle "Outbound"
+                , nest 2 $
+                  vcat $
+                  map addrFormatOutbound (M.assocs txSummaryOutbound) <>
+                  [nonStdRcp]
+                ]
+    nonStdRcp
+        | txSummaryNonStd == 0 = mempty
+        | otherwise =
+            formatAddrVal
+                unit
+                accDeriv
+                (formatStatic "Non-standard recipients")
+                Nothing
+                (-fromIntegral txSummaryNonStd)
+    inbound
+        | null txSummaryInbound = mempty
+        | otherwise =
+            vcat
+                [ formatTitle "Inbound"
+                , nest 2 $
+                  vcat $
+                  map addrFormatInbound $
+                  sortOn (not . isExternal . snd . snd) $
+                  M.assocs txSummaryInbound
+                ]
+    myInputs
+        | null txSummaryMyInputs = mempty
+        | otherwise =
+            vcat
+                [ formatTitle "Spent Coins"
+                , nest 2 $
+                  vcat $ map addrFormatMyInputs (M.assocs txSummaryMyInputs)
+                ]
+    addrFormatInbound (a, (v, p)) =
+        formatAddrVal
+            unit
+            accDeriv
+            ((if isExternal p
+                  then formatAddress
+                  else formatInternalAddress) $
+             cs $ addrToBase58 a)
+            (Just p)
+            (fromIntegral v)
+    addrFormatMyInputs (a, (v, p)) =
+        formatAddrVal
+            unit
+            accDeriv
+            (formatInternalAddress $ cs $ addrToBase58 a)
+            (Just p)
+            (-fromIntegral v)
+    addrFormatOutbound (a, v) =
+        formatAddrVal
+            unit
+            accDeriv
+            (formatAddress $ cs $ addrToBase58 a)
+            Nothing
+            (-fromIntegral v)
+
+formatAddrVal ::
+       AmountUnit
+    -> HardPath
+    -> ConsolePrinter
+    -> Maybe SoftPath
+    -> Integer
+    -> ConsolePrinter
+formatAddrVal unit accDeriv title pathM amnt =
+    vcat
+        [ title
+        , nest 4 $
+          vcat
+              [ formatKey (block 8 "Amount:") <> formatIntegerAmount unit amnt
+              , case pathM of
+                    Just p ->
+                        mconcat
+                            [ formatKey $ block 8 "Deriv:"
+                            , formatDeriv $
+                              show $ ParsedPrv $ toGeneric $ accDeriv ++/ p
+                            ]
+                    _ -> mempty
+              ]
+        ]
+
+isExternal :: SoftPath -> Bool
+isExternal (Deriv :/ 0 :/ _) = True
+isExternal _                 = False
 
 writeDoc :: FilePath -> J.Value -> IO FilePath
 writeDoc fileName dat = do

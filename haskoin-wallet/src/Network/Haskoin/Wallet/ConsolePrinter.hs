@@ -71,6 +71,7 @@ data ConsoleFormat
     | FormatDeriv { getFormat :: !String }
     | FormatMnemonic { getFormat :: !String }
     | FormatAddress { getFormat :: !String }
+    | FormatInternalAddress { getFormat :: !String }
     | FormatTxHash { getFormat :: !String }
     | FormatPosAmount { getFormat :: !String }
     | FormatNegAmount { getFormat :: !String }
@@ -109,6 +110,9 @@ formatMnemonic = text . FormatMnemonic
 formatAddress :: String -> ConsolePrinter
 formatAddress = text . FormatAddress
 
+formatInternalAddress :: String -> ConsolePrinter
+formatInternalAddress = text . FormatInternalAddress
+
 formatTxHash :: String -> ConsolePrinter
 formatTxHash = text . FormatTxHash
 
@@ -141,43 +145,46 @@ formatError = text . FormatError
 
 formatSGR :: ConsoleFormat -> [SGR]
 formatSGR frm = case frm of
-    FormatTitle _      -> [ SetConsoleIntensity BoldIntensity ]
-    FormatStatic _     -> []
-    FormatAccount _    -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull White
-                          ]
-    FormatPubKey _     -> [ SetColor Foreground Dull Magenta ]
-    FormatFilePath _   -> [ SetItalicized True
-                          , SetColor Foreground Dull White
-                          ]
-    FormatKey _        -> []
-    FormatDeriv _      -> []
-    FormatMnemonic _   -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull Cyan
-                          ]
-    FormatAddress _    -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull Blue
-                          ]
-    FormatTxHash _     -> [ SetColor Foreground Dull Magenta ]
-    FormatPosAmount  _ -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull Green
-                          ]
-    FormatNegAmount _  -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull Red
-                          ]
-    FormatFee _        -> []
-    FormatTrue _       -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull Green
-                          ]
-    FormatFalse _      -> [ SetConsoleIntensity BoldIntensity
-                          , SetColor Foreground Dull Red
-                          ]
-    FormatCash _       -> [ SetColor Foreground Dull Green
-                          ]
-    FormatBitcoin _    -> [ SetColor Foreground Dull Cyan
-                          ]
-    FormatTestnet _    -> [ SetColor Foreground Dull Yellow ]
-    FormatError _      -> [ SetColor Foreground Dull Red ]
+    FormatTitle _           -> [ SetConsoleIntensity BoldIntensity ]
+    FormatStatic _          -> []
+    FormatAccount _         -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull White
+                               ]
+    FormatPubKey _          -> [ SetColor Foreground Dull Magenta ]
+    FormatFilePath _        -> [ SetItalicized True
+                               , SetColor Foreground Dull White
+                               ]
+    FormatKey _             -> []
+    FormatDeriv _           -> []
+    FormatMnemonic _        -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull Cyan
+                               ]
+    FormatAddress _         -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull Blue
+                               ]
+    FormatInternalAddress _ -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Vivid Black
+                               ]
+    FormatTxHash _          -> [ SetColor Foreground Vivid Magenta ]
+    FormatPosAmount  _      -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull Green
+                               ]
+    FormatNegAmount _       -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull Red
+                               ]
+    FormatFee _             -> []
+    FormatTrue _            -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull Green
+                               ]
+    FormatFalse _           -> [ SetConsoleIntensity BoldIntensity
+                               , SetColor Foreground Dull Red
+                               ]
+    FormatCash _            -> [ SetColor Foreground Dull Green
+                               ]
+    FormatBitcoin _         -> [ SetColor Foreground Dull Cyan
+                               ]
+    FormatTestnet _         -> [ SetColor Foreground Vivid Yellow ]
+    FormatError _           -> [ SetColor Foreground Dull Red ]
 
 printFormat :: ConsoleFormat -> IO ()
 printFormat f = do
