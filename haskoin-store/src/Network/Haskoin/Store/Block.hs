@@ -378,7 +378,7 @@ getBalance addr db s =
     me (Just x) = return x
     i h bal@BalanceValue {..} =
         let minHeight =
-                if h < 99
+                if h <= 99
                     then 0
                     else h - 99
         in bal
@@ -770,7 +770,7 @@ getAddrDelta blockRef pos spentMap newOutMap prevMap =
             xm = M.union sm om
             ob = sum (map (outputValue . addrOutputValue) (M.elems om))
             sb = sum (map (outputValue . addrOutputValue) (M.elems sm))
-            im = [Immature blockRef sb | pos == 0]
+            im = [Immature blockRef ob | pos == 0]
         in AddressDelta
            { addressDeltaOutput = xm
            , addressDeltaBalance = fromIntegral ob - fromIntegral sb
