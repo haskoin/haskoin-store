@@ -233,7 +233,8 @@ signingSpec =
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryTxHash = Just $ txHash tx
+                { txSummaryType = "Outbound"
+                , txSummaryTxHash = Just $ txHash tx
                 , txSummaryOutbound = M.fromList [(head othAddrs, 50000000)]
                 , txSummaryInbound =
                       M.fromList [(head intAddrs, (40000000, intDeriv :/ 0))]
@@ -260,7 +261,8 @@ signingSpec =
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryTxHash = Just $ txHash tx
+                { txSummaryType = "Outbound"
+                , txSummaryTxHash = Just $ txHash tx
                 , txSummaryOutbound = M.fromList [(othAddrs !! 1, 200000000)]
                 , txSummaryInbound =
                       M.fromList [(intAddrs !! 1, (50000000, intDeriv :/ 1))]
@@ -292,7 +294,8 @@ signingSpec =
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryTxHash = Just $ txHash tx
+                { txSummaryType = "Self"
+                , txSummaryTxHash = Just $ txHash tx
                 , txSummaryOutbound = M.empty
                 , txSummaryInbound =
                       M.fromList
@@ -350,7 +353,8 @@ signingSpec =
                 (res, tx) = fromRight undefined $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryTxHash = Just $ txHash tx
+                { txSummaryType = "Outbound"
+                , txSummaryTxHash = Just $ txHash tx
                 , txSummaryOutbound =
                       M.fromList
                           [ (head othAddrs, 1000000000)

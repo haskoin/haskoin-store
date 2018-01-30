@@ -402,7 +402,7 @@ transactions = command "transactions" "Display the account transactions" $
 mvtToTxSummary :: M.Map Address SoftPath -> TxMovement -> Tx -> TxSummary
 mvtToTxSummary derivMap TxMovement {..} tx =
     TxSummary
-    { txSummaryType = txType
+    { txSummaryType = getTxType (fromIntegral $ max 0 fee) txMovementAmount
     , txSummaryTxHash = Just txMovementTxHash
     , txSummaryOutbound = outbound
     , txSummaryNonStd = nonStd
@@ -428,9 +428,6 @@ mvtToTxSummary derivMap TxMovement {..} tx =
     fee = inSum - outSum
     feeByte = fee `div` fromIntegral txSize
     txSize = BS.length $ S.encode tx
-    txType | fee > 0 && -txMovementAmount == fee = "Self"
-           | txMovementAmount > 0 = "Inbound"
-           | otherwise = "Outbound"
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $

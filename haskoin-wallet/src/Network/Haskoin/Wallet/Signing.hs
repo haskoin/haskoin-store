@@ -168,7 +168,7 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     | otherwise =
         return
             TxSummary
-            { txSummaryType = txType
+            { txSummaryType = getTxType fee amount
             , txSummaryTxHash = Nothing
             , txSummaryOutbound = outboundAddrs
             , txSummaryInbound = inboundAddrs
@@ -202,12 +202,14 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     inboundSum = sum $ map fst $ M.elems inboundAddrs
     myCoinsSum = sum $ map (outValue . snd) myCoins
     amount = toInteger inboundSum - toInteger myCoinsSum
-    txType | length (txIn tx) == length myCoins &&
-             length (txOut tx) == length inboundAddrs = "Self"
-           | amount > 0 = "Inbound"
-           | otherwise  = "Outbound"
     -- Guess the signed transaction size
     guessLen = guessTxSize (length $ txIn tx) [] (length $ txOut tx) 0
+
+getTxType :: Word64 -> Integer -> String
+getTxType fee amnt
+    | amnt > 0 = "Inbound"
+    | -amnt == fromIntegral fee = "Self"
+    | otherwise = "Outbound"
 
 signWalletTx :: TxSignData -> XPrvKey -> Either String (TxSummary, Tx)
 signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
