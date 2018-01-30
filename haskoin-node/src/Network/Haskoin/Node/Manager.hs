@@ -354,7 +354,7 @@ processManagerMessage (ManagerSetPeerBest p bn) = do
         Just op ->
             $(logDebug) $
             logMe <> "Setting best block " <> logShow (nodeHeight bn) <>
-            "for peer " <>
+            " for peer " <>
             logShow (onlinePeerAddress op)
     modifyPeer f p
   where
