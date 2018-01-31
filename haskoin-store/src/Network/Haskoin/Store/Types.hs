@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -70,33 +71,16 @@ data BlockMessage
 
 type BlockStore = Inbox BlockMessage
 
-newtype MultiAddrSpentKey =
-    MultiAddrSpentKey Address
-    deriving (Show, Eq, Ord)
-
-newtype MultiAddrUnspentKey =
-    MultiAddrUnspentKey Address
-    deriving (Show, Eq, Ord)
-
-data AddrUnspentKey = AddrUnspentKey
-    { addrUnspentKey      :: !Address
-    , addrUnspentHeight   :: !BlockHeight
-    , addrUnspentOutPoint :: !OutputKey
+data MultiAddrOutputKey = MultiAddrOutputKey
+    { multiAddrOutputSpent   :: !Bool
+    , multiAddrOutputAddress :: !Address
     } deriving (Show, Eq, Ord)
 
-newtype AddrUnspentValue = AddrUnspentValue
-    { addrUnspentOutput :: OutputValue
-    } deriving (Show, Eq, Ord)
-
-data AddrSpentKey = AddrSpentKey
-    { addrSpentKey      :: !Address
-    , addrSpentHeight   :: !BlockHeight
-    , addrSpentOutPoint :: !OutputKey
-    } deriving (Show, Eq, Ord)
-
-data AddrSpentValue = AddrSpentValue
-    { addrSpentValue  :: !SpentValue
-    , addrSpentOutput :: !OutputValue
+data AddrOutputKey = AddrOutputKey
+    { addrOutputSpent   :: !Bool
+    , addrOutputAddress :: !Address
+    , addrOutputHeight  :: !BlockHeight
+    , addrOutPoint      :: !OutPoint
     } deriving (Show, Eq, Ord)
 
 data BlockValue = BlockValue
@@ -115,48 +99,95 @@ data BlockRef = BlockRef
     } deriving (Show, Eq, Ord)
 
 data DetailedTx = DetailedTx
-    { detailedTx      :: !Tx
-    , detailedTxBlock :: !BlockRef
-    , detailedTxSpent :: ![(SpentKey, SpentValue)]
-    , detailedTxOuts  :: ![(OutputKey, OutputValue)]
+    { detailedTxData    :: !Tx
+    , detailedTxFee     :: !Word64
+    , detailedTxInputs  :: ![DetailedInput]
+    , detailedTxOutputs :: ![DetailedOutput]
+    , detailedTxBlock   :: !BlockRef
+    , detailedTxPos     :: !Word32
+    } deriving (Show, Eq, Ord)
+
+data DetailedInput
+    = DetailedCoinbase { detInOutPoint  :: !OutPoint
+                       , detInSequence  :: !Word32
+                       , detInSigScript :: !ByteString }
+    | DetailedInput { detInOutPoint  :: !OutPoint
+                    , detInSequence  :: !Word32
+                    , detInSigScript :: !ByteString
+                    , detInPkScript  :: !ByteString
+                    , detInValue     :: !Word64
+                    , detInBlock     :: !BlockRef
+                    , detInPos       :: !Word32 }
+    deriving (Show, Eq, Ord)
+
+isCoinbase :: DetailedInput -> Bool
+isCoinbase DetailedCoinbase {} = True
+isCoinbase _                   = False
+
+data DetailedOutput = DetailedOutput
+    { detOutValue   :: !Word64
+    , detOutScript  :: !ByteString
+    , detOutSpender :: !(Maybe Spender)
     } deriving (Show, Eq, Ord)
 
 data AddressBalance = AddressBalance
     { addressBalAddress      :: !Address
     , addressBalConfirmed    :: !Word64
-    , addressBalImmature     :: !Word64
-    , addressBalBlock        :: !BlockRef
     , addressBalTxCount      :: !Word64
     , addressBalUnspentCount :: !Word64
     , addressBalSpentCount   :: !Word64
     } deriving (Show, Eq, Ord)
 
-data TxValue = TxValue
-    { txValueBlock :: !BlockRef
-    , txValue      :: !Tx
-    , txValueOuts  :: [(OutputKey, OutputValue)]
+data TxRecord = TxRecord
+    { txValueBlock    :: !BlockRef
+    , txPos           :: !Word32
+    , txValue         :: !Tx
+    , txValuePrevOuts :: [(OutPoint, PrevOut)]
     } deriving (Show, Eq, Ord)
 
 newtype OutputKey = OutputKey
     { outPoint :: OutPoint
     } deriving (Show, Eq, Ord)
 
-data OutputValue = OutputValue
+data PrevOut = PrevOut
+    { prevOutValue  :: !Word64
+    , prevOutBlock  :: !BlockRef
+    , prevOutPos    :: !Word32
+    , prevOutScript :: !ByteString
+    } deriving (Show, Eq, Ord)
+
+data Output = Output
     { outputValue :: !Word64
     , outBlock    :: !BlockRef
     , outPos      :: !Word32
     , outScript   :: !ByteString
+    , outSpender  :: !(Maybe Spender)
     } deriving (Show, Eq, Ord)
 
-newtype SpentKey = SpentKey
-    { spentOutPoint :: OutPoint
-    } deriving (Show, Eq, Ord)
+outputToPrevOut :: Output -> PrevOut
+outputToPrevOut Output {..} =
+    PrevOut
+    { prevOutValue = outputValue
+    , prevOutBlock = outBlock
+    , prevOutPos = outPos
+    , prevOutScript = outScript
+    }
 
-data SpentValue = SpentValue
-    { spentInHash  :: !TxHash
-    , spentInIndex :: !Word32
-    , spentInBlock :: !BlockRef
-    , spentInPos   :: !Word32
+prevOutToOutput :: PrevOut -> Output
+prevOutToOutput PrevOut {..} =
+    Output
+    { outputValue = prevOutValue
+    , outBlock = prevOutBlock
+    , outPos = prevOutPos
+    , outScript = prevOutScript
+    , outSpender = Nothing
+    }
+
+data Spender = Spender
+    { spenderHash  :: !TxHash
+    , spenderIndex :: !Word32
+    , spenderBlock :: !BlockRef
+    , spenderPos   :: !Word32
     } deriving (Show, Eq, Ord)
 
 newtype BaseTxKey =
@@ -166,13 +197,11 @@ newtype BaseTxKey =
 data MultiTxKey
     = MultiTxKey !TxKey
     | MultiTxKeyOutput !OutputKey
-    | MultiTxKeySpent !SpentKey
     deriving (Show, Eq, Ord)
 
 data MultiTxValue
-    = MultiTx !TxValue
-    | MultiTxOut !OutputValue
-    | MultiTxSpent !SpentValue
+    = MultiTx !TxRecord
+    | MultiTxOutput !Output
     deriving (Show, Eq, Ord)
 
 newtype TxKey =
@@ -187,26 +216,15 @@ newtype HeightKey =
     HeightKey BlockHeight
     deriving (Show, Eq, Ord)
 
-data Immature = Immature
-    { immatureBlock :: !BlockRef
-    , immatureValue :: !Word64
+newtype BalanceKey = BalanceKey
+    { balanceAddress :: Address
     } deriving (Show, Eq, Ord)
 
-data BalanceKey = BalanceKey
-    { balanceAddress :: !Address
-    , balanceBlock   :: !BlockRef
-    } deriving (Show, Eq, Ord)
-
-data BalanceValue = BalanceValue
+data Balance = Balance
     { balanceValue       :: !Word64
-    , balanceImmature    :: ![Immature]
     , balanceTxCount     :: !Word64
     , balanceOutputCount :: !Word64
     , balanceSpentCount  :: !Word64
-    } deriving (Show, Eq, Ord)
-
-newtype MultiBalance = MultiBalance
-    { multiAddress :: Address
     } deriving (Show, Eq, Ord)
 
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
@@ -248,136 +266,81 @@ instance Ord Unspent where
         f Unspent {..} = (blockRefHeight unspentBlock, unspentPos, unspentIndex)
 
 instance Record BlockKey BlockValue
-instance Record TxKey TxValue
+instance Record TxKey TxRecord
 instance Record HeightKey BlockHash
 instance Record BestBlockKey BlockHash
-instance Record OutputKey OutputValue
-instance Record SpentKey SpentValue
+instance Record OutputKey Output
 instance Record MultiTxKey MultiTxValue
-instance Record AddrSpentKey AddrSpentValue
-instance Record AddrUnspentKey AddrUnspentValue
-instance Record BalanceKey BalanceValue
-instance MultiRecord MultiBalance BalanceKey BalanceValue
-instance MultiRecord MultiAddrSpentKey AddrSpentKey AddrSpentValue
-instance MultiRecord MultiAddrUnspentKey AddrUnspentKey AddrUnspentValue
+instance Record AddrOutputKey Output
+instance Record BalanceKey Balance
+instance MultiRecord MultiAddrOutputKey AddrOutputKey Output
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
-
-instance Serialize MultiBalance where
-    put MultiBalance {..} = do
-        putWord8 0x04
-        put multiAddress
-    get = do
-        guard . (== 0x04) =<< getWord8
-        multiAddress <- get
-        return MultiBalance {..}
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
         putWord8 0x04
         put balanceAddress
-        put (maxBound - blockRefHeight balanceBlock)
-        put (blockRefHash balanceBlock)
     get = do
         guard . (== 0x04) =<< getWord8
         balanceAddress <- get
-        blockRefHeight <- (maxBound -) <$> get
-        blockRefHash <- get
-        let blockRefMainChain = True
-            balanceBlock = BlockRef {..}
         return BalanceKey {..}
 
-instance Serialize BalanceValue where
-    put BalanceValue {..} = do
+instance Serialize Balance where
+    put Balance {..} = do
         put balanceValue
-        put balanceImmature
         put balanceTxCount
         put balanceOutputCount
         put balanceSpentCount
     get = do
         balanceValue <- get
-        balanceImmature <- get
         balanceTxCount <- get
         balanceOutputCount <- get
         balanceSpentCount <- get
-        return BalanceValue {..}
+        return Balance {..}
 
-instance Serialize Immature where
-    put Immature {..} =
-        put (immatureBlock, immatureValue)
+instance Serialize AddrOutputKey where
+    put AddrOutputKey {..} = do
+        if addrOutputSpent
+            then putWord8 0x03
+            else putWord8 0x05
+        put addrOutputAddress
+        put (maxBound - addrOutputHeight)
+        put addrOutPoint
     get = do
-        (immatureBlock, immatureValue) <- get
-        return Immature {..}
+        addrOutputSpent <-
+            getWord8 >>= \case
+                0x03 -> return True
+                0x05 -> return False
+                _ -> mzero
+        addrOutputAddress <- get
+        addrOutputHeight <- (maxBound -) <$> get
+        addrOutPoint <- get
+        return AddrOutputKey {..}
 
-instance Serialize AddrSpentKey where
-    put AddrSpentKey {..} = do
-        putWord8 0x03
-        put addrSpentKey
-        put (maxBound - addrSpentHeight)
-        put addrSpentOutPoint
+instance Serialize MultiAddrOutputKey where
+    put MultiAddrOutputKey {..} = do
+        if multiAddrOutputSpent
+            then putWord8 0x03
+            else putWord8 0x05
+        put multiAddrOutputAddress
     get = do
-        guard . (== 0x03) =<< getWord8
-        addrSpentKey <- get
-        addrSpentHeight <- (maxBound -) <$> get
-        addrSpentOutPoint <- get
-        return AddrSpentKey {..}
-
-instance Serialize AddrUnspentKey where
-    put AddrUnspentKey {..} = do
-        putWord8 0x05
-        put addrUnspentKey
-        put (maxBound - addrUnspentHeight)
-        put addrUnspentOutPoint
-    get = do
-        guard . (== 0x05) =<< getWord8
-        addrUnspentKey <- get
-        addrUnspentHeight <- (maxBound -) <$> get
-        addrUnspentOutPoint <- get
-        return AddrUnspentKey {..}
-
-instance Serialize MultiAddrSpentKey where
-    put (MultiAddrSpentKey h) = do
-        putWord8 0x03
-        put h
-    get = do
-        guard . (== 0x03) =<< getWord8
-        h <- get
-        return (MultiAddrSpentKey h)
-
-instance Serialize MultiAddrUnspentKey where
-    put (MultiAddrUnspentKey h) = do
-        putWord8 0x05
-        put h
-    get = do
-        guard . (== 0x05) =<< getWord8
-        h <- get
-        return (MultiAddrUnspentKey h)
-
-instance Serialize AddrSpentValue where
-    put AddrSpentValue {..} = do
-        put addrSpentValue
-        put addrSpentOutput
-    get = do
-        addrSpentValue <- get
-        addrSpentOutput <- get
-        return AddrSpentValue {..}
-
-instance Serialize AddrUnspentValue where
-    put AddrUnspentValue {..} = put addrUnspentOutput
-    get = AddrUnspentValue <$> get
+        multiAddrOutputSpent <-
+            getWord8 >>= \case
+                0x03 -> return True
+                0x05 -> return False
+                _ -> mzero
+        multiAddrOutputAddress <- get
+        return MultiAddrOutputKey {..}
 
 instance Serialize MultiTxKey where
     put (MultiTxKey k)       = put k
     put (MultiTxKeyOutput k) = put k
-    put (MultiTxKeySpent k)  = put k
-    get =
-        (MultiTxKey <$> get) <|> (MultiTxKeyOutput <$> get) <|>
-        (MultiTxKeySpent <$> get)
+    get = (MultiTxKey <$> get) <|> (MultiTxKeyOutput <$> get)
 
 instance Serialize MultiTxValue where
-    put (MultiTx v)      = put v
-    put (MultiTxOut v)   = put v
-    put (MultiTxSpent v) = put v
-    get = (MultiTx <$> get) <|> (MultiTxOut <$> get) <|> (MultiTxSpent <$> get)
+    put (MultiTx v)       = put v
+    put (MultiTxOutput v) = put v
+    get = (MultiTx <$> get) <|> (MultiTxOutput <$> get)
 
 instance Serialize BaseTxKey where
     put (BaseTxKey k) = do
@@ -388,35 +351,18 @@ instance Serialize BaseTxKey where
         k <- get
         return (BaseTxKey k)
 
-instance Serialize SpentKey where
-    put SpentKey {..} = do
-        putWord8 0x02
-        put (outPointHash spentOutPoint)
-        putWord8 0x01
-        put (outPointIndex spentOutPoint)
-        putWord8 0x01
+instance Serialize Spender where
+    put Spender {..} = do
+        put spenderHash
+        put spenderIndex
+        put spenderBlock
+        put spenderPos
     get = do
-        guard . (== 0x02) =<< getWord8
-        h <- get
-        guard . (== 0x01) =<< getWord8
-        i <- get
-        guard . (== 0x01) =<< getWord8
-        return (SpentKey (OutPoint h i))
-
-instance Serialize SpentValue where
-    put SpentValue {..} = do
-        putWord8 0x02
-        put spentInHash
-        put spentInIndex
-        put spentInBlock
-        put spentInPos
-    get = do
-        guard . (== 0x02) =<< getWord8
-        spentInHash <- get
-        spentInIndex <- get
-        spentInBlock <- get
-        spentInPos <- get
-        return SpentValue {..}
+        spenderHash <- get
+        spenderIndex <- get
+        spenderBlock <- get
+        spenderPos <- get
+        return Spender {..}
 
 instance Serialize OutputKey where
     put OutputKey {..} = do
@@ -424,54 +370,69 @@ instance Serialize OutputKey where
         put (outPointHash outPoint)
         putWord8 0x01
         put (outPointIndex outPoint)
-        putWord8 0x00
     get = do
         guard . (== 0x02) =<< getWord8
-        hash <- get
+        outPointHash <- get
         guard . (== 0x01) =<< getWord8
-        index <- get
-        guard . (== 0x00) =<< getWord8
-        let outPoint = OutPoint hash index
+        outPointIndex <- get
+        let outPoint = OutPoint {..}
         return OutputKey {..}
 
-instance Serialize OutputValue where
-    put OutputValue {..} = do
+instance Serialize PrevOut where
+    put PrevOut {..} = do
+        put prevOutValue
+        put prevOutBlock
+        put prevOutPos
+        put prevOutScript
+    get = do
+        prevOutValue <- get
+        prevOutBlock <- get
+        prevOutPos <- get
+        prevOutScript <- get
+        return PrevOut {..}
+
+instance Serialize Output where
+    put Output {..} = do
         putWord8 0x01
         put outputValue
         put outBlock
         put outPos
         put outScript
+        put outSpender
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
         outPos <- get
         outScript <- get
-        return OutputValue {..}
+        outSpender <- get
+        return Output {..}
 
 instance Serialize BlockRef where
-    put (BlockRef hash height main) = do
-        put hash
-        put height
-        put main
+    put BlockRef {..} = do
+        put blockRefHash
+        put blockRefHeight
+        put blockRefMainChain
     get = do
-        hash <- get
-        height <- get
-        main <- get
-        return (BlockRef hash height main)
+        blockRefHash <- get
+        blockRefHeight <- get
+        blockRefMainChain <- get
+        return BlockRef {..}
 
-instance Serialize TxValue where
-    put TxValue {..} = do
+instance Serialize TxRecord where
+    put TxRecord {..} = do
         putWord8 0x00
         put txValueBlock
+        put txPos
         put txValue
-        put txValueOuts
+        put txValuePrevOuts
     get = do
         guard . (== 0x00) =<< getWord8
         txValueBlock <- get
+        txPos <- get
         txValue <- get
-        txValueOuts <- get
-        return TxValue {..}
+        txValuePrevOuts <- get
+        return TxRecord {..}
 
 instance Serialize BestBlockKey where
     put BestBlockKey = put (BS.replicate 32 0x00)
@@ -514,13 +475,9 @@ instance ToJSON BlockValue where
     toJSON = object . blockValuePairs
     toEncoding = pairs . mconcat . blockValuePairs
 
-spentValuePairs :: KeyValue kv => SpentValue -> [kv]
-spentValuePairs SpentValue {..} =
-    ["txid" .= spentInHash, "vin" .= spentInIndex] ++ blockRefPairs spentInBlock
-
-instance ToJSON SpentValue where
-    toJSON = object . spentValuePairs
-    toEncoding = pairs . mconcat . spentValuePairs
+instance ToJSON Spender where
+    toJSON = object . spenderPairs
+    toEncoding = pairs . mconcat . spenderPairs
 
 blockRefPairs :: KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
@@ -528,58 +485,68 @@ blockRefPairs BlockRef {..} =
         then ["block" .= blockRefHash, "height" .= blockRefHeight]
         else []
 
+spenderPairs :: KeyValue kv => Spender -> [kv]
+spenderPairs Spender {..} =
+    ["txid" .= spenderHash, "vin" .= spenderIndex, "pos" .= spenderPos] ++
+    blockRefPairs spenderBlock
+
+scriptAddress :: KeyValue kv => ByteString -> [kv]
+scriptAddress bs =
+    case scriptToAddressBS bs of
+        Nothing -> []
+        Just addr -> ["address" .= addr]
+
+detailedOutputPairs :: KeyValue kv => DetailedOutput -> [kv]
+detailedOutputPairs DetailedOutput {..} =
+    [ "value" .= detOutValue
+    , "pkscript" .= String (cs (encodeHex detOutScript))
+    , "spent" .= isJust detOutSpender
+    ] ++
+    scriptAddress detOutScript ++
+    case detOutSpender of
+        Nothing -> []
+        Just spender -> spenderPairs spender
+
+instance ToJSON DetailedOutput where
+    toJSON = object . detailedOutputPairs
+    toEncoding = pairs . mconcat . detailedOutputPairs
+
+detailedInputPairs :: KeyValue kv => DetailedInput -> [kv]
+detailedInputPairs DetailedInput {..} =
+    [ "txid" .= outPointHash detInOutPoint
+    , "vout" .= outPointIndex detInOutPoint
+    , "coinbase" .= False
+    , "sequence" .= detInSequence
+    , "sigscript" .= String (cs (encodeHex detInSigScript))
+    , "pkscript" .= String (cs (encodeHex detInPkScript))
+    , "value" .= detInValue
+    , "pos" .= detInPos
+    ] ++
+    scriptAddress detInPkScript ++ blockRefPairs detInBlock
+detailedInputPairs DetailedCoinbase {..} =
+    [ "txid" .= outPointHash detInOutPoint
+    , "vout" .= outPointIndex detInOutPoint
+    , "coinbase" .= True
+    , "sequence" .= detInSequence
+    , "sigscript" .= String (cs (encodeHex detInSigScript))
+    ]
+
+instance ToJSON DetailedInput where
+    toJSON = object . detailedInputPairs
+    toEncoding = pairs . mconcat . detailedInputPairs
+
 detailedTxPairs :: KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
-    [ "txid" .= hash
-    , "size" .= BS.length (S.encode detailedTx)
-    , "version" .= txVersion detailedTx
-    , "locktime" .= txLockTime detailedTx
-    , "fee" .= fee
-    , "vin" .= map input (txIn detailedTx)
-    , "vout" .= zipWith output (txOut detailedTx) [0 ..]
-    , "hex" .= detailedTx
-    ] ++
-    blockRefPairs detailedTxBlock
-  where
-    hash = txHash detailedTx
-    fee =
-        if any ((== zero) . outPointHash . prevOutput) (txIn detailedTx)
-            then 0
-            else sum (map (outputValue . snd) detailedTxOuts) -
-                 sum (map outValue (txOut detailedTx))
-    input TxIn {..} =
-        object $
-        [ "txid" .= outPointHash prevOutput
-        , "vout" .= outPointIndex prevOutput
-        , "coinbase" .= (outPointHash prevOutput == zero)
-        , "sequence" .= txInSequence
-        ] ++
-        outInfo prevOutput
-    output TxOut {..} i =
-        object $
-        [ "value" .= outValue
-        , "pkscript" .= String (cs (encodeHex scriptOutput))
-        , "address" .=
-          eitherToMaybe (decodeOutputBS scriptOutput >>= outputAddress)
-        , "spent" .= isJust (spent i)
-        ] ++
-        ["spender" .= s | s <- maybeToList (spent i)]
-    zero = "0000000000000000000000000000000000000000000000000000000000000000"
-    spent i = lookup (SpentKey (OutPoint hash i)) detailedTxSpent
-    outInfo op@OutPoint {..} =
-        concat
-            [ x
-            | OutputValue {..} <-
-                  maybeToList (OutputKey op `lookup` detailedTxOuts)
-            , let x =
-                      [ "value" .= outputValue
-                      , "pkscript" .= String (cs (encodeHex outScript))
-                      , "address" .=
-                        eitherToMaybe
-                            (decodeOutputBS outScript >>= outputAddress)
-                      ] ++
-                      blockRefPairs outBlock
-            ]
+    [ "txid" .= txHash detailedTxData
+    , "size" .= BS.length (S.encode detailedTxData)
+    , "version" .= txVersion detailedTxData
+    , "locktime" .= txLockTime detailedTxData
+    , "fee" .= detailedTxFee
+    , "vin" .= detailedTxInputs
+    , "vout" .= detailedTxOutputs
+    , "hex" .= String (cs (encodeHex (S.encode detailedTxData)))
+    , "pos" .= detailedTxPos
+    ] ++ blockRefPairs detailedTxBlock
 
 instance ToJSON DetailedTx where
     toJSON = object . detailedTxPairs
@@ -595,6 +562,7 @@ addrTxPairs AddressTxIn {..} =
     , "txid" .= addressTxId
     , "amount" .= addressTxAmount
     , "vin" .= addressTxVin
+    , "pos" .= addressTxPos
     ] ++
     blockRefPairs addressTxBlock
 addrTxPairs AddressTxOut {..} =
@@ -602,6 +570,7 @@ addrTxPairs AddressTxOut {..} =
     , "txid" .= addressTxId
     , "amount" .= addressTxAmount
     , "vout" .= addressTxVout
+    , "pos" .= addressTxPos
     ] ++
     blockRefPairs addressTxBlock
 
@@ -616,6 +585,7 @@ unspentPairs Unspent {..} =
     , "txid" .= unspentTxId
     , "vout" .= unspentIndex
     , "value" .= unspentValue
+    , "pos" .= unspentPos
     ] ++
     blockRefPairs unspentBlock
 
@@ -627,12 +597,10 @@ addressBalancePairs :: KeyValue kv => AddressBalance -> [kv]
 addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "confirmed" .= addressBalConfirmed
-    , "immature" .= addressBalImmature
     , "transactions" .= addressBalTxCount
     , "unspent" .= addressBalUnspentCount
     , "spent" .= addressBalSpentCount
-    ] ++
-    blockRefPairs addressBalBlock
+    ]
 
 instance FromJSON NewTx where
     parseJSON = withObject "Transaction" $ \v -> NewTx <$> v .: "transaction"

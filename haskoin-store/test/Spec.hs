@@ -57,10 +57,10 @@ main = do
                         last blockValueTxs `shouldBe` h2
                         t1 <- getTx h1 db Nothing
                         t1 `shouldSatisfy` isJust
-                        txHash (detailedTx (fromJust t1)) `shouldBe` h1
+                        txHash (detailedTxData (fromJust t1)) `shouldBe` h1
                         t2 <- getTx h2 db Nothing
                         t2 `shouldSatisfy` isJust
-                        txHash (detailedTx (fromJust t2)) `shouldBe` h2
+                        txHash (detailedTxData (fromJust t2)) `shouldBe` h2
 
 dummyEventHandler :: (MonadIO m, Mailbox b) => b a -> m ()
 dummyEventHandler = forever . void . receive

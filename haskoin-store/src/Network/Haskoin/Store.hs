@@ -41,6 +41,7 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
+import           Data.Maybe
 import           Data.Monoid
 import           Data.String.Conversions
 import           Data.Text                   (Text)
@@ -161,14 +162,15 @@ postTransaction db mgr (NewTx tx) =
     runExceptT $ do
         outputs <-
             forM (txIn tx) $ \TxIn {..} -> do
-                OutputValue {..} <-
+                Output {..} <-
                     getOutput prevOutput db Nothing >>= \case
                         Nothing -> throwError InputNotFound
-                        Just (_, Just _) -> throwError InputSpent
-                        Just (output, Nothing) -> return output
+                        Just out@Output {..}
+                            | isJust outSpender -> throwError InputSpent
+                            | otherwise -> return out
                 pkScript <-
                     case decodeOutputBS outScript of
-                        Left _ -> throwError NonStandard
+                        Left _         -> throwError NonStandard
                         Right pkScript -> return pkScript
                 return (pkScript, outputValue, prevOutput)
         let inVal = sum $ map (\(_, val, _) -> val) outputs
