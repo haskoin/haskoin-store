@@ -74,7 +74,6 @@ peer pc p =
             $(logError) $ logPeer na <> "Invalid network address"
             throwIO PeerAddressInvalid
         Just (host, port) -> do
-            $(logDebug) $ logPeer na <> "Establishing TCP connection"
             let cset = clientSettings port (cs host)
             runGeneralTCPClient cset (peerSession (host, port))
   where
@@ -98,7 +97,6 @@ peer pc p =
 handshake :: MonadPeer m => Source m Message
 handshake = do
     lp <- logMe
-    $(logDebug) $ lp <> "Initiating handshake"
     p <- asks mySelf
     ch <- peerConfChain <$> asks myConfig
     rmt <- peerConfConnect <$> asks myConfig
@@ -106,16 +104,11 @@ handshake = do
     nonce <- peerConfNonce <$> asks myConfig
     bb <- chainGetBest ch
     ver <- buildVersion nonce (nodeHeight bb) loc rmt
-    $(logDebug) $ lp <> "Sending our version"
     yield $ MVersion ver
     v <- liftIO $ remoteVer p
-    $(logDebug) $
-        lp <> "Got peer version: " <> logShow (getVarString (userAgent v))
     yield MVerAck
-    $(logDebug) $ lp <> "Waiting for verack"
     remoteVerAck p
     mgr <- peerConfManager <$> asks myConfig
-    $(logDebug) $ lp <> "Handshake complete"
     managerSetPeerVersion p v mgr
   where
     remoteVer p = do
@@ -138,28 +131,19 @@ peerLoop =
     forever $ do
         me <- asks mySelf
         lp <- logMe
-        stats
-        $(logDebug) $ lp <> "Awaiting message"
         m <- liftIO $ timeout (2 * 60 * 1000 * 1000) (receive me)
         case m of
             Nothing  -> exchangePing
             Just msg -> processMessage msg
-  where
-    stats = do
-        lp <- logMe
-        pend <- fmap length $ liftIO . readTVarIO =<< asks myPending
-        $(logDebug) $ lp <> "Pending count: " <> logShow pend
 
 exchangePing :: MonadPeer m => Source m Message
 exchangePing = do
     lp <- logMe
     i <- liftIO randomIO
-    $(logDebug) $ lp <> "Sending ping"
     yield $ MPing (Ping i)
     me <- asks mySelf
     mgr <- peerConfManager <$> asks myConfig
     t1 <- liftIO getCurrentTime
-    $(logDebug) $ lp <> "Awaiting response"
     m <-
         liftIO . timeout time . receiveMatch me $ \case
             PeerIncoming (MPong (Pong j))
@@ -173,13 +157,12 @@ exchangePing = do
             t2 <- liftIO getCurrentTime
             let d = t2 `diffUTCTime` t1
             $(logDebug) $
-                lp <> "Roundtrip time: " <> logShow (d * 1000) <> " ms"
+                lp <> "Roundtrip: " <> logShow (d * 1000) <> " ms"
             ManagerPeerPing me d `send` mgr
 
 checkStale :: MonadPeer m => ConduitM () Message m ()
 checkStale = do
     lp <- logMe
-    $(logDebug) $ lp <> "Checking if this peer is stale"
     pbox <- asks myPending
     ps <- liftIO $ readTVarIO pbox
     case ps of
@@ -252,11 +235,9 @@ processMessage m = do
     checkStale
     case m of
         PeerOutgoing msg -> do
-            $(logDebug) $ lp <> "Sending " <> logMsg msg
             registerOutgoing msg
             yield msg
         PeerIncoming msg -> do
-            $(logDebug) $ lp <> "Received " <> logMsg msg
             registerIncoming msg
             incoming msg
 
@@ -281,44 +262,26 @@ incoming m = do
                     , rejectReason = VarString BS.empty
                     , rejectData = BS.empty
                     }
-        MPing (Ping n) -> do
-            $(logDebug) $ lp <> "Responding to " <> logMsg m
-            yield $ MPong (Pong n)
-        MPong (Pong n) -> do
-            $(logDebug) $ lp <> "Relaying pong " <> logShow n
-            liftIO . atomically $ l (p, GotPong n)
-        MSendHeaders {} -> do
-            $(logDebug) $ lp <> "Relaying sendheaders to chain actor"
-            ChainSendHeaders p `send` ch
-        MAlert {} -> $(logDebug) $ lp <> "Deprecated " <> logMsg m
-        MAddr (Addr as) -> do
-            $(logDebug) $ lp <> "Sending addresses to peer manager"
-            managerNewPeers p as mgr
+        MPing (Ping n) -> yield $ MPong (Pong n)
+        MPong (Pong n) -> liftIO . atomically $ l (p, GotPong n)
+        MSendHeaders {} -> ChainSendHeaders p `send` ch
+        MAlert {} -> $(logWarn) $ lp <> "Deprecated " <> logMsg m
+        MAddr (Addr as) -> managerNewPeers p as mgr
         MInv (Inv is) -> do
             let ts = [TxHash (invHash i) | i <- is, invType i == InvTx]
-            unless (null ts) $ do
-                $(logDebug) $ lp <> "Relaying transaction inventory"
+            unless (null ts) $
                 liftIO . atomically . forM_ ts $ l . (,) p . TxAvail
-        MTx tx -> do
-            $(logDebug) $ lp <> "Relaying transaction " <> logShow (txHash tx)
+        MTx tx ->
             liftIO . atomically $ l (p, GotTx tx)
-        MBlock b -> do
-            $(logDebug) $
-                lp <> "Relaying block " <> logShow (headerHash $ blockHeader b)
+        MBlock b ->
             liftIO . atomically $ l (p, GotBlock b)
-        MMerkleBlock b -> do
-            $(logDebug) $
-                lp <> "Relaying Merkle block " <>
-                logShow (headerHash $ merkleHeader b)
+        MMerkleBlock b ->
             liftIO . atomically $ l (p, GotMerkleBlock b)
-        MHeaders (Headers hcs) -> do
-            $(logDebug) $ lp <> "Sending new headers to chain actor"
+        MHeaders (Headers hcs) ->
             ChainNewHeaders p hcs `send` ch
-        MGetData (GetData d) -> do
-            $(logDebug) $ lp <> "Relaying getdata message"
+        MGetData (GetData d) ->
             liftIO . atomically $ l (p, SendData d)
         MNotFound (NotFound ns) -> do
-            $(logDebug) $ lp <> "Relaying notfound message"
             let f (InvVector InvTx hash) = Just (TxNotFound (TxHash hash))
                 f (InvVector InvBlock hash) =
                     Just (BlockNotFound (BlockHash hash))
@@ -327,22 +290,17 @@ incoming m = do
                 f _ = Nothing
                 events = mapMaybe f ns
             liftIO . atomically $ mapM_ (l . (p, )) events
-        MGetBlocks g -> do
-            $(logDebug) $ lp <> "Relaying getblocks message"
+        MGetBlocks g ->
             liftIO . atomically $ l (p, SendBlocks g)
-        MGetHeaders h -> do
-            $(logDebug) $ lp <> "Relaying getheaders message"
+        MGetHeaders h ->
             liftIO . atomically $ l (p, SendHeaders h)
-        MReject r -> do
-            $(logDebug) $ lp <> "Relaying rejection message"
+        MReject r ->
             liftIO . atomically $ l (p, Rejected r)
-        MMempool -> do
-            $(logDebug) $ lp <> "Relaying mempool message"
+        MMempool ->
             liftIO . atomically $ l (p, WantMempool)
-        MGetAddr -> do
-            $(logDebug) $ lp <> "Asking manager for peers"
+        MGetAddr ->
             managerGetAddr p mgr
-        _ -> $(logDebug) $ lp <> "Ignoring received " <> logMsg m
+        _ -> $(logWarn) $ lp <> "Ignoring message: " <> logMsg m
 
 inPeerConduit :: Monad m => Conduit ByteString m PeerMessage
 inPeerConduit = do

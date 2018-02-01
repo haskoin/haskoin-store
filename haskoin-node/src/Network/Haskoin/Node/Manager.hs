@@ -255,7 +255,6 @@ storePeer sa prio = do
     m <- RocksDB.get db def k
     case m of
         Nothing -> do
-            $(logDebug) $ logMe <> "Storing peer " <> logShow sa
             let v =
                     encode
                         PeerTimeAddress
@@ -324,9 +323,12 @@ backoffPeer sa = do
                         (error "Could not decode peer info from db")
                         (decode bs)
                 t = max (now + r) (getPeerNextConnect v)
-                v' = v { getPeerNextConnect = t }
+                v' = v {getPeerNextConnect = t}
                 bs' = encode v'
-            $(logWarn) $ logMe <> "Backing off peer " <> logShow sa
+            $(logWarn) $
+                logMe <> "Backing off peer " <> logShow sa <> " for " <>
+                logShow r <>
+                " seconds"
             RocksDB.write
                 db
                 def
@@ -344,7 +346,6 @@ getNewPeer = do
     if mgrConfNoNewPeers
         then return $ find (not . (`elem` onlinePeers)) configPeers
         else do
-            $(logDebug) $ logMe <> "Attempting to get a new peer from database"
             pdb <- asks myPeerDB
             now <- computeTime
             RocksDB.withIterator pdb def $ \it -> do
@@ -387,37 +388,30 @@ managerLoop :: (MonadManager m, MonadMask m) => m ()
 managerLoop =
     forever $ do
         mgr <- asks mySelf
-        $(logDebug) $ logMe <> "Awaiting message"
         msg <- receive mgr
         processManagerMessage msg
 
 processManagerMessage :: MonadManager m => ManagerMessage -> m ()
 
-processManagerMessage (ManagerSetFilter bf) = do
-    $(logDebug) $ logMe <> "Setting Bloom filter"
-    setFilter bf
+processManagerMessage (ManagerSetFilter bf) = setFilter bf
 
 processManagerMessage (ManagerSetBest bb) = do
-    $(logDebug) $
-        logMe <> "Setting my best block to height " <> logShow (nodeHeight bb)
     bbb <- asks myBestBlock
     liftIO . atomically $ writeTVar bbb bb
 
-processManagerMessage ManagerPing = do
-    $(logDebug) $ logMe <> "Attempting to connect to new peers"
-    connectNewPeers
+processManagerMessage ManagerPing = connectNewPeers
 
 processManagerMessage (ManagerGetAddr p) = do
     pn <- peerString p
-    $(logDebug) $ logMe <> "Ignoring address request from peer " <> cs pn
+    $(logWarn) $ logMe <> "Ignoring address request from peer " <> cs pn
 
 processManagerMessage (ManagerNewPeers p as) =
     void . runMaybeT $ do
         ManagerConfig {..} <- asks myConfig
         guard (not mgrConfNoNewPeers) -- Apologies for double negation
         pn <- peerString p
-        $(logDebug) $
-            logMe <> "Received " <> logShow (length as) <> " new peers from " <>
+        $(logInfo) $
+            logMe <> "Received " <> logShow (length as) <> " peers from " <>
             cs pn
         forM_ as $ \(_, na) ->
             let sa = naAddress na
@@ -431,14 +425,6 @@ processManagerMessage (ManagerKill e p) =
         onlinePeerAsync op `cancelWith` e
 
 processManagerMessage (ManagerSetPeerBest p bn) = do
-    m <- findPeer p
-    case m of
-        Nothing -> return ()
-        Just op ->
-            $(logDebug) $
-            logMe <> "Setting best block " <> logShow (nodeHeight bn) <>
-            " for peer " <>
-            logShow (onlinePeerAddress op)
     modifyPeer f p
   where
     f op = op {onlinePeerBestBlock = bn}
@@ -446,13 +432,6 @@ processManagerMessage (ManagerSetPeerBest p bn) = do
 processManagerMessage (ManagerGetPeerBest p reply) = do
     op <- findPeer p
     let bn = fmap onlinePeerBestBlock op
-    case (op, bn) of
-        (Just o, Just b) ->
-            $(logDebug) $
-            logMe <> "Requested peer " <> logShow (onlinePeerAddress o) <>
-            " best block at height " <>
-            logShow (nodeHeight b)
-        _ -> $(logWarn) $ logMe <> "Requested best block for unknown peer"
     liftIO . atomically $ reply bn
 
 processManagerMessage (ManagerSetPeerVersion p v) =
@@ -489,24 +468,18 @@ processManagerMessage (ManagerSetPeerVersion p v) =
     loadFilter = do
         bfb <- asks myBloomFilter
         bf <- liftIO $ readTVarIO bfb
-        pn <- peerString p
         case bf of
             Nothing -> return ()
-            Just b -> do
-                $(logDebug) $ logMe <> "Sending bloom filter to peer " <> cs pn
-                b `peerSetFilter` p
-    askForPeers = do
-        pn <- peerString p
+            Just b  -> b `peerSetFilter` p
+    askForPeers =
         mgrConfNoNewPeers <$> asks myConfig >>= \io ->
-            unless io $ do
-                $(logDebug) $ logMe <> "Asking for new peers to peer " <> cs pn
-                MGetAddr `sendMessage` p
+            unless io (MGetAddr `sendMessage` p)
     announcePeer =
         void . runMaybeT $ do
             op <- MaybeT $ findPeer p
             guard (not (onlinePeerConnected op))
             $(logInfo) $
-                logMe <> "Connected peer " <> logShow (onlinePeerAddress op)
+                logMe <> "Connected to " <> logShow (onlinePeerAddress op)
             l <- mgrConfMgrListener <$> asks myConfig
             liftIO . atomically . l $ ManagerConnect p
             ch <- asks myChain
@@ -514,18 +487,13 @@ processManagerMessage (ManagerSetPeerVersion p v) =
             setPeerAnnounced p
 
 processManagerMessage (ManagerGetPeerVersion p reply) = do
-    pn <- peerString p
-    $(logDebug) $ logMe <> "Getting version from peer " <> cs pn
     v <- fmap onlinePeerVersion <$> findPeer p
     liftIO . atomically $ reply v
 
-processManagerMessage (ManagerGetPeers reply) = do
-    $(logDebug) $ logMe <> "Peer list requested"
+processManagerMessage (ManagerGetPeers reply) =
     getPeers >>= liftIO . atomically . reply
 
-processManagerMessage (ManagerPeerPing p i) = do
-    pn <- peerString p
-    $(logDebug) $ logMe <> "Got time measurement from peer " <> cs pn
+processManagerMessage (ManagerPeerPing p i) =
     modifyPeer (\x -> x {onlinePeerPings = take 11 $ i : onlinePeerPings x}) p
 
 processManagerMessage (PeerStopped (p, _ex)) = do
@@ -544,16 +512,14 @@ processPeerOffline :: MonadManager m => OnlinePeer -> m ()
 processPeerOffline op
     | onlinePeerConnected op = do
         let p = onlinePeerMailbox op
-        $(logDebug) $
-            logMe <> "Notifying listeners of disconnected peer " <>
-            logShow (onlinePeerAddress op)
+        $(logWarn) $
+            logMe <> "Disconnected peer " <> logShow (onlinePeerAddress op)
         asks myChain >>= chainRemovePeer p
         l <- mgrConfMgrListener <$> asks myConfig
         liftIO . atomically . l $ ManagerDisconnect p
     | otherwise =
-        $(logDebug) $
-        logMe <> "Disconnected unannounced peer " <>
-        logShow (onlinePeerAddress op)
+        $(logWarn) $
+        logMe <> "Could not connect to peer " <> logShow (onlinePeerAddress op)
 
 getPeers :: MonadManager m => m [Peer]
 getPeers = do
@@ -568,15 +534,13 @@ connectNewPeers = do
     let n = mo - length ps
     case ps of
         [] -> do
-            $(logDebug) $ logMe <> "Not connected to any peer"
+            $(logWarn) $ logMe <> "No peers connected"
             ps' <- resolvePeers
-            $(logDebug) $
-                logMe <> "Resolved " <> logShow (length ps') <> " peers"
             mapM_ (uncurry storePeer) ps'
         _ ->
-            $(logDebug) $
-            logMe <> "Connected to " <> logShow (length ps) <> "/" <> logShow mo <>
-            " peers"
+            $(logInfo) $
+            logMe <> "Peers connected: " <> logShow (length ps) <> "/" <>
+            logShow mo
     void $ runMaybeT $ go n
   where
     go 0 = MaybeT $ return Nothing
@@ -636,18 +600,13 @@ setPeerAnnounced = modifyPeer (\x -> x {onlinePeerConnected = True})
 
 setFilter :: MonadManager m => BloomFilter -> m ()
 setFilter bl = do
-    $(logDebug) $ logMe <> "Loading bloom filter"
     bfb <- asks myBloomFilter
     liftIO . atomically . writeTVar bfb $ Just bl
     ops <- getOnlinePeers
     forM_ ops $ \op ->
         when (onlinePeerConnected op) $
         if acceptsFilters $ onlinePeerServices op
-            then do
-                $(logDebug) $
-                    logMe <> "Asking peer " <> logShow (onlinePeerAddress op) <>
-                    "to load Bloom filter"
-                bl `peerSetFilter` onlinePeerMailbox op
+            then bl `peerSetFilter` onlinePeerMailbox op
             else do
                 $(logError) $
                     logMe <> "Peer " <> logShow (onlinePeerAddress op) <>

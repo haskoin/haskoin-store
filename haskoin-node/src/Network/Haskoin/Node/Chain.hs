@@ -127,16 +127,9 @@ chain cfg =
         when (isNothing m) $ do
             addBlockHeader genesisNode
             RocksDB.put db def "best" gs
-            $(logDebug) $ logMe <> "Added genesis block node"
         forever $ do
-            stats
-            $(logDebug) $ logMe <> "Awaiting message"
             msg <- receive $ chainConfChain cfg
             processChainMessage msg
-    stats = do
-        nps <-
-            fmap (length . newPeers) $ liftIO . readTVarIO =<< asks chainState
-        $(logDebug) $ logMe <> "Pending peers: " <> logShow nps
 
 processChainMessage :: MonadChain m => ChainMessage -> m ()
 processChainMessage (ChainNewHeaders p hcs) = do
@@ -153,7 +146,6 @@ processChainMessage (ChainNewHeaders p hcs) = do
             case spM of
                 Nothing -> do
                     bb' <- getBestBlockHeader
-                    $(logDebug) $ logMe <> "Sync from this peer later"
                     liftIO . atomically . modifyTVar stb $ \s ->
                         s {newPeers = nub $ p : newPeers s}
                     syncHeaders bb' p
@@ -166,12 +158,11 @@ processChainMessage (ChainNewHeaders p hcs) = do
                             s {syncingPeer = Nothing}
                         processSyncQueue
                     | otherwise -> do
-                        $(logDebug) $ logMe <> "Sync from this peer later"
                         liftIO . atomically . modifyTVar stb $ \s ->
                             s {newPeers = nub $ p : newPeers s}
   where
     synced bb = do
-        $(logDebug) $
+        $(logInfo) $
             logMe <> "Headers synced to height " <> cs (show $ nodeHeight bb)
         st <- asks chainState
         liftIO . atomically . modifyTVar st $ \s -> s {syncingPeer = Nothing}
@@ -183,8 +174,8 @@ processChainMessage (ChainNewHeaders p hcs) = do
     conn bb bhs spM = do
         bb' <- getBestBlockHeader
         when (bb /= bb') $ do
-            $(logDebug) $
-                logMe <> "New best block at height " <> logShow (nodeHeight bb')
+            $(logInfo) $
+                logMe <> "Best header at height " <> logShow (nodeHeight bb')
             mgr <- chainConfManager <$> asks myConfig
             managerSetBest bb' mgr
             l <- chainConfListener <$> asks myConfig
@@ -196,10 +187,8 @@ processChainMessage (ChainNewHeaders p hcs) = do
                     Just sp
                         | sp == p -> do
                             upeer $ head bhs
-                            $(logDebug) $ logMe <> "Syncing more headers"
                             syncHeaders (head bhs) p
                     _ -> do
-                        $(logDebug) $ logMe <> "Sync from this peer later"
                         st <- asks chainState
                         liftIO . atomically . modifyTVar st $ \s ->
                             s {newPeers = nub $ p : newPeers s}
@@ -208,7 +197,6 @@ processChainMessage (ChainNewHeaders p hcs) = do
                 synced bb'
 
 processChainMessage (ChainNewPeer p) = do
-    $(logDebug) $ logMe <> "Got connected peer"
     st <- asks chainState
     sp <- liftIO . atomically $ do
         modifyTVar st $ \s -> s {newPeers = p : newPeers s}
@@ -218,7 +206,6 @@ processChainMessage (ChainNewPeer p) = do
         Just _  -> return ()
 
 processChainMessage (ChainRemovePeer p) = do
-    $(logDebug) $ logMe <> "Got peer disconnection"
     st <- asks chainState
     sp <-
         liftIO . atomically $ do
@@ -234,39 +221,25 @@ processChainMessage (ChainRemovePeer p) = do
 
 processChainMessage (ChainGetBest reply) = do
     b <- getBestBlockHeader
-    $(logDebug) $ logMe <> "Best block at height " <> logShow (nodeHeight b)
     liftIO . atomically $ reply b
 
 processChainMessage (ChainGetAncestor h n reply) = do
-    $(logDebug) $
-        logMe <> "Got request for ancestor of " <> logShow (nodeHeight n) <>
-        " at height " <>
-        logShow h
     a <- getAncestor h n
     liftIO . atomically $ reply a
 
 processChainMessage (ChainGetSplit r l reply) = do
-    $(logDebug) $
-        logMe <> "Got request for split point between " <>
-        logShow (nodeHeight r) <>
-        " and " <>
-        logShow (nodeHeight l)
     s <- splitPoint r l
     liftIO . atomically $ reply s
 
 processChainMessage (ChainGetBlock h reply) = do
-    $(logDebug) $ logMe <> "Got request for block " <> logShow h
     b <- getBlockHeader h
     liftIO . atomically $ reply b
 
-processChainMessage (ChainSendHeaders _) =
-    -- TODO: implement header syncing for peers
-    $(logDebug) $ logMe <> "Ignoring sendheaders from peer"
+processChainMessage (ChainSendHeaders _) = return ()
 
 processChainMessage (ChainIsSynced reply) = do
     st <- asks chainState
     s <- liftIO $ mySynced <$> readTVarIO st
-    $(logDebug) $ logMe <> "Synced: " <> logShow s
     liftIO . atomically $ reply s
 
 processSyncQueue :: MonadChain m => m ()
@@ -277,32 +250,28 @@ processSyncQueue = do
     go s bb =
         case newPeers s of
             [] -> do
-                $(logDebug) $ logMe <> "No more peers to sync"
                 t <- computeTime
                 let h2 = t - 2 * 60 * 60
                     tg = blockTimestamp (nodeHeader bb) > h2
                 if tg
                     then unless (mySynced s) $ do
-                             $(logDebug) $ logMe <> "Headers are now synced"
                              l <- chainConfListener <$> asks myConfig
                              st <- asks chainState
                              liftIO . atomically $ do
                                  l $ ChainSynced bb
                                  writeTVar st s {mySynced = True}
                     else do
-                        $(logDebug) $ logMe <> "Headers are not yet in sync"
                         l <- chainConfListener <$> asks myConfig
                         st <- asks chainState
                         liftIO . atomically $ do
                             l $ ChainNotSynced bb
                             writeTVar st s {mySynced = False}
             p:_ -> do
-                $(logDebug) $ logMe <> "Syncing against new peer"
                 syncHeaders bb p
 
 syncHeaders :: MonadChain m => BlockNode -> Peer -> m ()
+
 syncHeaders bb p = do
-    $(logDebug) $ logMe <> "Attempting to sync headers with a peer"
     st <- asks chainState
     s <- liftIO $ readTVarIO st
     liftIO . atomically . writeTVar st $
@@ -314,11 +283,9 @@ syncHeaders bb p = do
                 { getHeadersVersion = myVersion
                 , getHeadersBL = loc
                 , getHeadersHashStop =
-                      fromRight (error "Could not decode zero hash") .
-                      decode $
+                      fromRight (error "Could not decode zero hash") . decode $
                       BS.replicate 32 0
                 }
     PeerOutgoing m `send` p
-
 logMe :: Text
 logMe = "[Chain] "

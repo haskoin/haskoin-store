@@ -169,30 +169,10 @@ blockStore BlockConfig {..} = do
         , myBlockNo = blockConfBlockNo
         }
   where
-    stats = do
-        cache <- liftIO . readTVarIO =<< asks myUnspentCache
-        pending <- liftIO . readTVarIO =<< asks myPending
-        downloaded <- liftIO . readTVarIO =<< asks myDownloaded
-        $(logDebug) $
-            logMe <> "Cache blocks count: " <>
-            cs (show (M.size (unspentCacheBlocks cache)))
-        $(logDebug) $
-            logMe <> "Cache entry count: " <>
-            cs (show (M.size (unspentCache cache)))
-        $(logDebug) $
-            logMe <> "Pending block count: " <> cs (show (length pending))
-        $(logDebug) $
-            logMe <> "Download count: " <> cs (show (length downloaded))
-    run =
-        forever $ do
-            stats
-            $(logDebug) $ logMe <> "Awaiting message"
-            processBlockMessage =<< receive blockConfMailbox
+    run = forever (processBlockMessage =<< receive blockConfMailbox)
     loadBest =
         retrieveValue BestBlockKey blockConfDB Nothing >>= \case
-            Nothing -> do
-                importBlock genesisBlock
-                $(logDebug) $ logMe <> "Stored Genesis block in database"
+            Nothing -> importBlock genesisBlock
             Just _ -> return ()
 
 getBestBlockHash :: MonadIO m => DB -> Maybe Snapshot -> m (Maybe BlockHash)
@@ -408,7 +388,7 @@ revertBestBlock =
         best <-
             getBestBlockHash db Nothing >>= me "Could not retrieve best block"
         guard (best /= headerHash genesisHeader)
-        $(logDebug) $ logMe <> "Reverting block " <> logShow best
+        $(logWarn) $ logMe <> "Reverting block " <> logShow best
         ch <- asks myChain
         bn <- chainGetBlock best ch >>= me "Could not retrieve block from chain"
         BlockValue {..} <-
@@ -438,34 +418,23 @@ syncBlocks = do
         guard (myBestHash /= bestHash)
         guard . null =<< liftIO . readTVarIO =<< asks myPending
         guard . null =<< liftIO . readTVarIO =<< asks myDownloaded
-        $(logDebug) $ logMe <> "Attempting to get a peer to download blocks"
         p <-
             do maybePeer <- liftIO (readTVarIO peerbox)
                case maybePeer of
-                   Just p -> do
-                       $(logDebug) $
-                           logMe <> "Continue syncing against same peer"
-                       return p
+                   Just p -> return p
                    Nothing -> do
-                       $(logDebug) $
-                           logMe <> "Getting a new peer to sync against"
                        managerPeers <- managerGetPeers mgr
                        case managerPeers of
                            [] -> do
-                               $(logDebug) $
-                                   logMe <> "Could not find a suitable peer"
+                               $(logWarn) $
+                                   logMe <> "Could not find peer to sync blocks"
                                mzero
-                           p':_ -> do
-                               $(logDebug) $
-                                   logMe <> "Found a peer to sync against"
-                               return p'
+                           p':_ -> return p'
         liftIO . atomically $ writeTVar peerbox (Just p)
         myBest <-
             me "Colud not get my best block from chain" =<<
             chainGetBlock myBestHash ch
         splitBlock <- chainGetSplitBlock chainBest myBest ch
-        let splitHash = headerHash (nodeHeader splitBlock)
-        $(logDebug) $ logMe <> "Split block: " <> logShow splitHash
         revertUntil myBest splitBlock
         let chainHeight = nodeHeight chainBest
             splitHeight = nodeHeight splitBlock
@@ -492,12 +461,12 @@ syncBlocks = do
             newBestHash <-
                 getBestBlockHash db Nothing >>=
                 me "Could not get best block hash"
-            $(logDebug) $ logMe <> "Reverted to block " <> logShow newBestHash
+            $(logWarn) $ logMe <> "Reverted to block " <> logShow newBestHash
             ch <- asks myChain
             newBest <- MaybeT (chainGetBlock newBestHash ch)
             revertUntil newBest splitBlock
     downloadBlocks p bhs = do
-        $(logDebug) $
+        $(logInfo) $
             logMe <> "Downloading " <> logShow (length bhs) <> " blocks"
         peerGetBlocks p bhs
         pbox <- asks myPending
@@ -534,7 +503,6 @@ importBlocks = do
 
 importBlock :: MonadBlock m => Block -> m ()
 importBlock block@Block {..} = do
-    $(logDebug) $ logMe <> "Importing block " <> logShow blockHash
     ch <- asks myChain
     bn <-
         chainGetBlock blockHash ch >>= \case
@@ -545,12 +513,11 @@ importBlock block@Block {..} = do
                 error msg
     ops <- blockBatchOps block (nodeHeight bn) (nodeWork bn) True
     db <- asks myBlockDB
-    $(logDebug) $
-        logMe <> "Writing " <> logShow (length ops) <>
-        " entries for block " <>
-        logShow (nodeHeight bn)
     RocksDB.write db def ops
-    $(logInfo) $ logMe <> "Stored block " <> logShow (nodeHeight bn)
+    $(logInfo) $
+        logMe <> "Imported block " <> logShow (nodeHeight bn) <> " (" <>
+        logShow (length ops) <>
+        " database write operations)"
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
     unspentCachePrune
@@ -667,7 +634,7 @@ balanceOps main addrMap =
                 if main
                     then [insertOp key balance]
                     else case maybeOldBalance of
-                             Nothing -> [deleteOp key]
+                             Nothing  -> [deleteOp key]
                              Just old -> [insertOp key old]
             outputs = M.toList addressDeltaOutput
             outOps = concatMap (uncurry (addrOutputOps main)) outputs
@@ -859,24 +826,15 @@ getOutPointData ::
     -> m (Maybe PrevOut)
 getOutPointData key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
   where
-    hash = outPointHash key
-    index = outPointIndex key
     fromMap = MaybeT (return (M.lookup key os))
     fromDB = do
         db <- asks myBlockDB
-        asks myCacheNo >>= \n ->
-            when (n /= 0) . $(logDebug) $
-            logMe <> "Cache miss for output " <> cs (show hash) <> "/" <>
-            cs (show index)
         outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
     fromCache = do
         guard . (/= 0) =<< asks myCacheNo
         ubox <- asks myUnspentCache
         cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
         m <- MaybeT . return $ M.lookup key unspentCache
-        $(logDebug) $
-            logMe <> "Cache hit for output " <> cs (show hash) <> "/" <>
-            cs (show index)
         liftIO . atomically $
             writeTVar ubox cache {unspentCache = M.delete key unspentCache}
         return m
@@ -892,10 +850,11 @@ unspentCachePrune =
         let new = clear (fromIntegral n) cache
             del = M.size (unspentCache cache) - M.size (unspentCache new)
         liftIO . atomically $ writeTVar ubox new
-        $(logDebug) $
-            logMe <> "Deleted " <> cs (show del) <> " of " <>
+        when (del > 0) $
+            $(logDebug) $
+            logMe <> "Deleted " <> cs (show del) <> "/" <>
             cs (show (M.size (unspentCache cache))) <>
-            " entries from UTXO cache"
+            " from UTXO cache"
   where
     clear n c@UnspentCache {..}
         | M.size unspentCache < n = c
@@ -931,22 +890,11 @@ addToCache BlockRef {..} xs = void . runMaybeT $ do
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
-processBlockMessage (BlockChainNew bn) = do
-    $(logDebug) $
-        logMe <> "Got new block from chain actor: " <> logShow blockHash <>
-        " at " <>
-        logShow blockHeight
-    syncBlocks
-  where
-    blockHash = headerHash $ nodeHeader bn
-    blockHeight = nodeHeight bn
+processBlockMessage (BlockChainNew _) = syncBlocks
 
-processBlockMessage (BlockPeerConnect _) = do
-    $(logDebug) $ logMe <> "A peer just connected, syncing blocks"
-    syncBlocks
+processBlockMessage (BlockPeerConnect _) = syncBlocks
 
 processBlockMessage (BlockReceived _p b) = do
-    $(logDebug) $ logMe <> "Received a block"
     pbox <- asks myPending
     dbox <- asks myDownloaded
     let hash = headerHash (blockHeader b)
@@ -962,16 +910,12 @@ processBlockMessage (BlockReceived _p b) = do
   where
     e = error "Could not get best block from database"
 
-processBlockMessage BlockProcess = do
-    $(logDebug) $ logMe <> "Processing downloaded block"
-    importBlocks
+processBlockMessage BlockProcess = importBlocks
 
-processBlockMessage (BlockPeerDisconnect p) = do
-    $(logDebug) $ logMe <> "A peer disconnected"
-    purgePeer p
+processBlockMessage (BlockPeerDisconnect p) = purgePeer p
 
 processBlockMessage (BlockNotReceived p h) = do
-    $(logDebug) $ logMe <> "Block not found: " <> cs (show h)
+    $(logError) $ logMe <> "Block not found: " <> cs (show h)
     purgePeer p
 
 purgePeer :: MonadBlock m => Peer -> m ()
@@ -989,7 +933,7 @@ purgePeer p = do
                     return True
                 else return False
     when purge $ do
-        $(logWarn) $ logMe <> "Syncing peer has been disconnected"
+        $(logError) $ logMe <> "Syncing peer has been disconnected"
         managerKill (PeerMisbehaving "Peer purged from block store") p mgr
     mbox <- asks mySelf
     BlockProcess `send` mbox
@@ -1001,7 +945,7 @@ getAddrsTxs :: MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrsTxs addrs db s =
     case s of
         Nothing -> RocksDB.withSnapshot db $ g . Just
-        Just _ -> g s
+        Just _  -> g s
   where
     g s' = do
         us <- getAddrsUnspent addrs db s'

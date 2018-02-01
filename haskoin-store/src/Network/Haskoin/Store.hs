@@ -43,10 +43,8 @@ import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Data.Maybe
 import           Data.Monoid
-import           Data.String.Conversions
 import           Data.Text                   (Text)
 import           Database.RocksDB            (DB)
-import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
@@ -78,7 +76,7 @@ store ::
     => StoreConfig
     -> m ()
 store StoreConfig {..} = do
-    $(logDebug) $ logMe <> "Launching store"
+    $(logInfo) $ logMe <> "Launching store"
     let nodeDir = storeConfDir </> "node"
     liftIO $ createDirectoryIfMissing False nodeDir
     ns <- Inbox <$> liftIO newTQueueIO
@@ -119,42 +117,34 @@ store StoreConfig {..} = do
   where
     run =
         forever $ do
-            $(logDebug) $ logMe <> "Awaiting message"
             sm <- asks myMailbox
             storeDispatch =<< receive sm
 
 storeDispatch :: MonadStore m => NodeEvent -> m ()
 
 storeDispatch (ManagerEvent (ManagerConnect p)) = do
-    $(logDebug) $ logMe <> "New peer connected"
     b <- asks myBlockStore
     BlockPeerConnect p `send` b
 
 storeDispatch (ManagerEvent (ManagerDisconnect p)) = do
-    $(logDebug) $ logMe <> "Peer disconnected"
     b <- asks myBlockStore
     BlockPeerDisconnect p `send` b
 
 storeDispatch (ChainEvent (ChainNewBest bn)) = do
-    $(logDebug) $
-        logMe <> "Chain synced at height " <> cs (show $ nodeHeight bn)
     b <- asks myBlockStore
     BlockChainNew bn `send` b
 
-storeDispatch (ChainEvent _) =
-    $(logDebug) $ logMe <> "Ignoring chain event"
+storeDispatch (ChainEvent _) = return ()
 
 storeDispatch (PeerEvent (p, GotBlock block)) = do
-    $(logDebug) $ logMe <> "Received a block"
     b <- asks myBlockStore
     BlockReceived p block `send` b
 
 storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
-    $(logDebug) $ logMe <> "A block could not be found: " <> cs (show hash)
     b <- asks myBlockStore
     BlockNotReceived p hash `send` b
 
-storeDispatch (PeerEvent _) = $(logDebug) $ logMe <> "Ignoring peer event"
+storeDispatch (PeerEvent _) = return ()
 
 postTransaction ::
        MonadIO m => DB -> Manager -> NewTx -> m (Either BroadcastExcept SentTx)

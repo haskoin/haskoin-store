@@ -34,7 +34,7 @@ node ::
     -> m ()
 node cfg = do
     psup <- Inbox <$> liftIO newTQueueIO
-    $(logDebug) $ logMe <> "Starting node supervisor"
+    $(logInfo) $ logMe <> "Starting node"
     supervisor
         KillAll
         (nodeSupervisor cfg)
