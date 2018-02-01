@@ -83,34 +83,60 @@ data ManagerReader = ManagerReader
     , myBestBlock      :: !(TVar BlockNode)
     }
 
-newtype PeerAddress = PeerAddress {getPeerAddress :: SockAddr}
-    deriving (Eq, Show)
+data Priority
+    = PriorityNetwork
+    | PrioritySeed
+    | PriorityManual
+    deriving (Eq, Show, Ord)
+
+newtype PeerAddress = PeerAddress
+    { getPeerAddress :: SockAddr
+    } deriving (Eq, Show)
+
+instance Serialize Priority where
+    get =
+        S.getWord8 >>= \case
+            0x00 -> return PriorityManual
+            0x01 -> return PrioritySeed
+            0x02 -> return PriorityNetwork
+            _ -> mzero
+    put PriorityManual  = S.putWord8 0x00
+    put PrioritySeed    = S.putWord8 0x01
+    put PriorityNetwork = S.putWord8 0x02
 
 instance Serialize PeerAddress where
     get = do
-        b <- S.getWord8
-        guard (b == 0x01)
-        PeerAddress <$> decodeSockAddr
-    put pa = do
+        guard . (== 0x01) =<< S.getWord8
+        getPeerAddress <- decodeSockAddr
+        return PeerAddress {..}
+    put PeerAddress {..} = do
         S.putWord8 0x01
-        encodeSockAddr $ getPeerAddress pa
+        encodeSockAddr getPeerAddress
 
 data PeerTimeAddress = PeerTimeAddress
-    { getPeerNextConnect :: !Word32
+    { getPeerPrio        :: !Priority
+    , getPeerBanned      :: !Word32
+    , getPeerLastConnect :: !Word32
+    , getPeerNextConnect :: !Word32
     , getPeerTimeAddress :: !PeerAddress
     } deriving (Eq, Show)
 
 instance Serialize PeerTimeAddress where
     get = do
-        b <- S.getWord8
-        guard (b == 0x00)
-        t <- S.get
-        a <- S.get
-        return $ PeerTimeAddress t a
-    put pta = do
+        guard . (== 0x00) =<< S.getWord8
+        getPeerPrio <- S.get
+        getPeerBanned <- S.get
+        getPeerLastConnect <- (maxBound -) <$> S.get
+        getPeerNextConnect <- S.get
+        getPeerTimeAddress <- S.get
+        return PeerTimeAddress {..}
+    put PeerTimeAddress {..} = do
         S.putWord8 0x00
-        S.put (getPeerNextConnect pta)
-        S.put (getPeerTimeAddress pta)
+        S.put getPeerPrio
+        S.put getPeerBanned
+        S.put (maxBound - getPeerLastConnect)
+        S.put getPeerNextConnect
+        S.put getPeerTimeAddress
 
 manager ::
        ( MonadBase IO m
@@ -152,15 +178,21 @@ manager cfg = do
         connectNewPeers
         managerLoop
 
-resolvePeers :: MonadManager m => m [SockAddr]
+resolvePeers :: MonadManager m => m [(SockAddr, Priority)]
 resolvePeers = do
     cfg <- asks myConfig
-    confPeers <- concat <$> mapM toSockAddr (mgrConfPeers cfg)
+    confPeers <-
+        fmap
+            (map (, PriorityManual) . concat)
+            (mapM toSockAddr (mgrConfPeers cfg))
     if mgrConfNoNewPeers cfg
         then return confPeers
         else do
-            seedPeers <- concat <$> mapM (toSockAddr . (, defaultPort)) seeds
-            return $ confPeers <> seedPeers
+            seedPeers <-
+                fmap
+                    (map (, PrioritySeed) . concat)
+                    (mapM (toSockAddr . (, defaultPort)) seeds)
+            return (confPeers ++ seedPeers)
 
 encodeSockAddr :: SockAddr -> Put
 encodeSockAddr (SockAddrInet6 p _ (a, b, c, d) _) = do
@@ -194,17 +226,55 @@ decodeSockAddr = do
             p <- S.getWord16be
             return $ SockAddrInet6 (fromIntegral p) 0 (a, b, c, d) 0
 
-storePeer :: MonadManager m => SockAddr -> m ()
-storePeer sa = do
+connectPeer :: MonadManager m => SockAddr -> m ()
+connectPeer sa = do
     db <- asks myPeerDB
-    now <- computeTime
     let p = PeerAddress sa
         k = encode p
     m <- RocksDB.get db def k
-    when (isNothing m) $ do
-        $(logDebug) $ logMe <> "Storing peer " <> logShow sa
-        let v = encode (PeerTimeAddress now p)
-        RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
+    case m of
+        Nothing -> do
+            let msg = "Could not find peer to mark connected"
+            $(logError) $ logMe <> cs msg
+            error msg
+        Just bs -> do
+            now <- computeTime
+            let v = fromRight (error "Cannot decode peer info") (decode bs)
+                v' = v { getPeerLastConnect = now }
+                bs' = encode v'
+            RocksDB.write
+                db
+                def
+                [RocksDB.Del bs, RocksDB.Put bs' k, RocksDB.Put k bs']
+
+storePeer :: MonadManager m => SockAddr -> Priority -> m ()
+storePeer sa prio = do
+    db <- asks myPeerDB
+    let p = PeerAddress sa
+        k = encode p
+    m <- RocksDB.get db def k
+    case m of
+        Nothing -> do
+            $(logDebug) $ logMe <> "Storing peer " <> logShow sa
+            let v =
+                    encode
+                        PeerTimeAddress
+                        { getPeerPrio = prio
+                        , getPeerBanned = 0
+                        , getPeerLastConnect = 0
+                        , getPeerNextConnect = 0
+                        , getPeerTimeAddress = p
+                        }
+            RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
+        Just bs -> do
+            let v@PeerTimeAddress {..} =
+                    fromRight (error "Cannot decode peer info") (decode bs)
+            when (getPeerPrio < prio) $ do
+                let bs' = encode v {getPeerPrio = prio}
+                RocksDB.write
+                    db
+                    def
+                    [RocksDB.Del bs, RocksDB.Put bs' k, RocksDB.Put k bs']
 
 banPeer :: MonadManager m => SockAddr -> m ()
 banPeer sa = do
@@ -213,15 +283,25 @@ banPeer sa = do
     let p = PeerAddress sa
         k = encode p
     m <- RocksDB.get db def k
-    now <- computeTime
-    let v = encode (PeerTimeAddress (now + 3600 * 6) p)
     case m of
-        Nothing -> RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
-        Just bs ->
+        Nothing -> e "Cannot find peer to be banned"
+        Just bs -> do
+            now <- computeTime
+            let v = fromRight (error "Cannot decode peer info") (decode bs)
+                v' =
+                    v
+                    { getPeerBanned = now
+                    , getPeerNextConnect = now + 6 * 60 * 60
+                    }
+                bs' = encode v'
             RocksDB.write
                 db
                 def
-                [RocksDB.Del bs, RocksDB.Put k v, RocksDB.Put v k]
+                [RocksDB.Del bs, RocksDB.Put k bs', RocksDB.Put bs' k]
+  where
+    e msg = do
+        $(logError) $ logMe <> cs msg
+        error msg
 
 backoffPeer :: MonadManager m => SockAddr -> m ()
 backoffPeer sa = do
@@ -230,28 +310,31 @@ backoffPeer sa = do
     let p = PeerAddress sa
         k = encode p
     m <- RocksDB.get db def k
-    now <- computeTime
-    r <-
-        liftIO . randomRIO $
-        if null onlinePeers
-            then (90, 300)
-            else (900, 1800)
     case m of
-        Nothing -> do
-            let v = encode (PeerTimeAddress (now + r) p)
-            RocksDB.write db def [RocksDB.Put v k, RocksDB.Put k v]
+        Nothing -> e "Cannot find peer to backoff in database"
         Just bs -> do
-            let v = fromRight err (decode bs)
+            now <- computeTime
+            r <-
+                liftIO . randomRIO $
+                if null onlinePeers
+                    then (90, 300) -- Don't backoff so much if possibly offline
+                    else (900, 1800)
+            let v =
+                    fromRight
+                        (error "Could not decode peer info from db")
+                        (decode bs)
                 t = max (now + r) (getPeerNextConnect v)
-                v' = encode (PeerTimeAddress t p)
-            when (t == now + r) $ do
-                $(logWarn) $ logMe <> "Backing off peer " <> logShow sa
-                RocksDB.write
-                    db
-                    def
-                    [RocksDB.Del bs, RocksDB.Put k v', RocksDB.Put v' k]
+                v' = v { getPeerNextConnect = t }
+                bs' = encode v'
+            $(logWarn) $ logMe <> "Backing off peer " <> logShow sa
+            RocksDB.write
+                db
+                def
+                [RocksDB.Del bs, RocksDB.Put k bs', RocksDB.Put bs' k]
   where
-    err = error "Could not decode PeerTimeAddress from database"
+    e msg = do
+        $(logError) $ logMe <> cs msg
+        error msg
 
 getNewPeer :: MonadManager m => m (Maybe SockAddr)
 getNewPeer = do
@@ -331,14 +414,14 @@ processManagerMessage (ManagerGetAddr p) = do
 processManagerMessage (ManagerNewPeers p as) =
     void . runMaybeT $ do
         ManagerConfig {..} <- asks myConfig
-        guard (not mgrConfNoNewPeers)
+        guard (not mgrConfNoNewPeers) -- Apologies for double negation
         pn <- peerString p
         $(logDebug) $
             logMe <> "Received " <> logShow (length as) <> " new peers from " <>
             cs pn
         forM_ as $ \(_, na) ->
             let sa = naAddress na
-            in storePeer sa
+            in storePeer sa PriorityNetwork
 
 processManagerMessage (ManagerKill e p) =
     void . runMaybeT $ do
@@ -383,6 +466,7 @@ processManagerMessage (ManagerSetPeerVersion p v) =
             Right () -> do
                 loadFilter
                 askForPeers
+                connectPeer (onlinePeerAddress op)
                 announcePeer
   where
     f op =
@@ -488,7 +572,7 @@ connectNewPeers = do
             ps' <- resolvePeers
             $(logDebug) $
                 logMe <> "Resolved " <> logShow (length ps') <> " peers"
-            mapM_ storePeer ps'
+            mapM_ (uncurry storePeer) ps'
         _ ->
             $(logDebug) $
             logMe <> "Connected to " <> logShow (length ps) <> "/" <> logShow mo <>

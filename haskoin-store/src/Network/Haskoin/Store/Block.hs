@@ -431,19 +431,34 @@ syncBlocks = do
     chainBest <- chainGetBest ch
     let bestHash = headerHash (nodeHeader chainBest)
     db <- asks myBlockDB
+    blockNo <- asks myBlockNo
     myBestHash <-
         getBestBlockHash db Nothing >>= me "Could not get best block hash"
     void . runMaybeT $ do
         guard (myBestHash /= bestHash)
-        guard =<< do
-            pbox <- asks myPending
-            dbox <- asks myDownloaded
-            liftIO . atomically $
-                (&&) <$> (null <$> readTVar pbox) <*> (null <$> readTVar dbox)
+        guard . null =<< liftIO . readTVarIO =<< asks myPending
+        guard . null =<< liftIO . readTVarIO =<< asks myDownloaded
         $(logDebug) $ logMe <> "Attempting to get a peer to download blocks"
         p <-
-            MaybeT (liftIO (readTVarIO peerbox)) <|>
-            MaybeT (listToMaybe <$> managerGetPeers mgr)
+            do maybePeer <- liftIO (readTVarIO peerbox)
+               case maybePeer of
+                   Just p -> do
+                       $(logDebug) $
+                           logMe <> "Continue syncing against same peer"
+                       return p
+                   Nothing -> do
+                       $(logDebug) $
+                           logMe <> "Getting a new peer to sync against"
+                       managerPeers <- managerGetPeers mgr
+                       case managerPeers of
+                           [] -> do
+                               $(logDebug) $
+                                   logMe <> "Could not find a suitable peer"
+                               mzero
+                           p':_ -> do
+                               $(logDebug) $
+                                   logMe <> "Found a peer to sync against"
+                               return p'
         liftIO . atomically $ writeTVar peerbox (Just p)
         myBest <-
             me "Colud not get my best block from chain" =<<
@@ -452,7 +467,6 @@ syncBlocks = do
         let splitHash = headerHash (nodeHeader splitBlock)
         $(logDebug) $ logMe <> "Split block: " <> logShow splitHash
         revertUntil myBest splitBlock
-        blockNo <- asks myBlockNo
         let chainHeight = nodeHeight chainBest
             splitHeight = nodeHeight splitBlock
             topHeight = min chainHeight (splitHeight + blockNo)
@@ -492,6 +506,7 @@ syncBlocks = do
 importBlocks :: MonadBlock m => m ()
 importBlocks = do
     dbox <- asks myDownloaded
+    pbox <- asks myPending
     db <- asks myBlockDB
     best <- getBestBlockHash db Nothing >>= me "Could not get block hash"
     m <-
@@ -499,9 +514,11 @@ importBlocks = do
             ds <- readTVar dbox
             let (xs, ys) = partition ((== best) . prevBlock . blockHeader) ds
             case xs of
-                [] -> return Nothing
+                [] -> do
+                    readTVar pbox >>= \ps -> when (null ps) (writeTVar dbox [])
+                    return Nothing
                 b:_ -> do
-                    writeTVar dbox ys
+                    writeTVar dbox (nub ys)
                     return (Just b)
     case m of
         Just block -> do
@@ -941,7 +958,6 @@ processBlockMessage (BlockReceived _p b) = do
     mbox <- asks mySelf
     db <- asks myBlockDB
     best <- fromMaybe e <$> getBestBlockHash db Nothing
-    -- Only send BlockProcess message if download box has a block to process
     when (prevBlock (blockHeader b) == best) (BlockProcess `send` mbox)
   where
     e = error "Could not get best block from database"
@@ -962,7 +978,6 @@ purgePeer :: MonadBlock m => Peer -> m ()
 purgePeer p = do
     peerbox <- asks myPeer
     pbox <- asks myPending
-    dbox <- asks myDownloaded
     mgr <- asks myManager
     purge <-
         liftIO . atomically $ do
@@ -970,13 +985,14 @@ purgePeer p = do
             if Just p == p'
                 then do
                     writeTVar peerbox Nothing
-                    writeTVar dbox []
                     writeTVar pbox []
                     return True
                 else return False
-    when purge $
+    when purge $ do
+        $(logWarn) $ logMe <> "Syncing peer has been disconnected"
         managerKill (PeerMisbehaving "Peer purged from block store") p mgr
-    syncBlocks
+    mbox <- asks mySelf
+    BlockProcess `send` mbox
 
 getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrTxs addr = getAddrsTxs [addr]
