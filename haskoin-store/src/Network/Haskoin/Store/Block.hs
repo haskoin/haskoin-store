@@ -440,7 +440,14 @@ syncBlocks = do
             dbox <- asks myDownloaded
             liftIO . atomically $
                 (&&) <$> (null <$> readTVar pbox) <*> (null <$> readTVar dbox)
-        myBest <- MaybeT (chainGetBlock myBestHash ch)
+        $(logDebug) $ logMe <> "Attempting to get a peer to download blocks"
+        p <-
+            MaybeT (liftIO (readTVarIO peerbox)) <|>
+            MaybeT (listToMaybe <$> managerGetPeers mgr)
+        liftIO . atomically $ writeTVar peerbox (Just p)
+        myBest <-
+            me "Colud not get my best block from chain" =<<
+            chainGetBlock myBestHash ch
         splitBlock <- chainGetSplitBlock chainBest myBest ch
         let splitHash = headerHash (nodeHeader splitBlock)
         $(logDebug) $ logMe <> "Split block: " <> logShow splitHash
@@ -448,19 +455,15 @@ syncBlocks = do
         blockNo <- asks myBlockNo
         let chainHeight = nodeHeight chainBest
             splitHeight = nodeHeight splitBlock
-            topHeight = min chainHeight (splitHeight + blockNo + 1)
+            topHeight = min chainHeight (splitHeight + blockNo)
         targetBlock <-
-            MaybeT $
+            me "Could not get target block from chain" =<<
             if topHeight == chainHeight
                 then return (Just chainBest)
                 else chainGetAncestor topHeight chainBest ch
         requestBlocks <-
-            (++ [chainBest | targetBlock == chainBest]) <$>
+            (++ [targetBlock]) <$>
             chainGetParents (splitHeight + 1) targetBlock ch
-        p <-
-            MaybeT (liftIO (readTVarIO peerbox)) <|>
-            MaybeT (listToMaybe <$> managerGetPeers mgr)
-        liftIO . atomically $ writeTVar peerbox (Just p)
         downloadBlocks p (map (headerHash . nodeHeader) requestBlocks)
   where
     me msg Nothing = do
