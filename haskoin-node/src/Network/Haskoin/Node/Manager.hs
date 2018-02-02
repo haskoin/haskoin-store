@@ -424,8 +424,7 @@ processManagerMessage (ManagerKill e p) =
         banPeer $ onlinePeerAddress op
         onlinePeerAsync op `cancelWith` e
 
-processManagerMessage (ManagerSetPeerBest p bn) = do
-    modifyPeer f p
+processManagerMessage (ManagerSetPeerBest p bn) = modifyPeer f p
   where
     f op = op {onlinePeerBestBlock = bn}
 
