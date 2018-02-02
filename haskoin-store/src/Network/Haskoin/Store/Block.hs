@@ -422,13 +422,14 @@ syncBlocks = do
             liftIO . atomically $ do
                 pend <- readTVar pbox
                 down <- readTVar dbox
-                let ready =
-                        length pend + length down < fromIntegral blockNo `div` 2
-                    bstHash
+                let bstHash
                         | not (null pend) = last pend
                         | not (null down) = headerHash (blockHeader (head down))
                         | otherwise = myBestHash
+                    ready =
+                        length pend + length down < fromIntegral blockNo `div` 2
                 return (ready, bstHash)
+        guard (bstHash /= bestHash)
         guard ready
         p <-
             do maybePeer <- liftIO (readTVarIO peerbox)
