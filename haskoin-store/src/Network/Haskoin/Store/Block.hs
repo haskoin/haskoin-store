@@ -512,12 +512,12 @@ importBlock block@Block {..} = do
                 $(logError) $ logMe <> cs msg
                 error msg
     ops <- blockBatchOps block (nodeHeight bn) (nodeWork bn) True
-    db <- asks myBlockDB
-    RocksDB.write db def ops
     $(logInfo) $
-        logMe <> "Imported block " <> logShow (nodeHeight bn) <> " (" <>
+        logMe <> "Importing block " <> logShow (nodeHeight bn) <> " (" <>
         logShow (length ops) <>
         " database write operations)"
+    db <- asks myBlockDB
+    RocksDB.write db def ops
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
     unspentCachePrune
