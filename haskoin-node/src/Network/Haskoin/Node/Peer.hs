@@ -96,7 +96,6 @@ peer pc p =
 
 handshake :: MonadPeer m => Source m Message
 handshake = do
-    lp <- logMe
     p <- asks mySelf
     ch <- peerConfChain <$> asks myConfig
     rmt <- peerConfConnect <$> asks myConfig

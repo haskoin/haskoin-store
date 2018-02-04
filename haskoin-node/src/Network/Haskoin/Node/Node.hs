@@ -52,7 +52,7 @@ node cfg = do
         ManagerConfig
         { mgrConfMaxPeers = maxPeers cfg
         , mgrConfDir = directory cfg
-        , mgrConfNoNewPeers = noNewPeers cfg
+        , mgrConfDiscover = discover cfg
         , mgrConfMgrListener = nodeEvents cfg . ManagerEvent
         , mgrConfPeerListener = nodeEvents cfg . PeerEvent
         , mgrConfNetAddr = netAddress cfg

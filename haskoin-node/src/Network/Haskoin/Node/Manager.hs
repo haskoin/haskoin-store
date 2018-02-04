@@ -185,14 +185,14 @@ resolvePeers = do
         fmap
             (map (, PriorityManual) . concat)
             (mapM toSockAddr (mgrConfPeers cfg))
-    if mgrConfNoNewPeers cfg
-        then return confPeers
-        else do
+    if mgrConfDiscover cfg
+        then do
             seedPeers <-
                 fmap
                     (map (, PrioritySeed) . concat)
                     (mapM (toSockAddr . (, defaultPort)) seeds)
             return (confPeers ++ seedPeers)
+        else return confPeers
 
 encodeSockAddr :: SockAddr -> Put
 encodeSockAddr (SockAddrInet6 p _ (a, b, c, d) _) = do
@@ -343,14 +343,14 @@ getNewPeer = do
     ManagerConfig {..} <- asks myConfig
     onlinePeers <- map onlinePeerAddress <$> getOnlinePeers
     configPeers <- concat <$> mapM toSockAddr mgrConfPeers
-    if mgrConfNoNewPeers
-        then return $ find (not . (`elem` onlinePeers)) configPeers
-        else do
+    if mgrConfDiscover
+        then do
             pdb <- asks myPeerDB
             now <- computeTime
             RocksDB.withIterator pdb def $ \it -> do
                 RocksDB.iterSeek it (BS.singleton 0x00)
                 runMaybeT $ go now it onlinePeers
+        else return $ find (not . (`elem` onlinePeers)) configPeers
   where
     go now it onlinePeers = do
         guard =<< RocksDB.iterValid it
@@ -408,7 +408,7 @@ processManagerMessage (ManagerGetAddr p) = do
 processManagerMessage (ManagerNewPeers p as) =
     void . runMaybeT $ do
         ManagerConfig {..} <- asks myConfig
-        guard (not mgrConfNoNewPeers) -- Apologies for double negation
+        guard mgrConfDiscover
         pn <- peerString p
         $(logInfo) $
             logMe <> "Received " <> logShow (length as) <> " peers from " <>
@@ -471,8 +471,8 @@ processManagerMessage (ManagerSetPeerVersion p v) =
             Nothing -> return ()
             Just b  -> b `peerSetFilter` p
     askForPeers =
-        mgrConfNoNewPeers <$> asks myConfig >>= \io ->
-            unless io (MGetAddr `sendMessage` p)
+        mgrConfDiscover <$> asks myConfig >>= \discover ->
+            when discover (MGetAddr `sendMessage` p)
     announcePeer =
         void . runMaybeT $ do
             op <- MaybeT $ findPeer p

@@ -10,6 +10,7 @@ import           Control.Exception.Lifted
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
+import           Data.Bits
 import           Data.Hashable
 import           Data.Maybe
 import           Data.String.Conversions
@@ -65,7 +66,7 @@ data NodeConfig = NodeConfig
     { maxPeers       :: !Int
     , directory      :: !FilePath
     , initPeers      :: ![HostPort]
-    , noNewPeers     :: !Bool
+    , discover       :: !Bool
     , nodeEvents     :: !(Listen NodeEvent)
     , netAddress     :: !NetworkAddress
     , nodeSupervisor :: !(Inbox SupervisorMessage)
@@ -77,7 +78,7 @@ data ManagerConfig = ManagerConfig
     { mgrConfMaxPeers       :: !Int
     , mgrConfDir            :: !FilePath
     , mgrConfPeers          :: ![HostPort]
-    , mgrConfNoNewPeers     :: !Bool
+    , mgrConfDiscover       :: !Bool
     , mgrConfMgrListener    :: !(Listen ManagerEvent)
     , mgrConfPeerListener   :: !(Listen (Peer, PeerEvent))
     , mgrConfNetAddr        :: !NetworkAddress
