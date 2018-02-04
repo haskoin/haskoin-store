@@ -42,7 +42,7 @@ data OptConfig = OptConfig
     , optConfigBlocks    :: !(Maybe Word32)
     , optConfigPort      :: !(Maybe Int)
     , optConfigNetwork   :: !(Maybe Network)
-    , optConfigDiscovery :: !(Maybe Bool)
+    , optConfigDiscover  :: !(Maybe Bool)
     , optConfigPeers     :: !(Maybe [(Host, Maybe Port)])
     }
 
@@ -52,7 +52,7 @@ data Config = Config
     , configBlocks    :: !Word32
     , configPort      :: !Int
     , configNetwork   :: !Network
-    , configDiscovery :: !Bool
+    , configDiscover  :: !Bool
     , configPeers     :: ![(Host, Maybe Port)]
     }
 
@@ -82,7 +82,7 @@ optToConfig OptConfig {..} =
     , configBlocks = fromMaybe defBlocks optConfigBlocks
     , configPort = fromMaybe defPort optConfigPort
     , configNetwork = fromMaybe defNetwork optConfigNetwork
-    , configDiscovery = fromMaybe defDiscovery optConfigDiscovery
+    , configDiscover = fromMaybe defDiscovery optConfigDiscover
     , configPeers = fromMaybe defPeers optConfigPeers
     }
 
@@ -214,8 +214,8 @@ main :: IO ()
 main =
     execParser opts >>= \opt -> do
         let conf = optToConfig opt
-        when (null (configPeers conf) && not (configDiscovery conf)) $
-            die "Set peer discovery or trusted peers"
+        when (null (configPeers conf) && not (configDiscover conf)) $
+            die "Specify --discover or --peers [PEER,...]"
         setNetwork $ configNetwork conf
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
@@ -320,7 +320,7 @@ main =
                           map
                               (second (fromMaybe defaultPort))
                               (configPeers conf)
-                    , storeConfNoNewPeers = not (configDiscovery conf)
+                    , storeConfDiscover = configDiscover conf
                     , storeConfCacheNo = configCache conf
                     , storeConfBlockNo = configBlocks conf
                     , storeConfDB = db

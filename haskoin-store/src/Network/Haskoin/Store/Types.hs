@@ -657,7 +657,7 @@ data StoreConfig = StoreConfig
     , storeConfListener   :: !(Listen StoreEvent)
     , storeConfMaxPeers   :: !Int
     , storeConfInitPeers  :: ![HostPort]
-    , storeConfNoNewPeers :: !Bool
+    , storeConfDiscover   :: !Bool
     , storeConfCacheNo    :: !Word32
     , storeConfBlockNo    :: !Word32
     , storeConfDB         :: !DB

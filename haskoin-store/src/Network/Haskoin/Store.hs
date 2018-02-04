@@ -45,6 +45,7 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.Text                   (Text)
 import           Database.RocksDB            (DB)
+import           Network.Haskoin.Constants
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
@@ -86,7 +87,7 @@ store StoreConfig {..} = do
             { maxPeers = storeConfMaxPeers
             , directory = nodeDir
             , initPeers = storeConfInitPeers
-            , noNewPeers = storeConfNoNewPeers
+            , discover = storeConfDiscover
             , nodeEvents = (`sendSTM` sm)
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeSupervisor = ns
