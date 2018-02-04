@@ -42,6 +42,8 @@ import qualified Data.Map.Strict              as M
 import           Data.Maybe
 import           Data.Monoid
 import           Data.Serialize               (encode)
+import           Data.Set                     (Set)
+import qualified Data.Set                     as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
 import           Data.Word
@@ -63,7 +65,7 @@ data UnspentCache = UnspentCache
 
 data AddressCache = AddressCache
     { addressCache       :: !(Map Address (Balance, BlockHeight))
-    , addressCacheBlocks :: !(Map BlockHeight [Address])
+    , addressCacheBlocks :: !(Map BlockHeight (Set Address))
     }
 
 data BlockRead = BlockRead
@@ -301,7 +303,11 @@ updateBalanceCache height main balanceMap = do
                  cache@AddressCache {..} <- readTVar abox
                  let newCache = M.insert addr (bal, height) addressCache
                      newBlocks =
-                         M.insertWith (++) height [addr] addressCacheBlocks
+                         M.insertWith
+                             (<>)
+                             height
+                             (S.singleton addr)
+                             addressCacheBlocks
                  writeTVar
                      abox
                      cache
@@ -318,7 +324,7 @@ updateBalanceCache height main balanceMap = do
         AddressCache {..} <- readTVar abox
         when (M.size addressCache > fromIntegral n) $ do
             let (delBlocks, newBlocks) = M.splitAt 1 addressCacheBlocks
-                as = concat (M.elems delBlocks)
+                as = mconcat (M.elems delBlocks)
                 newCache = foldl' (flip M.delete) addressCache as
             writeTVar
                 abox
@@ -332,7 +338,10 @@ updateBalanceCache height main balanceMap = do
             Just (_, height') -> do
                 let newCache = M.delete address addressCache
                     newBlocks =
-                        M.adjust (filter (/= address)) height' addressCacheBlocks
+                        M.adjust
+                            (S.filter (/= address))
+                            height'
+                            addressCacheBlocks
                 writeTVar
                     abox
                     AddressCache
@@ -707,7 +716,7 @@ balanceOps main addrMap = do
                     if main
                         then [insertOp key balance]
                         else case maybeOldBalance of
-                                 Nothing -> [deleteOp key]
+                                 Nothing  -> [deleteOp key]
                                  Just old -> [insertOp key old]
                 outputs = M.toList addressDeltaOutput
                 outOps = concatMap (uncurry (addrOutputOps main)) outputs
