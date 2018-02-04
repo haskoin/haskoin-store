@@ -57,10 +57,10 @@ data Config = Config
     }
 
 defBlocks :: Word32
-defBlocks = 200
+defBlocks = 500
 
 defCache :: Word32
-defCache = 250000
+defCache = 1000000
 
 defPort :: Int
 defPort = 3000
