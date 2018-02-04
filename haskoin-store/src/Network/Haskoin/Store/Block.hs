@@ -296,27 +296,25 @@ getBalanceData addr = runMaybeT (fromCache <|> fromDB)
 updateBalanceCache :: MonadBlock m => BlockHeight -> Bool -> BalanceMap -> m ()
 updateBalanceCache height main balanceMap = do
     abox <- asks myAddressCache
+    let as = M.keys balanceMap
     if main
-        then liftIO . atomically $
-             forM_ (M.toList balanceMap) $ \(addr, bal) -> do
-                 removeOld abox addr
-                 cache@AddressCache {..} <- readTVar abox
-                 let newCache = M.insert addr (bal, height) addressCache
+        then liftIO . atomically $ do
+                 AddressCache {..} <- readTVar abox
+                 let newCache = addressCache <> M.map (, height) balanceMap
                      newBlocks =
-                         M.insertWith
-                             (<>)
-                             height
-                             (S.singleton addr)
-                             addressCacheBlocks
+                         M.insert height (S.fromList as) addressCacheBlocks
                  writeTVar
                      abox
-                     cache
+                     AddressCache
                      {addressCache = newCache, addressCacheBlocks = newBlocks}
-        else liftIO . atomically $
-             forM_ (M.keys balanceMap) $ \addr -> do
-                 cache@AddressCache {..} <- readTVar abox
-                 let newCache = M.delete addr addressCache
-                 writeTVar abox cache {addressCache = newCache}
+        else liftIO . atomically $ do
+                 AddressCache {..} <- readTVar abox
+                 let newCache = foldl' (flip M.delete) addressCache as
+                     newBlocks = M.delete height addressCacheBlocks
+                 writeTVar
+                     abox
+                     AddressCache
+                     {addressCache = newCache, addressCacheBlocks = newBlocks}
     cacheNo <- asks myCacheNo
     liftIO (atomically (pruneIfTooLarge abox cacheNo))
   where
@@ -331,21 +329,6 @@ updateBalanceCache height main balanceMap = do
                 AddressCache
                 {addressCache = newCache, addressCacheBlocks = newBlocks}
             pruneIfTooLarge abox n
-    removeOld abox address = do
-        AddressCache {..} <- readTVar abox
-        case M.lookup address addressCache of
-            Nothing -> return ()
-            Just (_, height') -> do
-                let newCache = M.delete address addressCache
-                    newBlocks =
-                        M.adjust
-                            (S.filter (/= address))
-                            height'
-                            addressCacheBlocks
-                writeTVar
-                    abox
-                    AddressCache
-                    {addressCache = newCache, addressCacheBlocks = newBlocks}
 
 getOutput ::
        MonadIO m
