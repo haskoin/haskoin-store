@@ -1,12 +1,16 @@
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies      #-}
 module Network.Haskoin.Wallet.Amounts where
 
 import           Control.Monad
-import           Data.List
-import           Data.Monoid                           ((<>))
-import           Data.Word
+import           Foundation
+import           Foundation.Collection
+import           Foundation.String.Read
 import           Network.Haskoin.Wallet.ConsolePrinter
-import           Text.Read
+
+type Satoshi = Natural
 
 data AmountUnit
     = UnitBitcoin
@@ -14,30 +18,73 @@ data AmountUnit
     | UnitSatoshi
     deriving (Eq)
 
-instance Show AmountUnit where
-    show unit = case unit of
-        UnitBitcoin -> "bitcoin"
-        UnitBit     -> "bit"
-        UnitSatoshi -> "satoshi"
+{- ConsolePrinter functions -}
 
-formatAmount :: AmountUnit -> Word64 -> ConsolePrinter
+formatAmount :: AmountUnit -> Satoshi -> ConsolePrinter
 formatAmount unit = formatIntegerAmount unit . fromIntegral
 
 formatIntegerAmount :: AmountUnit -> Integer -> ConsolePrinter
 formatIntegerAmount unit amnt
-    | amnt >= 0 = formatAmountWith formatPosAmount unit amnt
-    | otherwise = formatAmountWith formatNegAmount unit amnt
+    | amnt >= 0 = formatIntegerAmountWith formatPosAmount unit amnt
+    | otherwise = formatIntegerAmountWith formatNegAmount unit amnt
 
-formatAmountWith ::
+formatIntegerAmountWith ::
        (String -> ConsolePrinter) -> AmountUnit -> Integer -> ConsolePrinter
-formatAmountWith f unit amnt =
-    f (showIntegerAmount unit amnt) <+> formatStatic (showUnit unit amnt)
+formatIntegerAmountWith f unit amnt =
+    f (showIntegerAmount unit amnt) <+> formatUnit unit amnt
+
+formatUnit :: AmountUnit -> Integer -> ConsolePrinter
+formatUnit unit = formatStatic . showUnit unit
 
 showUnit :: AmountUnit -> Integer -> String
 showUnit unit amnt
-    | unit == UnitSatoshi = show unit -- satoshi is always singular
-    | abs amnt == 1 = show unit
-    | otherwise = show unit <> "s" -- plural form bitcoins and bits
+    | unit == UnitSatoshi = strUnit -- satoshi is always singular
+    | abs amnt == 1 = strUnit
+    | otherwise = strUnit <> "s" -- plural form bitcoins and bits
+  where
+    strUnit =
+        case unit of
+            UnitBitcoin -> "bitcoin"
+            UnitBit     -> "bit"
+            UnitSatoshi -> "satoshi"
+
+{- Amount Parsing -}
+
+showAmount :: AmountUnit -> Satoshi -> String
+showAmount unit amnt =
+    case unit of
+        UnitBitcoin ->
+            let (q, r) = amnt `divMod` 100000000
+            in addSep (show q) <> "." <>
+               stripEnd (padWith 8 '0' (<> show r))
+        UnitBit ->
+            let (q, r) = amnt `divMod` 100
+            in addSep (show q) <> "." <> padWith 2 '0' (<> show r)
+        UnitSatoshi -> addSep (show amnt)
+  where
+    stripEnd = dropPatternEnd "0000" . dropPatternEnd "000000"
+    addSep = intercalate "'" . groupEnd 3
+
+readAmount :: AmountUnit -> String -> Maybe Satoshi
+readAmount unit amntStr =
+    case unit of
+        UnitBitcoin -> do
+            guard $ length r <= 8
+            a <- readNatural q
+            b <- readNatural $ padWith 8 '0' (r <>)
+            return $ a * 100000000 + b
+        UnitBit -> do
+            guard $ length r <= 2
+            a <- readNatural q
+            b <- readNatural $ padWith 2 '0' (r <>)
+            return $ a * 100 + b
+        UnitSatoshi -> readNatural str
+  where
+    str = dropAmountSep amntStr
+    (q, r) = second (drop 1) $ breakElem '.' str
+
+dropAmountSep :: String -> String
+dropAmountSep = filter (`notElem` [' ', '_', '\''])
 
 -- | Like 'showAmount' but will display a minus sign for negative amounts
 showIntegerAmount :: AmountUnit -> Integer -> String
@@ -48,62 +95,32 @@ showIntegerAmount unit i
 
 -- | Like 'readAmount' but can parse a negative amount
 readIntegerAmount :: AmountUnit -> String -> Maybe Integer
-readIntegerAmount unit s =
-    case s of
-        ('-':str) -> ((-1) *) . fromIntegral <$> readAmount unit str
-        str       -> fromIntegral <$> readAmount unit str
+readIntegerAmount unit str =
+    case uncons str of
+        Just ('-', rest) -> negate . toInteger <$> readAmount unit rest
+        _ -> toInteger <$> readAmount unit str
 
-showAmount :: AmountUnit -> Word64 -> String
-showAmount unit amnt =
-    case unit of
-        UnitBitcoin ->
-            let (q, r) = amnt `quotRem` 100000000
-            in addSep (show q) <> "." <> stripEnd (padWith 8 '0' (<> show r))
-        UnitBit ->
-            let (q, r) = amnt `quotRem` 100
-            in addSep (show q) <> "." <> padWith 2 '0' (<> show r)
-        UnitSatoshi -> addSep (show amnt)
+padWith :: Sequential c => CountOf (Element c) -> Element c -> (c -> c) -> c
+padWith n p f =
+    case n - length xs of
+        Just r -> f $ replicate r p
+        _      -> xs
   where
-    stripEnd = dropPatternEnd "0000" . dropPatternEnd "000000"
-    addSep = intercalate "'" . groupEnd 3
+    xs = f mempty
 
-readAmount :: AmountUnit -> String -> Maybe Word64
-readAmount unit str' =
-    case unit of
-        UnitBitcoin -> do
-            guard $ length r <= 8
-            a <- readMaybe q
-            b <- readMaybe $ padWith 8 '0' (r <>)
-            return $ a * 100000000 + b
-        UnitBit -> do
-            guard $ length r <= 2
-            a <- readMaybe q
-            b <- readMaybe $ padWith 2 '0' (r <>)
-            return $ a * 100 + b
-        UnitSatoshi -> readMaybe str
-  where
-    str = dropSep str'
-    dropSep = filter (not . (`elem` (" _'" :: String)))
-    r = delete '.' r'
-    (q, r') = break (== '.') str
-
-padWith :: Int -> a -> ([a] -> [a]) -> [a]
-padWith n p f
-    | length xs < n = f pad
-    | otherwise = xs
-  where
-    pad = replicate (n - length xs) p
-    xs = f []
-
-dropPatternEnd :: Eq a => [a] -> [a] -> [a]
+dropPatternEnd :: (Eq (Element c), Sequential c) => c -> c -> c
 dropPatternEnd p xs
-    | p `isSuffixOf` xs = take (length xs - length p) xs
+    | p `isSuffixOf` xs =
+        case length xs - length p of
+            Just n -> take n xs
+            _      -> xs
     | otherwise = xs
 
-groupEnd :: Int -> [a] -> [[a]]
-groupEnd n xs
-    | length xs <= n = [xs]
-    | otherwise = groupEnd n a <> [b]
-  where
-    (a, b) = splitAt (length xs - n) xs
-
+groupEnd :: Sequential c => CountOf (Element c) -> c -> [c]
+groupEnd n xs =
+    case length xs - n of
+        Nothing -> [xs]
+        Just 0 -> [xs]
+        Just r ->
+            let (a, b) = splitAt r xs
+            in groupEnd n a <> [b]

@@ -1,64 +1,70 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE NoImplicitPrelude         #-}
+{-# LANGUAGE OverloadedStrings         #-}
 module Network.Haskoin.Wallet.HTTP where
 
-import           Control.Arrow                         ((&&&))
-import           Control.Lens                          ((&), (.~), (^.))
-import           Data.List
-import qualified Data.Map.Strict                       as M
-import           Data.Monoid                           ((<>))
-import           Data.String.Conversions               (cs)
-import           Data.Word
+import           Control.Arrow                           ((&&&))
+import           Control.Lens                            ((&), (.~), (^.))
+import           Data.List                               (sum)
+import           Data.Map.Strict                         (Map)
+import qualified Data.Map.Strict                         as Map
+import           Foundation
 import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
+import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
+import           Network.Haskoin.Wallet.FoundationCompat
 import           Network.HTTP.Types.Status
-import qualified Network.Wreq                          as HTTP
-import           Network.Wreq.Types                    (ResponseChecker)
+import qualified Network.Wreq                            as HTTP
+import           Network.Wreq.Types                      (ResponseChecker)
 
 data AddressTx = AddressTx
     { addrTxAddress :: !Address
     , addrTxTxHash  :: !TxHash
     , addrTxAmount  :: !Integer
     , addrTxBlock   :: !BlockHash
-    , addrTxHeight  :: !Integer
+    , addrTxHeight  :: !Natural
     }
     deriving (Eq, Show)
 
 data TxMovement = TxMovement
     { txMovementTxHash   :: !TxHash
-    , txMovementInbound  :: M.Map Address Word64
-    , txMovementMyInputs :: M.Map Address Word64
+    , txMovementInbound  :: Map Address Satoshi
+    , txMovementMyInputs :: Map Address Satoshi
     , txMovementAmount   :: !Integer
-    , txMovementHeight   :: !Integer
+    , txMovementHeight   :: !Natural
     }
     deriving (Eq, Show)
 
 mergeAddressTxs :: [AddressTx] -> [TxMovement]
 mergeAddressTxs as =
-    sortOn txMovementHeight $ map toMvt $ M.assocs aMap
+    sortBy (compare `on` txMovementHeight) $ mapMaybe toMvt $ Map.assocs aMap
   where
-    aMap :: M.Map TxHash [AddressTx]
-    aMap = M.fromListWith (<>) $ map (addrTxTxHash &&& (: [])) as
-    toMvt :: (TxHash, [AddressTx]) -> TxMovement
+    aMap :: Map TxHash [AddressTx]
+    aMap = Map.fromListWith (<>) $ fmap (addrTxTxHash &&& (: [])) as
+    toMvt :: (TxHash, [AddressTx]) -> Maybe TxMovement
     toMvt (tid, atxs) =
-        let (os, is) = partition ((< 0) . addrTxAmount) atxs
-        in TxMovement
-           { txMovementTxHash = tid
-           , txMovementInbound = toAddrMap is
-           , txMovementMyInputs = toAddrMap os
-           , txMovementAmount = sum $ map addrTxAmount atxs
-           , txMovementHeight = addrTxHeight $ head atxs
-           }
-    toAddrMap :: [AddressTx] -> M.Map Address Word64
-    toAddrMap = M.fromListWith (+) . map toAddrVal
-    toAddrVal :: AddressTx -> (Address, Word64)
+        case head <$> nonEmpty atxs of
+            Just a ->
+                let (os, is) = partition ((< 0) . addrTxAmount) atxs
+                in Just TxMovement
+                     { txMovementTxHash = tid
+                     , txMovementInbound = toAddrMap is
+                     , txMovementMyInputs = toAddrMap os
+                     , txMovementAmount = sum $ fmap addrTxAmount atxs
+                     , txMovementHeight = addrTxHeight a
+                     }
+            _ -> Nothing
+    toAddrMap :: [AddressTx] -> Map Address Satoshi
+    toAddrMap = Map.fromListWith (+) . fmap toAddrVal
+    toAddrVal :: AddressTx -> (Address, Satoshi)
     toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
 
 data BlockchainService = BlockchainService
-    { httpBalance    :: [Address] -> IO Word64
-    , httpUnspent    :: [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
+    { httpBalance    :: [Address] -> IO Satoshi
+    , httpUnspent    :: [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
     , httpAddressTxs :: [Address] -> IO [AddressTx]
     , httpTx         :: TxHash -> IO Tx
     , httpBroadcast  :: Tx -> IO ()
@@ -74,7 +80,10 @@ checkStatus _ r
             , nest 4 $
               vcat
                   [ formatKey (block 10 "Status:") <> formatError (show code)
-                  , formatKey (block 10 "Message:") <> formatStatic (cs message)
+                  , formatKey (block 10 "Message:") <>
+                    formatStatic
+                        (fromMaybe "Could not decode the message" $
+                         bsToString message)
                   ]
             ]
   where

@@ -35,8 +35,7 @@ library
                    , Network.Haskoin.Wallet.HTTP.Haskoin
                    , Network.Haskoin.Wallet.Amounts
                    , Network.Haskoin.Wallet.ConsolePrinter
-
-    other-modules: Network.Haskoin.Wallet.PrettyJson
+                   , Network.Haskoin.Wallet.FoundationCompat
 
     build-depends: aeson                         >= 0.8
                  , ansi-terminal
@@ -50,6 +49,8 @@ library
                  , console-program
                  , directory
                  , entropy                       >= 0.3.7
+                 , foundation                    >= 0.0       && < 0.1
+                 , foundation-edge               >= 0.0.3     && < 0.1
                  , haskeline
                  , haskoin-core                  >= 0.5       && < 0.6
                  , http-types                    >= 0.9

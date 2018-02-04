@@ -1,6 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Wallet.ConsolePrinter where
 
 import           Data.Monoid
+import           Foundation
+import           Foundation.Collection
 import           System.Console.ANSI
 import           System.Exit
 import           System.IO.Unsafe
@@ -8,7 +12,7 @@ import           System.IO.Unsafe
 data ConsolePrinter
     = ConsoleConcat !ConsolePrinter !ConsolePrinter
     | ConsoleNewline !ConsolePrinter
-    | ConsoleNest !Int !ConsolePrinter
+    | ConsoleNest !(CountOf (Element String)) !ConsolePrinter
     | ConsoleText !ConsoleFormat
     | ConsoleEmpty
 
@@ -16,7 +20,7 @@ instance Monoid ConsolePrinter where
     mempty = ConsoleEmpty
     mappend a ConsoleEmpty = a
     mappend ConsoleEmpty b = b
-    mappend a b = ConsoleConcat a b
+    mappend a b            = ConsoleConcat a b
 
 text :: ConsoleFormat -> ConsolePrinter
 text = ConsoleText
@@ -25,24 +29,26 @@ text = ConsoleText
 p1 <+> p2 = p1 <> text (FormatStatic " ") <> p2
 
 vcat :: [ConsolePrinter] -> ConsolePrinter
-vcat [] = ConsoleEmpty
+vcat []                = ConsoleEmpty
 vcat (ConsoleEmpty:xs) = vcat xs
-vcat (x:xs) = x <> ConsoleNewline (vcat xs)
+vcat (x:xs)            = x <> ConsoleNewline (vcat xs)
 
-nest :: Int -> ConsolePrinter -> ConsolePrinter
+nest :: CountOf (Element String) -> ConsolePrinter -> ConsolePrinter
 nest = ConsoleNest
 
-block :: Int -> String -> String
-block n str
-    | missing <= 0 = str
-    | otherwise = str <> replicate missing ' '
-  where
-    missing = n - length str
+block :: CountOf (Element String) -> String -> String
+block n str =
+    case n - length str of
+        Just missing -> str <> replicate missing ' '
+        _            -> str
 
 renderIO :: ConsolePrinter -> IO ()
 renderIO cp = go 0 0 cp >> putStrLn ""
   where
-    go :: Int -> Int -> ConsolePrinter -> IO Int
+    go :: CountOf (Element String)
+       -> CountOf (Element String)
+       -> ConsolePrinter
+       -> IO (CountOf (Element String))
     go l n p =
         case p of
             ConsoleConcat p1 p2 -> do

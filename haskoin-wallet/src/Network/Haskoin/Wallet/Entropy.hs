@@ -1,93 +1,102 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.Entropy where
 
-import           Control.Monad
-import           Data.Bits                             (xor)
-import qualified Data.ByteString                       as BS
-import qualified Data.ByteString.Char8                 as B8
-import           Data.Maybe
-import           Data.Monoid
-import           Data.String.Conversions               (cs)
-import           Network.Haskoin.Crypto                (Mnemonic, toMnemonic)
+import           Control.Monad                           (when)
+import           Foundation
+import           Foundation.Bits
+import           Foundation.Collection
+import           Foundation.IO
+import           Foundation.Numerical
+import           Foundation.System.Entropy
+import           Network.Haskoin.Crypto                  (Mnemonic, toMnemonic)
 import           Network.Haskoin.Util
-import           Network.Haskoin.Wallet.ConsolePrinter
-import           Numeric                               (readInt)
-import qualified System.Directory                      as D
-import qualified System.Entropy                        as System
-import qualified System.IO                             as IO
+import           Network.Haskoin.Wallet.FoundationCompat
+import           Numeric                                 (readInt)
+import qualified System.Directory                        as D
 
 {- Base 6 decoding for dice entropy -}
 
-b6Data :: BS.ByteString
+b6Data :: String
 b6Data = "612345"
 
-b6 :: Int -> Char
-b6 = B8.index b6Data
+b6 :: Offset (Element String) -> Maybe (Element String)
+b6 = (b6Data !)
 
-b6' :: Char -> Maybe Int
-b6' = flip B8.elemIndex b6Data
+b6' :: Element String -> Maybe (Offset (Element String))
+b6' = (`findIndex` b6Data) . (==)
 
-decodeBase6 :: BS.ByteString -> Maybe BS.ByteString
-decodeBase6 bs
-    | BS.null bs = Just BS.empty
+decodeBase6 :: String -> Maybe (UArray Word8)
+decodeBase6 str
+    | null str = Just mempty
     | otherwise =
-        case readInt 6 (isJust . b6') f $ cs bs of
-            ((i, []):_) -> Just $ integerToBS i
-            _ -> Nothing
+        case readInt
+                 6
+                 (isJust . b6')
+                 (fromInteger . toInteger . f)
+                 (toLString str) of
+            ((i, []):_) -> Just $ asBytes integerToBS i
+            _           -> Nothing
   where
     f = fromMaybe (error "Could not decode base6") . b6'
 
 -- Mix entropy of same length by xoring them
-mixEntropy :: BS.ByteString
-           -> BS.ByteString
-           -> Either String BS.ByteString
+mixEntropy :: UArray Word8
+           -> UArray Word8
+           -> Either String (UArray Word8)
 mixEntropy ent1 ent2
-    | BS.length ent1 == BS.length ent2 =
-        Right $ BS.pack $ BS.zipWith xor ent1 ent2
+    | length ent1 == length ent2 =
+        Right $ zipWith xor ent1 ent2
     | otherwise = Left "Entropy is not of the same length"
 
-diceToEntropy :: Int -> String -> Either String BS.ByteString
+diceToEntropy :: CountOf Word8 -> String -> Either String (UArray Word8)
 diceToEntropy ent rolls
     | length rolls /= requiredRolls ent =
         Left $ show (requiredRolls ent) <> " dice rolls are required"
     | otherwise = do
-        bs <- maybeToEither "Could not decode base6" $ decodeBase6 $ cs rolls
-        -- This check should probably never trigger
-        when (BS.length bs > ent) $ Left "Invalid entropy length"
-        let z = BS.replicate (ent - BS.length bs) 0x00
-        return $ BS.append z bs
+        bytes <- maybeToEither "Could not decode base6" $ decodeBase6 rolls
+        case ent - length bytes of
+            Just n -> return $ replicate n 0x00 <> bytes
+            -- This should probably never happend
+            _ -> Left "Invalid entropy length"
 
 -- The number of dice rolls required to reach a given amount of entropy
 -- Example: 32 bytes of entropy require 99 dice rolls (255.9 bits)
-requiredRolls :: Int -> Int
-requiredRolls ent = floor $ (fromIntegral ent :: Double) * 8 * log 2 / log 6
+requiredRolls :: CountOf Word8 -> CountOf (Element String)
+requiredRolls ent = roundDown $ fromIntegral (fromCount ent) * log2o6
+  where
+    log2o6 = 3.09482245788 :: Double -- 8 * log 2 / log 6
 
-genMnemonic :: Int -> Maybe String -> IO (Either String (String, Mnemonic))
-genMnemonic reqEnt rollsM
+genMnemonic :: CountOf Word8 -> IO (Either String (String, Mnemonic))
+genMnemonic reqEnt = genMnemonicGen reqEnt Nothing
+
+genMnemonicDice :: CountOf Word8 -> String -> IO (Either String (String, Mnemonic))
+genMnemonicDice reqEnt rolls = genMnemonicGen reqEnt (Just rolls)
+
+genMnemonicGen ::
+       CountOf Word8 -> Maybe String -> IO (Either String (String, Mnemonic))
+genMnemonicGen reqEnt rollsM
     | reqEnt `elem` [16,20 .. 32] = do
         (entOrig, sysEnt) <- systemEntropy reqEnt
         return $ do
             ent <-
                 maybe
                     (Right sysEnt)
-                    (mixEntropy sysEnt <=< diceToEntropy reqEnt)
+                    (diceToEntropy reqEnt >=> mixEntropy sysEnt)
                     rollsM
-            when (BS.length ent /= reqEnt) $
+            when (length ent /= reqEnt) $
                 Left "Something went wrong with the entropy size"
-            mnem <- toMnemonic ent
+            mnem <- eitherString $ withBytes toMnemonic ent
             return (entOrig, mnem)
     | otherwise = return $ Left "The entropy value can only be in [16,20..32]"
 
-systemEntropy :: Int -> IO (String, BS.ByteString)
-systemEntropy bytes
-    | bytes <= 0 = consoleError $ formatError "Entropy bytes can not be <= 0"
-    | otherwise = do
-        exists <- D.doesFileExist "/dev/random"
-        if exists
-            then ("/dev/random", ) <$> devRandom bytes
-            else ("System.Entropy.getEntropy", ) <$> System.getEntropy bytes
+systemEntropy :: CountOf Word8 -> IO (String, UArray Word8)
+systemEntropy bytes = do
+    exists <- D.doesFileExist "/dev/random"
+    if exists
+        then ("/dev/random", ) <$> devRandom bytes
+        else ("Foundation.System.Entropy.getEntropy", ) <$> getEntropy bytes
 
-devRandom :: Int -> IO BS.ByteString
-devRandom = IO.withBinaryFile "/dev/random" IO.ReadMode . flip BS.hGet
-
+devRandom :: CountOf Word8 -> IO (UArray Word8)
+devRandom bytes = withFile "/dev/random" ReadMode (`hGet` fromCount bytes)

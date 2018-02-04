@@ -1,26 +1,28 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Wallet.HTTP.Insight (insightService) where
 
-import           Control.Lens                          ((&), (<>~), (^.), (^..),
-                                                        (^?))
-import qualified Data.Aeson                            as J
+import           Control.Lens                            ((&), (<>~), (^.),
+                                                          (^..), (^?))
+import qualified Data.Aeson                              as Json
 import           Data.Aeson.Lens
-import           Data.List
-import           Data.Maybe
-import           Data.Monoid                           ((<>))
-import qualified Data.Serialize                        as S
-import           Data.String.Conversions               (cs)
-import           Data.Word
+import           Data.List                               (sum)
+import           Foundation
+import           Foundation.Compat.Text
+import           Foundation.Collection
 import           Network.Haskoin.Constants
-import           Network.Haskoin.Crypto
+import           Network.Haskoin.Crypto                  hiding (addrToBase58)
 import           Network.Haskoin.Script
-import           Network.Haskoin.Transaction
+import           Network.Haskoin.Transaction             hiding (hexToTxHash,
+                                                          txHashToHex)
 import           Network.Haskoin.Util
+import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
+import           Network.Haskoin.Wallet.FoundationCompat
 import           Network.Haskoin.Wallet.HTTP
-import qualified Network.Wreq                          as HTTP
+import qualified Network.Wreq                            as HTTP
 
-getURL :: String
+getURL :: LString
 getURL
     | getNetwork == bitcoinNetwork =
         "https://btc.blockdozer.com/insight-api/"
@@ -33,7 +35,7 @@ getURL
     | otherwise =
         consoleError $
         formatError $
-        "insight does not support the network " <> networkName
+        "insight does not support the network " <> fromLString networkName
 
 insightService :: BlockchainService
 insightService =
@@ -42,14 +44,15 @@ insightService =
     , httpUnspent = getUnspent
     , httpTx = getTx
     , httpBroadcast = broadcastTx
+    , httpAddressTxs = consoleError $ formatError "Not implemented"
     }
 
-getBalance :: [Address] -> IO Word64
+getBalance :: [Address] -> IO Satoshi
 getBalance addrs = do
     coins <- getUnspent addrs
-    return $ sum $ map lst3 coins
+    return $ sum $ lst3 <$> coins
 
-getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Word64)]
+getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
 getUnspent addrs = do
     r <- HTTP.asValue . setJSON =<< HTTP.getWith options url
     let v = r ^. HTTP.responseBody
@@ -58,16 +61,16 @@ getUnspent addrs = do
   where
     setJSON r
         | isNothing $ r ^? HTTP.responseHeader "Content-Type" =
-          r & HTTP.responseHeaders <>~ [("Content-Type", "application/json")]
+            r & HTTP.responseHeaders <>~ [("Content-Type", "application/json")]
         | otherwise = r
-    url = getURL <> "/addrs/" <> aList <> "/utxo"
-    aList = intercalate "," $ map (cs . addrToBase58) addrs
+    url = getURL <> "/addrs/" <> toLString aList <> "/utxo"
+    aList = intercalate "," $ addrToBase58 <$> addrs
     parseCoin v = do
-        tid <- hexToTxHash . cs =<< v ^? key "txid" . _String
+        tid <- hexToTxHash . fromText =<< v ^? key "txid" . _String
         pos <- v ^? key "vout" . _Integral
         val <- v ^? key "satoshis" . _Integral
         scpHex <- v ^? key "scriptPubKey" . _String
-        scp <- eitherToMaybe . decodeOutputBS =<< decodeHex (cs scpHex)
+        scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
 getTx :: TxHash -> IO Tx
@@ -75,10 +78,10 @@ getTx tid = do
     r <- HTTP.asValue =<< HTTP.getWith options url
     let v = r ^. HTTP.responseBody
         txHexM = v ^? key "rawtx" . _String
-        txM = eitherToMaybe . S.decode =<< decodeHex . cs =<< txHexM
-    maybe (consoleError $ formatError "Could not decode tx") return txM
+    maybe err return $ decodeBytes =<< decodeHexText =<< txHexM
   where
-    url  = getURL <> "/rawtx/" <> cs (txHashToHex tid)
+    url = getURL <> "/rawtx/" <> toLString (txHashToHex tid)
+    err = consoleError $ formatError "Could not decode tx"
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do
@@ -86,5 +89,6 @@ broadcastTx tx = do
     return ()
   where
     url = getURL <> "/tx/send"
-    val = J.object [ "rawtx" J..= J.String (cs $ encodeHex $ S.encode tx)]
-
+    val =
+        Json.object
+            ["rawtx" Json..= Json.String (encodeHexText $ encodeBytes tx)]

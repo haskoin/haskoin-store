@@ -1,24 +1,26 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.Signing where
 
-import           Control.Arrow
-import           Control.Monad
-import           Data.Aeson.TH
-import qualified Data.ByteString                     as BS
-import           Data.Either
-import           Data.List
-import qualified Data.Map.Strict                     as M
-import           Data.Maybe
-import           Data.Monoid                         ((<>))
-import qualified Data.Serialize                      as S
-import           Data.Word
+import           Control.Arrow                           ((&&&))
+import           Data.Aeson.TH                           (deriveJSON)
+import           Data.List                               (nub, sum)
+import           Data.Map.Strict                         (Map)
+import qualified Data.Map.Strict                         as Map
+import           Data.Ord
+import qualified Data.Set                                as Set
+import           Foundation
+import           Foundation.Collection
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
-import           Network.Haskoin.Network
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
 import           Network.Haskoin.Wallet.AccountStore
+import           Network.Haskoin.Wallet.Amounts
+import           Network.Haskoin.Wallet.FoundationCompat hiding (addrToBase58)
 import           Network.Haskoin.Wallet.HTTP
 
 {- Building Transactions -}
@@ -26,30 +28,36 @@ import           Network.Haskoin.Wallet.HTTP
 data WalletCoin = WalletCoin
     { walletCoinOutPoint     :: !OutPoint
     , walletCoinScriptOutput :: !ScriptOutput
-    , walletCoinValue        :: !Word64
+    , walletCoinValue        :: !Satoshi
     } deriving (Eq, Show)
 
 instance Coin WalletCoin where
-    coinValue = walletCoinValue
+    coinValue = fromIntegral . walletCoinValue
 
 instance Ord WalletCoin where
-    a `compare` b = walletCoinValue a `compare` walletCoinValue b
+    compare = compare `on` walletCoinValue
 
-toWalletCoin :: (OutPoint, ScriptOutput, Word64) -> WalletCoin
+toWalletCoin :: (OutPoint, ScriptOutput, Satoshi) -> WalletCoin
 toWalletCoin (op, so, v) = WalletCoin op so v
 
 buildTxSignData :: BlockchainService
                 -> AccountStore
-                -> [(Address, Word64)]
-                -> Word64
-                -> Word64
+                -> Map Address Satoshi
+                -> Satoshi
+                -> Satoshi
                 -> IO (Either String (TxSignData, AccountStore))
-buildTxSignData service store rcps feeByte dust
-    | null rcps = return $ Left "No recipients provided"
+buildTxSignData service store rcpMap feeByte dust
+    | Map.null rcpMap = return $ Left "No recipients provided"
     | otherwise = do
         allCoins <-
-            map toWalletCoin <$> httpUnspent service (map fst allAddrs)
-        case buildWalletTx allAddrs allCoins change rcps feeByte dust of
+            fmap toWalletCoin <$> httpUnspent service (Map.keys walletAddrMap)
+        case buildWalletTx
+                 walletAddrMap
+                 allCoins
+                 (second fromIntegral change)
+                 rcpMap
+                 feeByte
+                 dust of
             Right (tx, depTxHash, inDeriv, outDeriv) -> do
                 depTxs <- mapM (httpTx service) depTxHash
                 return $
@@ -65,47 +73,58 @@ buildTxSignData service store rcps feeByte dust
                               else store')
             Left err -> return $ Left err
   where
-    allAddrs = allExtAddresses store <> allIntAddresses store
+    walletAddrMap =
+        Map.fromList $ allExtAddresses store <> allIntAddresses store
     (change, store') = nextIntAddress store
 
-buildWalletTx :: [(Address, SoftPath)] -- All account addresses
+buildWalletTx :: Map Address SoftPath -- All account addresses
               -> [WalletCoin]
-              -> (Address, SoftPath, KeyIndex) -- change
-              -> [(Address, Word64)] -- recipients
-              -> Word64 -- Fee per byte
-              -> Word64 -- Dust
+              -> (Address, SoftPath, Natural) -- change
+              -> Map Address Satoshi -- recipients
+              -> Satoshi -- Fee per byte
+              -> Satoshi -- Dust
               -> Either String (Tx, [TxHash], [SoftPath], [SoftPath])
-buildWalletTx allAddrs coins (change, changeDeriv, _) rcps feeByte dust = do
-    (selectedCoins, changeAmnt) <- chooseCoins tot feeByte nRcps True descCoins
-    let (allRcps, outDeriv)
-            | changeAmnt <= dust = (rcps, [])
-            | otherwise = (rcps <> [(change, changeAmnt)], [changeDeriv])
-        ops = map walletCoinOutPoint selectedCoins
-    tx <- buildAddrTx ops $ map toBase58 allRcps
-    inDeriv <- mapM toInDeriv selectedCoins
-    return ( tx
-           , nub $ map outPointHash ops
-           , nub inDeriv
-           , nub $ outDeriv <> selfDeriv
-           )
-  where
+buildWalletTx walletAddrMap coins (change, changeDeriv, _) rcpMap feeByte dust = do
+    (selectedCoins, changeAmnt) <-
+        eitherString $
+        second toNatural <$>
+        chooseCoins
+            (fromIntegral tot)
+            (fromIntegral feeByte)
+            nRcps
+            True
+            descCoins
+    let (txRcpMap, outDeriv)
+            | changeAmnt <= dust = (rcpMap, [])
+            | otherwise = (Map.insert change changeAmnt rcpMap, [changeDeriv])
+        ops = fmap walletCoinOutPoint selectedCoins
+    tx <-
+        eitherString $
+        buildAddrTx ops $
+        bimap addrToBase58 fromIntegral <$> Map.assocs txRcpMap
+    inCoinAddrs <-
+        eitherString $ mapM (outputAddress . walletCoinScriptOutput) coins
+    let inDerivMap = Map.restrictKeys walletAddrMap $ Set.fromList inCoinAddrs
+    return
+        ( tx
+        , nub $ fmap outPointHash ops
+        , nub $ Map.elems inDerivMap
+        , nub $ outDeriv <> myPaths)
     -- Add recipients that are in our own wallet
-    selfDeriv = mapMaybe ((`M.lookup` aMap) . fst) rcps
-    nRcps = length rcps + 1
-    tot = sum $ map snd rcps
-    descCoins = sortBy (flip compare) coins
-    toBase58 (a, v) = (addrToBase58 a, v)
-    aMap = M.fromList allAddrs
-    toInDeriv = ((aMap M.!) <$>) . outputAddress . walletCoinScriptOutput
+  where
+    myPaths = Map.elems $ Map.intersection walletAddrMap rcpMap
+    nRcps = Map.size rcpMap + 1
+    tot = sum $ Map.elems rcpMap
+    descCoins = sortBy (comparing Down) coins
 
 {- Signing Transactions -}
 
-bip44Deriv :: KeyIndex -> HardPath
-bip44Deriv a = Deriv :| 44 :| bip44Coin :| a
+bip44Deriv :: Natural -> HardPath
+bip44Deriv a = Deriv :| 44 :| bip44Coin :| fromIntegral a
 
-signingKey :: Passphrase -> Mnemonic -> KeyIndex -> Either String XPrvKey
+signingKey :: String -> String -> Natural -> Either String XPrvKey
 signingKey pass mnem acc = do
-    seed <- mnemonicToSeed pass mnem
+    seed <- eitherString $ mnemonicToSeed (stringToBS pass) (stringToBS mnem)
     return $ derivePath (bip44Deriv acc) (makeXPrvKey seed)
 
 data TxSignData = TxSignData
@@ -117,113 +136,94 @@ data TxSignData = TxSignData
 
 $(deriveJSON (dropFieldLabel 10) ''TxSignData)
 
-instance S.Serialize TxSignData where
-    get = do
-        t <- S.get
-        (VarInt c) <- S.get
-        ti <- replicateM (fromIntegral c) S.get
-        TxSignData t ti <$> getPathLs <*> getPathLs
-      where
-        getPathLs = do
-            (VarInt c) <- S.get
-            replicateM (fromIntegral c) getPath
-        getPath =
-            S.get >>= \dM ->
-                case toSoft (dM :: DerivPath) of
-                    Just d -> return d
-                    _      -> mzero
-    put (TxSignData t ti is os) = do
-        S.put t
-        S.put $ VarInt $ fromIntegral $ length ti
-        forM_ ti S.put
-        putPath is
-        putPath os
-      where
-        putPath ls = do
-            S.put $ VarInt $ fromIntegral $ length ls
-            forM_ ls $ S.put . toGeneric
-
 data TxSummary = TxSummary
     { txSummaryType     :: !String
     , txSummaryTxHash   :: Maybe TxHash
-    , txSummaryOutbound :: M.Map Address Word64
-    , txSummaryNonStd   :: !Word64
-    , txSummaryInbound  :: M.Map Address (Word64, SoftPath)
-    , txSummaryMyInputs :: M.Map Address (Word64, SoftPath)
+    , txSummaryOutbound :: Map Address Satoshi
+    , txSummaryNonStd   :: !Satoshi
+    , txSummaryInbound  :: Map Address (Satoshi, SoftPath)
+    , txSummaryMyInputs :: Map Address (Satoshi, SoftPath)
     , txSummaryAmount   :: !Integer
-    , txSummaryFee      :: Maybe Word64
-    , txSummaryFeeByte  :: Maybe Word64
-    , txSummaryTxSize   :: Maybe Int
+    , txSummaryFee      :: Maybe Satoshi
+    , txSummaryFeeByte  :: Maybe Satoshi
+    , txSummaryTxSize   :: Maybe (CountOf (Element (UArray Word8)))
     , txSummaryIsSigned :: Maybe Bool
     } deriving (Eq, Show)
 
 pubTxSummary :: TxSignData -> XPubKey -> Either String TxSummary
 pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
-    | length coins /= length (txIn tx) =
+    | fromCount (length coins) /= fromCount (length $ txIn tx) =
         Left "Referenced input transactions are missing"
-    | length inPaths /= M.size myInputAddrs =
+    | length inPaths /= toCount (Map.size myInputAddrs) =
         Left "Tx is missing inputs from private keys"
-    | length outPaths /= M.size inboundAddrs =
+    | length outPaths /= toCount (Map.size inboundAddrs) =
         Left "Tx is missing change outputs"
     | otherwise =
         return
             TxSummary
-            { txSummaryType = getTxType fee amount
+            { txSummaryType = getTxType feeM amount
             , txSummaryTxHash = Nothing
             , txSummaryOutbound = outboundAddrs
             , txSummaryInbound = inboundAddrs
             , txSummaryNonStd = outNonStdValue
             , txSummaryMyInputs = myInputAddrs
             , txSummaryAmount = amount
-            , txSummaryFee = Just fee
-            , txSummaryFeeByte = Just $ fee `div` fromIntegral guessLen
+            , txSummaryFee = feeM
+            , txSummaryFeeByte =
+                  (`div` fromIntegral (toInteger guessLen)) <$> feeM
             , txSummaryTxSize = Just guessLen
             , txSummaryIsSigned = Just False
             }
     -- Outputs
   where
-    outAddrs = nub $ map (xPubAddr . (`derivePubPath` pubKey) &&& id) outPaths
-    (outMap, outNonStdValue) = txOutputAddressValues $ txOut tx
-    (outboundAddrs, inboundAddrs) =
-        M.mapEitherWithKey (isMyAddr outAddrs) outMap
-    isMyAddr xs a v =
-        case M.lookup a (M.fromList xs) of
-            Just p -> Right (v, p)
-            _      -> Left v
+    outAddrMap :: Map Address SoftPath
+    outAddrMap = Map.fromList $ fmap (pathToAddr pubKey &&& id) outPaths
+    (outValMap, outNonStdValue) = txOutputAddressValues $ txOut tx
+    inboundAddrs = Map.intersectionWith (,) outValMap outAddrMap
+    outboundAddrs = Map.difference outValMap outAddrMap
     -- Inputs
-    inAddrs = nub $ map (\p -> (xPubAddr $ derivePubPath p pubKey, p)) inPaths
+    inAddrMap :: Map Address SoftPath
+    inAddrMap = Map.fromList $ fmap (pathToAddr pubKey &&& id) inPaths
     (coins, myCoins) = parseTxCoins tsd pubKey
-    (myInputAddrs', _) = txOutputAddressValues $ map snd myCoins
-    (_, myInputAddrs) = M.mapEitherWithKey (isMyAddr inAddrs) myInputAddrs'
+    inValMap = fst $ txOutputAddressValues $ fmap snd myCoins
+    myInputAddrs = Map.intersectionWith (,) inValMap inAddrMap
     -- Amounts and Fees
-    inSum = sum $ map (outValue . snd) coins
-    outSum = sum $ map outValue $ txOut tx
-    fee = inSum - outSum
-    inboundSum = sum $ map fst $ M.elems inboundAddrs
-    myCoinsSum = sum $ map (outValue . snd) myCoins
-    amount = toInteger inboundSum - toInteger myCoinsSum
+    inSum = sum $ fmap (toNatural . outValue . snd) coins :: Satoshi
+    outSum = sum $ toNatural . outValue <$> txOut tx :: Satoshi
+    feeM = inSum - outSum :: Maybe Satoshi
+    inboundSum = sum $ Map.elems $ Map.map fst inboundAddrs :: Satoshi
+    myCoinsSum = sum $ fmap (toNatural . outValue . snd) myCoins :: Satoshi
+    amount = toInteger inboundSum - toInteger myCoinsSum :: Integer
     -- Guess the signed transaction size
-    guessLen = guessTxSize (length $ txIn tx) [] (length $ txOut tx) 0
+    guessLen :: CountOf (Element (UArray Word8))
+    guessLen =
+        fromIntegral $
+        guessTxSize
+            (fromCount $ length $ txIn tx)
+            []
+            (fromCount $ length $ txOut tx)
+            0
 
-getTxType :: Word64 -> Integer -> String
-getTxType fee amnt
+getTxType :: Maybe Satoshi -> Integer -> String
+getTxType feeM amnt
     | amnt > 0 = "Inbound"
-    | -amnt == fromIntegral fee = "Self"
+    | Just (fromIntegral $ abs amnt) == feeM = "Self"
     | otherwise = "Outbound"
 
 signWalletTx :: TxSignData -> XPrvKey -> Either String (TxSummary, Tx)
 signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
     sigDat <- mapM g myCoins
-    signedTx <- signTx tx (map f sigDat) prvKeys
-    let byteSize = BS.length $ S.encode signedTx
-        vDat = rights $ map g coins
+    signedTx <- eitherString $ signTx tx (fmap f sigDat) prvKeys
+    let byteSize = length $ encodeBytes signedTx
+        vDat = rights $ fmap g coins
         isSigned = noEmptyInputs signedTx && verifyStdTx signedTx vDat
     dat <- pubTxSummary tsd pubKey
     return
         ( dat
           { txSummaryFeeByte =
                 if isSigned
-                    then (`div` fromIntegral byteSize) <$> txSummaryFee dat
+                    then (`div` fromIntegral (toInteger byteSize)) <$>
+                         txSummaryFee dat
                     else txSummaryFeeByte dat
           , txSummaryTxSize =
                 if isSigned
@@ -236,51 +236,50 @@ signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
   where
     pubKey = deriveXPubKey signKey
     (coins, myCoins) = parseTxCoins tsd pubKey
-    prvKeys = map (toPrvKeyG . xPrvKey . (`derivePath` signKey)) inPaths
+    prvKeys = fmap (toPrvKeyG . xPrvKey . (`derivePath` signKey)) inPaths
     f (so, val, op) = SigInput so val op (maybeSetForkId sigHashAll) Nothing
-    g (op, to) =
-        (,,) <$> decodeTxOutSO to <*> return (outValue to) <*> return op
+    g (op, to) = (, outValue to, op) <$> decodeTxOutSO to
     maybeSetForkId
         | isJust sigHashForkId = setForkIdFlag
         | otherwise = id
 
 noEmptyInputs :: Tx -> Bool
-noEmptyInputs = all (not . BS.null) . map scriptInput . txIn
+noEmptyInputs = all (not . null) . fmap (asBytes scriptInput) . txIn
 
-txOutputAddressValues :: [TxOut] -> (M.Map Address Word64, Word64)
+txOutputAddressValues :: [TxOut] -> (Map Address Satoshi, Satoshi)
 txOutputAddressValues txout =
-    (M.fromListWith (+) rs, sum ls)
+    (Map.fromListWith (+) rs, sum ls)
   where
-    xs = map (decodeTxOutAddr &&& outValue) txout
-    (ls, rs) = partitionEithers $ map partE xs
+    xs = fmap (decodeTxOutAddr &&& toNatural . outValue) txout
+    (ls, rs) = partitionEithers $ fmap partE xs
     partE (Right a, v) = Right (a, v)
     partE (Left _, v)  = Left v
 
 decodeTxOutAddr :: TxOut -> Either String Address
-decodeTxOutAddr = outputAddress <=< decodeTxOutSO
+decodeTxOutAddr = decodeTxOutSO >=> eitherString . outputAddress
 
 decodeTxOutSO :: TxOut -> Either String ScriptOutput
-decodeTxOutSO = decodeOutputBS . scriptOutput
+decodeTxOutSO = eitherString . decodeOutputBS . scriptOutput
+
+pathToAddr :: XPubKey -> SoftPath -> Address
+pathToAddr pubKey = xPubAddr . (`derivePubPath` pubKey)
 
 parseTxCoins :: TxSignData -> XPubKey
              -> ([(OutPoint, TxOut)],[(OutPoint, TxOut)])
 parseTxCoins (TxSignData tx inTxs inPaths _) pubKey =
     (coins, myCoins)
   where
-    inAddrs = nub $ map (xPubAddr . (`derivePubPath` pubKey)) inPaths
+    inAddrs = nub $ fmap (pathToAddr pubKey) inPaths
     coins = mapMaybe (findCoin inTxs . prevOutput) $ txIn tx
     myCoins = filter (isMyCoin . snd) coins
     isMyCoin to =
         case decodeTxOutAddr to of
             Right a -> a `elem` inAddrs
-            _ -> False
+            _       -> False
 
 findCoin :: [Tx] -> OutPoint -> Maybe (OutPoint, TxOut)
 findCoin txs op@(OutPoint h i) = do
-    matchTx <- listToMaybe $ filter ((== h) . txHash) txs
-    to <- txOut matchTx `safeIndex` fromIntegral i
+    matchTx <- find ((== h) . txHash) txs
+    to <- txOut matchTx ! fromIntegral i
     return (op, to)
-  where
-    safeIndex xs n
-        | n >= length xs = Nothing
-        | otherwise = Just $ xs !! n
+
