@@ -713,10 +713,10 @@ balanceOps main addrMap = do
                                  Just old -> [insertOp key old]
                 outputs = M.toList addressDeltaOutput
                 outOps = concatMap (uncurry (addrOutputOps main)) outputs
-            return (balOps ++ outOps, M.singleton addr balance)
-    return (foldl' f ([], M.empty) ls)
-  where
-    f (os, ms) (o, m) = (os ++ o, ms <> m)
+            return (balOps ++ outOps, (addr, balance))
+    let ops = concatMap fst ls
+        bal = M.fromList (map snd ls)
+    return (ops, bal)
 
 blockOp ::
        MonadBlock m
@@ -903,17 +903,17 @@ getOutPointData ::
 getOutPointData key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
   where
     fromMap = MaybeT (return (M.lookup key os))
-    fromDB = do
-        db <- asks myBlockDB
-        outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
     fromCache = do
         guard . (/= 0) =<< asks myCacheNo
         ubox <- asks myUnspentCache
         cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
-        m <- MaybeT . return $ M.lookup key unspentCache
+        m <- MaybeT (return (M.lookup key unspentCache))
         liftIO . atomically $
             writeTVar ubox cache {unspentCache = M.delete key unspentCache}
         return m
+    fromDB = do
+        db <- asks myBlockDB
+        outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
 
 
 unspentCachePrune :: MonadBlock m => m ()
