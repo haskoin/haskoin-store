@@ -82,10 +82,10 @@ data Network = Network
     , getTargetSpacing            :: !Word32
     , getCheckpoints              :: ![(BlockHeight, BlockHash)]
     , getBip44Coin                :: !Word32
-    , getSeeds                    :: [String]
-    , getSigHashForkId            :: Maybe Word32
-    , getEDABlockHeight           :: Maybe Word32
-    , getDAABlockHeight           :: Maybe Word32
+    , getSeeds                    :: ![String]
+    , getSigHashForkId            :: !(Maybe Word32)
+    , getEDABlockHeight           :: !(Maybe Word32)
+    , getDAABlockHeight           :: !(Maybe Word32)
     } deriving (Eq)
 
 setBitcoinNetwork :: IO ()
@@ -391,7 +391,7 @@ bitcoinCashNetwork =
     , getSecretPrefix = 128
     , getExtPubKeyPrefix = 0x0488b21e
     , getExtSecretPrefix = 0x0488ade4
-    , getNetworkMagic = 0xf9beb4d9
+    , getNetworkMagic = 0xe3e1f3e8
     , getGenesisHeader =
           BlockHeader
               0x01
@@ -475,7 +475,7 @@ cashTestNetwork =
     , getSecretPrefix = 239
     , getExtPubKeyPrefix = 0x043587cf
     , getExtSecretPrefix = 0x04358394
-    , getNetworkMagic = 0x0b110907
+    , getNetworkMagic = 0xf4e5f3f4
     , getGenesisHeader =
           BlockHeader
               0x01
