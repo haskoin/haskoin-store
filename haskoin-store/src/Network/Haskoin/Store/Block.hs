@@ -299,8 +299,9 @@ updateBalanceCache height main balanceMap = do
     let as = M.keys balanceMap
     if main
         then liftIO . atomically $ do
-                 AddressCache {..} <- readTVar abox
-                 let newCache = addressCache <> M.map (, height) balanceMap
+                 oldCache <- readTVar abox
+                 let AddressCache {..} = foldl' delOld oldCache as
+                     newCache = addressCache <> M.map (, height) balanceMap
                      newBlocks =
                          M.insert height (S.fromList as) addressCacheBlocks
                  writeTVar
@@ -318,6 +319,15 @@ updateBalanceCache height main balanceMap = do
     cacheNo <- asks myCacheNo
     liftIO (atomically (pruneIfTooLarge abox cacheNo))
   where
+    delOld c@AddressCache {..} a =
+        case M.lookup a addressCache of
+            Nothing -> c
+            Just (_, h) ->
+                AddressCache
+                { addressCache = M.delete a addressCache
+                , addressCacheBlocks =
+                      M.adjust (S.delete a) h addressCacheBlocks
+                }
     pruneIfTooLarge abox n = do
         AddressCache {..} <- readTVar abox
         when (M.size addressCache > fromIntegral n) $ do
