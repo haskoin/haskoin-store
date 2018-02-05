@@ -953,23 +953,22 @@ unspentCachePrune = do
     when (n > 0) $ do
         ubox <- asks myUnspentCache
         cbox <- asks myCacheStats
-        cache <- liftIO (readTVarIO ubox)
-        let new = clear (fromIntegral n) cache
         liftIO . atomically $ do
+            cache <- readTVar ubox
+            let new = clear (fromIntegral n) cache
             writeTVar ubox new
             modifyTVar cbox $ \c ->
                 c {unspentCacheSize = M.size (unspentCache new)}
   where
     clear n c@UnspentCache {..}
-        | M.size unspentCache < n = c
+        | M.size unspentCache <= n = c
         | otherwise =
             let (del, keep) = M.splitAt 1 unspentCacheBlocks
                 delSet = S.fromList (concat (M.elems del))
                 cache = M.withoutKeys unspentCache delSet
-                newUnspent =
+                new =
                     UnspentCache
                     {unspentCache = cache, unspentCacheBlocks = keep}
-                new = clear n newUnspent
             in clear n new
 
 addToCache :: MonadBlock m => BlockRef -> [(OutPoint, PrevOut)] -> m ()
