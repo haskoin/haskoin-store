@@ -84,7 +84,6 @@ getAddressTxs addrs = do
     aList = intercalate "," $ addrToBase58 <$> addrs
     parseAddrTx v = do
         tid <- hexToTxHash . fromText =<< v ^? key "txid" . _String
-        bid <- hexToBlockHash . fromText =<< v ^? key "block" . _String
         addrB58 <- v ^? key "address" . _String
         addr <- base58ToAddr $ fromText addrB58
         height <- v ^? key "height" . _Integer
@@ -94,7 +93,6 @@ getAddressTxs addrs = do
             AddressTx
             { addrTxAddress = addr
             , addrTxTxHash = tid
-            , addrTxBlock = bid
             , addrTxAmount = amnt
             , addrTxHeight = fromIntegral $ abs height
             }

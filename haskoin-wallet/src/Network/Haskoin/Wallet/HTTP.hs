@@ -9,7 +9,6 @@ import           Data.List                               (sum)
 import           Data.Map.Strict                         (Map)
 import qualified Data.Map.Strict                         as Map
 import           Foundation
-import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
@@ -24,7 +23,6 @@ data AddressTx = AddressTx
     { addrTxAddress :: !Address
     , addrTxTxHash  :: !TxHash
     , addrTxAmount  :: !Integer
-    , addrTxBlock   :: !BlockHash
     , addrTxHeight  :: !Natural
     }
     deriving (Eq, Show)

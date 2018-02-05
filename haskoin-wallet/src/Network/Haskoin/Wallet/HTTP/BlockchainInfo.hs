@@ -13,9 +13,11 @@ import           Foundation.Collection
 import           Foundation.Compat.ByteString
 import           Foundation.Compat.Text
 import           Network.Haskoin.Constants
-import           Network.Haskoin.Crypto                  hiding (addrToBase58)
+import           Network.Haskoin.Crypto                  hiding (addrToBase58,
+                                                          base58ToAddr)
 import           Network.Haskoin.Script
-import           Network.Haskoin.Transaction             hiding (txHashToHex)
+import           Network.Haskoin.Transaction             hiding (hexToTxHash,
+                                                          txHashToHex)
 import           Network.Haskoin.Util                    (eitherToMaybe)
 import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
@@ -40,7 +42,7 @@ blockchainInfoService =
     , httpUnspent = getUnspent
     , httpTx = getTx
     , httpBroadcast = broadcastTx
-    , httpAddressTxs = consoleError $ formatError "Not implemented"
+    , httpAddressTxs = getAddressTxs
     }
 
 getBalance :: [Address] -> IO Satoshi
@@ -73,6 +75,32 @@ getUnspent addrs = do
         scpHex <- v ^? key "script" . _String
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
+
+getAddressTxs :: [Address] -> IO [AddressTx]
+getAddressTxs addrs = do
+    r <- HTTP.asValue =<< HTTP.getWith opts url
+    let v = r ^. HTTP.responseBody
+    return $ mconcat $ mapMaybe parseAddrTxs $ v ^.. key "txs" . values
+  where
+    url = getURL <> "/multiaddr"
+    opts = options & HTTP.param "active" .~ [toText aList]
+    aList = intercalate "|" $ addrToBase58 <$> addrs
+    parseAddrTxs v = do
+        tid <- hexToTxHash . fromText =<< v ^? key "hash" . _String
+        h <- fromIntegral <$> v ^? key "block_height" . _Integer
+        let is = v ^.. key "inputs" . values
+            os = v ^.. key "out" . values
+        return $
+            mapMaybe
+                (\i -> parseAddrTx tid h negate =<< i ^? key "prev_out" . _Value)
+                is <>
+            mapMaybe (parseAddrTx tid h id) os
+    parseAddrTx tid h f v = do
+        amnt <- v ^? key "value" . _Integer
+        addr <- base58ToAddr . fromText =<< v ^? key "addr" . _String
+        if addr `elem` addrs
+            then return $ AddressTx addr tid (f amnt) h
+            else Nothing
 
 getTx :: TxHash -> IO Tx
 getTx tid = do

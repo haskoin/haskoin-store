@@ -228,8 +228,8 @@ defaultBlockchainService :: BlockchainService
 defaultBlockchainService
     | getNetwork == bitcoinNetwork = blockchainInfoService
     | getNetwork == testnet3Network = haskoinService
-    | getNetwork == bitcoinCashNetwork = insightService
-    | getNetwork == cashTestNetwork = insightService
+    | getNetwork == bitcoinCashNetwork = haskoinService
+    | getNetwork == cashTestNetwork = haskoinService
     | otherwise = consoleError $ formatError $
         "No blockchain service for network " <> fromLString networkName
 
