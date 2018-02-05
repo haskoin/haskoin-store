@@ -39,6 +39,28 @@ data BroadcastExcept
 
 instance Exception BroadcastExcept
 
+data CacheStats = CacheStats
+    { unspentCacheHits      :: !Int
+    , unspentCacheMisses    :: !Int
+    , addressCacheHits      :: !Int
+    , existingAddressMisses :: !Int
+    , newAddressMisses      :: !Int
+    , addressCacheSize      :: !Int
+    , unspentCacheSize      :: !Int
+    }
+
+instance ToJSON CacheStats where
+    toJSON CacheStats {..} =
+        object
+            [ "utxo-hits" .= unspentCacheHits
+            , "utxo-misses" .= unspentCacheMisses
+            , "address-hits" .= addressCacheHits
+            , "address-misses" .= existingAddressMisses
+            , "new-address-misses" .= newAddressMisses
+            , "address-cache-size" .= addressCacheSize
+            , "utxo-cache-size" .= unspentCacheSize
+            ]
+
 newtype NewTx = NewTx
     { newTx :: Tx
     } deriving (Show, Eq, Ord)
@@ -68,6 +90,7 @@ data BlockMessage
     | BlockNotReceived !Peer
                        !BlockHash
     | BlockProcess
+    | BlockCacheStats !(Reply CacheStats)
 
 type BlockStore = Inbox BlockMessage
 
@@ -493,7 +516,7 @@ spenderPairs Spender {..} =
 scriptAddress :: KeyValue kv => ByteString -> [kv]
 scriptAddress bs =
     case scriptToAddressBS bs of
-        Nothing -> []
+        Nothing   -> []
         Just addr -> ["address" .= addr]
 
 detailedOutputPairs :: KeyValue kv => DetailedOutput -> [kv]
@@ -504,7 +527,7 @@ detailedOutputPairs DetailedOutput {..} =
     ] ++
     scriptAddress detOutScript ++
     case detOutSpender of
-        Nothing -> []
+        Nothing      -> []
         Just spender -> spenderPairs spender
 
 instance ToJSON DetailedOutput where

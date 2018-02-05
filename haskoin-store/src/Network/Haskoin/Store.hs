@@ -31,6 +31,7 @@ module Network.Haskoin.Store
     , getUnspents
     , getBalance
     , getBalances
+    , getCacheStats
     , postTransaction
     ) where
 
@@ -45,7 +46,6 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.Text                   (Text)
 import           Database.RocksDB            (DB)
-import           Network.Haskoin.Constants
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script

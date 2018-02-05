@@ -233,14 +233,14 @@ main =
         supervisor
             KillAll
             s
-            [runWeb (configPort conf) db mgr, runStore conf mgr wdir b db]
+            [runWeb (configPort conf) b db mgr, runStore conf mgr wdir b db]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port db mgr =
+    runWeb port b db mgr =
         scottyT port id $ do
             defaultHandler defHandler
             get "/block/best" $ getBestBlock db Nothing >>= json
@@ -280,6 +280,8 @@ main =
             get "/address/balances" $ do
                 addresses <- param "addresses"
                 getBalances addresses db Nothing >>= json
+            get "/stats/cache" $ do
+                getCacheStats b >>= json
             post "/transaction" $ do
                 txHex <- jsonData
                 postTransaction db mgr txHex >>= \case

@@ -23,6 +23,7 @@ module Network.Haskoin.Store.Block
     , getTxs
     , getUnspents
     , getOutput
+    , getCacheStats
     ) where
 
 import           Control.Applicative
@@ -81,6 +82,7 @@ data BlockRead = BlockRead
     , myAddressCache :: !(TVar AddressCache)
     , myCacheNo      :: !Word32
     , myBlockNo      :: !Word32
+    , myCacheStats   :: !(TVar CacheStats)
     }
 
 type MonadBlock m
@@ -157,6 +159,18 @@ blockStore ::
 blockStore BlockConfig {..} = do
     pbox <- liftIO $ newTVarIO []
     dbox <- liftIO $ newTVarIO []
+    cbox <-
+        liftIO $
+        newTVarIO
+            CacheStats
+            { unspentCacheHits = 0
+            , unspentCacheMisses = 0
+            , addressCacheHits = 0
+            , existingAddressMisses = 0
+            , newAddressMisses = 0
+            , addressCacheSize = 0
+            , unspentCacheSize = 0
+            }
     abox <-
         liftIO $
         newTVarIO
@@ -181,6 +195,7 @@ blockStore BlockConfig {..} = do
         , myAddressCache = abox
         , myCacheNo = blockConfCacheNo
         , myBlockNo = blockConfBlockNo
+        , myCacheStats = cbox
         }
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
@@ -287,11 +302,26 @@ getBalanceData addr = runMaybeT (fromCache <|> fromDB)
     fromCache = do
         guard . (/= 0) =<< asks myCacheNo
         abox <- asks myAddressCache
-        AddressCache {..} <- liftIO (readTVarIO abox)
-        MaybeT (return (fst <$> M.lookup addr addressCache))
+        cbox <- asks myCacheStats
+        MaybeT . liftIO . atomically $ do
+            AddressCache {..} <- readTVar abox
+            let entryMaybe = fst <$> M.lookup addr addressCache
+            when (isJust entryMaybe) $
+                modifyTVar cbox $ \c ->
+                    c {addressCacheHits = addressCacheHits c + 1}
+            return entryMaybe
     fromDB = do
         db <- asks myBlockDB
-        MaybeT (retrieveValue (BalanceKey addr) db Nothing)
+        cbox <- asks myCacheStats
+        entryMaybe <- retrieveValue (BalanceKey addr) db Nothing
+        case entryMaybe of
+            Nothing ->
+                liftIO . atomically . modifyTVar cbox $ \c ->
+                    c {newAddressMisses = newAddressMisses c + 1}
+            Just _ ->
+                liftIO . atomically . modifyTVar cbox $ \c ->
+                    c {existingAddressMisses = existingAddressMisses c + 1}
+        MaybeT (return entryMaybe)
 
 updateBalanceCache :: MonadBlock m => BlockHeight -> Bool -> BalanceMap -> m ()
 updateBalanceCache height main balanceMap = do
@@ -317,7 +347,11 @@ updateBalanceCache height main balanceMap = do
                      AddressCache
                      {addressCache = newCache, addressCacheBlocks = newBlocks}
     cacheNo <- asks myCacheNo
-    liftIO (atomically (pruneIfTooLarge abox cacheNo))
+    cbox <- asks myCacheStats
+    liftIO . atomically $ do
+        pruneIfTooLarge abox cacheNo
+        AddressCache {..} <- readTVar abox
+        modifyTVar cbox $ \c -> c {addressCacheSize = M.size addressCache}
   where
     delOld c@AddressCache {..} a =
         case M.lookup a addressCache of
@@ -908,23 +942,38 @@ getOutPointData key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
         ubox <- asks myUnspentCache
         cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
         m <- MaybeT (return (M.lookup key unspentCache))
-        liftIO . atomically $
-            writeTVar ubox cache {unspentCache = M.delete key unspentCache}
+        cbox <- asks myCacheStats
+        liftIO . atomically $ do
+            let newCache = M.delete key unspentCache
+            writeTVar ubox cache {unspentCache = newCache}
+            modifyTVar cbox $ \c ->
+                c
+                { unspentCacheSize = M.size newCache
+                , unspentCacheHits = unspentCacheHits c + 1
+                }
         return m
     fromDB = do
         db <- asks myBlockDB
+        cbox <- asks myCacheStats
+        liftIO . atomically . modifyTVar cbox $ \c ->
+            c {unspentCacheMisses = unspentCacheMisses c + 1}
         outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
 
+getCacheStats :: MonadIO m => BlockStore -> m CacheStats
+getCacheStats = query BlockCacheStats
 
 unspentCachePrune :: MonadBlock m => m ()
-unspentCachePrune =
-    void . runMaybeT $ do
-        n <- asks myCacheNo
-        guard (n /= 0)
+unspentCachePrune = do
+    n <- asks myCacheNo
+    when (n > 0) $ do
         ubox <- asks myUnspentCache
+        cbox <- asks myCacheStats
         cache <- liftIO (readTVarIO ubox)
         let new = clear (fromIntegral n) cache
-        liftIO . atomically $ writeTVar ubox new
+        liftIO . atomically $ do
+            writeTVar ubox new
+            modifyTVar cbox $ \c ->
+                c {unspentCacheSize = M.size (unspentCache new)}
   where
     clear n c@UnspentCache {..}
         | M.size unspentCache < n = c
@@ -943,20 +992,20 @@ unspentCachePrune =
                    {unspentCache = cache, unspentCacheBlocks = keep}
 
 addToCache :: MonadBlock m => BlockRef -> [(OutPoint, PrevOut)] -> m ()
-addToCache BlockRef {..} xs = void . runMaybeT $ do
-    guard . (/= 0) =<< asks myCacheNo
-    ubox <- asks myUnspentCache
-    UnspentCache {..} <- liftIO (readTVarIO ubox)
-    let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache xs
-        keys = map fst xs
-        blocks = M.insertWith (++) blockRefHeight keys unspentCacheBlocks
-    liftIO . atomically $
-        writeTVar
-            ubox
-            UnspentCache
-            { unspentCache = cache
-            , unspentCacheBlocks = blocks
-            }
+addToCache BlockRef {..} xs = do
+    n <- asks myCacheNo
+    when (n > 0) $ do
+        ubox <- asks myUnspentCache
+        cbox <- asks myCacheStats
+        UnspentCache {..} <- liftIO (readTVarIO ubox)
+        let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache xs
+            keys = map fst xs
+            blocks = M.insertWith (++) blockRefHeight keys unspentCacheBlocks
+        liftIO . atomically $ do
+            writeTVar
+                ubox
+                UnspentCache {unspentCache = cache, unspentCacheBlocks = blocks}
+            modifyTVar cbox $ \c -> c {unspentCacheSize = M.size cache}
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
@@ -1004,6 +1053,10 @@ processBlockMessage (BlockNotReceived p h) = do
     $(logError) $ logMe <> "Block not found: " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
+
+processBlockMessage (BlockCacheStats r) = do
+    cbox <- asks myCacheStats
+    liftIO . atomically $ readTVar cbox >>= r
 
 getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrTxs addr = getAddrsTxs [addr]
