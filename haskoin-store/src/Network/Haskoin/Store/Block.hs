@@ -35,6 +35,7 @@ import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Short        as BSS
 import           Data.Default
 import           Data.List
 import           Data.Map                     (Map)
@@ -304,10 +305,10 @@ getBalanceData addr = runMaybeT (fromCache <|> fromDB)
         case entryMaybe of
             Nothing ->
                 liftIO . atomically . modifyTVar cbox $ \c ->
-                    c {newAddressMisses = newAddressMisses c + 1}
+                    c {newAddresses = newAddresses c + 1}
             Just _ ->
                 liftIO . atomically . modifyTVar cbox $ \c ->
-                    c {existingAddressMisses = existingAddressMisses c + 1}
+                    c {addressCacheMisses = addressCacheMisses c + 1}
         MaybeT (return entryMaybe)
 
 updateBalanceCache :: MonadBlock m => BlockHeight -> Bool -> BalanceMap -> m ()
@@ -335,8 +336,9 @@ updateBalanceCache height main balanceMap = do
     cacheNo <- asks myCacheNo
     cbox <- asks myCacheStats
     liftIO . atomically $ do
-        pruneIfTooLarge abox cacheNo
-        AddressCache {..} <- readTVar abox
+        cache <- readTVar abox
+        let newCache@AddressCache {..} = pruneIfTooLarge cache cacheNo
+        writeTVar abox newCache
         modifyTVar cbox $ \c -> c {addressCacheSize = M.size addressCache}
   where
     delOld AddressCache {..} addrSet =
@@ -345,22 +347,20 @@ updateBalanceCache height main balanceMap = do
                 M.fromList
                     (map (\(a, (_, h)) -> (h, S.singleton a))
                          (M.toList onlyMatching))
-            newBlocks =
-                M.unionWith S.difference addressCacheBlocks addrHeights
+            newBlocks = M.unionWith S.difference addressCacheBlocks addrHeights
             newCache = M.withoutKeys addressCache addrSet
         in AddressCache
            {addressCache = newCache, addressCacheBlocks = newBlocks}
-    pruneIfTooLarge abox n = do
-        AddressCache {..} <- readTVar abox
-        when (M.size addressCache > fromIntegral n) $ do
+    pruneIfTooLarge cache@AddressCache {..} n
+        | M.size addressCache <= fromIntegral n = cache
+        | otherwise =
             let (delBlocks, newBlocks) = M.splitAt 1 addressCacheBlocks
                 addrSet = mconcat (M.elems delBlocks)
                 newCache = M.withoutKeys addressCache addrSet
-            writeTVar
-                abox
-                AddressCache
-                {addressCache = newCache, addressCacheBlocks = newBlocks}
-            pruneIfTooLarge abox n
+            in pruneIfTooLarge
+                   AddressCache
+                   {addressCache = newCache, addressCacheBlocks = newBlocks}
+                   n
 
 getOutput ::
        MonadIO m
@@ -445,7 +445,7 @@ getTx th db s =
                     { detInOutPoint = prevOutput
                     , detInSequence = txInSequence
                     , detInSigScript = scriptInput
-                    , detInPkScript = prevOutScript
+                    , detInPkScript = BSS.fromShort prevOutScript
                     , detInValue = prevOutValue
                     , detInBlock = prevOutBlock
                     , detInPos = prevOutPos

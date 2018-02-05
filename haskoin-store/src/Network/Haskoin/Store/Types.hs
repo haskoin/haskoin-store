@@ -13,6 +13,8 @@ import           Control.Monad.Reader
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
+import           Data.ByteString.Short        (ShortByteString)
+import qualified Data.ByteString.Short        as BSS
 import           Data.Default
 import           Data.Function
 import           Data.Int
@@ -41,23 +43,23 @@ data BroadcastExcept
 instance Exception BroadcastExcept
 
 data CacheStats = CacheStats
-    { unspentCacheHits      :: !Int
-    , unspentCacheMisses    :: !Int
-    , addressCacheHits      :: !Int
-    , existingAddressMisses :: !Int
-    , newAddressMisses      :: !Int
-    , addressCacheSize      :: !Int
-    , unspentCacheSize      :: !Int
+    { unspentCacheHits   :: !Int
+    , unspentCacheMisses :: !Int
+    , addressCacheHits   :: !Int
+    , addressCacheMisses :: !Int
+    , newAddresses       :: !Int
+    , addressCacheSize   :: !Int
+    , unspentCacheSize   :: !Int
     }
 
 instance ToJSON CacheStats where
     toJSON CacheStats {..} =
         object
-            [ "utxo-hits" .= unspentCacheHits
-            , "utxo-misses" .= unspentCacheMisses
-            , "address-hits" .= addressCacheHits
-            , "address-misses" .= existingAddressMisses
-            , "new-address-misses" .= newAddressMisses
+            [ "utxo-cache-hits" .= unspentCacheHits
+            , "utxo-cache-misses" .= unspentCacheMisses
+            , "address-cache-hits" .= addressCacheHits
+            , "address-cache-misses" .= addressCacheMisses
+            , "new-addresses" .= newAddresses
             , "address-cache-size" .= addressCacheSize
             , "utxo-cache-size" .= unspentCacheSize
             ]
@@ -68,8 +70,8 @@ instance Default CacheStats where
         { unspentCacheHits = 0
         , unspentCacheMisses = 0
         , addressCacheHits = 0
-        , existingAddressMisses = 0
-        , newAddressMisses = 0
+        , addressCacheMisses = 0
+        , newAddresses = 0
         , addressCacheSize = 0
         , unspentCacheSize = 0
         }
@@ -189,7 +191,7 @@ data PrevOut = PrevOut
     { prevOutValue  :: !Word64
     , prevOutBlock  :: !BlockRef
     , prevOutPos    :: !Word32
-    , prevOutScript :: !ByteString
+    , prevOutScript :: !ShortByteString
     } deriving (Show, Eq, Ord)
 
 data Output = Output
@@ -206,7 +208,7 @@ outputToPrevOut Output {..} =
     { prevOutValue = outputValue
     , prevOutBlock = outBlock
     , prevOutPos = outPos
-    , prevOutScript = outScript
+    , prevOutScript = BSS.toShort outScript
     }
 
 prevOutToOutput :: PrevOut -> Output
@@ -215,7 +217,7 @@ prevOutToOutput PrevOut {..} =
     { outputValue = prevOutValue
     , outBlock = prevOutBlock
     , outPos = prevOutPos
-    , outScript = prevOutScript
+    , outScript = BSS.fromShort prevOutScript
     , outSpender = Nothing
     }
 
@@ -419,12 +421,13 @@ instance Serialize PrevOut where
         put prevOutValue
         put prevOutBlock
         put prevOutPos
-        put prevOutScript
+        put (BSS.length prevOutScript)
+        putShortByteString prevOutScript
     get = do
         prevOutValue <- get
         prevOutBlock <- get
         prevOutPos <- get
-        prevOutScript <- get
+        prevOutScript <- getShortByteString =<< get
         return PrevOut {..}
 
 instance Serialize Output where
