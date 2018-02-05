@@ -31,7 +31,6 @@ module Network.Haskoin.Store
     , getUnspents
     , getBalance
     , getBalances
-    , getCacheStats
     , postTransaction
     ) where
 
@@ -110,6 +109,7 @@ store StoreConfig {..} = do
             , blockConfCacheNo = storeConfCacheNo
             , blockConfBlockNo = storeConfBlockNo
             , blockConfDB = storeConfDB
+            , blockCacheStats = storeConfCacheStats
             }
     supervisor
         KillAll

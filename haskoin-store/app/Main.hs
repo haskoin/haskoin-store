@@ -219,6 +219,7 @@ main =
         setNetwork $ configNetwork conf
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
+        cbox <- liftIO (newTVarIO def)
         let wdir = configDir conf </> networkName
         liftIO $ createDirectoryIfMissing True wdir
         db <-
@@ -233,14 +234,14 @@ main =
         supervisor
             KillAll
             s
-            [runWeb (configPort conf) b db mgr, runStore conf mgr wdir b db]
+            [runWeb (configPort conf) cbox db mgr, runStore conf mgr wdir b db cbox]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port b db mgr =
+    runWeb port cbox db mgr =
         scottyT port id $ do
             defaultHandler defHandler
             get "/block/best" $ getBestBlock db Nothing >>= json
@@ -280,8 +281,7 @@ main =
             get "/address/balances" $ do
                 addresses <- param "addresses"
                 getBalances addresses db Nothing >>= json
-            get "/stats/cache" $ do
-                getCacheStats b >>= json
+            get "/stats/cache" $ liftIO (readTVarIO cbox) >>= json
             post "/transaction" $ do
                 txHex <- jsonData
                 postTransaction db mgr txHex >>= \case
@@ -305,7 +305,7 @@ main =
                         json (UserError "No peers connected")
                     Right j -> json j
             notFound $ raise NotFound
-    runStore conf mgr wdir b db =
+    runStore conf mgr wdir b db cbox =
         runStderrLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO
@@ -326,5 +326,6 @@ main =
                     , storeConfCacheNo = configCache conf
                     , storeConfBlockNo = configBlocks conf
                     , storeConfDB = db
+                    , storeConfCacheStats = cbox
                     }
             store cfg

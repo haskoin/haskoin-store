@@ -13,6 +13,7 @@ import           Control.Monad.Reader
 import           Data.Aeson
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
+import           Data.Default
 import           Data.Function
 import           Data.Int
 import           Data.Maybe
@@ -61,6 +62,18 @@ instance ToJSON CacheStats where
             , "utxo-cache-size" .= unspentCacheSize
             ]
 
+instance Default CacheStats where
+    def =
+        CacheStats
+        { unspentCacheHits = 0
+        , unspentCacheMisses = 0
+        , addressCacheHits = 0
+        , existingAddressMisses = 0
+        , newAddressMisses = 0
+        , addressCacheSize = 0
+        , unspentCacheSize = 0
+        }
+
 newtype NewTx = NewTx
     { newTx :: Tx
     } deriving (Show, Eq, Ord)
@@ -77,6 +90,7 @@ data BlockConfig = BlockConfig
     , blockConfCacheNo  :: !Word32
     , blockConfBlockNo  :: !Word32
     , blockConfDB       :: !DB
+    , blockCacheStats   :: !(TVar CacheStats)
     }
 
 newtype BlockEvent = BestBlock BlockHash
@@ -90,7 +104,6 @@ data BlockMessage
     | BlockNotReceived !Peer
                        !BlockHash
     | BlockProcess
-    | BlockCacheStats !(Reply CacheStats)
 
 type BlockStore = Inbox BlockMessage
 
@@ -684,4 +697,5 @@ data StoreConfig = StoreConfig
     , storeConfCacheNo    :: !Word32
     , storeConfBlockNo    :: !Word32
     , storeConfDB         :: !DB
+    , storeConfCacheStats :: !(TVar CacheStats)
     }

@@ -23,7 +23,6 @@ module Network.Haskoin.Store.Block
     , getTxs
     , getUnspents
     , getOutput
-    , getCacheStats
     ) where
 
 import           Control.Applicative
@@ -159,18 +158,6 @@ blockStore ::
 blockStore BlockConfig {..} = do
     pbox <- liftIO $ newTVarIO []
     dbox <- liftIO $ newTVarIO []
-    cbox <-
-        liftIO $
-        newTVarIO
-            CacheStats
-            { unspentCacheHits = 0
-            , unspentCacheMisses = 0
-            , addressCacheHits = 0
-            , existingAddressMisses = 0
-            , newAddressMisses = 0
-            , addressCacheSize = 0
-            , unspentCacheSize = 0
-            }
     abox <-
         liftIO $
         newTVarIO
@@ -195,7 +182,7 @@ blockStore BlockConfig {..} = do
         , myAddressCache = abox
         , myCacheNo = blockConfCacheNo
         , myBlockNo = blockConfBlockNo
-        , myCacheStats = cbox
+        , myCacheStats = blockCacheStats
         }
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
@@ -959,9 +946,6 @@ getOutPointData key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
             c {unspentCacheMisses = unspentCacheMisses c + 1}
         outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
 
-getCacheStats :: MonadIO m => BlockStore -> m CacheStats
-getCacheStats = query BlockCacheStats
-
 unspentCachePrune :: MonadBlock m => m ()
 unspentCachePrune = do
     n <- asks myCacheNo
@@ -1053,10 +1037,6 @@ processBlockMessage (BlockNotReceived p h) = do
     $(logError) $ logMe <> "Block not found: " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
-
-processBlockMessage (BlockCacheStats r) = do
-    cbox <- asks myCacheStats
-    liftIO . atomically $ readTVar cbox >>= r
 
 getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrTxs addr = getAddrsTxs [addr]
