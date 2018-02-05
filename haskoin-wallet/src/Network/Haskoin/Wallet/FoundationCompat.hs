@@ -51,6 +51,9 @@ fromLString = fromList
 bsToString :: BS.ByteString -> Maybe String
 bsToString = bytesToString . fromByteString
 
+bsToString_ :: BS.ByteString -> String
+bsToString_ = bytesToString_ . fromByteString
+
 stringToBS :: String -> BS.ByteString
 stringToBS = toByteString . toBytes UTF8
 
@@ -75,10 +78,14 @@ asBytes f = fromByteString . f
 {- Helper functions -}
 
 bytesToString :: UArray Word8 -> Maybe String
-bytesToString a8 =
-    valM >> return str
+bytesToString a8 = do
+    guard $ isNothing valM
+    return str
   where
     (str,valM,_) = fromBytes UTF8 a8
+
+bytesToString_ :: UArray Word8 -> String
+bytesToString_ = fst . fromBytesLenient
 
 stringToBytes :: String -> UArray Word8
 stringToBytes = toBytes UTF8

@@ -111,7 +111,7 @@ nextExtAddress store =
     )
   where
     nat = accountStoreExternal store
-    idx = fromIntegral idx
+    idx = fromIntegral nat
 
 nextIntAddress :: AccountStore -> ((Address, SoftPath, Natural), AccountStore)
 nextIntAddress store =

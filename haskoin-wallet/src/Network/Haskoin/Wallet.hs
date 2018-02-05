@@ -363,7 +363,7 @@ addresses =
                         formatError "No addresses have been generated"
 
 addressFormat :: NonEmpty [(Natural, Address)] -> ConsolePrinter
-addressFormat as = vcat $ toFormat <$> toList as
+addressFormat as = vcat $ getNonEmpty $ nonEmptyFmap toFormat as
   where
     toFormat :: (Natural, Address) -> ConsolePrinter
     toFormat (i, a) =
