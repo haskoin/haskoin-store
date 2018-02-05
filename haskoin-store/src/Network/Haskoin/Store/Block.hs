@@ -313,21 +313,20 @@ getBalanceData addr = runMaybeT (fromCache <|> fromDB)
 updateBalanceCache :: MonadBlock m => BlockHeight -> Bool -> BalanceMap -> m ()
 updateBalanceCache height main balanceMap = do
     abox <- asks myAddressCache
-    let as = M.keys balanceMap
+    let addrSet = M.keysSet balanceMap
     if main
         then liftIO . atomically $ do
                  oldCache <- readTVar abox
-                 let AddressCache {..} = foldl' delOld oldCache as
+                 let AddressCache {..} = delOld oldCache addrSet
                      newCache = addressCache <> M.map (, height) balanceMap
-                     newBlocks =
-                         M.insert height (S.fromList as) addressCacheBlocks
+                     newBlocks = M.insert height addrSet addressCacheBlocks
                  writeTVar
                      abox
                      AddressCache
                      {addressCache = newCache, addressCacheBlocks = newBlocks}
         else liftIO . atomically $ do
                  AddressCache {..} <- readTVar abox
-                 let newCache = foldl' (flip M.delete) addressCache as
+                 let newCache = M.withoutKeys addressCache addrSet
                      newBlocks = M.delete height addressCacheBlocks
                  writeTVar
                      abox
@@ -340,21 +339,23 @@ updateBalanceCache height main balanceMap = do
         AddressCache {..} <- readTVar abox
         modifyTVar cbox $ \c -> c {addressCacheSize = M.size addressCache}
   where
-    delOld c@AddressCache {..} a =
-        case M.lookup a addressCache of
-            Nothing -> c
-            Just (_, h) ->
-                AddressCache
-                { addressCache = M.delete a addressCache
-                , addressCacheBlocks =
-                      M.adjust (S.delete a) h addressCacheBlocks
-                }
+    delOld AddressCache {..} addrSet =
+        let onlyMatching = M.restrictKeys addressCache addrSet
+            addrHeights =
+                M.fromList
+                    (map (\(a, (_, h)) -> (h, S.singleton a))
+                         (M.toList onlyMatching))
+            newBlocks =
+                M.unionWith S.difference addressCacheBlocks addrHeights
+            newCache = M.withoutKeys addressCache addrSet
+        in AddressCache
+           {addressCache = newCache, addressCacheBlocks = newBlocks}
     pruneIfTooLarge abox n = do
         AddressCache {..} <- readTVar abox
         when (M.size addressCache > fromIntegral n) $ do
             let (delBlocks, newBlocks) = M.splitAt 1 addressCacheBlocks
-                as = mconcat (M.elems delBlocks)
-                newCache = foldl' (flip M.delete) addressCache as
+                addrSet = mconcat (M.elems delBlocks)
+                newCache = M.withoutKeys addressCache addrSet
             writeTVar
                 abox
                 AddressCache
@@ -963,12 +964,12 @@ unspentCachePrune = do
         | M.size unspentCache < n = c
         | otherwise =
             let (del, keep) = M.splitAt 1 unspentCacheBlocks
-                cache =
-                    foldl' (flip M.delete) unspentCache (concat (M.elems del))
-                new = clear
-                   n
-                   UnspentCache
-                   {unspentCache = cache, unspentCacheBlocks = keep}
+                delSet = S.fromList (concat (M.elems del))
+                cache = M.withoutKeys unspentCache delSet
+                newUnspent =
+                    UnspentCache
+                    {unspentCache = cache, unspentCacheBlocks = keep}
+                new = clear n newUnspent
             in clear n new
 
 addToCache :: MonadBlock m => BlockRef -> [(OutPoint, PrevOut)] -> m ()
@@ -978,7 +979,7 @@ addToCache BlockRef {..} xs = do
         ubox <- asks myUnspentCache
         cbox <- asks myCacheStats
         UnspentCache {..} <- liftIO (readTVarIO ubox)
-        let cache = foldl' (\c (k, v) -> M.insert k v c) unspentCache xs
+        let cache = M.union (M.fromList xs) unspentCache
             keys = map fst xs
             blocks = M.insertWith (++) blockRefHeight keys unspentCacheBlocks
         liftIO . atomically $ do
