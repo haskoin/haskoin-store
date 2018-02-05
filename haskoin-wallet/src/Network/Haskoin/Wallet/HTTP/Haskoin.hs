@@ -104,7 +104,7 @@ getTx tid = do
     r <- HTTP.asValue =<< HTTP.getWith options url
     let v = r ^. HTTP.responseBody
         s = fromMaybe errHex $ v ^? key "hex" . _String
-    maybe errTx return $ decodeBytes (textToBytes s)
+    maybe errTx return $ decodeBytes =<< decodeHexText s
   where
     url = getURL <> "/transaction/" <> toLString (txHashToHex tid)
     errHex =

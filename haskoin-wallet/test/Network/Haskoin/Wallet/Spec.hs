@@ -6,18 +6,14 @@ import           Control.Lens                               ((^.), _1, _2, _3,
                                                              _4)
 import           Data.Either                                (isLeft)
 import           Data.List                                  (sum)
-import           Data.Map.Strict                            (Map)
 import qualified Data.Map.Strict                            as Map
 import           Foundation
 import           Foundation.Collection
 import           Foundation.Compat.ByteString
 import           Network.Haskoin.Block
-import           Network.Haskoin.Crypto                     hiding
-                                                             (addrToBase58,
-                                                             base58ToAddr)
+import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
-import           Network.Haskoin.Transaction                hiding (hexToTxHash,
-                                                             txHashToHex)
+import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util                       (integerToBS)
 import           Network.Haskoin.Wallet.AccountStore
 import           Network.Haskoin.Wallet.Amounts
@@ -44,7 +40,7 @@ walletSpec = do
     mergeAddressTxsSpec
     blockchainServiceSpec
     insightServiceSpec
-    haskoinServiceSpec -- Activate this when it's ready in prodnet
+    -- haskoinServiceSpec -- Activate this when it's ready in prodnet
 
 diceSpec :: Spec
 diceSpec =
@@ -303,7 +299,7 @@ signingSpec =
                 , txSummaryFeeByte =
                       Just $
                       10000000 `div`
-                      (fromIntegral $ fromCount $ length $ encodeBytes tx)
+                      fromIntegral (fromCount $ length $ encodeBytes tx)
                 , txSummaryTxSize = Just $ length $ encodeBytes tx
                 , txSummaryIsSigned = Just True
                 }
@@ -383,7 +379,7 @@ signingSpec =
                 , txSummaryFeeByte =
                       Just $
                       50000000 `div`
-                      (fromIntegral $ fromCount $ length $ encodeBytes tx)
+                      fromIntegral (fromCount $ length $ encodeBytes tx)
                 , txSummaryTxSize = Just $ length $ encodeBytes tx
                 , txSummaryIsSigned = Just True
                 }
@@ -449,7 +445,7 @@ signingSpec =
                 , txSummaryFeeByte =
                       Just $
                       100000000 `div`
-                      (fromIntegral $ fromCount $ length $ encodeBytes tx)
+                      fromIntegral (fromCount $ length $ encodeBytes tx)
                 , txSummaryTxSize = Just $ length $ encodeBytes tx
                 , txSummaryIsSigned = Just True
                 }

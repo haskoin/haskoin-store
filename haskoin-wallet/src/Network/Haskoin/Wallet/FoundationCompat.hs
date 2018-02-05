@@ -94,11 +94,11 @@ encodeHex :: UArray Word8 -> UArray Word8
 encodeHex = fromByteString . B16.encode .  toByteString
 
 decodeHex :: UArray Word8 -> Maybe (UArray Word8)
-decodeHex a8 = do
+decodeHex bytes = do
     guard (BS.null rest)
     return $ fromByteString res
   where
-    (res, rest) = B16.decode $ toByteString a8
+    (res, rest) = B16.decode $ toByteString bytes
 
 encodeHexStr :: UArray Word8 -> String
 encodeHexStr = fst . fromBytesLenient . encodeHex

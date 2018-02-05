@@ -612,7 +612,7 @@ txSummaryFormat accDeriv unit TxSummary {..} =
                   , case txSummaryTxSize of
                         Just size ->
                             formatKey (block 12 "Tx size:") <>
-                            formatStatic (show size <> " bytes")
+                            formatStatic (show (fromCount size) <> " bytes")
                         _ -> mempty
                   , case txSummaryIsSigned of
                         Just signed ->

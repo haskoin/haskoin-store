@@ -54,7 +54,7 @@ buildTxSignData service store rcpMap feeByte dust
         case buildWalletTx
                  walletAddrMap
                  allCoins
-                 (second fromIntegral change)
+                 change
                  rcpMap
                  feeByte
                  dust of
