@@ -26,7 +26,9 @@ import qualified Network.Wreq                            as HTTP
 
 getURL :: LString
 getURL
-    | getNetwork == testnet3Network = "http://nuc.haskoin.com:7053"
+    | getNetwork == testnet3Network = "https://api.haskoin.com/testnet3"
+    | getNetwork == cashTestNetwork = "https://api.haskoin.com/cashtest"
+    | getNetwork == bitcoinCashNetwork = "https://api.haskoin.com/bitcoincash"
     | otherwise =
         consoleError $
         formatError $

@@ -103,7 +103,7 @@ buildWalletTx walletAddrMap coins (change, changeDeriv, _) rcpMap feeByte dust =
         buildAddrTx ops $
         bimap addrToBase58 fromIntegral <$> Map.assocs txRcpMap
     inCoinAddrs <-
-        eitherString $ mapM (outputAddress . walletCoinScriptOutput) coins
+        eitherString $ mapM (outputAddress . walletCoinScriptOutput) selectedCoins
     let inDerivMap = Map.restrictKeys walletAddrMap $ Set.fromList inCoinAddrs
     return
         ( tx
