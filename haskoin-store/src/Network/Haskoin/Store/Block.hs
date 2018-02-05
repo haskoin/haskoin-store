@@ -61,7 +61,7 @@ import           Network.Haskoin.Transaction
 
 data UnspentCache = UnspentCache
     { unspentCache       :: !PrevOutMap
-    , unspentCacheBlocks :: !(Map BlockHeight [OutPoint])
+    , unspentCacheBlocks :: !(Map BlockHeight (Set OutPoint))
     }
 
 data AddressCache = AddressCache
@@ -761,9 +761,7 @@ blockOp block height work main BlockData {..} = do
         BlockRef
         {blockRefHash = hash, blockRefHeight = height, blockRefMainChain = main}
     txs = blockTxns block
-    cacheOuts = do
-        let entries = M.toList blockNewOutMap
-        addToCache blockRef (map (second outputToPrevOut) entries)
+    cacheOuts = addToCache blockRef (M.map outputToPrevOut blockNewOutMap)
     blockHashOp =
         let key = BlockKey (headerHash header)
             value =
@@ -964,23 +962,23 @@ unspentCachePrune = do
         | M.size unspentCache <= n = c
         | otherwise =
             let (del, keep) = M.splitAt 1 unspentCacheBlocks
-                delSet = S.fromList (concat (M.elems del))
+                delSet = mconcat (M.elems del)
                 cache = M.withoutKeys unspentCache delSet
                 new =
                     UnspentCache
                     {unspentCache = cache, unspentCacheBlocks = keep}
             in clear n new
 
-addToCache :: MonadBlock m => BlockRef -> [(OutPoint, PrevOut)] -> m ()
-addToCache BlockRef {..} xs = do
+addToCache :: MonadBlock m => BlockRef -> Map OutPoint PrevOut -> m ()
+addToCache BlockRef {..} outputMap = do
     n <- asks myCacheNo
     when (n > 0) $ do
         ubox <- asks myUnspentCache
         cbox <- asks myCacheStats
         UnspentCache {..} <- liftIO (readTVarIO ubox)
-        let cache = M.union (M.fromList xs) unspentCache
-            keys = map fst xs
-            blocks = M.insertWith (++) blockRefHeight keys unspentCacheBlocks
+        let cache = M.union outputMap unspentCache
+            keys = M.keysSet outputMap
+            blocks = M.insertWith (<>) blockRefHeight keys unspentCacheBlocks
         liftIO . atomically $ do
             writeTVar
                 ubox

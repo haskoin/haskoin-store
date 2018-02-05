@@ -228,7 +228,6 @@ main =
                 def
                 { RocksDB.createIfMissing = True
                 , RocksDB.compression = RocksDB.NoCompression
-                , RocksDB.maxOpenFiles = -1
                 }
         mgr <- Inbox <$> liftIO newTQueueIO
         supervisor
