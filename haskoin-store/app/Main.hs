@@ -57,10 +57,10 @@ data Config = Config
     }
 
 defBlocks :: Word32
-defBlocks = 500
+defBlocks = 250
 
 defCache :: Word32
-defCache = 1000000
+defCache = 200000
 
 defPort :: Int
 defPort = 3000
@@ -228,7 +228,6 @@ main =
                 def
                 { RocksDB.createIfMissing = True
                 , RocksDB.compression = RocksDB.NoCompression
-                , RocksDB.writeBufferSize = 512 * 1024 * 1024
                 }
         mgr <- Inbox <$> liftIO newTQueueIO
         supervisor
