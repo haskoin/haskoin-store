@@ -135,7 +135,7 @@ config =
              auto
              (metavar "COUNT" <> long "cache" <> short 'c' <>
               help
-                  ("Number of entries in UTXO cache for faster synchronisation (default: " <>
+                  ("Number of entries in UTXO and address cache (default: " <>
                    show defCache <>
                    ")"))) <*>
     optional

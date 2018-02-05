@@ -963,17 +963,13 @@ unspentCachePrune = do
         | M.size unspentCache < n = c
         | otherwise =
             let (del, keep) = M.splitAt 1 unspentCacheBlocks
-                ks =
-                    [ k
-                    | keys <- M.elems del
-                    , k <- keys
-                    , isJust (M.lookup k unspentCache)
-                    ]
-                cache = foldl' (flip M.delete) unspentCache ks
-            in clear
+                cache =
+                    foldl' (flip M.delete) unspentCache (concat (M.elems del))
+                new = clear
                    n
                    UnspentCache
                    {unspentCache = cache, unspentCacheBlocks = keep}
+            in clear n new
 
 addToCache :: MonadBlock m => BlockRef -> [(OutPoint, PrevOut)] -> m ()
 addToCache BlockRef {..} xs = do
