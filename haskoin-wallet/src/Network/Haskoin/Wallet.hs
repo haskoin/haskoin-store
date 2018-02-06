@@ -511,27 +511,35 @@ transactions = command "transactions" "Display the account transactions" $
                 let service = parseBlockchainService s
                     walletAddrs = allExtAddresses store <> allIntAddresses store
                     walletAddrMap = Map.fromList walletAddrs
-                mvts <-
-                    mergeAddressTxs <$>
-                    httpAddressTxs service (fmap fst walletAddrs)
-                forM_ mvts $ \mvt -> do
+                mvts <- getMvts service (fmap fst walletAddrs)
+                forM_ (sortOn txMovementHeight mvts) $ \mvt -> do
                     tx <- httpTx service $ txMovementTxHash mvt
                     renderIO $
                         txSummaryFormat
                             (accountStoreDeriv store)
                             unit
                             (mvtToTxSummary walletAddrMap mvt tx)
+  where
+    getMvts :: BlockchainService -> [Address] -> IO [TxMovement]
+    getMvts service =
+        fromMaybe notImp $
+        httpTxMovements service <|>
+        (httpAddressTxs service >>=
+             \f -> Just (fmap mergeAddressTxs . f))
+    notImp =
+        consoleError $
+        formatError "The transactions command is not implemented"
 
 mvtToTxSummary :: Map Address SoftPath -> TxMovement -> Tx -> TxSummary
 mvtToTxSummary derivMap TxMovement {..} tx =
     TxSummary
-    { txSummaryType = getTxType feeM txMovementAmount
+    { txSummaryType = getTxType feeM amount
     , txSummaryTxHash = Just txMovementTxHash
     , txSummaryOutbound = outbound
     , txSummaryNonStd = nonStd
     , txSummaryInbound = joinWithPath txMovementInbound
     , txSummaryMyInputs = joinWithPath txMovementMyInputs
-    , txSummaryAmount = txMovementAmount
+    , txSummaryAmount = amount
     , txSummaryFee = feeM
     , txSummaryFeeByte = feeByteM
     , txSummaryTxSize = Just txSize
@@ -540,7 +548,7 @@ mvtToTxSummary derivMap TxMovement {..} tx =
   where
     (outAddrMap, nonStd) = txOutputAddressValues $ txOut tx
     outbound
-        | txMovementAmount > 0 = Map.empty
+        | amount > 0 = Map.empty
         | otherwise = Map.difference outAddrMap txMovementInbound
     joinWithPath :: Map Address Satoshi -> Map Address (Satoshi, SoftPath)
     joinWithPath = Map.intersectionWith (flip (,)) derivMap
@@ -548,6 +556,9 @@ mvtToTxSummary derivMap TxMovement {..} tx =
     outSum = sum $ (toNatural . outValue) <$> txOut tx
     inSum :: Natural
     inSum = sum $ Map.elems txMovementMyInputs
+    amount =
+        toInteger (sum $ Map.elems txMovementInbound) -
+        toInteger (sum $ Map.elems txMovementMyInputs)
     feeM = inSum - outSum
     feeByteM = (`div` fromIntegral (fromCount txSize)) <$> feeM
     txSize = length $ encodeBytes tx

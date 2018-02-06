@@ -4,10 +4,12 @@ module Network.Haskoin.Wallet.HTTP.BlockchainInfo
 ( blockchainInfoService
 ) where
 
-import           Control.Lens                            ((&), (.~), (^.),
-                                                          (^..), (^?))
+import           Control.Lens                            ((&), (.~), (^..),
+                                                          (^?))
+import           Control.Monad                           (guard)
 import           Data.Aeson.Lens
 import           Data.List                               (sum)
+import qualified Data.Map.Strict                         as Map
 import           Foundation
 import           Foundation.Collection
 import           Foundation.Compat.ByteString
@@ -40,31 +42,30 @@ blockchainInfoService =
     BlockchainService
     { httpBalance = getBalance
     , httpUnspent = getUnspent
+    , httpAddressTxs = Nothing
+    , httpTxMovements = Just getTxMovements
     , httpTx = getTx
     , httpBroadcast = broadcastTx
-    , httpAddressTxs = getAddressTxs
     }
 
 getBalance :: [Address] -> IO Satoshi
 getBalance addrs = do
-    r <- HTTP.asValue =<< HTTP.getWith opts url
-    let v = r ^. HTTP.responseBody
+    v <- httpJsonGet opts url
     return $ fromIntegral $ sum $ v ^.. members . key "final_balance" . _Integer
   where
     url = getURL <> "/balance"
-    opts = options & HTTP.param "active" .~ [toText aList]
+    opts = HTTP.defaults & HTTP.param "active" .~ [toText aList]
     aList = intercalate "|" $ addrToBase58 <$> addrs
 
 getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
 getUnspent addrs = do
-    r <- HTTP.asValue =<< HTTP.getWith opts url
-    let v = r ^. HTTP.responseBody
-        resM = mapM parseCoin $ v ^.. key "unspent_outputs" . values
+    v <- httpJsonGet opts url
+    let resM = mapM parseCoin $ v ^.. key "unspent_outputs" . values
     maybe (consoleError $ formatError "Could not parse coin") return resM
   where
     url = getURL <> "/unspent"
     opts =
-        options & HTTP.param "active" .~ [toText aList] &
+        HTTP.defaults & HTTP.param "active" .~ [toText aList] &
         HTTP.param "confirmations" .~
         ["1"]
     aList = intercalate "|" $ addrToBase58 <$> addrs
@@ -76,45 +77,47 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
-getAddressTxs :: [Address] -> IO [AddressTx]
-getAddressTxs addrs = do
-    r <- HTTP.asValue =<< HTTP.getWith opts url
-    let v = r ^. HTTP.responseBody
-    return $ mconcat $ mapMaybe parseAddrTxs $ v ^.. key "txs" . values
+getTxMovements :: [Address] -> IO [TxMovement]
+getTxMovements addrs = do
+    v <- httpJsonGet opts url
+    let resM = mapM parseTxMovement $ v ^.. key "txs" . values
+    maybe (consoleError $ formatError "Could not parse tx movement") return resM
   where
     url = getURL <> "/multiaddr"
-    opts = options & HTTP.param "active" .~ [toText aList]
+    opts = HTTP.defaults & HTTP.param "active" .~ [toText aList]
     aList = intercalate "|" $ addrToBase58 <$> addrs
-    parseAddrTxs v = do
+    parseTxMovement v = do
         tid <- hexToTxHash . fromText =<< v ^? key "hash" . _String
-        h <- fromIntegral <$> v ^? key "block_height" . _Integer
-        let is = v ^.. key "inputs" . values
-            os = v ^.. key "out" . values
-        return $
-            mapMaybe
-                (\i -> parseAddrTx tid h negate =<< i ^? key "prev_out" . _Value)
-                is <>
-            mapMaybe (parseAddrTx tid h id) os
-    parseAddrTx tid h f v = do
-        amnt <- v ^? key "value" . _Integer
+        let heightM = fromIntegral <$> v ^? key "block_height" . _Integer
+            is =
+                Map.fromList $ mapMaybe go $ v ^.. key "inputs" . values .
+                key "prev_out"
+            os = Map.fromList $ mapMaybe go $ v ^.. key "out" . values
+        return
+            TxMovement
+            { txMovementTxHash = tid
+            , txMovementInbound = os
+            , txMovementMyInputs = is
+            , txMovementHeight = heightM
+            }
+    go v = do
         addr <- base58ToAddr . fromText =<< v ^? key "addr" . _String
-        if addr `elem` addrs
-            then return $ AddressTx addr tid (f amnt) h
-            else Nothing
+        guard $ addr `elem` addrs
+        amnt <- fromIntegral <$> v ^? key "value" . _Integer
+        return (addr, amnt)
 
 getTx :: TxHash -> IO Tx
 getTx tid = do
-    r <- HTTP.getWith opts url
-    let bytes = fromByteString . toStrictBS $ r ^. HTTP.responseBody
+    bytes <- httpBytesGet opts url
     maybe err return $ decodeBytes =<< decodeHex bytes
   where
     url = getURL <> "/rawtx/" <> toLString (txHashToHex tid)
-    opts = options & HTTP.param "format" .~ ["hex"]
+    opts = HTTP.defaults & HTTP.param "format" .~ ["hex"]
     err = consoleError $ formatError "Could not decode tx"
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do
-    _ <- HTTP.postWith options url $ HTTP.partBS "tx" dat
+    _ <- HTTP.postWith (addStatusCheck HTTP.defaults) url $ HTTP.partBS "tx" dat
     return ()
   where
     url = getURL <> "/pushtx"

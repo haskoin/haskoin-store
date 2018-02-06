@@ -2,9 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Wallet.HTTP.Haskoin (haskoinService) where
 
-import           Control.Lens                            ((&), (.~), (^.),
-                                                          (^..), (^?))
-import           Control.Monad                           (guard)
+import           Control.Lens                            ((&), (.~), (^..),
+                                                          (^?))
 import qualified Data.Aeson                              as J
 import           Data.Aeson.Lens
 import           Data.List                               (sum)
@@ -39,30 +38,29 @@ haskoinService =
     BlockchainService
     { httpBalance = getBalance
     , httpUnspent = getUnspent
-    , httpAddressTxs = getAddressTxs
+    , httpAddressTxs = Just getAddressTxs
+    , httpTxMovements = Nothing
     , httpTx = getTx
     , httpBroadcast = broadcastTx
     }
 
 getBalance :: [Address] -> IO Satoshi
 getBalance addrs = do
-    r <- HTTP.asValue =<< HTTP.getWith opts url
-    let v = r ^. HTTP.responseBody
+    v <- httpJsonGet opts url
     return $ fromIntegral $ sum $ v ^.. values . key "confirmed" . _Integer
   where
     url = getURL <> "/address/balances"
-    opts = options & HTTP.param "addresses" .~ [toText aList]
+    opts = HTTP.defaults & HTTP.param "addresses" .~ [toText aList]
     aList = intercalate "," $ addrToBase58 <$> addrs
 
 getUnspent :: [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
 getUnspent addrs = do
-    r <- HTTP.asValue =<< HTTP.getWith opts url
-    let v = r ^. HTTP.responseBody
-        resM = mapM parseCoin $ v ^.. values
+    v <- httpJsonGet opts url
+    let resM = mapM parseCoin $ v ^.. values
     maybe (consoleError $ formatError "Could not parse coin") return resM
   where
     url = getURL <> "/address/unspent"
-    opts = options & HTTP.param "addresses" .~ [toText aList]
+    opts = HTTP.defaults & HTTP.param "addresses" .~ [toText aList]
     aList = intercalate "," $ addrToBase58 <$> addrs
     parseCoin v = do
         tid <- hexToTxHash . fromText =<< v ^? key "txid" . _String
@@ -74,47 +72,39 @@ getUnspent addrs = do
 
 getAddressTxs :: [Address] -> IO [AddressTx]
 getAddressTxs addrs = do
-    r <- HTTP.asValue =<< HTTP.getWith opts url
-    let v = r ^. HTTP.responseBody
-        resM = mapM parseAddrTx $ v ^.. values
+    v <- httpJsonGet opts url
+    let resM = mapM parseAddrTx $ v ^.. values
     maybe (consoleError $ formatError "Could not parse addrTx") return resM
   where
     url = getURL <> "/address/transactions"
-    opts = options & HTTP.param "addresses" .~ [toText aList]
+    opts = HTTP.defaults & HTTP.param "addresses" .~ [toText aList]
     aList = intercalate "," $ addrToBase58 <$> addrs
     parseAddrTx v = do
         tid <- hexToTxHash . fromText =<< v ^? key "txid" . _String
         addrB58 <- v ^? key "address" . _String
         addr <- base58ToAddr $ fromText addrB58
-        height <- v ^? key "height" . _Integer
         amnt <- v ^? key "amount" . _Integer
-        guard $ height >= 0
+        let heightM = fromIntegral <$> v ^? key "height" . _Integer
         return
             AddressTx
             { addrTxAddress = addr
             , addrTxTxHash = tid
             , addrTxAmount = amnt
-            , addrTxHeight = fromIntegral $ abs height
+            , addrTxHeight = heightM
             }
 
 getTx :: TxHash -> IO Tx
 getTx tid = do
-    r <- HTTP.asValue =<< HTTP.getWith options url
-    let v = r ^. HTTP.responseBody
-        s = fromMaybe errHex $ v ^? key "hex" . _String
-    maybe errTx return $ decodeBytes =<< decodeHexText s
+    v <- httpJsonGet HTTP.defaults url
+    let resM = v ^? key "hex" . _String
+    maybe err return $ decodeBytes =<< decodeHexText =<< resM
   where
     url = getURL <> "/transaction/" <> toLString (txHashToHex tid)
-    errHex =
-        consoleError $
-        formatError "Invalid JSON response. Could not find the \"hex\" key"
-    errTx =
-        consoleError $
-        formatError "Invalid \"hex\" value. Could not decode a transaction."
+    err = consoleError $ formatError "Could not decode the transaction."
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do
-    _ <- HTTP.postWith options url val
+    _ <- HTTP.postWith (addStatusCheck HTTP.defaults) url val
     return ()
   where
     url = getURL <> "/transaction"

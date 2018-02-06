@@ -505,26 +505,22 @@ mergeAddressTxsSpec =
                           (just $ extAddrs ! 0)
                           (dummyTxHash 1)
                           1000
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 0)
                           (dummyTxHash 1)
                           2000
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 1)
                           (dummyTxHash 1)
                           4000
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 1)
                           (dummyTxHash 2)
                           5000
-                          (dummyBlockHash 2)
-                          2
+                          (Just 2)
                     ]
             mergeAddressTxs as `shouldBe`
                 [ TxMovement
@@ -534,14 +530,12 @@ mergeAddressTxsSpec =
                            , (just $ extAddrs ! 1, 4000)
                            ])
                       Map.empty
-                      7000
-                      1
+                      (Just 1)
                 , TxMovement
                       (dummyTxHash 2)
                       (Map.fromList [(just $ extAddrs ! 1, 5000)])
                       Map.empty
-                      5000
-                      2
+                      (Just 2)
                 ]
         it "Can merge input and output addresses" $ do
             let as =
@@ -549,50 +543,42 @@ mergeAddressTxsSpec =
                           (just $ extAddrs ! 0)
                           (dummyTxHash 1)
                           1000
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 0)
                           (dummyTxHash 1)
                           (-1000)
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 0)
                           (dummyTxHash 2)
                           1000
-                          (dummyBlockHash 2)
-                          2
+                          (Just 2)
                     , AddressTx
                           (just $ extAddrs ! 1)
                           (dummyTxHash 1)
                           4000
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 1)
                           (-2000)
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 1)
                           (-3000)
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 2)
                           (-2000)
-                          (dummyBlockHash 2)
-                          2
+                          (Just 2)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 1)
                           6000
-                          (dummyBlockHash 1)
-                          1
+                          (Just 1)
                     ]
             mergeAddressTxs as `shouldBe`
                 [ TxMovement
@@ -606,14 +592,12 @@ mergeAddressTxsSpec =
                            [ (just $ extAddrs ! 0, 1000)
                            , (just $ extAddrs ! 2, 5000)
                            ])
-                      5000
-                      1
+                      (Just 1)
                 , TxMovement
                       (dummyTxHash 2)
                       (Map.fromList [(just $ extAddrs ! 0, 1000)])
                       (Map.fromList [(just $ extAddrs ! 2, 2000)])
-                      (-1000)
-                      2
+                      (Just 2)
                 ]
 
 blockchainServiceSpec :: Spec
@@ -637,6 +621,17 @@ blockchainServiceSpec =
                 , PayPK
                       "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
                 , 5000000000)
+        it "can receive a transaction movement (online test)" $ do
+            res <-
+                just
+                    (httpTxMovements blockchainInfoService)
+                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            length res `shouldSatisfy` (> 9)
+            let res1 = head $ nonEmpty_ res
+                as =
+                    Map.keys (txMovementInbound res1) <>
+                    Map.keys (txMovementMyInputs res1)
+            as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
         it "can receive a transaction (online test)" $ do
             let tid =
                     "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
@@ -663,6 +658,17 @@ insightServiceSpec =
                        12
                  , PayPKHash "62e907b15cbf27d5425399ebf6f0fb50ebb88f18"
                  , 333000) `elem`)
+        it "can receive a transaction movement (online test)" $ do
+            res <-
+                just
+                    (httpTxMovements insightService)
+                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            length res `shouldSatisfy` (> 9)
+            let res1 = head $ nonEmpty_ res
+                as =
+                    Map.keys (txMovementInbound res1) <>
+                    Map.keys (txMovementMyInputs res1)
+            as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
         it "can receive a transaction (online test)" $ do
             let tid =
                     "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
@@ -690,6 +696,17 @@ haskoinServiceSpec =
                 , PayPK
                       "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
                 , 5000000000)
+        it "can receive a transaction movement (online test)" $ do
+            res <-
+                just
+                    (httpTxMovements haskoinService)
+                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            length res `shouldSatisfy` (> 9)
+            let res1 = head $ nonEmpty_ res
+                as =
+                    Map.keys (txMovementInbound res1) <>
+                    Map.keys (txMovementMyInputs res1)
+            as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
         it "can receive a transaction (online test)" $ do
             let tid =
                     "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
