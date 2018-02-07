@@ -12,6 +12,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Aeson                  (ToJSON (..), Value (..), object,
                                               (.=))
+import           Data.Bits
 import           Data.Default                (def)
 import           Data.Maybe
 import           Data.Monoid
@@ -36,19 +37,19 @@ import           Web.Scotty.Trans
 type StoreM = ActionT Except IO
 
 data OptConfig = OptConfig
-    { optConfigDir       :: !(Maybe FilePath)
-    , optConfigPort      :: !(Maybe Int)
-    , optConfigNetwork   :: !(Maybe Network)
-    , optConfigDiscover  :: !(Maybe Bool)
-    , optConfigPeers     :: !(Maybe [(Host, Maybe Port)])
+    { optConfigDir      :: !(Maybe FilePath)
+    , optConfigPort     :: !(Maybe Int)
+    , optConfigNetwork  :: !(Maybe Network)
+    , optConfigDiscover :: !(Maybe Bool)
+    , optConfigPeers    :: !(Maybe [(Host, Maybe Port)])
     }
 
 data Config = Config
-    { configDir       :: !FilePath
-    , configPort      :: !Int
-    , configNetwork   :: !Network
-    , configDiscover  :: !Bool
-    , configPeers     :: ![(Host, Maybe Port)]
+    { configDir      :: !FilePath
+    , configPort     :: !Int
+    , configNetwork  :: !Network
+    , configDiscover :: !Bool
+    , configPeers    :: ![(Host, Maybe Port)]
     }
 
 defPort :: Int
@@ -197,7 +198,9 @@ main =
                 (wdir </> "blocks")
                 def
                 { RocksDB.createIfMissing = True
-                , RocksDB.compression = RocksDB.NoCompression
+                , RocksDB.compression = RocksDB.SnappyCompression
+                , RocksDB.maxOpenFiles = -1
+                , RocksDB.writeBufferSize = 2 `shift` 30
                 }
         mgr <- Inbox <$> liftIO newTQueueIO
         supervisor
