@@ -17,7 +17,6 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.String.Conversions
 import qualified Data.Text                   as T
-import           Data.Word
 import qualified Database.RocksDB            as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
@@ -38,8 +37,6 @@ type StoreM = ActionT Except IO
 
 data OptConfig = OptConfig
     { optConfigDir       :: !(Maybe FilePath)
-    , optConfigCache     :: !(Maybe Word32)
-    , optConfigBlocks    :: !(Maybe Word32)
     , optConfigPort      :: !(Maybe Int)
     , optConfigNetwork   :: !(Maybe Network)
     , optConfigDiscover  :: !(Maybe Bool)
@@ -48,19 +45,11 @@ data OptConfig = OptConfig
 
 data Config = Config
     { configDir       :: !FilePath
-    , configCache     :: !Word32
-    , configBlocks    :: !Word32
     , configPort      :: !Int
     , configNetwork   :: !Network
     , configDiscover  :: !Bool
     , configPeers     :: ![(Host, Maybe Port)]
     }
-
-defBlocks :: Word32
-defBlocks = 250
-
-defCache :: Word32
-defCache = 200000
 
 defPort :: Int
 defPort = 3000
@@ -78,8 +67,6 @@ optToConfig :: OptConfig -> Config
 optToConfig OptConfig {..} =
     Config
     { configDir = fromMaybe myDirectory optConfigDir
-    , configCache = fromMaybe defCache optConfigCache
-    , configBlocks = fromMaybe defBlocks optConfigBlocks
     , configPort = fromMaybe defPort optConfigPort
     , configNetwork = fromMaybe defNetwork optConfigNetwork
     , configDiscover = fromMaybe defDiscovery optConfigDiscover
@@ -129,22 +116,6 @@ config =
               help
                   ("Directory to store blockchain data (default: " <>
                    myDirectory <>
-                   ")"))) <*>
-    optional
-        (option
-             auto
-             (metavar "COUNT" <> long "cache" <> short 'c' <>
-              help
-                  ("Number of entries in UTXO and address cache (default: " <>
-                   show defCache <>
-                   ")"))) <*>
-    optional
-        (option
-             auto
-             (metavar "BLOCKS" <> long "blocks" <> short 'b' <>
-              help
-                  ("Number of blocks to download per request to peer (default: " <>
-                   show defBlocks <>
                    ")"))) <*>
     optional
         (option
@@ -219,7 +190,6 @@ main =
         setNetwork $ configNetwork conf
         b <- Inbox <$> liftIO newTQueueIO
         s <- Inbox <$> liftIO newTQueueIO
-        cbox <- liftIO (newTVarIO def)
         let wdir = configDir conf </> networkName
         liftIO $ createDirectoryIfMissing True wdir
         db <-
@@ -233,14 +203,14 @@ main =
         supervisor
             KillAll
             s
-            [runWeb (configPort conf) cbox db mgr, runStore conf mgr wdir b db cbox]
+            [runWeb (configPort conf) db mgr, runStore conf mgr wdir b db]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port cbox db mgr =
+    runWeb port db mgr =
         scottyT port id $ do
             defaultHandler defHandler
             get "/block/best" $ getBestBlock db Nothing >>= json
@@ -280,7 +250,6 @@ main =
             get "/address/balances" $ do
                 addresses <- param "addresses"
                 getBalances addresses db Nothing >>= json
-            get "/stats/cache" $ liftIO (readTVarIO cbox) >>= json
             post "/transaction" $ do
                 txHex <- jsonData
                 postTransaction db mgr txHex >>= \case
@@ -303,8 +272,10 @@ main =
                         status status500
                         json (UserError "No peers connected")
                     Right j -> json j
+            get "/dbstats" $
+                RocksDB.getProperty db RocksDB.Stats >>= text . cs . fromJust
             notFound $ raise NotFound
-    runStore conf mgr wdir b db cbox =
+    runStore conf mgr wdir b db =
         runStderrLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO
@@ -322,9 +293,6 @@ main =
                               (second (fromMaybe defaultPort))
                               (configPeers conf)
                     , storeConfDiscover = configDiscover conf
-                    , storeConfCacheNo = configCache conf
-                    , storeConfBlockNo = configBlocks conf
                     , storeConfDB = db
-                    , storeConfCacheStats = cbox
                     }
             store cfg

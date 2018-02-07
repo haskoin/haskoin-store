@@ -15,7 +15,6 @@ import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as BS
 import           Data.ByteString.Short        (ShortByteString)
 import qualified Data.ByteString.Short        as BSS
-import           Data.Default
 import           Data.Function
 import           Data.Int
 import           Data.Maybe
@@ -42,40 +41,6 @@ data BroadcastExcept
 
 instance Exception BroadcastExcept
 
-data CacheStats = CacheStats
-    { unspentCacheHits   :: !Int
-    , unspentCacheMisses :: !Int
-    , addressCacheHits   :: !Int
-    , addressCacheMisses :: !Int
-    , newAddresses       :: !Int
-    , addressCacheSize   :: !Int
-    , unspentCacheSize   :: !Int
-    }
-
-instance ToJSON CacheStats where
-    toJSON CacheStats {..} =
-        object
-            [ "utxo-cache-hits" .= unspentCacheHits
-            , "utxo-cache-misses" .= unspentCacheMisses
-            , "address-cache-hits" .= addressCacheHits
-            , "address-cache-misses" .= addressCacheMisses
-            , "new-addresses" .= newAddresses
-            , "address-cache-size" .= addressCacheSize
-            , "utxo-cache-size" .= unspentCacheSize
-            ]
-
-instance Default CacheStats where
-    def =
-        CacheStats
-        { unspentCacheHits = 0
-        , unspentCacheMisses = 0
-        , addressCacheHits = 0
-        , addressCacheMisses = 0
-        , newAddresses = 0
-        , addressCacheSize = 0
-        , unspentCacheSize = 0
-        }
-
 newtype NewTx = NewTx
     { newTx :: Tx
     } deriving (Show, Eq, Ord)
@@ -89,10 +54,7 @@ data BlockConfig = BlockConfig
     , blockConfManager  :: !Manager
     , blockConfChain    :: !Chain
     , blockConfListener :: !(Listen BlockEvent)
-    , blockConfCacheNo  :: !Word32
-    , blockConfBlockNo  :: !Word32
     , blockConfDB       :: !DB
-    , blockCacheStats   :: !(TVar CacheStats)
     }
 
 newtype BlockEvent = BestBlock BlockHash
@@ -697,8 +659,5 @@ data StoreConfig = StoreConfig
     , storeConfMaxPeers   :: !Int
     , storeConfInitPeers  :: ![HostPort]
     , storeConfDiscover   :: !Bool
-    , storeConfCacheNo    :: !Word32
-    , storeConfBlockNo    :: !Word32
     , storeConfDB         :: !DB
-    , storeConfCacheStats :: !(TVar CacheStats)
     }

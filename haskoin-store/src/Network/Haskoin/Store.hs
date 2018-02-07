@@ -106,10 +106,7 @@ store StoreConfig {..} = do
             , blockConfChain = storeConfChain
             , blockConfManager = storeConfManager
             , blockConfListener = storeConfListener . BlockEvent
-            , blockConfCacheNo = storeConfCacheNo
-            , blockConfBlockNo = storeConfBlockNo
             , blockConfDB = storeConfDB
-            , blockCacheStats = storeConfCacheStats
             }
     supervisor
         KillAll

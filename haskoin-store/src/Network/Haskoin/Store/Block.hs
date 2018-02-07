@@ -43,8 +43,6 @@ import qualified Data.Map.Strict              as M
 import           Data.Maybe
 import           Data.Monoid
 import           Data.Serialize               (encode)
-import           Data.Set                     (Set)
-import qualified Data.Set                     as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
 import           Data.Word
@@ -59,16 +57,6 @@ import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
 
-data UnspentCache = UnspentCache
-    { unspentCache       :: !PrevOutMap
-    , unspentCacheBlocks :: !(Map BlockHeight (Set OutPoint))
-    }
-
-data AddressCache = AddressCache
-    { addressCache       :: !(Map Address (Balance, BlockHeight))
-    , addressCacheBlocks :: !(Map BlockHeight (Set Address))
-    }
-
 data BlockRead = BlockRead
     { myBlockDB      :: !DB
     , mySelf         :: !BlockStore
@@ -78,11 +66,6 @@ data BlockRead = BlockRead
     , myPending      :: !(TVar [BlockHash])
     , myDownloaded   :: !(TVar [Block])
     , myPeer         :: !(TVar (Maybe Peer))
-    , myUnspentCache :: !(TVar UnspentCache)
-    , myAddressCache :: !(TVar AddressCache)
-    , myCacheNo      :: !Word32
-    , myBlockNo      :: !Word32
-    , myCacheStats   :: !(TVar CacheStats)
     }
 
 type MonadBlock m
@@ -124,7 +107,6 @@ instance Monoid AddressDelta where
 type PrevOutMap = Map OutPoint PrevOut
 type OutputMap = Map OutPoint Output
 type AddressMap = Map Address AddressDelta
-type BalanceMap = Map Address Balance
 
 data BlockData = BlockData
     { blockPrevOutMap :: !PrevOutMap
@@ -141,9 +123,9 @@ instance Monoid BlockData where
         }
     a `mappend` b =
         BlockData
-        { blockPrevOutMap = M.union (blockPrevOutMap b) (blockPrevOutMap a)
+        { blockPrevOutMap = blockPrevOutMap b `M.union` blockPrevOutMap a
         , blockAddrMap = M.unionWith (<>) (blockAddrMap a) (blockAddrMap b)
-        , blockNewOutMap = M.union (blockNewOutMap b) (blockNewOutMap a)
+        , blockNewOutMap = blockNewOutMap b `M.union` blockNewOutMap a
         }
 
 blockStore ::
@@ -159,14 +141,6 @@ blockStore ::
 blockStore BlockConfig {..} = do
     pbox <- liftIO $ newTVarIO []
     dbox <- liftIO $ newTVarIO []
-    abox <-
-        liftIO $
-        newTVarIO
-            AddressCache {addressCache = M.empty, addressCacheBlocks = M.empty}
-    ubox <-
-        liftIO $
-        newTVarIO
-            UnspentCache {unspentCache = M.empty, unspentCacheBlocks = M.empty}
     peerbox <- liftIO $ newTVarIO Nothing
     runReaderT
         (loadBest >> syncBlocks >> run)
@@ -179,11 +153,6 @@ blockStore BlockConfig {..} = do
         , myPending = pbox
         , myDownloaded = dbox
         , myPeer = peerbox
-        , myUnspentCache = ubox
-        , myAddressCache = abox
-        , myCacheNo = blockConfCacheNo
-        , myBlockNo = blockConfBlockNo
-        , myCacheStats = blockCacheStats
         }
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
@@ -285,82 +254,9 @@ getAddrUnspent ::
 getAddrUnspent = valuesForKey . MultiAddrOutputKey False
 
 getBalanceData :: MonadBlock m => Address -> m (Maybe Balance)
-getBalanceData addr = runMaybeT (fromCache <|> fromDB)
-  where
-    fromCache = do
-        guard . (/= 0) =<< asks myCacheNo
-        abox <- asks myAddressCache
-        cbox <- asks myCacheStats
-        MaybeT . liftIO . atomically $ do
-            AddressCache {..} <- readTVar abox
-            let entryMaybe = fst <$> M.lookup addr addressCache
-            when (isJust entryMaybe) $
-                modifyTVar cbox $ \c ->
-                    c {addressCacheHits = addressCacheHits c + 1}
-            return entryMaybe
-    fromDB = do
-        db <- asks myBlockDB
-        cbox <- asks myCacheStats
-        entryMaybe <- retrieveValue (BalanceKey addr) db Nothing
-        case entryMaybe of
-            Nothing ->
-                liftIO . atomically . modifyTVar cbox $ \c ->
-                    c {newAddresses = newAddresses c + 1}
-            Just _ ->
-                liftIO . atomically . modifyTVar cbox $ \c ->
-                    c {addressCacheMisses = addressCacheMisses c + 1}
-        MaybeT (return entryMaybe)
-
-updateBalanceCache :: MonadBlock m => BlockHeight -> Bool -> BalanceMap -> m ()
-updateBalanceCache height main balanceMap = do
-    abox <- asks myAddressCache
-    let addrSet = M.keysSet balanceMap
-    if main
-        then liftIO . atomically $ do
-                 oldCache <- readTVar abox
-                 let AddressCache {..} = delOld oldCache addrSet
-                     newCache = addressCache <> M.map (, height) balanceMap
-                     newBlocks = M.insert height addrSet addressCacheBlocks
-                 writeTVar
-                     abox
-                     AddressCache
-                     {addressCache = newCache, addressCacheBlocks = newBlocks}
-        else liftIO . atomically $ do
-                 AddressCache {..} <- readTVar abox
-                 let newCache = M.withoutKeys addressCache addrSet
-                     newBlocks = M.delete height addressCacheBlocks
-                 writeTVar
-                     abox
-                     AddressCache
-                     {addressCache = newCache, addressCacheBlocks = newBlocks}
-    cacheNo <- asks myCacheNo
-    cbox <- asks myCacheStats
-    liftIO . atomically $ do
-        cache <- readTVar abox
-        let newCache@AddressCache {..} = pruneIfTooLarge cache cacheNo
-        writeTVar abox newCache
-        modifyTVar cbox $ \c -> c {addressCacheSize = M.size addressCache}
-  where
-    delOld AddressCache {..} addrSet =
-        let onlyMatching = M.restrictKeys addressCache addrSet
-            addrHeights =
-                M.fromList
-                    (map (\(a, (_, h)) -> (h, S.singleton a))
-                         (M.toList onlyMatching))
-            newBlocks = M.unionWith S.difference addressCacheBlocks addrHeights
-            newCache = M.withoutKeys addressCache addrSet
-        in AddressCache
-           {addressCache = newCache, addressCacheBlocks = newBlocks}
-    pruneIfTooLarge cache@AddressCache {..} n
-        | M.size addressCache <= fromIntegral n = cache
-        | otherwise =
-            let (delBlocks, newBlocks) = M.splitAt 1 addressCacheBlocks
-                addrSet = mconcat (M.elems delBlocks)
-                newCache = M.withoutKeys addressCache addrSet
-            in pruneIfTooLarge
-                   AddressCache
-                   {addressCache = newCache, addressCacheBlocks = newBlocks}
-                   n
+getBalanceData addr = do
+    db <- asks myBlockDB
+    retrieveValue (BalanceKey addr) db Nothing
 
 getOutput ::
        MonadIO m
@@ -505,7 +401,6 @@ syncBlocks = do
     chainBest <- chainGetBest ch
     let bestHash = headerHash (nodeHeader chainBest)
     db <- asks myBlockDB
-    blockNo <- asks myBlockNo
     myBestHash <-
         fromMaybe (error "Could not get best block hash") <$>
         getBestBlockHash db Nothing
@@ -522,7 +417,7 @@ syncBlocks = do
                         | not (null down) = headerHash (blockHeader (head down))
                         | otherwise = myBestHash
                     ready =
-                        length pend + length down < fromIntegral blockNo `div` 2
+                        length pend + length down < 500 `div` 2
                 return (ready, bstHash)
         guard (bstHash /= bestHash)
         guard ready
@@ -554,7 +449,7 @@ syncBlocks = do
             (revertUntil (headerHash (nodeHeader splitBlock)))
         let chainHeight = nodeHeight chainBest
             splitHeight = nodeHeight splitBlock
-            topHeight = min chainHeight (splitHeight + blockNo)
+            topHeight = min chainHeight (splitHeight + 500)
         targetBlock <-
             if topHeight == chainHeight
                 then return chainBest
@@ -614,7 +509,6 @@ importBlock block@Block {..} = do
     RocksDB.write db def ops
     l <- asks myListener
     liftIO . atomically . l $ BestBlock blockHash
-    unspentCachePrune
   where
     blockHash = headerHash blockHeader
 
@@ -674,71 +568,65 @@ outputOps main op@OutPoint {..} v@Output {..}
                 blockRefHash (spenderBlock spender) == blockRefHash outBlock
 
 balanceOps ::
-       MonadBlock m => Bool -> AddressMap -> m ([RocksDB.BatchOp], BalanceMap)
-balanceOps main addrMap = do
-    ls <-
-        forM (M.toList addrMap) $ \(addr, AddressDelta {..}) -> do
-            maybeExisting <- getBalanceData addr
-            let key = BalanceKey {balanceAddress = addr}
-                balance =
-                    case maybeExisting of
-                        Nothing ->
-                            Balance
-                            { balanceValue = addressDeltaBalance
-                            , balanceTxCount = addressDeltaTxCount
-                            , balanceOutputCount = addressDeltaOutputCount
-                            , balanceSpentCount = addressDeltaSpentCount
-                            }
-                        Just Balance {..} ->
-                            Balance
-                            { balanceValue = balanceValue + addressDeltaBalance
-                            , balanceTxCount =
-                                  balanceTxCount + addressDeltaTxCount
-                            , balanceOutputCount =
-                                  balanceOutputCount + addressDeltaOutputCount
-                            , balanceSpentCount =
-                                  balanceSpentCount + addressDeltaSpentCount
-                            }
-                maybeOldBalance =
-                    case maybeExisting of
-                        Nothing -> Nothing
-                        Just Balance {..} ->
-                            let oldBalance =
-                                    Balance
-                                    { balanceValue =
-                                          balanceValue - addressDeltaBalance
-                                    , balanceTxCount =
-                                          balanceTxCount - addressDeltaTxCount
-                                    , balanceOutputCount =
-                                          balanceOutputCount -
-                                          addressDeltaOutputCount
-                                    , balanceSpentCount =
-                                          balanceSpentCount -
-                                          addressDeltaSpentCount
-                                    }
-                                zeroBalance =
-                                    Balance
-                                    { balanceValue = 0
-                                    , balanceTxCount = 0
-                                    , balanceOutputCount = 0
-                                    , balanceSpentCount = 0
-                                    }
-                                isZero = oldBalance == zeroBalance
-                            in if isZero
-                                   then Nothing
-                                   else Just oldBalance
-                balOps =
-                    if main
-                        then [insertOp key balance]
-                        else case maybeOldBalance of
-                                 Nothing  -> [deleteOp key]
-                                 Just old -> [insertOp key old]
-                outputs = M.toList addressDeltaOutput
-                outOps = concatMap (uncurry (addrOutputOps main)) outputs
-            return (balOps ++ outOps, (addr, balance))
-    let ops = concatMap fst ls
-        bal = M.fromList (map snd ls)
-    return (ops, bal)
+       MonadBlock m => Bool -> AddressMap -> m [RocksDB.BatchOp]
+balanceOps main addrMap =
+    fmap concat . forM (M.toList addrMap) $ \(addr, AddressDelta {..}) -> do
+        maybeExisting <- getBalanceData addr
+        let key = BalanceKey {balanceAddress = addr}
+            balance =
+                case maybeExisting of
+                    Nothing ->
+                        Balance
+                        { balanceValue = addressDeltaBalance
+                        , balanceTxCount = addressDeltaTxCount
+                        , balanceOutputCount = addressDeltaOutputCount
+                        , balanceSpentCount = addressDeltaSpentCount
+                        }
+                    Just Balance {..} ->
+                        Balance
+                        { balanceValue = balanceValue + addressDeltaBalance
+                        , balanceTxCount = balanceTxCount + addressDeltaTxCount
+                        , balanceOutputCount =
+                              balanceOutputCount + addressDeltaOutputCount
+                        , balanceSpentCount =
+                              balanceSpentCount + addressDeltaSpentCount
+                        }
+            maybeOldBalance =
+                case maybeExisting of
+                    Nothing -> Nothing
+                    Just Balance {..} ->
+                        let oldBalance =
+                                Balance
+                                { balanceValue =
+                                      balanceValue - addressDeltaBalance
+                                , balanceTxCount =
+                                      balanceTxCount - addressDeltaTxCount
+                                , balanceOutputCount =
+                                      balanceOutputCount -
+                                      addressDeltaOutputCount
+                                , balanceSpentCount =
+                                      balanceSpentCount - addressDeltaSpentCount
+                                }
+                            zeroBalance =
+                                Balance
+                                { balanceValue = 0
+                                , balanceTxCount = 0
+                                , balanceOutputCount = 0
+                                , balanceSpentCount = 0
+                                }
+                            isZero = oldBalance == zeroBalance
+                        in if isZero
+                               then Nothing
+                               else Just oldBalance
+            balOps =
+                if main
+                    then [insertOp key balance]
+                    else case maybeOldBalance of
+                             Nothing -> [deleteOp key]
+                             Just old -> [insertOp key old]
+            outputs = M.toList addressDeltaOutput
+            outOps = concatMap (uncurry (addrOutputOps main)) outputs
+        return (balOps ++ outOps)
 
 blockOp ::
        MonadBlock m
@@ -749,11 +637,8 @@ blockOp ::
     -> BlockData
     -> m [RocksDB.BatchOp]
 blockOp block height work main BlockData {..} = do
-    (aops, balMap) <- balanceOps main blockAddrMap
-    updateBalanceCache height main balMap
-    cacheOuts
-    return $
-        [blockHashOp, blockHeightOp, bestOp] <> concat [txOps, outOps, aops]
+    aops <- balanceOps main blockAddrMap
+    return $ concat [[blockHashOp, blockHeightOp, bestOp], txOps, outOps, aops]
   where
     header = blockHeader block
     hash = headerHash header
@@ -761,7 +646,6 @@ blockOp block height work main BlockData {..} = do
         BlockRef
         {blockRefHash = hash, blockRefHeight = height, blockRefMainChain = main}
     txs = blockTxns block
-    cacheOuts = addToCache blockRef (M.map outputToPrevOut blockNewOutMap)
     blockHashOp =
         let key = BlockKey (headerHash header)
             value =
@@ -825,12 +709,12 @@ blockBatchOps block@Block {..} height work main = do
         prevOutMap <- getPrevOutputs tx (blockPrevOutMap blockData)
         let spentOutMap = getSpentOutputs blockRef pos prevOutMap tx
             newOutMap = getNewOutputs blockRef pos tx
-            outMap = spentOutMap <> newOutMap
+            outMap = M.union spentOutMap newOutMap
             addrMap = getAddrDelta outMap
             txData =
                 BlockData
                 { blockPrevOutMap =
-                      prevOutMap <> M.map outputToPrevOut newOutMap
+                      prevOutMap `M.union` M.map outputToPrevOut newOutMap
                 , blockNewOutMap = outMap
                 , blockAddrMap = addrMap
                 }
@@ -855,7 +739,7 @@ getAddrDelta outMap =
            }
     addrs = nub (M.keys addrOutMap)
     addrOutMap =
-        M.fromListWith (<>) (mapMaybe (uncurry out) (M.toList outMap))
+        M.fromListWith M.union (mapMaybe (uncurry out) (M.toList outMap))
     out outpoint output@Output {..} = do
         address <- scriptToAddressBS outScript
         return (address, M.singleton outpoint output)
@@ -920,70 +804,12 @@ getOutPointData ::
     => OutPoint
     -> PrevOutMap
     -> m (Maybe PrevOut)
-getOutPointData key os = runMaybeT (fromMap <|> fromCache <|> fromDB)
+getOutPointData key os = runMaybeT (fromMap <|> fromDB)
   where
     fromMap = MaybeT (return (M.lookup key os))
-    fromCache = do
-        guard . (/= 0) =<< asks myCacheNo
-        ubox <- asks myUnspentCache
-        cache@UnspentCache {..} <- liftIO $ readTVarIO ubox
-        m <- MaybeT (return (M.lookup key unspentCache))
-        cbox <- asks myCacheStats
-        liftIO . atomically $ do
-            let newCache = M.delete key unspentCache
-            writeTVar ubox cache {unspentCache = newCache}
-            modifyTVar cbox $ \c ->
-                c
-                { unspentCacheSize = M.size newCache
-                , unspentCacheHits = unspentCacheHits c + 1
-                }
-        return m
     fromDB = do
         db <- asks myBlockDB
-        cbox <- asks myCacheStats
-        liftIO . atomically . modifyTVar cbox $ \c ->
-            c {unspentCacheMisses = unspentCacheMisses c + 1}
         outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
-
-unspentCachePrune :: MonadBlock m => m ()
-unspentCachePrune = do
-    n <- asks myCacheNo
-    when (n > 0) $ do
-        ubox <- asks myUnspentCache
-        cbox <- asks myCacheStats
-        liftIO . atomically $ do
-            cache <- readTVar ubox
-            let new = clear (fromIntegral n) cache
-            writeTVar ubox new
-            modifyTVar cbox $ \c ->
-                c {unspentCacheSize = M.size (unspentCache new)}
-  where
-    clear n c@UnspentCache {..}
-        | M.size unspentCache <= n = c
-        | otherwise =
-            let (del, keep) = M.splitAt 1 unspentCacheBlocks
-                delSet = mconcat (M.elems del)
-                cache = M.withoutKeys unspentCache delSet
-                new =
-                    UnspentCache
-                    {unspentCache = cache, unspentCacheBlocks = keep}
-            in clear n new
-
-addToCache :: MonadBlock m => BlockRef -> Map OutPoint PrevOut -> m ()
-addToCache BlockRef {..} outputMap = do
-    n <- asks myCacheNo
-    when (n > 0) $ do
-        ubox <- asks myUnspentCache
-        cbox <- asks myCacheStats
-        UnspentCache {..} <- liftIO (readTVarIO ubox)
-        let cache = M.union outputMap unspentCache
-            keys = M.keysSet outputMap
-            blocks = M.insertWith (<>) blockRefHeight keys unspentCacheBlocks
-        liftIO . atomically $ do
-            writeTVar
-                ubox
-                UnspentCache {unspentCache = cache, unspentCacheBlocks = blocks}
-            modifyTVar cbox $ \c -> c {unspentCacheSize = M.size cache}
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
