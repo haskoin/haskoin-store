@@ -15,6 +15,7 @@ import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util                       (integerToBS)
+import           Network.Haskoin.Wallet
 import           Network.Haskoin.Wallet.AccountStore
 import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.Arbitrary           ()
@@ -280,29 +281,32 @@ signingSpec =
                         ]
                 dat = TxSignData newTx [fundTx] [extDeriv :/ 0] [intDeriv :/ 0]
                 xPrv = right $ signingKey pwd mnem 0
-                (res, tx) = right $ signWalletTx dat xPrv
+                (res, tx, isSigned) = right $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryType = "Outbound"
-                , txSummaryTxHash = Just $ txHash tx
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryTxSize = Just $ length $ encodeBytes tx
                 , txSummaryOutbound =
                       Map.fromList [(just $ othAddrs ! 0, 50000000)]
+                , txSummaryNonStd = 0
                 , txSummaryInbound =
                       Map.fromList
-                          [(just $ intAddrs ! 0, (40000000, intDeriv :/ 0))]
-                , txSummaryNonStd = 0
+                          [ ( just $ intAddrs ! 0
+                            , (40000000, Just $ intDeriv :/ 0))
+                          ]
                 , txSummaryMyInputs =
                       Map.fromList
-                          [(just $ extAddrs ! 0, (100000000, extDeriv :/ 0))]
-                , txSummaryAmount = -60000000
+                          [ ( just $ extAddrs ! 0
+                            , (100000000, Just $ extDeriv :/ 0))
+                          ]
                 , txSummaryFee = Just 10000000
-                , txSummaryFeeByte =
-                      Just $
-                      10000000 `div`
-                      fromIntegral (fromCount $ length $ encodeBytes tx)
-                , txSummaryTxSize = Just $ length $ encodeBytes tx
-                , txSummaryIsSigned = Just True
+                , txSummaryHeight = Nothing
+                , txSummaryBlockHash = Nothing
                 }
+            txSummaryTxType res `shouldBe` "Outbound"
+            txSummaryAmount res `shouldBe` -60000000
+            txSummaryFeeByte res `shouldBe` Just 44444.44
+            isSigned `shouldBe` True
         it "can partially sign a transaction" $ do
             let fundTx =
                     testTx'
@@ -317,27 +321,32 @@ signingSpec =
                         ]
                 dat = TxSignData newTx [fundTx] [extDeriv :/ 2] [intDeriv :/ 1]
                 xPrv = right $ signingKey pwd mnem 0
-                (res, tx) = right $ signWalletTx dat xPrv
+                (res, _, isSigned) = right $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryType = "Outbound"
-                , txSummaryTxHash = Just $ txHash tx
+                { txSummaryTxHash = Nothing
+                , txSummaryTxSize = Just $ fromIntegral $ guessTxSize 2 [] 2 0
                 , txSummaryOutbound =
                       Map.fromList [(just $ othAddrs ! 1, 200000000)]
+                , txSummaryNonStd = 0
                 , txSummaryInbound =
                       Map.fromList
-                          [(just $ intAddrs ! 1, (50000000, intDeriv :/ 1))]
-                , txSummaryNonStd = 0
+                          [ ( just $ intAddrs ! 1
+                            , (50000000, Just $ intDeriv :/ 1))
+                          ]
                 , txSummaryMyInputs =
                       Map.fromList
-                          [(just $ extAddrs ! 2, (200000000, extDeriv :/ 2))]
-                , txSummaryAmount = -150000000
+                          [ ( just $ extAddrs ! 2
+                            , (200000000, Just $ extDeriv :/ 2))
+                          ]
                 , txSummaryFee = Just 50000000
-                , txSummaryFeeByte =
-                      Just $ 50000000 `div` fromIntegral (guessTxSize 2 [] 2 0)
-                , txSummaryTxSize = Just $ fromIntegral $ guessTxSize 2 [] 2 0
-                , txSummaryIsSigned = Just False
+                , txSummaryHeight = Nothing
+                , txSummaryBlockHash = Nothing
                 }
+            txSummaryTxType res `shouldBe` "Outbound"
+            txSummaryAmount res `shouldBe` -150000000
+            txSummaryFeeByte res `shouldBe` Just 133689.84
+            isSigned `shouldBe` False
         it "can send coins to your own wallet only" $ do
             let fundTx =
                     testTx'
@@ -357,32 +366,35 @@ signingSpec =
                         [extDeriv :/ 0, extDeriv :/ 1]
                         [intDeriv :/ 0, extDeriv :/ 2]
                 xPrv = right $ signingKey pwd mnem 0
-                (res, tx) = right $ signWalletTx dat xPrv
+                (res, tx, isSigned) = right $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryType = "Self"
-                , txSummaryTxHash = Just $ txHash tx
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryTxSize = Just $ length $ encodeBytes tx
                 , txSummaryOutbound = Map.empty
+                , txSummaryNonStd = 0
                 , txSummaryInbound =
                       Map.fromList
-                          [ (just $ intAddrs ! 0, (50000000, intDeriv :/ 0))
-                          , (just $ extAddrs ! 2, (200000000, extDeriv :/ 2))
+                          [ ( just $ intAddrs ! 0
+                            , (50000000, Just $ intDeriv :/ 0))
+                          , ( just $ extAddrs ! 2
+                            , (200000000, Just $ extDeriv :/ 2))
                           ]
-                , txSummaryNonStd = 0
                 , txSummaryMyInputs =
                       Map.fromList
-                          [ (just $ extAddrs ! 1, (200000000, extDeriv :/ 1))
-                          , (just $ extAddrs ! 0, (100000000, extDeriv :/ 0))
+                          [ ( just $ extAddrs ! 1
+                            , (200000000, Just $ extDeriv :/ 1))
+                          , ( just $ extAddrs ! 0
+                            , (100000000, Just $ extDeriv :/ 0))
                           ]
-                , txSummaryAmount = -50000000
                 , txSummaryFee = Just 50000000
-                , txSummaryFeeByte =
-                      Just $
-                      50000000 `div`
-                      fromIntegral (fromCount $ length $ encodeBytes tx)
-                , txSummaryTxSize = Just $ length $ encodeBytes tx
-                , txSummaryIsSigned = Just True
+                , txSummaryHeight = Nothing
+                , txSummaryBlockHash = Nothing
                 }
+            txSummaryTxType res `shouldBe` "Self"
+            txSummaryAmount res `shouldBe` -50000000
+            txSummaryFeeByte res `shouldBe` Just 134408.60
+            isSigned `shouldBe` True
         it "can sign a complex transaction" $ do
             let fundTx1 =
                     testTx'
@@ -418,37 +430,41 @@ signingSpec =
                         [extDeriv :/ 0, extDeriv :/ 1, extDeriv :/ 2]
                         [intDeriv :/ 0, intDeriv :/ 1]
                 xPrv = right $ signingKey pwd mnem 0
-                (res, tx) = right $ signWalletTx dat xPrv
+                (res, tx, isSigned) = right $ signWalletTx dat xPrv
             res `shouldBe`
                 TxSummary
-                { txSummaryType = "Outbound"
-                , txSummaryTxHash = Just $ txHash tx
+                { txSummaryTxHash = Just $ txHash tx
+                , txSummaryTxSize = Just $ length $ encodeBytes tx
                 , txSummaryOutbound =
                       Map.fromList
                           [ (just $ othAddrs ! 0, 1000000000)
                           , (just $ othAddrs ! 1, 300000000)
                           ]
+                , txSummaryNonStd = 0
                 , txSummaryInbound =
                       Map.fromList
-                          [ (just $ intAddrs ! 0, (200000000, intDeriv :/ 0))
-                          , (just $ intAddrs ! 1, (100000000, intDeriv :/ 1))
+                          [ ( just $ intAddrs ! 0
+                            , (200000000, Just $ intDeriv :/ 0))
+                          , ( just $ intAddrs ! 1
+                            , (100000000, Just $ intDeriv :/ 1))
                           ]
-                , txSummaryNonStd = 0
                 , txSummaryMyInputs =
                       Map.fromList
-                          [ (just $ extAddrs ! 1, (500000000, extDeriv :/ 1))
-                          , (just $ extAddrs ! 2, (600000000, extDeriv :/ 2))
-                          , (just $ extAddrs ! 0, (600000000, extDeriv :/ 0))
+                          [ ( just $ extAddrs ! 1
+                            , (500000000, Just $ extDeriv :/ 1))
+                          , ( just $ extAddrs ! 2
+                            , (600000000, Just $ extDeriv :/ 2))
+                          , ( just $ extAddrs ! 0
+                            , (600000000, Just $ extDeriv :/ 0))
                           ]
-                , txSummaryAmount = -1400000000
                 , txSummaryFee = Just 100000000
-                , txSummaryFeeByte =
-                      Just $
-                      100000000 `div`
-                      fromIntegral (fromCount $ length $ encodeBytes tx)
-                , txSummaryTxSize = Just $ length $ encodeBytes tx
-                , txSummaryIsSigned = Just True
+                , txSummaryHeight = Nothing
+                , txSummaryBlockHash = Nothing
                 }
+            txSummaryTxType res `shouldBe` "Outbound"
+            txSummaryAmount res `shouldBe` -1400000000
+            txSummaryFeeByte res `shouldBe` Just 105152.47
+            isSigned `shouldBe` True
         it "can show \"Tx is missing inputs from private keys\" error" $ do
             let fundTx1 = testTx' [(just $ extAddrs ! 1, 100000000)]
                 newTx =
@@ -506,36 +522,54 @@ mergeAddressTxsSpec =
                           (dummyTxHash 1)
                           1000
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 0)
                           (dummyTxHash 1)
                           2000
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 1)
                           (dummyTxHash 1)
                           4000
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 1)
                           (dummyTxHash 2)
                           5000
                           (Just 2)
+                          (Just $ dummyBlockHash 2)
                     ]
             mergeAddressTxs as `shouldBe`
-                [ TxMovement
-                      (dummyTxHash 1)
-                      (Map.fromList
-                           [ (just $ extAddrs ! 0, 3000)
-                           , (just $ extAddrs ! 1, 4000)
-                           ])
-                      Map.empty
-                      (Just 1)
-                , TxMovement
-                      (dummyTxHash 2)
-                      (Map.fromList [(just $ extAddrs ! 1, 5000)])
-                      Map.empty
-                      (Just 2)
+                [ TxSummary
+                  { txSummaryTxHash = Just $ dummyTxHash 1
+                  , txSummaryTxSize = Nothing
+                  , txSummaryOutbound = Map.empty
+                  , txSummaryNonStd = 0
+                  , txSummaryInbound =
+                        Map.fromList
+                             [ (just $ extAddrs ! 0, (3000, Nothing))
+                             , (just $ extAddrs ! 1, (4000, Nothing))
+                             ]
+                  , txSummaryMyInputs = Map.empty
+                  , txSummaryFee = Nothing
+                  , txSummaryHeight = Just 1
+                  , txSummaryBlockHash = Just $ dummyBlockHash 1
+                  }
+                , TxSummary
+                  { txSummaryTxHash = Just $ dummyTxHash 2
+                  , txSummaryTxSize = Nothing
+                  , txSummaryOutbound = Map.empty
+                  , txSummaryNonStd = 0
+                  , txSummaryInbound =
+                        Map.fromList [(just $ extAddrs ! 1, (5000, Nothing))]
+                  , txSummaryMyInputs = Map.empty
+                  , txSummaryFee = Nothing
+                  , txSummaryHeight = Just 2
+                  , txSummaryBlockHash = Just $ dummyBlockHash 2
+                  }
                 ]
         it "Can merge input and output addresses" $ do
             let as =
@@ -544,60 +578,84 @@ mergeAddressTxsSpec =
                           (dummyTxHash 1)
                           1000
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 0)
                           (dummyTxHash 1)
                           (-1000)
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 0)
                           (dummyTxHash 2)
                           1000
                           (Just 2)
+                          (Just $ dummyBlockHash 2)
                     , AddressTx
                           (just $ extAddrs ! 1)
                           (dummyTxHash 1)
                           4000
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 1)
                           (-2000)
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 1)
                           (-3000)
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 2)
                           (-2000)
                           (Just 2)
+                          (Just $ dummyBlockHash 2)
                     , AddressTx
                           (just $ extAddrs ! 2)
                           (dummyTxHash 1)
                           6000
                           (Just 1)
+                          (Just $ dummyBlockHash 1)
                     ]
             mergeAddressTxs as `shouldBe`
-                [ TxMovement
-                      (dummyTxHash 1)
-                      (Map.fromList
-                           [ (just $ extAddrs ! 0, 1000)
-                           , (just $ extAddrs ! 1, 4000)
-                           , (just $ extAddrs ! 2, 6000)
-                           ])
-                      (Map.fromList
-                           [ (just $ extAddrs ! 0, 1000)
-                           , (just $ extAddrs ! 2, 5000)
-                           ])
-                      (Just 1)
-                , TxMovement
-                      (dummyTxHash 2)
-                      (Map.fromList [(just $ extAddrs ! 0, 1000)])
-                      (Map.fromList [(just $ extAddrs ! 2, 2000)])
-                      (Just 2)
+                [ TxSummary
+                  { txSummaryTxHash = Just $ dummyTxHash 1
+                  , txSummaryTxSize = Nothing
+                  , txSummaryOutbound = Map.empty
+                  , txSummaryNonStd = 0
+                  , txSummaryInbound =
+                      Map.fromList
+                           [ (just $ extAddrs ! 0, (1000, Nothing))
+                           , (just $ extAddrs ! 1, (4000, Nothing))
+                           , (just $ extAddrs ! 2, (6000, Nothing))
+                           ]
+                  , txSummaryMyInputs =
+                      Map.fromList
+                           [ (just $ extAddrs ! 0, (1000, Nothing))
+                           , (just $ extAddrs ! 2, (5000, Nothing))
+                           ]
+                  , txSummaryFee = Nothing
+                  , txSummaryHeight = Just 1
+                  , txSummaryBlockHash = Just $ dummyBlockHash 1
+                  }
+                , TxSummary
+                  { txSummaryTxHash = Just $ dummyTxHash 2
+                  , txSummaryTxSize = Nothing
+                  , txSummaryOutbound = Map.empty
+                  , txSummaryNonStd = 0
+                  , txSummaryInbound =
+                      Map.fromList [(just $ extAddrs ! 0, (1000, Nothing))]
+                  , txSummaryMyInputs =
+                      Map.fromList [(just $ extAddrs ! 2, (2000, Nothing))]
+                  , txSummaryFee = Nothing
+                  , txSummaryHeight = Just 2
+                  , txSummaryBlockHash = Just $ dummyBlockHash 2
+                  }
                 ]
 
 blockchainServiceSpec :: Spec
@@ -621,7 +679,7 @@ blockchainServiceSpec =
                 , PayPK
                       "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
                 , 5000000000)
-        it "can receive a transaction movement (online test)" $ do
+        it "can receive a transaction summary (online test)" $ do
             res <-
                 just
                     (httpTxMovements blockchainInfoService)
@@ -629,8 +687,8 @@ blockchainServiceSpec =
             length res `shouldSatisfy` (> 9)
             let res1 = head $ nonEmpty_ res
                 as =
-                    Map.keys (txMovementInbound res1) <>
-                    Map.keys (txMovementMyInputs res1)
+                    Map.keys (txSummaryInbound res1) <>
+                    Map.keys (txSummaryMyInputs res1)
             as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
         it "can receive a transaction (online test)" $ do
             let tid =
@@ -666,8 +724,8 @@ insightServiceSpec =
             length res `shouldSatisfy` (> 9)
             let res1 = head $ nonEmpty_ res
                 as =
-                    Map.keys (txMovementInbound res1) <>
-                    Map.keys (txMovementMyInputs res1)
+                    Map.keys (txSummaryInbound res1) <>
+                    Map.keys (txSummaryMyInputs res1)
             as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
         it "can receive a transaction (online test)" $ do
             let tid =
@@ -704,8 +762,8 @@ haskoinServiceSpec =
             length res `shouldSatisfy` (> 9)
             let res1 = head $ nonEmpty_ res
                 as =
-                    Map.keys (txMovementInbound res1) <>
-                    Map.keys (txMovementMyInputs res1)
+                    Map.keys (txSummaryInbound res1) <>
+                    Map.keys (txSummaryMyInputs res1)
             as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
         it "can receive a transaction (online test)" $ do
             let tid =

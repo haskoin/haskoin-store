@@ -11,6 +11,7 @@ import           Data.List                               (sum)
 import qualified Data.Map.Strict                         as Map
 import           Foundation
 import           Foundation.Collection
+import           Foundation.Numerical
 import           Foundation.Compat.Text
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto                  hiding (addrToBase58,
@@ -84,8 +85,8 @@ getTxSummary addrs = do
         tid <- hexToTxHash . fromText =<< v ^? key "txid" . _String
         bytes <- fromIntegral <$> v ^? key "size" . _Integer
         feesDouble <- v ^? key "fees" . _Double
-        fee <- readAmount UnitBitcoin $ show feesDouble
-        let heightM = fromIntegral <$> v ^? key "blockheight" . _Integer
+        let feeSat = roundDown (feesDouble * 100000000) :: Satoshi
+            heightM = fromIntegral <$> v ^? key "blockheight" . _Integer
             bidM = hexToBlockHash . fromText =<< v ^? key "blockhash" . _String
             is =
                 Map.fromListWith (+) $ mapMaybe parseVin $ v ^.. key "vin" .
@@ -101,7 +102,7 @@ getTxSummary addrs = do
             , txSummaryNonStd = 0
             , txSummaryInbound = Map.map (,Nothing) os
             , txSummaryMyInputs = Map.map (,Nothing) is
-            , txSummaryFee = Just fee
+            , txSummaryFee = Just feeSat
             , txSummaryHeight = heightM
             , txSummaryBlockHash = bidM
             }
