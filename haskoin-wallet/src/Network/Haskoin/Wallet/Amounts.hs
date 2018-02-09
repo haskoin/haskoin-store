@@ -5,6 +5,7 @@
 module Network.Haskoin.Wallet.Amounts where
 
 import           Control.Monad
+import           Data.Decimal
 import           Foundation
 import           Foundation.Collection
 import           Foundation.String.Read
@@ -19,6 +20,9 @@ data AmountUnit
     deriving (Eq)
 
 {- ConsolePrinter functions -}
+
+formatFeeBytes :: Decimal -> ConsolePrinter
+formatFeeBytes fee = formatFee (show fee) <+> formatStatic "sat/bytes"
 
 formatAmount :: AmountUnit -> Satoshi -> ConsolePrinter
 formatAmount unit = formatIntegerAmount unit . fromIntegral
@@ -98,7 +102,7 @@ readIntegerAmount :: AmountUnit -> String -> Maybe Integer
 readIntegerAmount unit str =
     case uncons str of
         Just ('-', rest) -> negate . toInteger <$> readAmount unit rest
-        _ -> toInteger <$> readAmount unit str
+        _                -> toInteger <$> readAmount unit str
 
 padWith :: Sequential c => CountOf (Element c) -> Element c -> (c -> c) -> c
 padWith n p f =

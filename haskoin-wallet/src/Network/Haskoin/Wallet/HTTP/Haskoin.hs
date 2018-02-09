@@ -25,9 +25,9 @@ import qualified Network.Wreq                            as HTTP
 
 getURL :: LString
 getURL
-    | getNetwork == testnet3Network = "https://api.haskoin.com/testnet3"
-    | getNetwork == cashTestNetwork = "https://api.haskoin.com/cashtest"
-    | getNetwork == bitcoinCashNetwork = "https://api.haskoin.com/bitcoincash"
+    | getNetwork == testnet3Network = "https://testnet3.haskoin.com/api"
+    | getNetwork == cashTestNetwork = "https://cashtest.haskoin.com/api"
+    | getNetwork == bitcoinCashNetwork = "https://bitcoincash.haskoin.com/api"
     | otherwise =
         consoleError $
         formatError $
@@ -85,12 +85,14 @@ getAddressTxs addrs = do
         addr <- base58ToAddr $ fromText addrB58
         amnt <- v ^? key "amount" . _Integer
         let heightM = fromIntegral <$> v ^? key "height" . _Integer
+            blockM = hexToBlockHash . fromText =<< v ^? key "block" . _String
         return
             AddressTx
             { addrTxAddress = addr
             , addrTxTxHash = tid
             , addrTxAmount = amnt
             , addrTxHeight = heightM
+            , addrTxBlockHash = blockM
             }
 
 getTx :: TxHash -> IO Tx

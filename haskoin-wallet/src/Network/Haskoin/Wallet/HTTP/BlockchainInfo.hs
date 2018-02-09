@@ -1,5 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 module Network.Haskoin.Wallet.HTTP.BlockchainInfo
 ( blockchainInfoService
 ) where
@@ -77,7 +78,7 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
-getTxMovements :: [Address] -> IO [TxMovement]
+getTxMovements :: [Address] -> IO [TxSummary]
 getTxMovements addrs = do
     v <- httpJsonGet opts url
     let resM = mapM parseTxMovement $ v ^.. key "txs" . values
@@ -88,17 +89,24 @@ getTxMovements addrs = do
     aList = intercalate "|" $ addrToBase58 <$> addrs
     parseTxMovement v = do
         tid <- hexToTxHash . fromText =<< v ^? key "hash" . _String
+        size <- v ^? key "size" . _Integer
+        fee <- v ^? key "fee" . _Integer
         let heightM = fromIntegral <$> v ^? key "block_height" . _Integer
             is =
                 Map.fromList $ mapMaybe go $ v ^.. key "inputs" . values .
                 key "prev_out"
             os = Map.fromList $ mapMaybe go $ v ^.. key "out" . values
         return
-            TxMovement
-            { txMovementTxHash = tid
-            , txMovementInbound = os
-            , txMovementMyInputs = is
-            , txMovementHeight = heightM
+            TxSummary
+            { txSummaryTxHash = Just tid
+            , txSummaryTxSize = Just $ fromIntegral size
+            , txSummaryOutbound = Map.empty
+            , txSummaryNonStd = 0
+            , txSummaryInbound = Map.map (,Nothing) os
+            , txSummaryMyInputs = Map.map (,Nothing) is
+            , txSummaryFee = Just $ fromIntegral fee
+            , txSummaryHeight = heightM
+            , txSummaryBlockHash = Nothing
             }
     go v = do
         addr <- base58ToAddr . fromText =<< v ^? key "addr" . _String

@@ -1,5 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 module Network.Haskoin.Wallet.HTTP.Insight (insightService) where
 
 import           Control.Lens                            ((^..), (^?))
@@ -45,7 +46,7 @@ insightService =
     { httpBalance = getBalance
     , httpUnspent = getUnspent
     , httpAddressTxs = Nothing
-    , httpTxMovements = Just getTxMovements
+    , httpTxMovements = Just getTxSummary
     , httpTx = getTx
     , httpBroadcast = broadcastTx
     }
@@ -71,8 +72,8 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
-getTxMovements :: [Address] -> IO [TxMovement]
-getTxMovements addrs = do
+getTxSummary :: [Address] -> IO [TxSummary]
+getTxSummary addrs = do
     v <- httpJsonGet HTTP.defaults url
     let resM = mapM parseTxMovement $ v ^.. key "items" . values
     maybe (consoleError $ formatError "Could not parse addrTx") return resM
@@ -81,7 +82,11 @@ getTxMovements addrs = do
     aList = intercalate "," $ addrToBase58 <$> addrs
     parseTxMovement v = do
         tid <- hexToTxHash . fromText =<< v ^? key "txid" . _String
+        bytes <- fromIntegral <$> v ^? key "size" . _Integer
+        feesDouble <- v ^? key "fees" . _Double
+        fee <- readAmount UnitBitcoin $ show feesDouble
         let heightM = fromIntegral <$> v ^? key "blockheight" . _Integer
+            bidM = hexToBlockHash . fromText =<< v ^? key "blockhash" . _String
             is =
                 Map.fromListWith (+) $ mapMaybe parseVin $ v ^.. key "vin" .
                 values
@@ -89,11 +94,16 @@ getTxMovements addrs = do
                 Map.fromListWith (+) $ mapMaybe parseVout $ v ^.. key "vout" .
                 values
         return
-            TxMovement
-            { txMovementTxHash = tid
-            , txMovementInbound = os
-            , txMovementMyInputs = is
-            , txMovementHeight = heightM
+            TxSummary
+            { txSummaryTxHash = Just tid
+            , txSummaryTxSize = Just bytes
+            , txSummaryOutbound = Map.empty
+            , txSummaryNonStd = 0
+            , txSummaryInbound = Map.map (,Nothing) os
+            , txSummaryMyInputs = Map.map (,Nothing) is
+            , txSummaryFee = Just fee
+            , txSummaryHeight = heightM
+            , txSummaryBlockHash = bidM
             }
     parseVin v = do
         addr <- base58ToAddr . fromText =<< v ^? key "addr" . _String

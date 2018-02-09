@@ -48,6 +48,7 @@ library
                  , containers                    >= 0.5
                  , console-program
                  , directory
+                 , Decimal                       >= 0.4.2
                  , entropy                       >= 0.3.7
                  , foundation                    >= 0.0       && < 0.1
                  , foundation-edge               >= 0.0.3     && < 0.1

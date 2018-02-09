@@ -22,6 +22,12 @@ instance Monoid ConsolePrinter where
     mappend ConsoleEmpty b = b
     mappend a b            = ConsoleConcat a b
 
+isEmptyPrinter :: ConsolePrinter -> Bool
+isEmptyPrinter ConsoleEmpty       = True
+isEmptyPrinter (ConsoleNest _ n)  = isEmptyPrinter n
+isEmptyPrinter (ConsoleNewline n) = isEmptyPrinter n
+isEmptyPrinter _                  = False
+
 text :: ConsoleFormat -> ConsolePrinter
 text = ConsoleText
 
@@ -29,9 +35,11 @@ text = ConsoleText
 p1 <+> p2 = p1 <> text (FormatStatic " ") <> p2
 
 vcat :: [ConsolePrinter] -> ConsolePrinter
-vcat []                = ConsoleEmpty
-vcat (ConsoleEmpty:xs) = vcat xs
-vcat (x:xs)            = x <> ConsoleNewline (vcat xs)
+vcat = go . filter (not . isEmptyPrinter)
+  where
+    go [] = ConsoleEmpty
+    go [x] = x
+    go (x:xs) = x <> ConsoleNewline (go xs)
 
 nest :: CountOf (Element String) -> ConsolePrinter -> ConsolePrinter
 nest = ConsoleNest
@@ -49,12 +57,12 @@ renderIO cp = go 0 0 cp >> putStrLn ""
        -> CountOf (Element String)
        -> ConsolePrinter
        -> IO (CountOf (Element String))
-    go l n p =
-        case p of
+    go l n p
+        | isEmptyPrinter p = return l
+        | otherwise = case p of
             ConsoleConcat p1 p2 -> do
                 l2 <- go l n p1
                 go l2 n p2
-            ConsoleNewline ConsoleEmpty -> return l
             ConsoleNewline p1 -> do
                 putStrLn ""
                 putStr $ replicate n ' '

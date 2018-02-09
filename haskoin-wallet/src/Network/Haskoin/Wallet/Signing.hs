@@ -1,5 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.Signing where
@@ -136,20 +137,6 @@ data TxSignData = TxSignData
 
 $(deriveJSON (dropFieldLabel 10) ''TxSignData)
 
-data TxSummary = TxSummary
-    { txSummaryType     :: !String
-    , txSummaryTxHash   :: Maybe TxHash
-    , txSummaryOutbound :: Map Address Satoshi
-    , txSummaryNonStd   :: !Satoshi
-    , txSummaryInbound  :: Map Address (Satoshi, SoftPath)
-    , txSummaryMyInputs :: Map Address (Satoshi, SoftPath)
-    , txSummaryAmount   :: !Integer
-    , txSummaryFee      :: Maybe Satoshi
-    , txSummaryFeeByte  :: Maybe Satoshi
-    , txSummaryTxSize   :: Maybe (CountOf (Element (UArray Word8)))
-    , txSummaryIsSigned :: Maybe Bool
-    } deriving (Eq, Show)
-
 pubTxSummary :: TxSignData -> XPubKey -> Either String TxSummary
 pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     | fromCount (length coins) /= fromCount (length $ txIn tx) =
@@ -161,39 +148,33 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
     | otherwise =
         return
             TxSummary
-            { txSummaryType = getTxType feeM amount
-            , txSummaryTxHash = Nothing
-            , txSummaryOutbound = outboundAddrs
-            , txSummaryInbound = inboundAddrs
-            , txSummaryNonStd = outNonStdValue
-            , txSummaryMyInputs = myInputAddrs
-            , txSummaryAmount = amount
-            , txSummaryFee = feeM
-            , txSummaryFeeByte =
-                  (`div` fromIntegral (toInteger guessLen)) <$> feeM
+            { txSummaryTxHash = Nothing
             , txSummaryTxSize = Just guessLen
-            , txSummaryIsSigned = Just False
+            , txSummaryOutbound = outboundAddrs
+            , txSummaryNonStd = outNonStdValue
+            , txSummaryInbound = Map.map (second Just) inboundAddrs
+            , txSummaryMyInputs = Map.map (second Just) myInputAddrs
+            , txSummaryFee = feeM
+            , txSummaryHeight = Nothing
+            , txSummaryBlockHash = Nothing
             }
     -- Outputs
   where
     outAddrMap :: Map Address SoftPath
     outAddrMap = Map.fromList $ fmap (pathToAddr pubKey &&& id) outPaths
-    (outValMap, outNonStdValue) = txOutputAddressValues $ txOut tx
+    (outValMap, outNonStdValue) = txOutAddressMap $ txOut tx
     inboundAddrs = Map.intersectionWith (,) outValMap outAddrMap
     outboundAddrs = Map.difference outValMap outAddrMap
     -- Inputs
     inAddrMap :: Map Address SoftPath
     inAddrMap = Map.fromList $ fmap (pathToAddr pubKey &&& id) inPaths
     (coins, myCoins) = parseTxCoins tsd pubKey
-    inValMap = fst $ txOutputAddressValues $ fmap snd myCoins
+    inValMap = fst $ txOutAddressMap $ fmap snd myCoins
     myInputAddrs = Map.intersectionWith (,) inValMap inAddrMap
     -- Amounts and Fees
     inSum = sum $ fmap (toNatural . outValue . snd) coins :: Satoshi
     outSum = sum $ toNatural . outValue <$> txOut tx :: Satoshi
     feeM = inSum - outSum :: Maybe Satoshi
-    inboundSum = sum $ Map.elems $ Map.map fst inboundAddrs :: Satoshi
-    myCoinsSum = sum $ fmap (toNatural . outValue . snd) myCoins :: Satoshi
-    amount = toInteger inboundSum - toInteger myCoinsSum :: Integer
     -- Guess the signed transaction size
     guessLen :: CountOf (Element (UArray Word8))
     guessLen =
@@ -204,35 +185,19 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
             (fromCount $ length $ txOut tx)
             0
 
-getTxType :: Maybe Satoshi -> Integer -> String
-getTxType feeM amnt
-    | amnt > 0 = "Inbound"
-    | Just (fromIntegral $ abs amnt) == feeM = "Self"
-    | otherwise = "Outbound"
-
-signWalletTx :: TxSignData -> XPrvKey -> Either String (TxSummary, Tx)
+signWalletTx :: TxSignData -> XPrvKey -> Either String (TxSummary, Tx, Bool)
 signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
     sigDat <- mapM g myCoins
     signedTx <- eitherString $ signTx tx (fmap f sigDat) prvKeys
-    let byteSize = length $ encodeBytes signedTx
-        vDat = rights $ fmap g coins
+    let vDat = rights $ fmap g coins
         isSigned = noEmptyInputs signedTx && verifyStdTx signedTx vDat
-    dat <- pubTxSummary tsd pubKey
+    txSummary <- pubTxSummary tsd pubKey
     return
-        ( dat
-          { txSummaryFeeByte =
-                if isSigned
-                    then (`div` fromIntegral (toInteger byteSize)) <$>
-                         txSummaryFee dat
-                    else txSummaryFeeByte dat
-          , txSummaryTxSize =
-                if isSigned
-                    then Just byteSize
-                    else txSummaryTxSize dat
-          , txSummaryTxHash = Just $ txHash signedTx
-          , txSummaryIsSigned = Just isSigned
-          }
-        , signedTx)
+        ( if isSigned
+              then txSummaryFillTx signedTx txSummary
+              else txSummary
+        , signedTx
+        , isSigned)
   where
     pubKey = deriveXPubKey signKey
     (coins, myCoins) = parseTxCoins tsd pubKey
@@ -243,11 +208,27 @@ signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
         | isJust sigHashForkId = setForkIdFlag
         | otherwise = id
 
+txSummaryFillTx :: Tx -> TxSummary -> TxSummary
+txSummaryFillTx tx txSummary =
+    txSummary
+    { txSummaryOutbound = outbound
+    , txSummaryNonStd = nonStd
+    , txSummaryTxHash = Just $ txHash tx
+    , txSummaryTxSize = Just $ length $ encodeBytes tx
+    , txSummaryFee = txSummaryFee txSummary <|> feeM
+    }
+  where
+    (outAddrMap, nonStd) = txOutAddressMap $ txOut tx
+    outbound = Map.difference outAddrMap (txSummaryInbound txSummary)
+    outSum = sum $ (toNatural . outValue) <$> txOut tx :: Natural
+    inSum = sum $ fst <$> Map.elems (txSummaryMyInputs txSummary) :: Natural
+    feeM = inSum - outSum :: Maybe Natural
+
 noEmptyInputs :: Tx -> Bool
 noEmptyInputs = all (not . null) . fmap (asBytes scriptInput) . txIn
 
-txOutputAddressValues :: [TxOut] -> (Map Address Satoshi, Satoshi)
-txOutputAddressValues txout =
+txOutAddressMap :: [TxOut] -> (Map Address Satoshi, Satoshi)
+txOutAddressMap txout =
     (Map.fromListWith (+) rs, sum ls)
   where
     xs = fmap (decodeTxOutAddr &&& toNatural . outValue) txout
