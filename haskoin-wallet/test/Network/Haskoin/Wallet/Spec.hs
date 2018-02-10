@@ -39,9 +39,9 @@ walletSpec = do
     buildSpec
     signingSpec
     mergeAddressTxsSpec
-    blockchainServiceSpec
-    insightServiceSpec
-    -- haskoinServiceSpec -- Activate this when it's ready in prodnet
+    serviceSpec "blockchain.info" blockchainInfoService
+    serviceSpec "insight" insightService
+    -- serviceSpec "haskoin" haskoinService
 
 diceSpec :: Spec
 diceSpec =
@@ -658,71 +658,22 @@ mergeAddressTxsSpec =
                   }
                 ]
 
-blockchainServiceSpec :: Spec
-blockchainServiceSpec =
-    describe "Blockchain.info service (online test)" $ do
+serviceSpec :: LString -> BlockchainService -> Spec
+serviceSpec name service =
+    describe (name <> " (online test)") $ do
         it "can receive balance (online test)" $ do
-            res <-
-                httpBalance
-                    blockchainInfoService
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            res `shouldSatisfy` (>= 5000000000)
-        it "can receive coins (online test)" $ do
-            res <-
-                httpUnspent
-                    blockchainInfoService
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            head (nonEmpty_ res) `shouldBe`
-                ( OutPoint
-                      "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-                      0
-                , PayPK
-                      "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
-                , 5000000000)
-        it "can receive a transaction summary (online test)" $ do
-            res <-
-                just
-                    (httpTxMovements blockchainInfoService)
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            length res `shouldSatisfy` (> 9)
-            let res1 = head $ nonEmpty_ res
-                as =
-                    Map.keys (txSummaryInbound res1) <>
-                    Map.keys (txSummaryMyInputs res1)
-            as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
-        it "can receive a transaction (online test)" $ do
-            let tid =
-                    "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-            res <- httpTx blockchainInfoService tid
-            txHash res `shouldBe` tid
-        it "can get the best block height (online test)" $ do
-            res <- httpBestHeight blockchainInfoService
-            res `shouldSatisfy` (> 500000)
-
-insightServiceSpec :: Spec
-insightServiceSpec =
-    describe "Insight service (online test)" $ do
-        it "can receive balance (online test)" $ do
-            res <-
-                httpBalance
-                    insightService
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            res <- httpBalance service ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
             res `shouldSatisfy` (>= 1600000000)
         it "can receive coins (online test)" $ do
-            res <-
-                httpUnspent
-                    insightService
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            res `shouldSatisfy`
-                (( OutPoint
-                       "5609df21a76484bfd4a890e624723f87465916f0036b1fa8a06b9c2e8e63be30"
-                       12
-                 , PayPKHash "62e907b15cbf27d5425399ebf6f0fb50ebb88f18"
-                 , 333000) `elem`)
+            res <- httpUnspent service ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
+            length res `shouldSatisfy` (> 9)
+            (outputAddress . snd) <$>
+                res `shouldSatisfy`
+                all (== Right "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
         it "can receive a transaction movement (online test)" $ do
             res <-
                 just
-                    (httpTxMovements insightService)
+                    (httpTxMovements service)
                     ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
             length res `shouldSatisfy` (> 9)
             let res1 = head $ nonEmpty_ res
@@ -733,51 +684,10 @@ insightServiceSpec =
         it "can receive a transaction (online test)" $ do
             let tid =
                     "0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098"
-            res <- httpTx insightService tid
+            res <- httpTx service tid
             txHash res `shouldBe` tid
         it "can get the best block height (online test)" $ do
-            res <- httpBestHeight insightService
-            res `shouldSatisfy` (> 500000)
-
-haskoinServiceSpec :: Spec
-haskoinServiceSpec =
-    describe "Haskoin service (online test)" $ do
-        it "can receive balance (online test)" $ do
-            res <-
-                httpBalance
-                    haskoinService
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            res `shouldSatisfy` (>= 5000000000)
-        it "can receive coins (online test)" $ do
-            res <-
-                httpUnspent
-                    haskoinService
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            head (nonEmpty_ res) `shouldBe`
-                ( OutPoint
-                      "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-                      0
-                , PayPK
-                      "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
-                , 5000000000)
-        it "can receive a transaction movement (online test)" $ do
-            res <-
-                just
-                    (httpTxMovements haskoinService)
-                    ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
-            length res `shouldSatisfy` (> 9)
-            let res1 = head $ nonEmpty_ res
-                as =
-                    Map.keys (txSummaryInbound res1) <>
-                    Map.keys (txSummaryMyInputs res1)
-            as `shouldSatisfy` ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa" `elem`)
-        it "can receive a transaction (online test)" $ do
-            let tid =
-                    "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-            res <- httpTx haskoinService tid
-            txHash res `shouldBe` tid
-        it "can get the best block height (online test)" $ do
-            res <- httpBestHeight haskoinService
+            res <- httpBestHeight service
             res `shouldSatisfy` (> 500000)
 
 {- Test Constants -}
