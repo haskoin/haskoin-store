@@ -2,9 +2,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Wallet.ConsolePrinter where
 
+import           Control.Monad         (when)
 import           Data.Monoid
 import           Foundation
 import           Foundation.Collection
+import           Foundation.IO
 import           System.Console.ANSI
 import           System.Exit
 import           System.IO.Unsafe
@@ -37,8 +39,8 @@ p1 <+> p2 = p1 <> text (FormatStatic " ") <> p2
 vcat :: [ConsolePrinter] -> ConsolePrinter
 vcat = go . filter (not . isEmptyPrinter)
   where
-    go [] = ConsoleEmpty
-    go [x] = x
+    go []     = ConsoleEmpty
+    go [x]    = x
     go (x:xs) = x <> ConsoleNewline (go xs)
 
 nest :: CountOf (Element String) -> ConsolePrinter -> ConsolePrinter
@@ -207,9 +209,10 @@ formatSGR frm = case frm of
 
 printFormat :: ConsoleFormat -> IO ()
 printFormat f = do
-    setSGR $ formatSGR f
+    support <- hSupportsANSI stdout
+    when support $ setSGR $ formatSGR f
     putStr $ getFormat f
-    setSGR []
+    when support $ setSGR []
 
 consoleError :: ConsolePrinter -> a
 consoleError prt = unsafePerformIO $ renderIO prt >> exitFailure
