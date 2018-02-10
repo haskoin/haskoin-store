@@ -146,7 +146,10 @@ txInformationFormatCompact _ unit _ heightM s@TxInformation {..} =
         case txInformationFee of
             Just fee ->
                 formatKey "Fees:" <+>
-                formatIntegerAmount unit (negate $ fromIntegral fee)
+                formatIntegerAmountWith
+                    formatFee
+                    unit
+                    (fromIntegral fee)
             _ -> mempty
     self
         | txInformationTxType s /= "Self" = mempty
@@ -192,7 +195,7 @@ txInformationFormat accDeriv unit txSignedM heightM s@TxInformation {..} =
                     formatIntegerAmount unit (txInformationAmount s)
                   , case txInformationFee of
                         Just fee ->
-                            formatKey (block 15 "Fee:") <>
+                            formatKey (block 15 "Fees:") <>
                             formatIntegerAmountWith
                                 formatFee
                                 unit
