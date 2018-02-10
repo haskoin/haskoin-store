@@ -1,21 +1,15 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NoImplicitPrelude         #-}
 {-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE TupleSections             #-}
 module Network.Haskoin.Wallet.HTTP where
 
-import           Control.Arrow                           ((&&&))
 import           Control.Lens                            ((&), (.~), (<>~),
                                                           (^.), (^?))
 import           Control.Monad                           (mapM)
 import           Data.Aeson                              as Json
 import           Data.ByteString.Lazy                    (ByteString)
-import           Data.List                               (sortOn)
-import           Data.Map.Strict                         (Map)
-import qualified Data.Map.Strict                         as Map
 import           Foundation
 import           Foundation.Compat.ByteString
-import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
@@ -34,7 +28,6 @@ data Service =
 instance BlockchainService Service where
     httpBalance (Service s) = httpBalance s
     httpUnspent (Service s) = httpUnspent s
-    httpAddressTxs (Service s) = httpAddressTxs s
     httpTxInformation (Service s) = httpTxInformation s
     httpTx (Service s) = httpTx s
     httpTxs (Service s) = httpTxs s
@@ -44,11 +37,7 @@ instance BlockchainService Service where
 class BlockchainService s where
     httpBalance :: s -> [Address] -> IO Satoshi
     httpUnspent :: s -> [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
-    httpAddressTxs :: s -> [Address] -> IO [AddressTx]
-    httpAddressTxs _ =
-        consoleError $ formatError "httpAddressTxs is not defined"
     httpTxInformation :: s -> [Address] -> IO [TxInformation]
-    httpTxInformation s = (mergeAddressTxs <$>) . httpAddressTxs s
     httpTx :: s -> TxHash -> IO Tx
     httpTx s tid = do
         res <- httpTxs s [tid]
@@ -59,44 +48,6 @@ class BlockchainService s where
     httpTxs s = mapM (httpTx s)
     httpBestHeight :: s -> IO Natural
     httpBroadcast :: s -> Tx -> IO ()
-
-mergeAddressTxs :: [AddressTx] -> [TxInformation]
-mergeAddressTxs as =
-    sortOn txInformationHeight $ mapMaybe toMvt $ Map.assocs aMap
-  where
-    aMap :: Map TxHash [AddressTx]
-    aMap = Map.fromListWith (<>) $ fmap (addrTxTxHash &&& (: [])) as
-    toMvt :: (TxHash, [AddressTx]) -> Maybe TxInformation
-    toMvt (tid, atxs) =
-        case head <$> nonEmpty atxs of
-            Just a ->
-                let (os, is) = partition ((< 0) . addrTxAmount) atxs
-                in Just
-                       TxInformation
-                       { txInformationTxHash = Just tid
-                       , txInformationTxSize = Nothing
-                       , txInformationOutbound = Map.empty
-                       , txInformationNonStd = 0
-                       , txInformationInbound = toAddrMap is
-                       , txInformationMyInputs = toAddrMap os
-                       , txInformationFee = Nothing
-                       , txInformationHeight = addrTxHeight a
-                       , txInformationBlockHash = addrTxBlockHash a
-                       }
-            _ -> Nothing
-    toAddrMap :: [AddressTx] -> Map Address (Satoshi, Maybe SoftPath)
-    toAddrMap = Map.map (, Nothing) . Map.fromListWith (+) . fmap toAddrVal
-    toAddrVal :: AddressTx -> (Address, Satoshi)
-    toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
-
-data AddressTx = AddressTx
-    { addrTxAddress   :: !Address
-    , addrTxTxHash    :: !TxHash
-    , addrTxAmount    :: !Integer
-    , addrTxHeight    :: Maybe Natural
-    , addrTxBlockHash :: Maybe BlockHash
-    }
-    deriving (Eq, Show)
 
 httpJsonGet :: HTTP.Options -> LString -> IO Json.Value
 httpJsonGet = httpJsonGen id

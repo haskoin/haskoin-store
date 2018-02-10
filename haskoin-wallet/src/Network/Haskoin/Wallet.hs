@@ -532,27 +532,21 @@ transactions = command "transactions" "Display the account transactions" $
                 let service = parseBlockchainService s
                     walletAddrs = allExtAddresses store <> allIntAddresses store
                     walletAddrMap = Map.fromList walletAddrs
-                mvts <- httpTxInformation service $ fmap fst walletAddrs
+                txInfs <- httpTxInformation service $ fmap fst walletAddrs
                 currHeight <- httpBestHeight service
-                forM_ (sortOn txInformationHeight mvts) $ \mvt -> do
+                forM_ (sortOn txInformationHeight txInfs) $ \txInf -> do
                     let format =
                             if verbose
                                 then txInformationFormat
                                 else txInformationFormatCompact
-                        mvtPath = txInformationFillPath walletAddrMap mvt
-                        mvtTxF = flip txInformationFillTx mvtPath
-                    mvtTx <-
-                        maybe
-                            (return mvtPath)
-                            ((mvtTxF <$>) . httpTx service) $
-                            txInformationTxHash mvtPath
+                        txInfPath = txInformationFillPath walletAddrMap txInf
                     renderIO $
                         format
                             (accountStoreDeriv store)
                             unit
                             Nothing
                             (Just currHeight)
-                            mvtTx
+                            txInfPath
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $

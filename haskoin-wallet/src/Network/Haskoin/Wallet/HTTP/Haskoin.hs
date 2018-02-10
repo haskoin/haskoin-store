@@ -1,17 +1,22 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.HTTP.Haskoin
 ( HaskoinService(..)
 ) where
 
+import           Control.Arrow                           ((&&&))
 import           Control.Lens                            ((&), (.~), (^..),
                                                           (^?))
 import qualified Data.Aeson                              as J
 import           Data.Aeson.Lens
-import           Data.List                               (sum)
+import           Data.List                               (nub, sortOn, sum)
+import           Data.Map                                (Map)
+import qualified Data.Map                                as Map
 import           Foundation
 import           Foundation.Collection
 import           Foundation.Compat.Text
+import           Network.Haskoin.Block                   hiding (hexToBlockHash)
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto                  hiding (addrToBase58,
                                                           base58ToAddr)
@@ -23,9 +28,19 @@ import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.FoundationCompat
 import           Network.Haskoin.Wallet.HTTP
+import           Network.Haskoin.Wallet.TxInformation
 import qualified Network.Wreq                            as HTTP
 
 data HaskoinService = HaskoinService
+
+data AddressTx = AddressTx
+    { addrTxAddress   :: !Address
+    , addrTxTxHash    :: !TxHash
+    , addrTxAmount    :: !Integer
+    , addrTxHeight    :: Maybe Natural
+    , addrTxBlockHash :: Maybe BlockHash
+    }
+    deriving (Eq, Show)
 
 getURL :: LString
 getURL
@@ -40,8 +55,8 @@ getURL
 instance BlockchainService HaskoinService where
     httpBalance _ = getBalance
     httpUnspent _ = getUnspent
-    httpAddressTxs _ = getAddressTxs
-    httpTx _ = getTx
+    httpTxInformation _ = getTxInformation
+    httpTxs _ tids = (fst <$>) <$> getTxs tids
     httpBroadcast _ = broadcastTx
     httpBestHeight _ = getBestHeight
 
@@ -71,6 +86,25 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
+getTxInformation :: [Address] -> IO [TxInformation]
+getTxInformation addrs = do
+    txInfs <- mergeAddressTxs <$> getAddressTxs addrs
+    let tids = nub $ mapMaybe txInformationTxHash txInfs
+    txs <- getTxs tids
+    return $ fmap (mergeWith txs) txInfs
+  where
+    findTx :: [(Tx, Natural)] -> TxInformation -> Maybe (Tx, Natural)
+    findTx txs txInf = do
+        tid <- txInformationTxHash txInf
+        find ((== tid) . txHash . fst) txs
+    mergeWith :: [(Tx, Natural)] -> TxInformation -> TxInformation
+    mergeWith txs txInf = maybe txInf (`addData` txInf) $ findTx txs txInf
+    addData :: (Tx, Natural) -> TxInformation -> TxInformation
+    addData (tx, fee) txInf =
+        txInformationFillTx tx txInf
+        { txInformationFee = Just fee
+        }
+
 getAddressTxs :: [Address] -> IO [AddressTx]
 getAddressTxs addrs = do
     v <- httpJsonGet opts url
@@ -96,14 +130,51 @@ getAddressTxs addrs = do
             , addrTxBlockHash = blockM
             }
 
-getTx :: TxHash -> IO Tx
-getTx tid = do
-    v <- httpJsonGet HTTP.defaults url
-    let resM = v ^? key "hex" . _String
-    maybe err return $ decodeBytes =<< decodeHexText =<< resM
+mergeAddressTxs :: [AddressTx] -> [TxInformation]
+mergeAddressTxs as =
+    sortOn txInformationHeight $ mapMaybe toMvt $ Map.assocs aMap
   where
-    url = getURL <> "/transaction/" <> toLString (txHashToHex tid)
-    err = consoleError $ formatError "Could not decode the transaction."
+    aMap :: Map TxHash [AddressTx]
+    aMap = Map.fromListWith (<>) $ fmap (addrTxTxHash &&& (: [])) as
+    toMvt :: (TxHash, [AddressTx]) -> Maybe TxInformation
+    toMvt (tid, atxs) =
+        case head <$> nonEmpty atxs of
+            Just a ->
+                let (os, is) = partition ((< 0) . addrTxAmount) atxs
+                in Just
+                       TxInformation
+                       { txInformationTxHash = Just tid
+                       , txInformationTxSize = Nothing
+                       , txInformationOutbound = Map.empty
+                       , txInformationNonStd = 0
+                       , txInformationInbound = toAddrMap is
+                       , txInformationMyInputs = toAddrMap os
+                       , txInformationFee = Nothing
+                       , txInformationHeight = addrTxHeight a
+                       , txInformationBlockHash = addrTxBlockHash a
+                       }
+            _ -> Nothing
+    toAddrMap :: [AddressTx] -> Map Address (Satoshi, Maybe SoftPath)
+    toAddrMap = Map.map (, Nothing) . Map.fromListWith (+) . fmap toAddrVal
+    toAddrVal :: AddressTx -> (Address, Satoshi)
+    toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
+
+getTxs :: [TxHash] -> IO [(Tx, Natural)]
+getTxs tids = do
+    v <- httpJsonGet opts url
+    let xs = mapM parseTx $ v ^.. values
+    maybe
+        (consoleError $ formatError "Could not decode the transaction")
+        return
+        xs
+  where
+    url = getURL <> "/transactions"
+    opts = HTTP.defaults & HTTP.param "txids" .~ [toText tList]
+    tList = intercalate "," $ txHashToHex <$> tids
+    parseTx v = do
+        tx <- decodeBytes =<< decodeHexText =<< v ^? key "hex" . _String
+        fee <- fromIntegral <$> v ^? key "fee" . _Integer
+        return (tx, fee)
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do
