@@ -1,7 +1,9 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
-module Network.Haskoin.Wallet.HTTP.Insight (insightService) where
+module Network.Haskoin.Wallet.HTTP.Insight
+( InsightService(..)
+) where
 
 import           Control.Lens                            ((^..), (^?))
 import           Control.Monad                           (guard)
@@ -27,6 +29,8 @@ import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.TxInformation
 import qualified Network.Wreq                            as HTTP
 
+data InsightService = InsightService
+
 getURL :: LString
 getURL
     | getNetwork == bitcoinNetwork =
@@ -42,17 +46,13 @@ getURL
         formatError $
         "insight does not support the network " <> fromLString networkName
 
-insightService :: BlockchainService
-insightService =
-    BlockchainService
-    { httpBalance = getBalance
-    , httpUnspent = getUnspent
-    , httpAddressTxs = Nothing
-    , httpTxMovements = Just getTxInformation
-    , httpTx = getTx
-    , httpBroadcast = broadcastTx
-    , httpBestHeight = getBestHeight
-    }
+instance BlockchainService InsightService where
+    httpBalance _ = getBalance
+    httpUnspent _ = getUnspent
+    httpTxInformation _ = getTxInformation
+    httpTx _ = getTx
+    httpBestHeight _ = getBestHeight
+    httpBroadcast _ = broadcastTx
 
 getBalance :: [Address] -> IO Satoshi
 getBalance addrs = do

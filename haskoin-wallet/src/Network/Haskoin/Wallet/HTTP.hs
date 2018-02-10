@@ -7,6 +7,7 @@ module Network.Haskoin.Wallet.HTTP where
 import           Control.Arrow                           ((&&&))
 import           Control.Lens                            ((&), (.~), (<>~),
                                                           (^.), (^?))
+import           Control.Monad                           (mapM)
 import           Data.Aeson                              as Json
 import           Data.ByteString.Lazy                    (ByteString)
 import           Data.List                               (sortOn)
@@ -26,15 +27,67 @@ import           Network.HTTP.Types.Status
 import qualified Network.Wreq                            as HTTP
 import           Network.Wreq.Types                      (ResponseChecker)
 
-data BlockchainService = BlockchainService
-    { httpBalance     :: [Address] -> IO Satoshi
-    , httpUnspent     :: [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
-    , httpAddressTxs  :: Maybe ([Address] -> IO [AddressTx])
-    , httpTxMovements :: Maybe ([Address] -> IO [TxInformation])
-    , httpTx          :: TxHash -> IO Tx
-    , httpBestHeight  :: IO Natural
-    , httpBroadcast   :: Tx -> IO ()
-    }
+data Service =
+    forall service. (BlockchainService service) =>
+    Service service
+
+instance BlockchainService Service where
+    httpBalance (Service s) = httpBalance s
+    httpUnspent (Service s) = httpUnspent s
+    httpAddressTxs (Service s) = httpAddressTxs s
+    httpTxInformation (Service s) = httpTxInformation s
+    httpTx (Service s) = httpTx s
+    httpTxs (Service s) = httpTxs s
+    httpBestHeight (Service s) = httpBestHeight s
+    httpBroadcast (Service s) = httpBroadcast s
+
+class BlockchainService s where
+    httpBalance :: s -> [Address] -> IO Satoshi
+    httpUnspent :: s -> [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
+    httpAddressTxs :: s -> [Address] -> IO [AddressTx]
+    httpAddressTxs _ =
+        consoleError $ formatError "httpAddressTxs is not defined"
+    httpTxInformation :: s -> [Address] -> IO [TxInformation]
+    httpTxInformation s = (mergeAddressTxs <$>) . httpAddressTxs s
+    httpTx :: s -> TxHash -> IO Tx
+    httpTx s tid = do
+        res <- httpTxs s [tid]
+        case res of
+            (tx:_) -> return tx
+            _ -> consoleError $ formatError "httpTxs did not return any txs"
+    httpTxs :: s -> [TxHash] -> IO [Tx]
+    httpTxs s = mapM (httpTx s)
+    httpBestHeight :: s -> IO Natural
+    httpBroadcast :: s -> Tx -> IO ()
+
+mergeAddressTxs :: [AddressTx] -> [TxInformation]
+mergeAddressTxs as =
+    sortOn txInformationHeight $ mapMaybe toMvt $ Map.assocs aMap
+  where
+    aMap :: Map TxHash [AddressTx]
+    aMap = Map.fromListWith (<>) $ fmap (addrTxTxHash &&& (: [])) as
+    toMvt :: (TxHash, [AddressTx]) -> Maybe TxInformation
+    toMvt (tid, atxs) =
+        case head <$> nonEmpty atxs of
+            Just a ->
+                let (os, is) = partition ((< 0) . addrTxAmount) atxs
+                in Just
+                       TxInformation
+                       { txInformationTxHash = Just tid
+                       , txInformationTxSize = Nothing
+                       , txInformationOutbound = Map.empty
+                       , txInformationNonStd = 0
+                       , txInformationInbound = toAddrMap is
+                       , txInformationMyInputs = toAddrMap os
+                       , txInformationFee = Nothing
+                       , txInformationHeight = addrTxHeight a
+                       , txInformationBlockHash = addrTxBlockHash a
+                       }
+            _ -> Nothing
+    toAddrMap :: [AddressTx] -> Map Address (Satoshi, Maybe SoftPath)
+    toAddrMap = Map.map (, Nothing) . Map.fromListWith (+) . fmap toAddrVal
+    toAddrVal :: AddressTx -> (Address, Satoshi)
+    toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
 
 data AddressTx = AddressTx
     { addrTxAddress   :: !Address
@@ -69,35 +122,6 @@ httpBytesGet :: HTTP.Options -> LString -> IO (UArray Word8)
 httpBytesGet opts url = do
     r <- HTTP.getWith (addStatusCheck opts) url
     return $ fromByteString $ toStrictBS $ r ^. HTTP.responseBody
-
-mergeAddressTxs :: [AddressTx] -> [TxInformation]
-mergeAddressTxs as =
-    sortOn txInformationHeight $ mapMaybe toMvt $ Map.assocs aMap
-  where
-    aMap :: Map TxHash [AddressTx]
-    aMap = Map.fromListWith (<>) $ fmap (addrTxTxHash &&& (: [])) as
-    toMvt :: (TxHash, [AddressTx]) -> Maybe TxInformation
-    toMvt (tid, atxs) =
-        case head <$> nonEmpty atxs of
-            Just a ->
-                let (os, is) = partition ((< 0) . addrTxAmount) atxs
-                in Just
-                       TxInformation
-                       { txInformationTxHash = Just tid
-                       , txInformationTxSize = Nothing
-                       , txInformationOutbound = Map.empty
-                       , txInformationNonStd = 0
-                       , txInformationInbound = toAddrMap is
-                       , txInformationMyInputs = toAddrMap os
-                       , txInformationFee = Nothing
-                       , txInformationHeight = addrTxHeight a
-                       , txInformationBlockHash = addrTxBlockHash a
-                       }
-            _ -> Nothing
-    toAddrMap :: [AddressTx] -> Map Address (Satoshi, Maybe SoftPath)
-    toAddrMap = Map.map (, Nothing) . Map.fromListWith (+) . fmap toAddrVal
-    toAddrVal :: AddressTx -> (Address, Satoshi)
-    toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
 
 checkStatus :: ResponseChecker
 checkStatus _ r

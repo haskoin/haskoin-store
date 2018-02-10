@@ -39,9 +39,9 @@ walletSpec = do
     buildSpec
     signingSpec
     mergeAddressTxsSpec
-    serviceSpec "blockchain.info" blockchainInfoService
-    serviceSpec "insight" insightService
-    -- serviceSpec "haskoin" haskoinService
+    serviceSpec "blockchain.info" (Service BlockchainInfoService)
+    serviceSpec "insight" (Service InsightService)
+    -- serviceSpec "haskoin" (Service HaskoinService)
 
 diceSpec :: Spec
 diceSpec =
@@ -658,7 +658,7 @@ mergeAddressTxsSpec =
                   }
                 ]
 
-serviceSpec :: LString -> BlockchainService -> Spec
+serviceSpec :: LString -> Service -> Spec
 serviceSpec name service =
     describe (name <> " (online test)") $ do
         it "can receive balance (online test)" $ do
@@ -672,8 +672,7 @@ serviceSpec name service =
                 all (== Right "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
         it "can receive a transaction movement (online test)" $ do
             res <-
-                just
-                    (httpTxMovements service)
+                httpTxInformation service
                     ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"]
             length res `shouldSatisfy` (> 9)
             let res1 = head $ nonEmpty_ res

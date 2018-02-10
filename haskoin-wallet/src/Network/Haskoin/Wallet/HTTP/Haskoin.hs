@@ -1,6 +1,8 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Wallet.HTTP.Haskoin (haskoinService) where
+module Network.Haskoin.Wallet.HTTP.Haskoin
+( HaskoinService(..)
+) where
 
 import           Control.Lens                            ((&), (.~), (^..),
                                                           (^?))
@@ -23,6 +25,8 @@ import           Network.Haskoin.Wallet.FoundationCompat
 import           Network.Haskoin.Wallet.HTTP
 import qualified Network.Wreq                            as HTTP
 
+data HaskoinService = HaskoinService
+
 getURL :: LString
 getURL
     | getNetwork == testnet3Network = "https://testnet3.haskoin.com/api"
@@ -33,17 +37,13 @@ getURL
         formatError $
         "Haskoin does not support the network " <> fromLString networkName
 
-haskoinService :: BlockchainService
-haskoinService =
-    BlockchainService
-    { httpBalance = getBalance
-    , httpUnspent = getUnspent
-    , httpAddressTxs = Just getAddressTxs
-    , httpTxMovements = Nothing
-    , httpTx = getTx
-    , httpBroadcast = broadcastTx
-    , httpBestHeight = getBestHeight
-    }
+instance BlockchainService HaskoinService where
+    httpBalance _ = getBalance
+    httpUnspent _ = getUnspent
+    httpAddressTxs _ = getAddressTxs
+    httpTx _ = getTx
+    httpBroadcast _ = broadcastTx
+    httpBestHeight _ = getBestHeight
 
 getBalance :: [Address] -> IO Satoshi
 getBalance addrs = do

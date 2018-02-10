@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.HTTP.BlockchainInfo
-( blockchainInfoService
+( BlockchainInfoService(..)
 ) where
 
 import           Control.Lens                            ((&), (.~), (^..),
@@ -29,6 +29,8 @@ import           Network.Haskoin.Wallet.HTTP
 import           Network.Haskoin.Wallet.TxInformation
 import qualified Network.Wreq                            as HTTP
 
+data BlockchainInfoService = BlockchainInfoService
+
 getURL :: LString
 getURL
     | getNetwork == bitcoinNetwork = "https://blockchain.info"
@@ -39,17 +41,13 @@ getURL
         "blockchain.info does not support the network " <>
         fromLString networkName
 
-blockchainInfoService :: BlockchainService
-blockchainInfoService =
-    BlockchainService
-    { httpBalance = getBalance
-    , httpUnspent = getUnspent
-    , httpAddressTxs = Nothing
-    , httpTxMovements = Just getTxMovements
-    , httpTx = getTx
-    , httpBroadcast = broadcastTx
-    , httpBestHeight = getBestHeight
-    }
+instance BlockchainService BlockchainInfoService where
+    httpBalance _ = getBalance
+    httpUnspent _ = getUnspent
+    httpTxInformation _ = getTxInformation
+    httpTx _ = getTx
+    httpBestHeight _ = getBestHeight
+    httpBroadcast _ = broadcastTx
 
 getBalance :: [Address] -> IO Satoshi
 getBalance addrs = do
@@ -80,8 +78,8 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
-getTxMovements :: [Address] -> IO [TxInformation]
-getTxMovements addrs = do
+getTxInformation :: [Address] -> IO [TxInformation]
+getTxInformation addrs = do
     v <- httpJsonGet opts url
     let resM = mapM parseTxMovement $ v ^.. key "txs" . values
     maybe (consoleError $ formatError "Could not parse tx movement") return resM

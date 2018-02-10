@@ -42,7 +42,8 @@ instance Ord WalletCoin where
 toWalletCoin :: (OutPoint, ScriptOutput, Satoshi) -> WalletCoin
 toWalletCoin (op, so, v) = WalletCoin op so v
 
-buildTxSignData :: BlockchainService
+buildTxSignData :: BlockchainService s
+                => s
                 -> AccountStore
                 -> Map Address Satoshi
                 -> Satoshi

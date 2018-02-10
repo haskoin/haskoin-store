@@ -1,8 +1,8 @@
-{-# LANGUAGE BangPatterns      #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE BangPatterns              #-}
+{-# LANGUAGE NoImplicitPrelude         #-}
+{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE TemplateHaskell           #-}
 module Network.Haskoin.Wallet where
 
 import           Control.Arrow                              (right, (&&&))
@@ -208,13 +208,13 @@ serOpt =
         ""
         "Blockchain service (=haskoin|blockchain|insight)"
 
-parseBlockchainService :: String -> BlockchainService
+parseBlockchainService :: String -> Service
 parseBlockchainService service =
     case service of
         "" -> defaultBlockchainService
-        "haskoin" -> haskoinService
-        "blockchain" -> blockchainInfoService
-        "insight" -> insightService
+        "haskoin" -> Service HaskoinService
+        "blockchain" -> Service BlockchainInfoService
+        "insight" -> Service InsightService
         _ ->
             consoleError $
             vcat
@@ -224,12 +224,12 @@ parseBlockchainService service =
                   vcat $ fmap formatStatic ["haskoin", "blockchain", "insight"]
                 ]
 
-defaultBlockchainService :: BlockchainService
+defaultBlockchainService :: Service
 defaultBlockchainService
-    | getNetwork == bitcoinNetwork = blockchainInfoService
-    | getNetwork == testnet3Network = haskoinService
-    | getNetwork == bitcoinCashNetwork = haskoinService
-    | getNetwork == cashTestNetwork = haskoinService
+    | getNetwork == bitcoinNetwork = Service BlockchainInfoService
+    | getNetwork == testnet3Network = Service HaskoinService
+    | getNetwork == bitcoinCashNetwork = Service HaskoinService
+    | getNetwork == cashTestNetwork = Service HaskoinService
     | otherwise = consoleError $ formatError $
         "No blockchain service for network " <> fromLString networkName
 
@@ -532,7 +532,7 @@ transactions = command "transactions" "Display the account transactions" $
                 let service = parseBlockchainService s
                     walletAddrs = allExtAddresses store <> allIntAddresses store
                     walletAddrMap = Map.fromList walletAddrs
-                mvts <- getTxInformation service (fmap fst walletAddrs)
+                mvts <- httpTxInformation service $ fmap fst walletAddrs
                 currHeight <- httpBestHeight service
                 forM_ (sortOn txInformationHeight mvts) $ \mvt -> do
                     let format =
@@ -553,16 +553,6 @@ transactions = command "transactions" "Display the account transactions" $
                             Nothing
                             (Just currHeight)
                             mvtTx
-  where
-    getTxInformation :: BlockchainService -> [Address] -> IO [TxInformation]
-    getTxInformation service =
-        fromMaybe notImp $
-        httpTxMovements service <|>
-        (httpAddressTxs service >>=
-             \f -> Just (fmap mergeAddressTxs . f))
-    notImp =
-        consoleError $
-        formatError "The transactions command is not implemented"
 
 broadcast :: Command IO
 broadcast = command "broadcast" "broadcast a tx from a file in hex format" $
