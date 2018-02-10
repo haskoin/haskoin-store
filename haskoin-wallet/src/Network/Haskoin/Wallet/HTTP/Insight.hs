@@ -50,6 +50,7 @@ insightService =
     , httpTxMovements = Just getTxSummary
     , httpTx = getTx
     , httpBroadcast = broadcastTx
+    , httpBestHeight = getBestHeight
     }
 
 getBalance :: [Address] -> IO Satoshi
@@ -137,3 +138,12 @@ broadcastTx tx = do
     val =
         Json.object
             ["rawtx" Json..= Json.String (encodeHexText $ encodeBytes tx)]
+
+getBestHeight :: IO Natural
+getBestHeight = do
+    v <- httpJsonGet HTTP.defaults url
+    let resM = fromIntegral <$> v ^? key "info" . key "blocks" . _Integer
+    maybe err return resM
+  where
+    url = getURL <> "/status"
+    err = consoleError $ formatError "Could not get the best block height"
