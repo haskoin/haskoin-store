@@ -42,6 +42,7 @@ haskoinService =
     , httpTxMovements = Nothing
     , httpTx = getTx
     , httpBroadcast = broadcastTx
+    , httpBestHeight = getBestHeight
     }
 
 getBalance :: [Address] -> IO Satoshi
@@ -112,3 +113,13 @@ broadcastTx tx = do
     url = getURL <> "/transaction"
     val =
         J.object ["transaction" J..= J.String (encodeHexText $ encodeBytes tx)]
+
+getBestHeight :: IO Natural
+getBestHeight = do
+    v <- httpJsonGet HTTP.defaults url
+    let resM = fromIntegral <$> v ^? key "height" . _Integer
+    maybe err return resM
+  where
+    url = getURL <> "/block/best"
+    err = consoleError $ formatError "Could not get the best block height"
+

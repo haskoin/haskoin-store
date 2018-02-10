@@ -32,6 +32,7 @@ data BlockchainService = BlockchainService
     , httpAddressTxs  :: Maybe ([Address] -> IO [AddressTx])
     , httpTxMovements :: Maybe ([Address] -> IO [TxSummary])
     , httpTx          :: TxHash -> IO Tx
+    , httpBestHeight  :: IO Natural
     , httpBroadcast   :: Tx -> IO ()
     }
 

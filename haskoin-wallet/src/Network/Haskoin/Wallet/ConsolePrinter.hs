@@ -87,6 +87,7 @@ data ConsoleFormat
     | FormatAddress { getFormat :: !String }
     | FormatInternalAddress { getFormat :: !String }
     | FormatTxHash { getFormat :: !String }
+    | FormatBlockHash { getFormat :: !String }
     | FormatPosAmount { getFormat :: !String }
     | FormatNegAmount { getFormat :: !String }
     | FormatFee { getFormat :: !String }
@@ -129,6 +130,9 @@ formatInternalAddress = text . FormatInternalAddress
 
 formatTxHash :: String -> ConsolePrinter
 formatTxHash = text . FormatTxHash
+
+formatBlockHash :: String -> ConsolePrinter
+formatBlockHash = text . FormatBlockHash
 
 formatPosAmount :: String -> ConsolePrinter
 formatPosAmount = text . FormatPosAmount
@@ -180,6 +184,7 @@ formatSGR frm = case frm of
                                , SetColor Foreground Vivid Black
                                ]
     FormatTxHash _          -> [ SetColor Foreground Vivid Magenta ]
+    FormatBlockHash _       -> [ SetColor Foreground Vivid Magenta ]
     FormatPosAmount  _      -> [ SetConsoleIntensity BoldIntensity
                                , SetColor Foreground Dull Green
                                ]

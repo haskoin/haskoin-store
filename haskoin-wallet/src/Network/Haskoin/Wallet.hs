@@ -426,7 +426,11 @@ send =
                 renderIO $
                     vcat
                         [ txSummaryFormat
-                          (accountStoreDeriv store) unit (Just False) info
+                            (accountStoreDeriv store)
+                            unit
+                            (Just False)
+                            Nothing
+                            info
                         , formatTitle "Unsigned Tx Data File"
                         , nest 4 $ formatFilePath $ filePathToString path
                         ]
@@ -459,7 +463,12 @@ sign = command "sign" "Sign the output of the \"send\" command" $
             case signWalletTx dat signKey of
                 Right (info, signedTx, isSigned) -> do
                     renderIO $
-                        txSummaryFormat (bip44Deriv d) unit (Just isSigned) info
+                        txSummaryFormat
+                            (bip44Deriv d)
+                            unit
+                            (Just isSigned)
+                            Nothing
+                            info
                     confirmAmount unit $ txSummaryAmount info
                     let signedHex = encodeHexText $ encodeBytes signedTx
                         chsum = txChksum signedTx
@@ -526,6 +535,7 @@ transactions = command "transactions" "Display the account transactions" $
                     walletAddrs = allExtAddresses store <> allIntAddresses store
                     walletAddrMap = Map.fromList walletAddrs
                 mvts <- getTxSummary service (fmap fst walletAddrs)
+                currHeight <- httpBestHeight service
                 forM_ (sortOn txSummaryHeight mvts) $ \mvt -> do
                     let format =
                             if verbose
@@ -543,6 +553,7 @@ transactions = command "transactions" "Display the account transactions" $
                             (accountStoreDeriv store)
                             unit
                             Nothing
+                            (Just currHeight)
                             mvtTx
   where
     getTxSummary :: BlockchainService -> [Address] -> IO [TxSummary]
@@ -579,36 +590,72 @@ txSummaryFormatCompact
     :: HardPath
     -> AmountUnit
     -> Maybe Bool
+    -> Maybe Natural
     -> TxSummary
     -> ConsolePrinter
-txSummaryFormatCompact accDeriv unit isSigned s@TxSummary {..} =
-    vcat
-        [ maybe
-              (formatStatic "Unsigned Transaction")
-              (formatTxHash . txHashToHex)
-              txSummaryTxHash
-        , nest 2 $
-          vcat
-              [ formatKey (block 16 $ txSummaryTxType s <> " Amount:") <+>
-                formatIntegerAmount unit (txSummaryAmount s)
-              , nest 2 outbound
-              ]
-        ]
+txSummaryFormatCompact _ unit _ heightM s@TxSummary {..} =
+    vcat [title <+> confs, nest 4 $ vcat [txid, outbound, self, inbound]]
   where
+    title =
+        case txSummaryTxType s of
+            "Outbound" -> formatTitle "Outbound Payment"
+            "Inbound" -> formatTitle "Inbound Payment"
+            "Self" -> formatTitle "Payment To Yourself"
+            _ -> consoleError $ formatError "Invalid tx type"
+    confs =
+        case heightM of
+            Just currHeight ->
+                case (currHeight -) =<< txSummaryHeight of
+                    Just conf ->
+                        formatStatic $
+                        "(" <> show (conf + 1) <> " confirmations)"
+                    _ -> formatStatic "(Pending)"
+            _ -> mempty
+    txid = maybe mempty (formatTxHash . txHashToHex) txSummaryTxHash
     outbound
+        | txSummaryTxType s /= "Outbound" = mempty
         | txSummaryNonStd == 0 && Map.null txSummaryOutbound = mempty
-        | otherwise = vcat $ fmap addrFormat (Map.assocs txSummaryOutbound)
-    addrFormat (a, v) =
+        | otherwise =
+            vcat $
+            [feeKey] <> fmap (addrFormat negate) (Map.assocs txSummaryOutbound) <>
+            [nonStdRcp]
+    nonStdRcp
+        | txSummaryNonStd == 0 = mempty
+        | otherwise =
+            formatStatic "Non-standard recipients:" <+>
+            formatIntegerAmount unit (fromIntegral txSummaryNonStd)
+    feeKey =
+        case txSummaryFee of
+            Just fee ->
+                formatKey "Fees:" <+>
+                formatIntegerAmount unit (negate $ fromIntegral fee)
+            _ -> mempty
+    self
+        | txSummaryTxType s /= "Self" = mempty
+        | otherwise = feeKey
+    inbound
+        | txSummaryTxType s /= "Inbound" = mempty
+        | Map.null txSummaryInbound = mempty
+        | otherwise =
+            vcat $
+            [ if Map.size txSummaryInbound > 1
+                  then formatKey "Total amount:" <+>
+                       formatIntegerAmount unit (txSummaryAmount s)
+                  else mempty
+            ] <>
+            fmap (addrFormat id) (Map.assocs $ Map.map fst txSummaryInbound)
+    addrFormat f (a, v) =
         formatAddress (addrToBase58 a) <> formatStatic ":" <+>
-        formatIntegerAmount unit (fromIntegral v)
+        formatIntegerAmount unit (f $ fromIntegral v)
 
 txSummaryFormat
     :: HardPath
     -> AmountUnit
     -> Maybe Bool
+    -> Maybe Natural
     -> TxSummary
     -> ConsolePrinter
-txSummaryFormat accDeriv unit txSignedM s@TxSummary {..} =
+txSummaryFormat accDeriv unit txSignedM heightM s@TxSummary {..} =
     vcat [summary, nest 2 $ vcat [outbound, inbound, myInputs]]
   where
     summary =
@@ -616,18 +663,18 @@ txSummaryFormat accDeriv unit txSignedM s@TxSummary {..} =
             [ formatTitle "Tx Summary"
             , nest 4 $
               vcat
-                  [ formatKey (block 12 "Tx Type:") <>
+                  [ formatKey (block 15 "Tx Type:") <>
                     formatStatic (txSummaryTxType s)
                   , case txSummaryTxHash of
                         Just tid ->
-                            formatKey (block 12 "Tx hash:") <>
+                            formatKey (block 15 "Tx hash:") <>
                             formatTxHash (txHashToHex tid)
                         _ -> mempty
-                  , formatKey (block 12 "Amount:") <>
+                  , formatKey (block 15 "Amount:") <>
                     formatIntegerAmount unit (txSummaryAmount s)
                   , case txSummaryFee of
                         Just fee ->
-                            formatKey (block 12 "Fee:") <>
+                            formatKey (block 15 "Fee:") <>
                             formatIntegerAmountWith
                                 formatFee
                                 unit
@@ -635,17 +682,34 @@ txSummaryFormat accDeriv unit txSignedM s@TxSummary {..} =
                         _ -> mempty
                   , case txSummaryFeeByte s of
                         Just feeByte ->
-                            formatKey (block 12 "Fee/byte:") <>
+                            formatKey (block 15 "Fee/byte:") <>
                             formatFeeBytes feeByte
                         _ -> mempty
                   , case txSummaryTxSize of
                         Just bytes ->
-                            formatKey (block 12 "Tx size:") <>
+                            formatKey (block 15 "Tx size:") <>
                             formatStatic (show (fromCount bytes) <> " bytes")
+                        _ -> mempty
+                  , case txSummaryHeight of
+                        Just height ->
+                            formatKey (block 15 "Block Height:") <>
+                            formatStatic (show height)
+                        _ -> mempty
+                  , case txSummaryBlockHash of
+                        Just bh ->
+                            formatKey (block 15 "Block Hash:") <>
+                            formatBlockHash (blockHashToHex bh)
+                        _ -> mempty
+                  , case heightM of
+                        Just currHeight ->
+                            formatKey (block 15 "Confirmations:") <>
+                            case (currHeight -) =<< txSummaryHeight of
+                                Just conf -> formatStatic $ show $ conf + 1
+                                _ -> formatStatic "Pending"
                         _ -> mempty
                   , case txSignedM of
                         Just signed ->
-                            formatKey (block 12 "Signed:") <>
+                            formatKey (block 15 "Signed:") <>
                             if signed
                                 then formatTrue "Yes"
                                 else formatFalse "No"
@@ -653,7 +717,7 @@ txSummaryFormat accDeriv unit txSignedM s@TxSummary {..} =
                   ]
             ]
     outbound
-        | txSummaryAmount s >= 0 = mempty
+        | txSummaryTxType s /= "Outbound" = mempty
         | txSummaryNonStd == 0 && Map.null txSummaryOutbound = mempty
         | otherwise =
             vcat
