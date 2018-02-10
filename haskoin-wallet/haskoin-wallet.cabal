@@ -36,6 +36,7 @@ library
                    , Network.Haskoin.Wallet.Amounts
                    , Network.Haskoin.Wallet.ConsolePrinter
                    , Network.Haskoin.Wallet.FoundationCompat
+                   , Network.Haskoin.Wallet.TxInformation
 
     build-depends: aeson                         >= 0.8
                  , ansi-terminal

@@ -1,6 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.HTTP.BlockchainInfo
 ( blockchainInfoService
 ) where
@@ -26,6 +26,7 @@ import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.FoundationCompat
 import           Network.Haskoin.Wallet.HTTP
+import           Network.Haskoin.Wallet.TxInformation
 import qualified Network.Wreq                            as HTTP
 
 getURL :: LString
@@ -79,7 +80,7 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
-getTxMovements :: [Address] -> IO [TxSummary]
+getTxMovements :: [Address] -> IO [TxInformation]
 getTxMovements addrs = do
     v <- httpJsonGet opts url
     let resM = mapM parseTxMovement $ v ^.. key "txs" . values
@@ -98,16 +99,16 @@ getTxMovements addrs = do
                 key "prev_out"
             os = Map.fromList $ mapMaybe go $ v ^.. key "out" . values
         return
-            TxSummary
-            { txSummaryTxHash = Just tid
-            , txSummaryTxSize = Just $ fromIntegral size
-            , txSummaryOutbound = Map.empty
-            , txSummaryNonStd = 0
-            , txSummaryInbound = Map.map (,Nothing) os
-            , txSummaryMyInputs = Map.map (,Nothing) is
-            , txSummaryFee = Just $ fromIntegral fee
-            , txSummaryHeight = heightM
-            , txSummaryBlockHash = Nothing
+            TxInformation
+            { txInformationTxHash = Just tid
+            , txInformationTxSize = Just $ fromIntegral size
+            , txInformationOutbound = Map.empty
+            , txInformationNonStd = 0
+            , txInformationInbound = Map.map (,Nothing) os
+            , txInformationMyInputs = Map.map (,Nothing) is
+            , txInformationFee = Just $ fromIntegral fee
+            , txInformationHeight = heightM
+            , txInformationBlockHash = Nothing
             }
     go v = do
         addr <- base58ToAddr . fromText =<< v ^? key "addr" . _String

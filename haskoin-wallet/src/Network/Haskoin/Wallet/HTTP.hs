@@ -13,7 +13,6 @@ import           Data.List                               (sortOn)
 import           Data.Map.Strict                         (Map)
 import qualified Data.Map.Strict                         as Map
 import           Foundation
-import           Foundation.Collection
 import           Foundation.Compat.ByteString
 import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
@@ -22,6 +21,7 @@ import           Network.Haskoin.Transaction
 import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.FoundationCompat
+import           Network.Haskoin.Wallet.TxInformation
 import           Network.HTTP.Types.Status
 import qualified Network.Wreq                            as HTTP
 import           Network.Wreq.Types                      (ResponseChecker)
@@ -30,7 +30,7 @@ data BlockchainService = BlockchainService
     { httpBalance     :: [Address] -> IO Satoshi
     , httpUnspent     :: [Address] -> IO [(OutPoint, ScriptOutput, Satoshi)]
     , httpAddressTxs  :: Maybe ([Address] -> IO [AddressTx])
-    , httpTxMovements :: Maybe ([Address] -> IO [TxSummary])
+    , httpTxMovements :: Maybe ([Address] -> IO [TxInformation])
     , httpTx          :: TxHash -> IO Tx
     , httpBestHeight  :: IO Natural
     , httpBroadcast   :: Tx -> IO ()
@@ -44,18 +44,6 @@ data AddressTx = AddressTx
     , addrTxBlockHash :: Maybe BlockHash
     }
     deriving (Eq, Show)
-
-data TxSummary = TxSummary
-    { txSummaryTxHash    :: Maybe TxHash
-    , txSummaryTxSize    :: Maybe (CountOf (Element (UArray Word8)))
-    , txSummaryOutbound  :: Map Address Satoshi
-    , txSummaryNonStd    :: Satoshi
-    , txSummaryInbound   :: Map Address (Satoshi, Maybe SoftPath)
-    , txSummaryMyInputs  :: Map Address (Satoshi, Maybe SoftPath)
-    , txSummaryFee       :: Maybe Satoshi
-    , txSummaryHeight    :: Maybe Natural
-    , txSummaryBlockHash :: Maybe BlockHash
-    } deriving (Eq, Show)
 
 httpJsonGet :: HTTP.Options -> LString -> IO Json.Value
 httpJsonGet = httpJsonGen id
@@ -82,31 +70,32 @@ httpBytesGet opts url = do
     r <- HTTP.getWith (addStatusCheck opts) url
     return $ fromByteString $ toStrictBS $ r ^. HTTP.responseBody
 
-mergeAddressTxs :: [AddressTx] -> [TxSummary]
+mergeAddressTxs :: [AddressTx] -> [TxInformation]
 mergeAddressTxs as =
-    sortOn txSummaryHeight $ mapMaybe toMvt $ Map.assocs aMap
+    sortOn txInformationHeight $ mapMaybe toMvt $ Map.assocs aMap
   where
     aMap :: Map TxHash [AddressTx]
     aMap = Map.fromListWith (<>) $ fmap (addrTxTxHash &&& (: [])) as
-    toMvt :: (TxHash, [AddressTx]) -> Maybe TxSummary
+    toMvt :: (TxHash, [AddressTx]) -> Maybe TxInformation
     toMvt (tid, atxs) =
         case head <$> nonEmpty atxs of
             Just a ->
                 let (os, is) = partition ((< 0) . addrTxAmount) atxs
-                in Just TxSummary
-                     { txSummaryTxHash = Just tid
-                     , txSummaryTxSize = Nothing
-                     , txSummaryOutbound = Map.empty
-                     , txSummaryNonStd = 0
-                     , txSummaryInbound = toAddrMap is
-                     , txSummaryMyInputs = toAddrMap os
-                     , txSummaryFee = Nothing
-                     , txSummaryHeight = addrTxHeight a
-                     , txSummaryBlockHash = addrTxBlockHash a
-                     }
+                in Just
+                       TxInformation
+                       { txInformationTxHash = Just tid
+                       , txInformationTxSize = Nothing
+                       , txInformationOutbound = Map.empty
+                       , txInformationNonStd = 0
+                       , txInformationInbound = toAddrMap is
+                       , txInformationMyInputs = toAddrMap os
+                       , txInformationFee = Nothing
+                       , txInformationHeight = addrTxHeight a
+                       , txInformationBlockHash = addrTxBlockHash a
+                       }
             _ -> Nothing
     toAddrMap :: [AddressTx] -> Map Address (Satoshi, Maybe SoftPath)
-    toAddrMap = Map.map (,Nothing) . Map.fromListWith (+) . fmap toAddrVal
+    toAddrMap = Map.map (, Nothing) . Map.fromListWith (+) . fmap toAddrVal
     toAddrVal :: AddressTx -> (Address, Satoshi)
     toAddrVal = addrTxAddress &&& fromIntegral . abs . addrTxAmount
 

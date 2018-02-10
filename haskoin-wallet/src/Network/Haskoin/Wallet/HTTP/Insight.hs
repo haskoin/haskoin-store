@@ -24,6 +24,7 @@ import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.ConsolePrinter
 import           Network.Haskoin.Wallet.FoundationCompat
 import           Network.Haskoin.Wallet.HTTP
+import           Network.Haskoin.Wallet.TxInformation
 import qualified Network.Wreq                            as HTTP
 
 getURL :: LString
@@ -47,7 +48,7 @@ insightService =
     { httpBalance = getBalance
     , httpUnspent = getUnspent
     , httpAddressTxs = Nothing
-    , httpTxMovements = Just getTxSummary
+    , httpTxMovements = Just getTxInformation
     , httpTx = getTx
     , httpBroadcast = broadcastTx
     , httpBestHeight = getBestHeight
@@ -74,8 +75,8 @@ getUnspent addrs = do
         scp <- eitherToMaybe . withBytes decodeOutputBS =<< decodeHexText scpHex
         return (OutPoint tid pos, scp, val)
 
-getTxSummary :: [Address] -> IO [TxSummary]
-getTxSummary addrs = do
+getTxInformation :: [Address] -> IO [TxInformation]
+getTxInformation addrs = do
     v <- httpJsonGet HTTP.defaults url
     let resM = mapM parseTxMovement $ v ^.. key "items" . values
     maybe (consoleError $ formatError "Could not parse addrTx") return resM
@@ -96,16 +97,16 @@ getTxSummary addrs = do
                 Map.fromListWith (+) $ mapMaybe parseVout $ v ^.. key "vout" .
                 values
         return
-            TxSummary
-            { txSummaryTxHash = Just tid
-            , txSummaryTxSize = Just bytes
-            , txSummaryOutbound = Map.empty
-            , txSummaryNonStd = 0
-            , txSummaryInbound = Map.map (,Nothing) os
-            , txSummaryMyInputs = Map.map (,Nothing) is
-            , txSummaryFee = Just feeSat
-            , txSummaryHeight = heightM
-            , txSummaryBlockHash = bidM
+            TxInformation
+            { txInformationTxHash = Just tid
+            , txInformationTxSize = Just bytes
+            , txInformationOutbound = Map.empty
+            , txInformationNonStd = 0
+            , txInformationInbound = Map.map (, Nothing) os
+            , txInformationMyInputs = Map.map (, Nothing) is
+            , txInformationFee = Just feeSat
+            , txInformationHeight = heightM
+            , txInformationBlockHash = bidM
             }
     parseVin v = do
         addr <- base58ToAddr . fromText =<< v ^? key "addr" . _String

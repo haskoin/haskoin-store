@@ -8,7 +8,6 @@ import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BL
 import           Data.Either
 import           Data.List
-import           Data.List
 import           Data.Maybe
 import           Data.Monoid                 ((<>))
 import           Data.Serialize
@@ -115,7 +114,7 @@ scriptSpec =
                             (val * 100000000)
                 case res of
                     "OK" -> ver `shouldBe` True
-                    _ -> ver `shouldBe` False
+                    _    -> ver `shouldBe` False
 
 forkIdScriptSpec :: Spec
 forkIdScriptSpec =
@@ -146,7 +145,7 @@ forkIdScriptSpec =
                         val
             case res of
                 "OK" -> ver `shouldBe` True
-                _ -> ver `shouldBe` False
+                _    -> ver `shouldBe` False
 
 creditTx :: BS.ByteString -> Word64 -> Tx
 creditTx scriptPubKey val =

@@ -23,6 +23,7 @@ import           Network.Haskoin.Wallet.AccountStore
 import           Network.Haskoin.Wallet.Amounts
 import           Network.Haskoin.Wallet.FoundationCompat hiding (addrToBase58)
 import           Network.Haskoin.Wallet.HTTP
+import           Network.Haskoin.Wallet.TxInformation
 
 {- Building Transactions -}
 
@@ -52,13 +53,7 @@ buildTxSignData service store rcpMap feeByte dust
     | otherwise = do
         allCoins <-
             fmap toWalletCoin <$> httpUnspent service (Map.keys walletAddrMap)
-        case buildWalletTx
-                 walletAddrMap
-                 allCoins
-                 change
-                 rcpMap
-                 feeByte
-                 dust of
+        case buildWalletTx walletAddrMap allCoins change rcpMap feeByte dust of
             Right (tx, depTxHash, inDeriv, outDeriv) -> do
                 depTxs <- mapM (httpTx service) depTxHash
                 return $
@@ -104,7 +99,8 @@ buildWalletTx walletAddrMap coins (change, changeDeriv, _) rcpMap feeByte dust =
         buildAddrTx ops $
         bimap addrToBase58 fromIntegral <$> Map.assocs txRcpMap
     inCoinAddrs <-
-        eitherString $ mapM (outputAddress . walletCoinScriptOutput) selectedCoins
+        eitherString $
+        mapM (outputAddress . walletCoinScriptOutput) selectedCoins
     let inDerivMap = Map.restrictKeys walletAddrMap $ Set.fromList inCoinAddrs
     return
         ( tx
@@ -137,8 +133,8 @@ data TxSignData = TxSignData
 
 $(deriveJSON (dropFieldLabel 10) ''TxSignData)
 
-pubTxSummary :: TxSignData -> XPubKey -> Either String TxSummary
-pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
+pubTxInformation :: TxSignData -> XPubKey -> Either String TxInformation
+pubTxInformation tsd@(TxSignData tx _ inPaths outPaths) pubKey
     | fromCount (length coins) /= fromCount (length $ txIn tx) =
         Left "Referenced input transactions are missing"
     | length inPaths /= toCount (Map.size myInputAddrs) =
@@ -147,16 +143,16 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
         Left "Tx is missing change outputs"
     | otherwise =
         return
-            TxSummary
-            { txSummaryTxHash = Nothing
-            , txSummaryTxSize = Just guessLen
-            , txSummaryOutbound = outboundAddrs
-            , txSummaryNonStd = outNonStdValue
-            , txSummaryInbound = Map.map (second Just) inboundAddrs
-            , txSummaryMyInputs = Map.map (second Just) myInputAddrs
-            , txSummaryFee = feeM
-            , txSummaryHeight = Nothing
-            , txSummaryBlockHash = Nothing
+            TxInformation
+            { txInformationTxHash = Nothing
+            , txInformationTxSize = Just guessLen
+            , txInformationOutbound = outboundAddrs
+            , txInformationNonStd = outNonStdValue
+            , txInformationInbound = Map.map (second Just) inboundAddrs
+            , txInformationMyInputs = Map.map (second Just) myInputAddrs
+            , txInformationFee = feeM
+            , txInformationHeight = Nothing
+            , txInformationBlockHash = Nothing
             }
     -- Outputs
   where
@@ -185,17 +181,17 @@ pubTxSummary tsd@(TxSignData tx _ inPaths outPaths) pubKey
             (fromCount $ length $ txOut tx)
             0
 
-signWalletTx :: TxSignData -> XPrvKey -> Either String (TxSummary, Tx, Bool)
+signWalletTx :: TxSignData -> XPrvKey -> Either String (TxInformation, Tx, Bool)
 signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
     sigDat <- mapM g myCoins
     signedTx <- eitherString $ signTx tx (fmap f sigDat) prvKeys
     let vDat = rights $ fmap g coins
         isSigned = noEmptyInputs signedTx && verifyStdTx signedTx vDat
-    txSummary <- pubTxSummary tsd pubKey
+    txInformation <- pubTxInformation tsd pubKey
     return
         ( if isSigned
-              then txSummaryFillTx signedTx txSummary
-              else txSummary
+              then txInformationFillTx signedTx txInformation
+              else txInformation
         , signedTx
         , isSigned)
   where
@@ -208,39 +204,8 @@ signWalletTx tsd@(TxSignData tx _ inPaths _) signKey = do
         | isJust sigHashForkId = setForkIdFlag
         | otherwise = id
 
-txSummaryFillTx :: Tx -> TxSummary -> TxSummary
-txSummaryFillTx tx txSummary =
-    txSummary
-    { txSummaryOutbound = outbound
-    , txSummaryNonStd = nonStd
-    , txSummaryTxHash = Just $ txHash tx
-    , txSummaryTxSize = Just $ length $ encodeBytes tx
-    , txSummaryFee = txSummaryFee txSummary <|> feeM
-    }
-  where
-    (outAddrMap, nonStd) = txOutAddressMap $ txOut tx
-    outbound = Map.difference outAddrMap (txSummaryInbound txSummary)
-    outSum = sum $ (toNatural . outValue) <$> txOut tx :: Natural
-    inSum = sum $ fst <$> Map.elems (txSummaryMyInputs txSummary) :: Natural
-    feeM = inSum - outSum :: Maybe Natural
-
 noEmptyInputs :: Tx -> Bool
 noEmptyInputs = all (not . null) . fmap (asBytes scriptInput) . txIn
-
-txOutAddressMap :: [TxOut] -> (Map Address Satoshi, Satoshi)
-txOutAddressMap txout =
-    (Map.fromListWith (+) rs, sum ls)
-  where
-    xs = fmap (decodeTxOutAddr &&& toNatural . outValue) txout
-    (ls, rs) = partitionEithers $ fmap partE xs
-    partE (Right a, v) = Right (a, v)
-    partE (Left _, v)  = Left v
-
-decodeTxOutAddr :: TxOut -> Either String Address
-decodeTxOutAddr = decodeTxOutSO >=> eitherString . outputAddress
-
-decodeTxOutSO :: TxOut -> Either String ScriptOutput
-decodeTxOutSO = eitherString . decodeOutputBS . scriptOutput
 
 pathToAddr :: XPubKey -> SoftPath -> Address
 pathToAddr pubKey = xPubAddr . (`derivePubPath` pubKey)
