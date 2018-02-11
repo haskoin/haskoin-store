@@ -210,7 +210,7 @@ buildAddrTx xs ys =
 -- and a list of 'ScriptOutput' and amounts as outputs.
 buildTx :: [OutPoint] -> [(ScriptOutput, Word64)] -> Either String Tx
 buildTx xs ys =
-    mapM fo ys >>= \os -> return $ Tx 1 (map fi xs) os 0
+    mapM fo ys >>= \os -> return $ Tx 1 (map fi xs) os [] 0
   where
     fi outPoint = TxIn outPoint BS.empty maxBound
     fo (o, v)
@@ -274,7 +274,7 @@ signInput tx i (SigInput so val _ sh rdmM) key = do
     let sig = TxSignature (signMsg msg key) sh
     si <- buildInput tx i so val rdmM sig $ derivePubKey key
     let ins = updateIndex i (txIn tx) (f si)
-    return $ Tx (txVersion tx) ins (txOut tx) (txLockTime tx)
+    return $ Tx (txVersion tx) ins (txOut tx) [] (txLockTime tx)
   where
     f si x = x{ scriptInput = encodeInputBS si }
     msg = txSigHash tx (encodeOutput $ fromMaybe so rdmM) val i sh
@@ -356,7 +356,7 @@ mergeTxs txs os
     emptyTxs = map (\tx -> foldl clearInput tx outs) txs
     ins is i = updateIndex i is (\ti -> ti{ scriptInput = BS.empty })
     clearInput tx (_, i) =
-        Tx (txVersion tx) (ins (txIn tx) i) (txOut tx) (txLockTime tx)
+        Tx (txVersion tx) (ins (txIn tx) i) (txOut tx) [] (txLockTime tx)
 
 mergeTxInput :: [Tx] -> Tx -> ((ScriptOutput, Word64), Int) -> Either String Tx
 mergeTxInput txs tx ((so, val), i) = do
@@ -368,7 +368,7 @@ mergeTxInput txs tx ((so, val), i) = do
         Left "Redeem scripts do not match"
     si <- encodeInputBS <$> go (nub $ concatMap fst sigRes) so rdm
     let ins' = updateIndex i (txIn tx) (\ti -> ti{ scriptInput = si })
-    return $ Tx (txVersion tx) ins' (txOut tx) (txLockTime tx)
+    return $ Tx (txVersion tx) ins' (txOut tx) [] (txLockTime tx)
   where
     go allSigs out rdmM = case out of
         PayMulSig msPubs r ->

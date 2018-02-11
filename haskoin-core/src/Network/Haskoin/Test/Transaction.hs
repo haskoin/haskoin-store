@@ -11,6 +11,7 @@ import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Script
 import           Network.Haskoin.Test.Crypto
+import           Network.Haskoin.Test.Util
 import           Network.Haskoin.Test.Script
 import           Network.Haskoin.Transaction
 import           Test.QuickCheck
@@ -45,9 +46,12 @@ arbitraryTxIn =
          <*> (encodeInputBS <$> arbitraryScriptInput)
          <*> arbitrary
 
--- | Arbitrary Tx
 arbitraryTx :: Gen Tx
-arbitraryTx = do
+arbitraryTx = oneof [arbitraryLegacyTx, arbitraryWitnessTx]
+
+-- | Arbitrary Legacy Tx
+arbitraryLegacyTx :: Gen Tx
+arbitraryLegacyTx = do
     v    <- arbitrary
     ni   <- choose (0,5)
     no   <- choose (0,5)
@@ -55,7 +59,20 @@ arbitraryTx = do
     outs <- vectorOf no arbitraryTxOut
     let uniqueInps = nubBy (\a b -> prevOutput a == prevOutput b) inps
     t    <- arbitrary
-    return $ Tx v uniqueInps outs t
+    return $ Tx v uniqueInps outs [] t
+
+-- | Arbitrary Legacy Tx (Witness data is bogus)
+arbitraryWitnessTx :: Gen Tx
+arbitraryWitnessTx = do
+    v    <- arbitrary
+    ni   <- choose (0,5)
+    no   <- choose (0,5)
+    inps <- vectorOf ni arbitraryTxIn
+    outs <- vectorOf no arbitraryTxOut
+    let uniqueInps = nubBy (\a b -> prevOutput a == prevOutput b) inps
+    t    <- arbitrary
+    w    <- vectorOf (length uniqueInps) (listOf arbitraryBS)
+    return $ Tx v uniqueInps outs w t
 
 -- | Arbitrary Tx containing only inputs of type SpendPKHash, SpendScriptHash
 -- (multisig) and outputs of type PayPKHash and PaySH. Only compressed
@@ -68,7 +85,7 @@ arbitraryAddrOnlyTx = do
     inps <- vectorOf ni arbitraryAddrOnlyTxIn
     outs <- vectorOf no arbitraryAddrOnlyTxOut
     t    <- arbitrary
-    return $ Tx v inps outs t
+    return $ Tx v inps outs [] t
 
 -- | Like 'arbitraryAddrOnlyTx' without empty signatures in the inputs
 arbitraryAddrOnlyTxFull :: Gen Tx
@@ -79,7 +96,7 @@ arbitraryAddrOnlyTxFull = do
     inps <- vectorOf ni arbitraryAddrOnlyTxInFull
     outs <- vectorOf no arbitraryAddrOnlyTxOut
     t    <- arbitrary
-    return $ Tx v inps outs t
+    return $ Tx v inps outs [] t
 
 -- | Arbitrary TxIn that can only be of type SpendPKHash or
 -- SpendScriptHash (multisig). Only compressed public keys are used.
@@ -177,7 +194,7 @@ arbitrarySigningData = do
     outs <- vectorOf no arbitraryTxOut
     l    <- arbitrary
     perm <- choose (0, length inps - 1)
-    let tx   = Tx v (permutations inps !! perm) outs l
+    let tx   = Tx v (permutations inps !! perm) outs [] l
         keys = concatMap snd uSigis
     return (tx, map fst uSigis, keys)
 
@@ -190,7 +207,7 @@ arbitraryEmptyTx = do
     ops  <- vectorOf ni arbitraryOutPoint
     t    <- arbitrary
     s    <- arbitrary
-    return $ Tx v (map (\op -> TxIn op BS.empty s) (nub ops)) outs t
+    return $ Tx v (map (\op -> TxIn op BS.empty s) (nub ops)) outs [] t
 
 arbitraryPartialTxs :: Gen ([Tx], [(ScriptOutput, Word64, OutPoint, Int, Int)])
 arbitraryPartialTxs = do

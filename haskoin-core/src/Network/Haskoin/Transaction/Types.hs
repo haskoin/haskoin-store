@@ -13,8 +13,9 @@ module Network.Haskoin.Transaction.Types
 , nullOutPoint
 ) where
 
+import           Control.Applicative           ((<|>))
 import           Control.DeepSeq               (NFData, rnf)
-import           Control.Monad                 (forM_, liftM2, mzero,
+import           Control.Monad                 (forM_, guard, liftM2, mzero,
                                                 replicateM, (<=<))
 import           Data.Aeson                    (FromJSON, ToJSON,
                                                 Value (String), parseJSON,
@@ -25,10 +26,8 @@ import           Data.Hashable                 (Hashable)
 import           Data.Maybe                    (fromMaybe, maybe)
 import           Data.Serialize                (Serialize, decode, encode, get,
                                                 put)
-import           Data.Serialize.Get            (getByteString, getWord32le,
-                                                getWord64le)
-import           Data.Serialize.Put            (putByteString, putWord32le,
-                                                putWord64le)
+import           Data.Serialize.Get
+import           Data.Serialize.Put
 import           Data.String                   (IsString, fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Word                     (Word32, Word64)
@@ -69,6 +68,10 @@ hexToTxHash hex = do
     h <- either (const Nothing) Just (decode bs)
     return $ TxHash h
 
+type WitnessData = [WitnessStack]
+type WitnessStack = [WitnessStackItem]
+type WitnessStackItem = ByteString
+
 -- | Data type representing a bitcoin transaction
 data Tx = Tx
     { -- | Transaction data format version
@@ -77,6 +80,8 @@ data Tx = Tx
     , txIn       :: ![TxIn]
       -- | List of transaction outputs
     , txOut      :: ![TxOut]
+      -- | The witness data for the transaction
+    , txWitness  :: !WitnessData
       -- | The block number or timestamp at which this transaction is locked
     , txLockTime :: !Word32
     } deriving (Eq)
@@ -94,29 +99,83 @@ instance IsString Tx where
         e = error "Could not read transaction from hex string"
 
 instance NFData Tx where
-    rnf (Tx v i o l) = rnf v `seq` rnf i `seq` rnf o `seq` rnf l
+    rnf (Tx v i o w l) = rnf v `seq` rnf i `seq` rnf o `seq` rnf w `seq` rnf l
 
 instance Serialize Tx where
-    get = do
-        v  <- getWord32le
-        is <- replicateList =<< get
-        os <- replicateList =<< get
-        l  <- getWord32le
-        return Tx { txVersion  = v
-                  , txIn       = is
-                  , txOut      = os
-                  , txLockTime = l
-                  }
-      where
-        replicateList (VarInt c) = replicateM (fromIntegral c) get
+    get = parseWitnessTx <|> parseLegacyTx
+    put tx
+        | null (txWitness tx) = putLegacyTx tx
+        | otherwise = putWitnessTx tx
 
-    put (Tx v is os l) = do
-        putWord32le v
-        put $ VarInt $ fromIntegral $ length is
-        forM_ is put
-        put $ VarInt $ fromIntegral $ length os
-        forM_ os put
-        putWord32le l
+putLegacyTx :: Tx -> Put
+putLegacyTx (Tx v is os _ l) = do
+    putWord32le v
+    put $ VarInt $ fromIntegral $ length is
+    forM_ is put
+    put $ VarInt $ fromIntegral $ length os
+    forM_ os put
+    putWord32le l
+
+putWitnessTx :: Tx -> Put
+putWitnessTx (Tx v is os w l) = do
+    putWord32le v
+    putWord8 0x00
+    putWord8 0x01
+    put $ VarInt $ fromIntegral $ length is
+    forM_ is put
+    put $ VarInt $ fromIntegral $ length os
+    forM_ os put
+    putWitnessData w
+    putWord32le l
+
+parseLegacyTx :: Get Tx
+parseLegacyTx = do
+    v <- getWord32le
+    is <- replicateList =<< get
+    os <- replicateList =<< get
+    l <- getWord32le
+    return
+        Tx
+        {txVersion = v, txIn = is, txOut = os, txWitness = [], txLockTime = l}
+  where
+    replicateList (VarInt c) = replicateM (fromIntegral c) get
+
+parseWitnessTx :: Get Tx
+parseWitnessTx = do
+    v <- getWord32le
+    m <- getWord8
+    f <- getWord8
+    guard $ m == 0x00
+    guard $ f == 0x01
+    is <- replicateList =<< get
+    os <- replicateList =<< get
+    w <- parseWitnessData $ length is
+    l <- getWord32le
+    return
+        Tx {txVersion = v, txIn = is, txOut = os, txWitness = w, txLockTime = l}
+  where
+    replicateList (VarInt c) = replicateM (fromIntegral c) get
+
+parseWitnessData :: Int -> Get WitnessData
+parseWitnessData n = replicateM n parseWitnessStack
+  where
+    parseWitnessStack = do
+        VarInt i <- get
+        replicateM (fromIntegral i) parseWitnessStackItem
+    parseWitnessStackItem = do
+        VarInt i <- get
+        getByteString $ fromIntegral i
+
+
+putWitnessData :: WitnessData -> Put
+putWitnessData = mapM_ putWitnessStack
+  where
+    putWitnessStack ws = do
+        put $ VarInt $ fromIntegral $ length ws
+        mapM_ putWitnessStackItem ws
+    putWitnessStackItem bs = do
+        put $ VarInt $ fromIntegral $ BS.length bs
+        putByteString bs
 
 instance FromJSON Tx where
     parseJSON = withText "Tx" $

@@ -255,7 +255,7 @@ maxSeqNum = 0xffffffff -- Perhaps this should be moved to constants.
 -- nLockTimes are 0, all nSequences are max."
 buildCreditTx :: ByteString -> Tx
 buildCreditTx scriptPubKey =
-    Tx 1 [ txI ] [ txO ] 0
+    Tx 1 [ txI ] [ txO ] [] 0
   where
     txO = TxOut { outValue = 0
                 , scriptOutput = scriptPubKey
@@ -271,7 +271,7 @@ buildSpendTx :: ByteString  -- ScriptSig
              -> Tx          -- Creditting Tx
              -> Tx
 buildSpendTx scriptSig creditTx =
-    Tx 1 [ txI ] [ txO ] 0
+    Tx 1 [ txI ] [ txO ] [] 0
   where
     txI = TxIn { prevOutput = OutPoint { outPointHash = txHash creditTx
                                        , outPointIndex = 0

@@ -50,6 +50,8 @@ tests =
         , testProperty "TxOut" $ forAll arbitraryTxOut testId
         , testProperty "OutPoint" $ forAll arbitraryOutPoint testId
         , testProperty "Tx" $ forAll arbitraryTx testId
+        , testProperty "Tx" $ forAll arbitraryWitnessTx testId
+        , testProperty "Tx" $ forAll arbitraryLegacyTx testId
         ]
     , testGroup "Binary encoding and decoding of block types"
         [ testProperty "Block" $ forAll arbitraryBlock testId

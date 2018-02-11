@@ -149,7 +149,7 @@ forkIdScriptSpec =
 
 creditTx :: BS.ByteString -> Word64 -> Tx
 creditTx scriptPubKey val =
-    Tx 1 [txI] [txO] 0
+    Tx 1 [txI] [txO] [] 0
   where
     txO = TxOut {outValue = val, scriptOutput = scriptPubKey}
     txI =
@@ -161,7 +161,7 @@ creditTx scriptPubKey val =
 
 spendTx :: BS.ByteString -> Word64 -> BS.ByteString -> Tx
 spendTx scriptPubKey val scriptSig =
-    Tx 1 [txI] [txO] 0
+    Tx 1 [txI] [txO] [] 0
   where
     txO = TxOut {outValue = val, scriptOutput = BS.empty}
     txI =

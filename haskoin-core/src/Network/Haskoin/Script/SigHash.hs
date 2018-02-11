@@ -135,7 +135,7 @@ txSigHash tx out v i sh
         -- When SigSingle and input index > outputs, then sign integer 1
         fromMaybe one $ do
             newOut <- buildOutputs (txOut tx) i sh
-            let newTx = Tx (txVersion tx) newIn newOut (txLockTime tx)
+            let newTx = Tx (txVersion tx) newIn newOut [] (txLockTime tx)
             return $
                 doubleSHA256 $
                 runPut $ do
