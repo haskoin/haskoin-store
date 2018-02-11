@@ -3,6 +3,8 @@
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Wallet.HTTP.Haskoin
 ( HaskoinService(..)
+, AddressTx(..)
+, mergeAddressTxs
 ) where
 
 import           Control.Arrow                           ((&&&))

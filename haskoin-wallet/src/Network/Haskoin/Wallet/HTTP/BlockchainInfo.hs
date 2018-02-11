@@ -82,7 +82,16 @@ getTxInformation :: [Address] -> IO [TxInformation]
 getTxInformation addrs = do
     v <- httpJsonGet opts url
     let resM = mapM parseTxMovement $ v ^.. key "txs" . values
-    maybe (consoleError $ formatError "Could not parse tx movement") return resM
+        txInfs =
+            fromMaybe
+                (consoleError $ formatError "Could not parse TxInformation")
+                resM
+    forM txInfs $ \txInf ->
+        case txInformationTxHash txInf of
+            Just tid -> do
+                tx <- getTx tid
+                return $ txInformationFillTx tx txInf
+            _ -> return txInf
   where
     url = getURL <> "/multiaddr"
     opts = HTTP.defaults & HTTP.param "active" .~ [toText aList]
@@ -102,8 +111,8 @@ getTxInformation addrs = do
             , txInformationTxSize = Just $ fromIntegral size
             , txInformationOutbound = Map.empty
             , txInformationNonStd = 0
-            , txInformationInbound = Map.map (,Nothing) os
-            , txInformationMyInputs = Map.map (,Nothing) is
+            , txInformationInbound = Map.map (, Nothing) os
+            , txInformationMyInputs = Map.map (, Nothing) is
             , txInformationFee = Just $ fromIntegral fee
             , txInformationHeight = heightM
             , txInformationBlockHash = Nothing
@@ -117,11 +126,11 @@ getTxInformation addrs = do
 getTx :: TxHash -> IO Tx
 getTx tid = do
     bytes <- httpBytesGet opts url
-    maybe err return $ decodeBytes =<< decodeHex bytes
+    maybe (consoleError $ formatError "Could not decode tx") return $
+        decodeBytes =<< decodeHex bytes
   where
     url = getURL <> "/rawtx/" <> toLString (txHashToHex tid)
     opts = HTTP.defaults & HTTP.param "format" .~ ["hex"]
-    err = consoleError $ formatError "Could not decode tx"
 
 broadcastTx :: Tx -> IO ()
 broadcastTx tx = do

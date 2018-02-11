@@ -9,7 +9,7 @@ import           Control.Lens                            ((^..), (^?))
 import           Control.Monad                           (guard)
 import qualified Data.Aeson                              as Json
 import           Data.Aeson.Lens
-import           Data.List                               (sum)
+import           Data.List                               (sum, nub)
 import qualified Data.Map.Strict                         as Map
 import           Foundation
 import           Foundation.Collection
@@ -79,7 +79,16 @@ getTxInformation :: [Address] -> IO [TxInformation]
 getTxInformation addrs = do
     v <- httpJsonGet HTTP.defaults url
     let resM = mapM parseTxMovement $ v ^.. key "items" . values
-    maybe (consoleError $ formatError "Could not parse addrTx") return resM
+        txInfs =
+            fromMaybe
+                (consoleError $ formatError "Could not parse TxInformation")
+                resM
+    forM txInfs $ \txInf ->
+        case txInformationTxHash txInf of
+            Just tid -> do
+                tx <- getTx tid
+                return $ txInformationFillTx tx txInf
+            _ -> return txInf
   where
     url = getURL <> "/addrs/" <> toLString aList <> "/txs"
     aList = intercalate "," $ addrToBase58 <$> addrs
