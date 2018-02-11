@@ -328,7 +328,7 @@ getTx th db s =
     fee is os =
         if any isCoinbase is
             then 0
-            else sum (map detOutValue os) - sum (map detInValue is)
+            else sum (map detInValue is) - sum (map detOutValue os)
     input prevs TxIn {..} =
         if outPointHash prevOutput == zero
             then DetailedCoinbase
