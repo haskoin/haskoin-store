@@ -747,7 +747,7 @@ othAddrs =
 {- Test Helpers -}
 
 testTx :: [(TxHash, Word32)] -> [(Address, Word64)] -> Tx
-testTx xs ys = Tx 1 txi txo 0
+testTx xs ys = Tx 1 txi txo [] 0
   where
     txi =
         fmap
