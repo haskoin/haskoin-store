@@ -77,16 +77,14 @@ withTestStore t f =
             m <- Inbox <$> liftIO newTQueueIO
             db <-
                 RocksDB.open
-                    (w </> "blocks")
+                    w
                     def
                     { RocksDB.createIfMissing = True
-                    , RocksDB.compression = RocksDB.NoCompression
-                    , RocksDB.writeBufferSize = 512 * 1024 * 1024
+                    , RocksDB.compression = RocksDB.SnappyCompression
                     }
             let cfg =
                     StoreConfig
-                    { storeConfDir = w
-                    , storeConfBlocks = b
+                    { storeConfBlocks = b
                     , storeConfSupervisor = s
                     , storeConfChain = c
                     , storeConfListener = (`sendSTM` e)

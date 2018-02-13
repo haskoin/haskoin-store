@@ -10,10 +10,12 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Control
 import qualified Data.ByteString                as BS
+import           Data.Default
 import           Data.Either
 import           Data.Maybe
 import           Data.Serialize
 import           Data.String.Conversions
+import qualified Database.RocksDB               as RocksDB
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
@@ -98,7 +100,9 @@ downloadBlock =
             receiveMatch mbox $ \case
                 ManagerEvent (ManagerConnect p) -> Just p
                 _ -> Nothing
+        $(logInfo) "Getting block"
         peerGetBlocks p [h]
+        $(logInfo) "Got block"
         b <-
             receiveMatch mbox $ \case
                 PeerEvent (p', GotBlock b)
@@ -255,10 +259,17 @@ withTestNode t f = do
         ch <- Inbox <$> liftIO newTQueueIO
         ns <- Inbox <$> liftIO newTQueueIO
         mgr <- Inbox <$> liftIO newTQueueIO
+        db <-
+            RocksDB.open
+                w
+                def
+                { RocksDB.createIfMissing = True
+                , RocksDB.compression = RocksDB.SnappyCompression
+                }
         let cfg =
                 NodeConfig
                 { maxPeers = 20
-                , directory = w
+                , database = db
                 , initPeers = []
                 , discover = True
                 , nodeEvents = (`sendSTM` events)

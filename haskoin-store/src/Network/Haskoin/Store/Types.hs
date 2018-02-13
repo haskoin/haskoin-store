@@ -650,8 +650,7 @@ newtype StoreEvent =
 type StoreSupervisor = Inbox SupervisorMessage
 
 data StoreConfig = StoreConfig
-    { storeConfDir        :: !FilePath
-    , storeConfBlocks     :: !BlockStore
+    { storeConfBlocks     :: !BlockStore
     , storeConfSupervisor :: !StoreSupervisor
     , storeConfManager    :: !Manager
     , storeConfChain      :: !Chain

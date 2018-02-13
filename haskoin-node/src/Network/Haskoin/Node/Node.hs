@@ -19,7 +19,6 @@ import           Data.Text                            (Text)
 import           Network.Haskoin.Node.Chain
 import           Network.Haskoin.Node.Common
 import           Network.Haskoin.Node.Manager
-import           System.FilePath
 
 node ::
        ( MonadBase IO m
@@ -43,7 +42,7 @@ node cfg = do
     peerSup psup = supervisor (Notify deadPeer) psup []
     chCfg =
         ChainConfig
-        { chainConfDbFile = directory cfg </> "headers"
+        { chainConfDB = database cfg
         , chainConfListener = nodeEvents cfg . ChainEvent
         , chainConfManager = nodeManager cfg
         , chainConfChain = nodeChain cfg
@@ -51,7 +50,7 @@ node cfg = do
     mgrCfg psup =
         ManagerConfig
         { mgrConfMaxPeers = maxPeers cfg
-        , mgrConfDir = directory cfg
+        , mgrConfDB = database cfg
         , mgrConfDiscover = discover cfg
         , mgrConfMgrListener = nodeEvents cfg . ManagerEvent
         , mgrConfPeerListener = nodeEvents cfg . PeerEvent

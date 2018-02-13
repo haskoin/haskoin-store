@@ -20,7 +20,6 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
-import           Control.Monad.Trans.Resource
 import qualified Data.ByteString              as BS
 import           Data.Default
 import           Data.Either
@@ -39,8 +38,7 @@ import           Network.Haskoin.Util
 type MonadChain m
      = ( BlockHeaders m
        , MonadLoggerIO m
-       , MonadReader ChainReader m
-       , MonadResource m)
+       , MonadReader ChainReader m)
 
 data ChainState = ChainState
     { syncingPeer :: !(Maybe Peer)
@@ -54,16 +52,16 @@ data ChainReader = ChainReader
     , chainState :: !(TVar ChainState)
     }
 
-instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) =>
+instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m) =>
          BlockHeaders m where
     addBlockHeader bn = do
         db <- asks headerDB
         let bs = encode bn
-            sh = encode $ headerHash $ nodeHeader bn
+            sh = 0x90 `BS.cons` encode (headerHash (nodeHeader bn))
         RocksDB.put db def sh bs
     getBlockHeader bh = do
         db <- asks headerDB
-        let sh = encode bh
+        let sh = 0x90 `BS.cons` encode bh
         bsM <- RocksDB.get db def sh
         return $
             fromRight (error "Could not decode block header") . decode <$> bsM
@@ -71,7 +69,7 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
         best <-
             runMaybeT $ do
                 db <- asks headerDB
-                bs <- MaybeT (RocksDB.get db def "best")
+                bs <- MaybeT (RocksDB.get db def (BS.singleton 0x91))
                 MaybeT (return (eitherToMaybe (decode bs)))
         case best of
             Nothing -> do
@@ -82,16 +80,15 @@ instance (Monad m, MonadLoggerIO m, MonadReader ChainReader m, MonadResource m) 
     setBestBlockHeader bn = do
         db <- asks headerDB
         let bs = encode bn
-        RocksDB.put db def "best" bs
+        RocksDB.put db def (BS.singleton 0x91) bs
     addBlockHeaders bns = do
         db <- asks headerDB
-        RocksDB.write db def $
-            map
-                (\bn ->
-                     RocksDB.Put
-                         (encode $ headerHash $ nodeHeader bn)
-                         (encode bn))
-                bns
+        RocksDB.write db def (map f bns)
+      where
+        f bn =
+            RocksDB.Put
+                (0x90 `BS.cons` encode (headerHash (nodeHeader bn)))
+                (encode bn)
 
 chain ::
        ( MonadBase IO m
@@ -104,29 +101,23 @@ chain ::
        )
     => ChainConfig
     -> m ()
-chain cfg =
-    runResourceT $ do
-        let opts =
-                def
-                { RocksDB.createIfMissing = True
-                , RocksDB.compression = RocksDB.NoCompression
-                }
-        hdb <- RocksDB.open (chainConfDbFile cfg) opts
-        st <-
-            liftIO $
-            newTVarIO
-                ChainState
-                {syncingPeer = Nothing, mySynced = False, newPeers = []}
-        let rd = ChainReader {myConfig = cfg, headerDB = hdb, chainState = st}
-        run `runReaderT` rd
+chain cfg = do
+    st <-
+        liftIO $
+        newTVarIO
+            ChainState {syncingPeer = Nothing, mySynced = False, newPeers = []}
+    let rd =
+            ChainReader
+            {myConfig = cfg, headerDB = chainConfDB cfg, chainState = st}
+    run `runReaderT` rd
   where
     run = do
         let gs = encode genesisNode
         db <- asks headerDB
-        m <- RocksDB.get db def "best"
+        m <- RocksDB.get db def (BS.singleton 0x91)
         when (isNothing m) $ do
             addBlockHeader genesisNode
-            RocksDB.put db def "best" gs
+            RocksDB.put db def (BS.singleton 0x91) gs
         forever $ do
             msg <- receive $ chainConfChain cfg
             processChainMessage msg
@@ -157,7 +148,7 @@ processChainMessage (ChainNewHeaders p hcs) = do
                         liftIO . atomically . modifyTVar stb $ \s ->
                             s {syncingPeer = Nothing}
                         processSyncQueue
-                    | otherwise -> do
+                    | otherwise ->
                         liftIO . atomically . modifyTVar stb $ \s ->
                             s {newPeers = nub $ p : newPeers s}
   where
@@ -266,8 +257,7 @@ processSyncQueue = do
                         liftIO . atomically $ do
                             l $ ChainNotSynced bb
                             writeTVar st s {mySynced = False}
-            p:_ -> do
-                syncHeaders bb p
+            p:_ -> syncHeaders bb p
 
 syncHeaders :: MonadChain m => BlockNode -> Peer -> m ()
 

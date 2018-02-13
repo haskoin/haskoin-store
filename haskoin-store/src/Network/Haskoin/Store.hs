@@ -52,8 +52,6 @@ import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
 import           Network.Socket              (SockAddr (..))
-import           System.Directory
-import           System.FilePath
 
 type MonadStore m
      = ( MonadBase IO m
@@ -67,7 +65,6 @@ data StoreRead = StoreRead
     , myBlockStore :: !BlockStore
     , myChain      :: !Chain
     , myManager    :: !Manager
-    , myDir        :: !FilePath
     , myListener   :: !(Listen StoreEvent)
     }
 
@@ -77,14 +74,12 @@ store ::
     -> m ()
 store StoreConfig {..} = do
     $(logInfo) $ logMe <> "Launching store"
-    let nodeDir = storeConfDir </> "node"
-    liftIO $ createDirectoryIfMissing False nodeDir
     ns <- Inbox <$> liftIO newTQueueIO
     sm <- Inbox <$> liftIO newTQueueIO
     let nodeCfg =
             NodeConfig
             { maxPeers = storeConfMaxPeers
-            , directory = nodeDir
+            , database = storeConfDB
             , initPeers = storeConfInitPeers
             , discover = storeConfDiscover
             , nodeEvents = (`sendSTM` sm)
@@ -98,7 +93,6 @@ store StoreConfig {..} = do
             , myBlockStore = storeConfBlocks
             , myChain = storeConfChain
             , myManager = storeConfManager
-            , myDir = storeConfDir
             , myListener = storeConfListener
             }
     let blockCfg = BlockConfig

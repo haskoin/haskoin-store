@@ -206,7 +206,7 @@ main =
         supervisor
             KillAll
             s
-            [runWeb (configPort conf) db mgr, runStore conf mgr wdir b db]
+            [runWeb (configPort conf) db mgr, runStore conf mgr b db]
   where
     opts =
         info
@@ -278,14 +278,13 @@ main =
             get "/dbstats" $
                 RocksDB.getProperty db RocksDB.Stats >>= text . cs . fromJust
             notFound $ raise NotFound
-    runStore conf mgr wdir b db =
+    runStore conf mgr b db =
         runStderrLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
             c <- Inbox <$> liftIO newTQueueIO
             let cfg =
                     StoreConfig
-                    { storeConfDir = wdir
-                    , storeConfBlocks = b
+                    { storeConfBlocks = b
                     , storeConfSupervisor = s
                     , storeConfChain = c
                     , storeConfManager = mgr

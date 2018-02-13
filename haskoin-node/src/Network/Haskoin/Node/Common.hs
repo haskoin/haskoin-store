@@ -10,7 +10,6 @@ import           Control.Exception.Lifted
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
-import           Data.Bits
 import           Data.Hashable
 import           Data.Maybe
 import           Data.String.Conversions
@@ -18,6 +17,7 @@ import           Data.Text                            (Text)
 import           Data.Time.Clock
 import           Data.Time.Clock.POSIX
 import           Data.Word
+import           Database.RocksDB                     (DB)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Network
@@ -64,7 +64,7 @@ instance Mailbox UniqueInbox where
 
 data NodeConfig = NodeConfig
     { maxPeers       :: !Int
-    , directory      :: !FilePath
+    , database       :: !DB
     , initPeers      :: ![HostPort]
     , discover       :: !Bool
     , nodeEvents     :: !(Listen NodeEvent)
@@ -76,7 +76,7 @@ data NodeConfig = NodeConfig
 
 data ManagerConfig = ManagerConfig
     { mgrConfMaxPeers       :: !Int
-    , mgrConfDir            :: !FilePath
+    , mgrConfDB             :: !DB
     , mgrConfPeers          :: ![HostPort]
     , mgrConfDiscover       :: !Bool
     , mgrConfMgrListener    :: !(Listen ManagerEvent)
@@ -119,7 +119,7 @@ data ManagerMessage
     | PeerStopped !(Async (), Either SomeException ())
 
 data ChainConfig = ChainConfig
-    { chainConfDbFile   :: !FilePath
+    { chainConfDB       :: !DB
     , chainConfListener :: !(Listen ChainEvent)
     , chainConfManager  :: !Manager
     , chainConfChain    :: !Chain
