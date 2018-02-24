@@ -317,10 +317,10 @@ getTx th db s =
             DetailedTx
             { detailedTxData = txValue
             , detailedTxFee = fee is os
-            , detailedTxBlock = txValueBlock
+            , detailedTxBlock = Just txValueBlock
             , detailedTxInputs = is
             , detailedTxOutputs = os
-            , detailedTxPos = txPos
+            , detailedTxPos = Just txPos
             }
   where
     fee is os =
@@ -341,8 +341,8 @@ getTx th db s =
                     , detInSigScript = scriptInput
                     , detInPkScript = BSS.fromShort prevOutScript
                     , detInValue = prevOutValue
-                    , detInBlock = prevOutBlock
-                    , detInPos = prevOutPos
+                    , detInBlock = Just prevOutBlock
+                    , detInPos = Just prevOutPos
                     }
     output OutPoint {..} Output {..} =
         DetailedOutput
@@ -528,7 +528,8 @@ addrOutputOps main op@OutPoint {..} out@Output {..} =
         case outSpender of
             Nothing -> False
             Just spender ->
-                blockRefHash (spenderBlock spender) == blockRefHash outBlock
+                blockRefHash (fromJust (spenderBlock spender)) ==
+                blockRefHash outBlock
     unspent = out {outSpender = Nothing}
     maybeKey = do
         addr <- scriptToAddressBS outScript
@@ -563,7 +564,8 @@ outputOps main op@OutPoint {..} v@Output {..}
         case outSpender of
             Nothing -> False
             Just spender ->
-                blockRefHash (spenderBlock spender) == blockRefHash outBlock
+                blockRefHash (fromJust (spenderBlock spender)) ==
+                blockRefHash outBlock
 
 balanceOps ::
        MonadBlock m => Bool -> AddressMap -> m [RocksDB.BatchOp]
@@ -754,8 +756,8 @@ getSpentOutputs block pos prevMap tx =
                          Spender
                          { spenderHash = txHash tx
                          , spenderIndex = i
-                         , spenderBlock = block
-                         , spenderPos = pos
+                         , spenderBlock = Just block
+                         , spenderPos = Just pos
                          }
                      unspent = prevOutToOutput prev
                      spent = unspent {outSpender = Just spender}
@@ -873,8 +875,8 @@ getAddrsTxs addrs db s =
                 { addressTxAddress = addrOutputAddress
                 , addressTxId = outPointHash addrOutPoint
                 , addressTxAmount = fromIntegral outputValue
-                , addressTxBlock = outBlock
-                , addressTxPos = outPos
+                , addressTxBlock = Just outBlock
+                , addressTxPos = Just outPos
                 , addressTxVout = outPointIndex addrOutPoint
                 }
                 | (AddrOutputKey {..}, Output {..}) <- us
@@ -884,8 +886,8 @@ getAddrsTxs addrs db s =
                 { addressTxAddress = addrOutputAddress
                 , addressTxId = outPointHash addrOutPoint
                 , addressTxAmount = fromIntegral outputValue
-                , addressTxBlock = outBlock
-                , addressTxPos = outPos
+                , addressTxBlock = Just outBlock
+                , addressTxPos = Just outPos
                 , addressTxVout = outPointIndex addrOutPoint
                 }
                 | (AddrOutputKey {..}, Output {..}) <- ss
@@ -920,13 +922,13 @@ getUnspent addr db s = do
   where
     toUnspent AddrOutputKey {..} Output {..} =
         Unspent
-        { unspentAddress = addrOutputAddress
+        { unspentAddress = Just addrOutputAddress
         , unspentPkScript = outScript
         , unspentTxId = outPointHash addrOutPoint
         , unspentIndex = outPointIndex addrOutPoint
         , unspentValue = outputValue
-        , unspentBlock = outBlock
-        , unspentPos = outPos
+        , unspentBlock = Just outBlock
+        , unspentPos = Just outPos
         }
 
 logMe :: Text
