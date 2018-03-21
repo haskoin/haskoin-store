@@ -16,7 +16,8 @@ module Network.Haskoin.Store
     , AddressTx(..)
     , Unspent(..)
     , AddressBalance(..)
-    , BroadcastExcept(..)
+    , MempoolException(..)
+    , SentTx(..)
     , store
     , getBestBlock
     , getBlockAtHeight
@@ -132,30 +133,9 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
 storeDispatch (PeerEvent _) = return ()
 
 postTransaction ::
-       MonadIO m => DB -> Manager -> NewTx -> m (Either BroadcastExcept SentTx)
-postTransaction db mgr (NewTx tx) =
-    runExceptT $ do
-        outputs <-
-            forM (txIn tx) $ \TxIn {..} -> do
-                Output {..} <-
-                    getOutput prevOutput db Nothing >>= \case
-                        Nothing -> throwError InputNotFound
-                        Just out@Output {..}
-                            | isJust outSpender -> throwError InputSpent
-                            | otherwise -> return out
-                pkScript <-
-                    case decodeOutputBS outScript of
-                        Left _         -> throwError NonStandard
-                        Right pkScript -> return pkScript
-                return (pkScript, outputValue, prevOutput)
-        let inVal = sum $ map (\(_, val, _) -> val) outputs
-            outVal = sum $ map outValue (txOut tx)
-        when (outVal > inVal) $ throwError NotEnoughCoins
-        unless (verifyStdTx tx outputs) $ throwError BadSignature
-        peers <- managerGetPeers mgr
-        when (null peers) $ throwError NoPeers
-        forM_ peers $ sendMessage (MTx tx)
-        return (SentTx (txHash tx))
+       MonadIO m => DB -> Mempool -> Tx -> m (Maybe MempoolException)
+postTransaction db mem tx = do
+    SendTx tx `query` mem
 
 logMe :: Text
 logMe = "[Store] "

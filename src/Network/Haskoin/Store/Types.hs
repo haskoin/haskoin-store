@@ -32,14 +32,10 @@ import           Network.Haskoin.Util
 
 data MempoolException
     = DoubleSpend
-    | OutputNotFound
+    | InvalidOutput
+    | OrphanTx
     | OverSpend
-    | BadSignature
-    | NonStandard
-    | InputSpent
-    | InputNotFound
-    | NotEnoughCoins
-    | BroadcastNoPeers
+    | NoPeers
     deriving (Show, Eq, Ord)
 
 instance Exception MempoolException
@@ -71,21 +67,11 @@ data BlockMessage
     | BlockNotReceived !Peer
                        !BlockHash
     | BlockProcess
-
-data MempoolMessage
-    = TxAvailable { txAvailable     :: !TxHash
-                  , txAvailablePeer :: !Peer }
-    | TxReceived { txReceived :: !Tx }
-    | TxDelete { txDelete :: !TxHash }
-    | TxRejected { txRejected     :: !TxHash
-                 , txRejectReason :: !TxReject
-                 , txRejectPeer   :: !Peer }
-    | PongReceived { pongReceived     :: !Word64
-                   , pongReceivedPeer :: !Peer }
-    | GetAddressTxs { addrTxsAddress :: !Address
-                    , addrTxsReply   :: !(Reply [DetailedTx]) }
-    | GetMempoolTx { getMempoolTxId    :: !TxHash
-                   , getMempoolTxReply :: !(Reply (Maybe DetailedTx)) }
+    | TxAvailable !Peer !TxHash
+    | TxReceived !Tx
+    | TxRejected !Peer !TxReject !TxHash
+    | PongReceived !Peer !Word64
+    | SendTx !Tx !(Reply (Maybe MempoolException))
 
 data TxReject
     = RejectInvalidTx
@@ -105,7 +91,7 @@ data MultiAddrOutputKey = MultiAddrOutputKey
 data AddrOutputKey = AddrOutputKey
     { addrOutputSpent   :: !Bool
     , addrOutputAddress :: !Address
-    , addrOutputHeight  :: !BlockHeight
+    , addrOutputHeight  :: !(Maybe BlockHeight)
     , addrOutPoint      :: !OutPoint
     } deriving (Show, Eq, Ord)
 
@@ -122,7 +108,13 @@ data BlockRef = BlockRef
     { blockRefHash      :: !BlockHash
     , blockRefHeight    :: !BlockHeight
     , blockRefMainChain :: !Bool
-    } deriving (Show, Eq, Ord)
+    , blockRefPos       :: !Word32
+    } deriving (Show, Eq)
+
+instance Ord BlockRef where
+    compare = compare `on` f
+      where
+        f BlockRef {..} = (blockRefHeight, blockRefPos)
 
 data DetailedTx = DetailedTx
     { detailedTxData    :: !Tx
@@ -130,7 +122,6 @@ data DetailedTx = DetailedTx
     , detailedTxInputs  :: ![DetailedInput]
     , detailedTxOutputs :: ![DetailedOutput]
     , detailedTxBlock   :: !(Maybe BlockRef)
-    , detailedTxPos     :: !(Maybe Word32)
     } deriving (Show, Eq, Ord)
 
 data DetailedInput
@@ -142,8 +133,7 @@ data DetailedInput
                     , detInSigScript :: !ByteString
                     , detInPkScript  :: !ByteString
                     , detInValue     :: !Word64
-                    , detInBlock     :: !(Maybe BlockRef)
-                    , detInPos       :: !(Maybe Word32) }
+                    , detInBlock     :: !(Maybe BlockRef) }
     deriving (Show, Eq, Ord)
 
 isCoinbase :: DetailedInput -> Bool
@@ -162,11 +152,11 @@ data AddressBalance = AddressBalance
     , addressBalTxCount      :: !Word64
     , addressBalUnspentCount :: !Word64
     , addressBalSpentCount   :: !Word64
+    , addressBalUnconfirmed  :: !Word64
     } deriving (Show, Eq, Ord)
 
 data TxRecord = TxRecord
-    { txValueBlock    :: !BlockRef
-    , txPos           :: !Word32
+    { txValueBlock    :: !(Maybe BlockRef)
     , txValue         :: !Tx
     , txValuePrevOuts :: [(OutPoint, PrevOut)]
     } deriving (Show, Eq, Ord)
@@ -177,15 +167,13 @@ newtype OutputKey = OutputKey
 
 data PrevOut = PrevOut
     { prevOutValue  :: !Word64
-    , prevOutBlock  :: !BlockRef
-    , prevOutPos    :: !Word32
+    , prevOutBlock  :: !(Maybe BlockRef)
     , prevOutScript :: !ShortByteString
     } deriving (Show, Eq, Ord)
 
 data Output = Output
     { outputValue :: !Word64
-    , outBlock    :: !BlockRef
-    , outPos      :: !Word32
+    , outBlock    :: !(Maybe BlockRef)
     , outScript   :: !ByteString
     , outSpender  :: !(Maybe Spender)
     } deriving (Show, Eq, Ord)
@@ -195,7 +183,6 @@ outputToPrevOut Output {..} =
     PrevOut
     { prevOutValue = outputValue
     , prevOutBlock = outBlock
-    , prevOutPos = outPos
     , prevOutScript = BSS.toShort outScript
     }
 
@@ -204,7 +191,6 @@ prevOutToOutput PrevOut {..} =
     Output
     { outputValue = prevOutValue
     , outBlock = prevOutBlock
-    , outPos = prevOutPos
     , outScript = BSS.fromShort prevOutScript
     , outSpender = Nothing
     }
@@ -213,7 +199,6 @@ data Spender = Spender
     { spenderHash  :: !TxHash
     , spenderIndex :: !Word32
     , spenderBlock :: !(Maybe BlockRef)
-    , spenderPos   :: !(Maybe Word32)
     } deriving (Show, Eq, Ord)
 
 newtype BaseTxKey =
@@ -260,27 +245,20 @@ data AddressTx
                   , addressTxId      :: !TxHash
                   , addressTxAmount  :: !Int64
                   , addressTxBlock   :: !(Maybe BlockRef)
-                  , addressTxPos     :: !(Maybe Word32)
                   , addressTxVin     :: !Word32 }
     | AddressTxOut { addressTxAddress :: !Address
                    , addressTxId      :: !TxHash
                    , addressTxAmount  :: !Int64
                    , addressTxBlock   :: !(Maybe BlockRef)
-                   , addressTxPos     :: !(Maybe Word32)
                    , addressTxVout    :: !Word32 }
     deriving (Eq, Show)
 
 instance Ord AddressTx where
     compare = compare `on` f
+        -- Transactions in mempool should be greater than those in a block
       where
-        f AddressTxIn {..} =
-            let h = maybe maxBound blockRefHeight addressTxBlock
-                p = fromMaybe maxBound addressTxPos
-            in (h, p, False)
-        f AddressTxOut {..} =
-            let h = maybe maxBound blockRefHeight addressTxBlock
-                p = fromMaybe maxBound addressTxPos
-            in (h, p, True)
+        f AddressTxIn {..} = (isNothing addressTxBlock, addressTxBlock, False)
+        f AddressTxOut {..} = (isNothing addressTxBlock, addressTxBlock, True)
 
 data Unspent = Unspent
     { unspentAddress  :: !(Maybe Address)
@@ -289,16 +267,13 @@ data Unspent = Unspent
     , unspentIndex    :: !Word32
     , unspentValue    :: !Word64
     , unspentBlock    :: !(Maybe BlockRef)
-    , unspentPos      :: !(Maybe Word32)
     } deriving (Eq, Show)
 
 instance Ord Unspent where
     compare = compare `on` f
+        -- Transactions in mempool should be greater than those in a block
       where
-        f Unspent {..} =
-            let h = maybe maxBound blockRefHeight unspentBlock
-                p = fromMaybe maxBound unspentPos
-            in (h, p, unspentIndex)
+        f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
 
 instance Record BlockKey BlockValue
 instance Record TxKey TxRecord
@@ -339,7 +314,7 @@ instance Serialize AddrOutputKey where
             then putWord8 0x03
             else putWord8 0x05
         put addrOutputAddress
-        put (maxBound - addrOutputHeight)
+        put (maxBound - fromMaybe 0 addrOutputHeight)
         put addrOutPoint
     get = do
         addrOutputSpent <-
@@ -348,7 +323,8 @@ instance Serialize AddrOutputKey where
                 0x05 -> return False
                 _ -> mzero
         addrOutputAddress <- get
-        addrOutputHeight <- (maxBound -) <$> get
+        h <- (maxBound -) <$> get
+        let addrOutputHeight = if h == maxBound then Nothing else Just h
         addrOutPoint <- get
         return AddrOutputKey {..}
 
@@ -391,12 +367,10 @@ instance Serialize Spender where
         put spenderHash
         put spenderIndex
         put spenderBlock
-        put spenderPos
     get = do
         spenderHash <- get
         spenderIndex <- get
         spenderBlock <- get
-        spenderPos <- get
         return Spender {..}
 
 instance Serialize OutputKey where
@@ -417,13 +391,11 @@ instance Serialize PrevOut where
     put PrevOut {..} = do
         put prevOutValue
         put prevOutBlock
-        put prevOutPos
         put (BSS.length prevOutScript)
         putShortByteString prevOutScript
     get = do
         prevOutValue <- get
         prevOutBlock <- get
-        prevOutPos <- get
         prevOutScript <- getShortByteString =<< get
         return PrevOut {..}
 
@@ -432,14 +404,12 @@ instance Serialize Output where
         putWord8 0x01
         put outputValue
         put outBlock
-        put outPos
         put outScript
         put outSpender
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
-        outPos <- get
         outScript <- get
         outSpender <- get
         return Output {..}
@@ -449,23 +419,23 @@ instance Serialize BlockRef where
         put blockRefHash
         put blockRefHeight
         put blockRefMainChain
+        put blockRefPos
     get = do
         blockRefHash <- get
         blockRefHeight <- get
         blockRefMainChain <- get
+        blockRefPos <- get
         return BlockRef {..}
 
 instance Serialize TxRecord where
     put TxRecord {..} = do
         putWord8 0x00
         put txValueBlock
-        put txPos
         put txValue
         put txValuePrevOuts
     get = do
         guard . (== 0x00) =<< getWord8
         txValueBlock <- get
-        txPos <- get
         txValue <- get
         txValuePrevOuts <- get
         return TxRecord {..}
@@ -518,13 +488,15 @@ instance ToJSON Spender where
 blockRefPairs :: KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
     if blockRefMainChain
-        then ["block" .= blockRefHash, "height" .= blockRefHeight]
+        then [ "block" .= blockRefHash
+             , "height" .= blockRefHeight
+             , "pos" .= blockRefPos
+             ]
         else []
 
 spenderPairs :: KeyValue kv => Spender -> [kv]
 spenderPairs Spender {..} =
     ["txid" .= spenderHash, "vin" .= spenderIndex] ++
-    maybe [] (\p -> ["pos" .= p]) spenderPos ++
     maybe [] blockRefPairs spenderBlock
 
 scriptAddress :: KeyValue kv => ByteString -> [kv]
@@ -555,7 +527,6 @@ detailedInputPairs DetailedInput {..} =
     , "pkscript" .= String (cs (encodeHex detInPkScript))
     , "value" .= detInValue
     ] ++
-    maybe [] (\p -> ["pos" .= p]) detInPos ++
     scriptAddress detInPkScript ++ maybe [] blockRefPairs detInBlock
 detailedInputPairs DetailedCoinbase {..} =
     [ "txid" .= outPointHash detInOutPoint
@@ -580,7 +551,6 @@ detailedTxPairs DetailedTx {..} =
     , "vout" .= detailedTxOutputs
     , "hex" .= String (cs (encodeHex (S.encode detailedTxData)))
     ] ++
-    maybe [] (\p -> ["pos" .= p]) detailedTxPos ++
     maybe [] blockRefPairs detailedTxBlock
 
 instance ToJSON DetailedTx where
@@ -598,7 +568,6 @@ addrTxPairs AddressTxIn {..} =
     , "amount" .= addressTxAmount
     , "vin" .= addressTxVin
     ] ++
-    maybe [] (\p -> ["pos" .= p]) addressTxPos ++
     maybe [] blockRefPairs addressTxBlock
 addrTxPairs AddressTxOut {..} =
     [ "address" .= addressTxAddress
@@ -606,7 +575,6 @@ addrTxPairs AddressTxOut {..} =
     , "amount" .= addressTxAmount
     , "vout" .= addressTxVout
     ] ++
-    maybe [] (\p -> ["pos" .= p]) addressTxPos ++
     maybe [] blockRefPairs addressTxBlock
 
 instance ToJSON AddressTx where
@@ -621,7 +589,6 @@ unspentPairs Unspent {..} =
     , "value" .= unspentValue
     ] ++
     maybe [] (\a -> ["address" .= a]) unspentAddress ++
-    maybe [] (\p -> ["pos" .= p]) unspentPos ++
     maybe [] blockRefPairs unspentBlock
 
 instance ToJSON Unspent where

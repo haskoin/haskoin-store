@@ -14,6 +14,8 @@ import           Data.Aeson                  (ToJSON (..), Value (..), object,
 import           Data.Bits
 import           Data.Default                (def)
 import           Data.Maybe
+import           Data.Monoid
+import           Data.Serialize              (decodeLazy)
 import           Data.String.Conversions
 import qualified Data.Text                   as T
 import qualified Database.RocksDB            as RocksDB
@@ -253,27 +255,29 @@ main =
                 addresses <- param "addresses"
                 getBalances addresses db Nothing >>= json
             post "/transaction" $ do
-                txHex <- jsonData
-                postTransaction db mgr txHex >>= \case
-                    Left NonStandard -> do
+                te <- decodeLazy <$> body
+                case te of
+                    Left _ -> do
                         status status400
-                        json (UserError "Non-standard output")
-                    Left InputSpent -> do
-                        status status400
-                        json (UserError "Input already spent")
-                    Left BadSignature -> do
-                        status status400
-                        json (UserError "Invalid signature")
-                    Left InputNotFound -> do
-                        status status400
-                        json (UserError "Input not found")
-                    Left NotEnoughCoins -> do
-                        status status400
-                        json (UserError "Not enough coins")
-                    Left NoPeers -> do
-                        status status500
-                        json (UserError "No peers connected")
-                    Right j -> json j
+                        json (UserError "Invalid transaction")
+                    Right tx ->
+                        postTransaction db mem tx >>= \case
+                            Just DoubleSpend -> do
+                                status status400
+                                json (UserError "Input already spent")
+                            Just InvalidOutput -> do
+                                status status400
+                                json (UserError "Invalid previous output")
+                            Just OrphanTx -> do
+                                status status400
+                                json (UserError "Unknown previous output")
+                            Just OverSpend -> do
+                                status status400
+                                json (UserError "Spends excessive amount")
+                            Just NoPeers -> do
+                                status status500
+                                json (UserError "No peers connected")
+                            Nothing -> json (SentTx (txHash tx))
             get "/dbstats" $
                 RocksDB.getProperty db RocksDB.Stats >>= text . cs . fromJust
             notFound $ raise NotFound
