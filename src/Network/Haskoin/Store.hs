@@ -32,7 +32,7 @@ module Network.Haskoin.Store
     , getUnspents
     , getBalance
     , getBalances
-    , postTransaction
+    -- , postTransaction
     ) where
 
 import           Control.Concurrent.NQE
@@ -132,10 +132,10 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
 
 storeDispatch (PeerEvent _) = return ()
 
-postTransaction ::
-       MonadIO m => DB -> Mempool -> Tx -> m (Maybe MempoolException)
-postTransaction db mem tx = do
-    SendTx tx `query` mem
+-- postTransaction ::
+--        MonadIO m => DB -> Mempool -> Tx -> m (Maybe MempoolException)
+-- postTransaction db mem tx = do
+--     SendTx tx `query` mem
 
 logMe :: Text
 logMe = "[Store] "

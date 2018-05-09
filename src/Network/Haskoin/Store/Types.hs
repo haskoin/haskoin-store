@@ -67,8 +67,7 @@ data BlockMessage
     | BlockNotReceived !Peer
                        !BlockHash
     | BlockProcess
-    | TxAvailable !Peer !TxHash
-    | TxReceived !Tx
+    | TxReceived !Peer !Tx
     | TxRejected !Peer !TxReject !TxHash
     | PongReceived !Peer !Word64
     | SendTx !Tx !(Reply (Maybe MempoolException))
@@ -149,10 +148,10 @@ data DetailedOutput = DetailedOutput
 data AddressBalance = AddressBalance
     { addressBalAddress      :: !Address
     , addressBalConfirmed    :: !Word64
+    , addressBalUnconfirmed  :: !Word64
     , addressBalTxCount      :: !Word64
     , addressBalUnspentCount :: !Word64
     , addressBalSpentCount   :: !Word64
-    , addressBalUnconfirmed  :: !Word64
     } deriving (Show, Eq, Ord)
 
 data TxRecord = TxRecord
@@ -233,9 +232,10 @@ newtype BalanceKey = BalanceKey
 
 data Balance = Balance
     { balanceValue       :: !Word64
-    , balanceTxCount     :: !Word64
+    , balanceUnconfirmed :: !Word64
     , balanceOutputCount :: !Word64
     , balanceSpentCount  :: !Word64
+    , balanceMempoolTxs  :: ![TxHash]
     } deriving (Show, Eq, Ord)
 
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
@@ -255,7 +255,8 @@ data AddressTx
 
 instance Ord AddressTx where
     compare = compare `on` f
-        -- Transactions in mempool should be greater than those in a block
+        -- Transactions in mempool should be greater than those in a block.
+        -- Outputs must be greater than inputs.
       where
         f AddressTxIn {..} = (isNothing addressTxBlock, addressTxBlock, False)
         f AddressTxOut {..} = (isNothing addressTxBlock, addressTxBlock, True)
@@ -275,6 +276,10 @@ instance Ord Unspent where
       where
         f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
 
+newtype MempoolSpent = MempoolSpent
+    { mempoolSpent :: OutputKey
+    } deriving (Show, Eq, Ord)
+
 instance Record BlockKey BlockValue
 instance Record TxKey TxRecord
 instance Record HeightKey BlockHash
@@ -285,6 +290,15 @@ instance Record AddrOutputKey Output
 instance Record BalanceKey Balance
 instance MultiRecord MultiAddrOutputKey AddrOutputKey Output
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
+
+instance Serialize MempoolSpent where
+    put MempoolSpent {..} = do
+        putWord8 0x06
+        put mempoolSpent
+    get = do
+        guard . (== 0x06) =<< getWord8
+        mempoolSpent <- get
+        return MempoolSpent {..}
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
@@ -298,14 +312,16 @@ instance Serialize BalanceKey where
 instance Serialize Balance where
     put Balance {..} = do
         put balanceValue
-        put balanceTxCount
+        put balanceUnconfirmed
         put balanceOutputCount
         put balanceSpentCount
+        put balanceMempoolTxs
     get = do
         balanceValue <- get
-        balanceTxCount <- get
+        balanceUnconfirmed <- get
         balanceOutputCount <- get
         balanceSpentCount <- get
+        balanceMempoolTxs <- get
         return Balance {..}
 
 instance Serialize AddrOutputKey where
@@ -599,13 +615,14 @@ addressBalancePairs :: KeyValue kv => AddressBalance -> [kv]
 addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "confirmed" .= addressBalConfirmed
+    , "unconfirmed" .= addressBalUnconfirmed
     , "transactions" .= addressBalTxCount
     , "unspent" .= addressBalUnspentCount
     , "spent" .= addressBalSpentCount
     ]
 
 instance FromJSON NewTx where
-    parseJSON = withObject "Transaction" $ \v -> NewTx <$> v .: "transaction"
+    parseJSON = withObject "transaction" $ \v -> NewTx <$> v .: "transaction"
 
 instance ToJSON SentTx where
     toJSON (SentTx txid) = object ["txid" .= txid]
