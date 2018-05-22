@@ -446,7 +446,9 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty, S.empty)
                         Just a -> getBalance a >>= putBalance a . removeOutput o
                 delTx
 
-blockOutBal :: 
+blockOutBal ::
+       MonadIO m => BlockHash -> DB -> Snapshot -> m (OutputMap, AddressMap)
+blockOutBal bh db s = undefined
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
