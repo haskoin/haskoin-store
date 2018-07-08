@@ -50,7 +50,7 @@ Full blockchain index & store supporting:
 - UTXO cache for faster indexing
 - RESTful endpoints for blockchain data
 
-[API Documentation and example server](https://app.swaggerhub.com/apis/haskoin/blockchain-api/0.0.1)
+[API Documentation and example server](https://app.swaggerhub.com/apis/haskoin/blockchain-api/0.0.1-oas3)
 
 ## Installation Instructions
 
