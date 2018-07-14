@@ -148,10 +148,7 @@ data DetailedOutput = DetailedOutput
 data AddressBalance = AddressBalance
     { addressBalAddress      :: !Address
     , addressBalConfirmed    :: !Word64
-    , addressBalUnconfirmed  :: !Word64
-    , addressBalTxCount      :: !Word64
-    , addressBalUnspentCount :: !Word64
-    , addressBalSpentCount   :: !Word64
+    , addressBalUnconfirmed  :: !Int64
     } deriving (Show, Eq, Ord)
 
 data TxRecord = TxRecord
@@ -232,7 +229,7 @@ newtype BalanceKey = BalanceKey
 
 data Balance = Balance
     { balanceValue       :: !Word64
-    , balanceUnconfirmed :: !Word64
+    , balanceUnconfirmed :: !Int64
     , balanceOutputCount :: !Word64
     , balanceSpentCount  :: !Word64
     , balanceMempoolTxs  :: ![TxHash]
@@ -616,9 +613,6 @@ addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "confirmed" .= addressBalConfirmed
     , "unconfirmed" .= addressBalUnconfirmed
-    , "transactions" .= addressBalTxCount
-    , "unspent" .= addressBalUnspentCount
-    , "spent" .= addressBalSpentCount
     ]
 
 instance FromJSON NewTx where

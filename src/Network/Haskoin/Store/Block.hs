@@ -215,10 +215,6 @@ getBalance addr db s =
                 AddressBalance
                 { addressBalAddress = addr
                 , addressBalConfirmed = balanceValue
-                , addressBalTxCount = balanceTxCount
-                , addressBalUnspentCount =
-                      balanceOutputCount - balanceSpentCount
-                , addressBalSpentCount = balanceSpentCount
                 , addressBalUnconfirmed = balanceUnconfirmed
                 }
         Nothing ->
@@ -226,9 +222,6 @@ getBalance addr db s =
                 AddressBalance
                 { addressBalAddress = addr
                 , addressBalConfirmed = 0
-                , addressBalTxCount = 0
-                , addressBalUnspentCount = 0
-                , addressBalSpentCount = 0
                 , addressBalUnconfirmed = 0
                 }
 
@@ -316,9 +309,6 @@ getOutPoints os db s =
             Nothing -> return Nothing
             Just v  -> return $ Just (op, v)
 
-addOutput :: OutPoint -> Output -> OutputMap -> OutputMap
-addOutput = M.insert
-
 txOutputMap ::
        MonadIO m => Tx -> Maybe BlockRef -> DB -> Maybe Snapshot -> m OutputMap
 txOutputMap tx mb db s = do
@@ -327,7 +317,7 @@ txOutputMap tx mb db s = do
     return $ foldl f om (zip [0 ..] (txOut tx))
   where
     f m (i, o) =
-        addOutput
+        M.insert
             OutPoint {outPointHash = txHash tx, outPointIndex = i}
             Output
             { outputValue = outValue o
@@ -391,8 +381,7 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty, S.empty)
         modify $ \(omap, amap, os, ts) -> (omap, M.insert a b amap, os, ts)
     delOutput op =
         modify $ \(omap, amap, os, ts) -> (omap, amap, S.insert op os, ts)
-    delTx =
-        modify $ \(omap, amap, os, ts) -> (omap, amap, os, S.insert th ts)
+    delTx = modify $ \(omap, amap, os, ts) -> (omap, amap, os, S.insert th ts)
     delSpender spender = do
         (omap, amap, os, ts) <- get
         let th = spenderHash spender
@@ -406,14 +395,16 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty, S.empty)
                  , balanceSpentCount = balanceSpentCount b - 1
                  }
             else b
-                 { balanceUnconfirmed = balanceUnconfirmed b + outputValue o
+                 { balanceUnconfirmed =
+                       balanceUnconfirmed b + fromIntegral (outputValue o)
                  , balanceMempoolTxs = delete th (balanceMempoolTxs b)
                  }
     removeOutput o b =
         case outBlock o of
             Nothing ->
                 b
-                { balanceUnconfirmed = balanceUnconfirmed b - outputValue o
+                { balanceUnconfirmed =
+                      balanceUnconfirmed b - fromIntegral (outputValue o)
                 , balanceMempoolTxs = delete th (balanceMempoolTxs b)
                 }
             Just _ ->
@@ -434,7 +425,8 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty, S.empty)
                     case scriptToAddressBS (outScript o) of
                         Nothing -> return ()
                         Just a ->
-                            getBalance a >>= putBalance a . unspendBalance conf o
+                            getBalance a >>=
+                            putBalance a . unspendBalance conf o
                 forM_ (zip [0 ..] (txOut txValue)) $ \(i, to) -> do
                     let op = OutPoint th i
                     o <- getOutput op
@@ -447,8 +439,142 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty, S.empty)
                 delTx
 
 blockOutBal ::
-       MonadIO m => BlockHash -> DB -> Snapshot -> m (OutputMap, AddressMap)
-blockOutBal bh db s = undefined
+       MonadLoggerIO m
+    => BlockHash
+    -> DB
+    -> Maybe Snapshot
+    -> m (Maybe (OutputMap, AddressMap))
+blockOutBal bh db s =
+    getBlock bh db s >>= \case
+        Nothing -> return Nothing
+        Just BlockValue {..} -> do
+            txs <- getTxs blockValueTxs db s
+            let om = M.fromList (concatMap f txs ++ concatMap h txs)
+                as =
+                    S.fromList
+                        (mapMaybe (scriptToAddressBS . outScript) (M.elems om))
+            bm <- M.fromList <$> mapM l (S.toList as)
+            return (Just (om, bm))
+  where
+    f dtx@DetailedTx {..} = zipWith (g dtx) [0 ..] detailedTxOutputs
+    g DetailedTx {..} i DetailedOutput {..} =
+        let x =
+                OutPoint
+                {outPointHash = txHash detailedTxData, outPointIndex = i}
+            y =
+                Output
+                { outputValue = detOutValue
+                , outBlock = detailedTxBlock
+                , outScript = detOutScript
+                , outSpender = detOutSpender
+                }
+        in (x, y)
+    h dtx@DetailedTx {..} =
+        map
+            (uncurry (j dtx))
+            (filter (not . isCoinbase . snd) (zip [0 ..] detailedTxInputs))
+    j DetailedTx {..} i DetailedInput {..} =
+        let x = detInOutPoint
+            y =
+                Output
+                { outputValue = detInValue
+                , outBlock = detInBlock
+                , outScript = detInPkScript
+                , outSpender =
+                      Just
+                          Spender
+                          { spenderHash = txHash detailedTxData
+                          , spenderIndex = i
+                          , spenderBlock = detailedTxBlock
+                          }
+                }
+        in (x, y)
+    l a =
+        retrieveValue (BalanceKey a) db s >>= \case
+            Nothing -> do
+                $(logError) $ "Balance not found: " <> logShow a
+                error $ "Balance not found: " <> show a
+            Just b -> return (a, b)
+
+updateTxBalances ::
+       OutputMap
+    -> AddressMap
+    -> Maybe BlockRef
+    -> Tx
+    -> Maybe (OutputMap, AddressMap)
+updateTxBalances om am bl tx = execStateT (runMaybeT go) (om, am)
+  where
+    go = do
+        forM_ ins $ \(i, TxIn {..}) -> do
+            o@Output {..} <- MaybeT (gout prevOutput)
+            guard (isNothing outSpender)
+            upout
+                prevOutput
+                o
+                { outSpender =
+                      Just
+                          Spender
+                          { spenderHash = txHash tx
+                          , spenderIndex = i
+                          , spenderBlock = bl
+                          }
+                }
+            case scriptToAddressBS outScript of
+                Nothing -> return ()
+                Just a -> do
+                    b@Balance {..} <- MaybeT (gbal a)
+                    case bl of
+                        Nothing -> do
+                            upbal
+                                a
+                                b
+                                { balanceUnconfirmed =
+                                      balanceUnconfirmed -
+                                      fromIntegral outputValue
+                                , balanceMempoolTxs =
+                                      txHash tx : balanceMempoolTxs
+                                }
+                        Just _ -> do
+                            guard (balanceValue >= outputValue)
+                            upbal
+                                a
+                                b {balanceValue = balanceValue - outputValue}
+        forM_ outs $ \(i, TxOut {..}) -> do
+            o@Output {..} <-
+                MaybeT $
+                gout OutPoint {outPointIndex = i, outPointHash = txHash tx}
+            guard (isJust outSpender)
+            case scriptToAddressBS outScript of
+                Nothing -> return ()
+                Just a -> do
+                    b@Balance {..} <- MaybeT (gbal a)
+                    case bl of
+                        Nothing -> do
+                            upbal
+                                a
+                                b
+                                { balanceUnconfirmed =
+                                      balanceUnconfirmed +
+                                      fromIntegral outputValue
+                                , balanceMempoolTxs =
+                                      txHash tx : balanceMempoolTxs
+                                }
+                        Just _ -> do
+                            upbal
+                                a
+                                b {balanceValue = balanceValue + outputValue}
+    outs = zip [0 ..] (txOut tx)
+    ins = filter ((/= nullOutPoint) . prevOutput . snd) (zip [0 ..] (txIn tx))
+    gout op = gets (M.lookup op . fst)
+    gbal a = gets (M.lookup a . snd)
+    upout op o = modify . first $ M.insert op o
+    upbal a b = modify . second $ M.insert a b
+
+
+
+------------------------------------------------------
+--- THE STUFF BELOW IS FROM BEFORE MEMPOOL REWRITE ---
+------------------------------------------------------
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
