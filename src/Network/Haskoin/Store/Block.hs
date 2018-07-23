@@ -332,12 +332,12 @@ addrBalance = retrieveValue . BalanceKey
 
 addrBalances ::
        MonadIO m
-    => [Address]
+    => Set Address
     -> DB
     -> Maybe Snapshot
     -> m AddressMap
 addrBalances as db s =
-    fmap (M.fromList . catMaybes) . forM as $ \a ->
+    fmap (M.fromList . catMaybes) . forM (S.toList as) $ \a ->
         addrBalance a db s >>= \case
             Nothing -> return Nothing
             Just b -> return $ Just (a, b)
@@ -350,6 +350,7 @@ deleteTransaction ::
     -> DB
     -> Maybe Snapshot
     -> m (OutputMap, AddressMap, Set OutPoint, Set TxHash)
+    -- ^ updated maps and sets of outputs and transactions to delete
 deleteTransaction om am th db s = execStateT go (om, am, S.empty, S.empty)
   where
     getTx = retrieveValue (TxKey th) db s
@@ -570,7 +571,56 @@ updateTxBalances om am bl tx = execStateT (runMaybeT go) (om, am)
     upout op o = modify . first $ M.insert op o
     upbal a b = modify . second $ M.insert a b
 
-
+addNewBlock ::
+       MonadLoggerIO m => Block -> BlockHeight -> DB -> Maybe Snapshot -> m ()
+addNewBlock b@Block {..} height db s =
+    flip evalStateT (M.empty, M.empty, S.empty, S.empty) $ do
+        initOutputs
+        initBalances
+        unspendOutputs
+        let ds = mapMaybe (h om) (concatMap g (tail blockTxns))
+        (om', bs', ds', ts') <- foldM k (om, bs, S.empty, S.empty) ds
+        undefined
+  where
+    initOutputs = do
+        let f i t =
+                let br =
+                        BlockRef
+                        { blockRefHash = headerHash blockHeader
+                        , blockRefHeight = height
+                        , blockRefMainChain = True
+                        , blockRefPos = i
+                        }
+                in txOutputMap t (Just br) db s
+        om <- M.unions <$> zipWithM f [0 ..] blockTxns
+        modify $ \(_, am, os, ts) -> (om, am, os, ts)
+    initBalances = do
+        (om, _, _, _) <- get
+        let as =
+                S.fromList . catMaybes $
+                map (scriptToAddressBS . outScript) (M.elems om)
+        am <- addrBalances as db s
+        modify $ \(_, _, os, ts) -> (om, am, os, ts)
+    unspendOutputs = do
+        (om, _, _, _) <- get
+        let findSpender op =
+                case M.lookup op om of
+                    Nothing ->
+                        error "You killed the dragon with your bare hands"
+                    Just Output {..} ->
+                        case outSpender of
+                            Nothing -> Nothing
+                            Just Spender {..} -> Just spenderHash
+            prevOutputs Tx {..} = map prevOutput txIn
+            deleteTxs =
+                mapMaybe findSpender . concatMap prevOutputs $ tail blockTxns
+        forM deleteTxs $ \t -> do
+            (o1, a1, os, ts) <- get
+            (o1', a1', os', ts') <- deleteTransaction o1 a1 t db s
+            put (o1', a1', os <> os', ts <> ts')
+    k (a, b, c, d) t = do
+        (a', b', c', d') <- deleteTransaction a b t db s
+        return (a', b', c <> c', d <> d')
 
 ------------------------------------------------------
 --- THE STUFF BELOW IS FROM BEFORE MEMPOOL REWRITE ---
