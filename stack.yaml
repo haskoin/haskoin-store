@@ -8,7 +8,7 @@ packages:
 extra-deps:
 - pbkdf-1.1.1.1
 - murmur3-1.0.3
-- secp256k1-0.5.2
+- secp256k1-0.5.3
 - concurrent-extra-0.7.0.10
 - parsec-extra-0.2.0.0
 - console-program-0.4.2.1
