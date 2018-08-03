@@ -33,7 +33,6 @@ import           Network.Haskoin.Util
 data MempoolException
     = DoubleSpend
     | InvalidOutput
-    | OrphanTx
     | OverSpend
     | NoPeers
     deriving (Show, Eq, Ord)
@@ -215,6 +214,20 @@ newtype TxKey =
     TxKey TxHash
     deriving (Show, Eq, Ord)
 
+newtype MempoolTx =
+    MempoolTx TxHash
+    deriving (Show, Eq, Ord)
+
+newtype OrphanTx =
+    OrphanTx TxHash
+    deriving (Show, Eq, Ord)
+
+data MempoolKey = MempoolKey
+    deriving (Show, Eq, Ord)
+
+data OrphanKey = OrphanKey
+    deriving (Show, Eq, Ord)
+
 newtype BlockKey =
     BlockKey BlockHash
     deriving (Show, Eq, Ord)
@@ -273,10 +286,6 @@ instance Ord Unspent where
       where
         f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
 
-newtype MempoolSpent = MempoolSpent
-    { mempoolSpent :: OutputKey
-    } deriving (Show, Eq, Ord)
-
 instance Record BlockKey BlockValue
 instance Record TxKey TxRecord
 instance Record HeightKey BlockHash
@@ -285,17 +294,44 @@ instance Record OutputKey Output
 instance Record MultiTxKey MultiTxValue
 instance Record AddrOutputKey Output
 instance Record BalanceKey Balance
+instance Record MempoolTx Tx
+instance Record OrphanTx Tx
 instance MultiRecord MultiAddrOutputKey AddrOutputKey Output
 instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
+instance MultiRecord MempoolKey MempoolTx Tx
+instance MultiRecord OrphanKey OrphanTx Tx
 
-instance Serialize MempoolSpent where
-    put MempoolSpent {..} = do
-        putWord8 0x06
-        put mempoolSpent
+instance Serialize MempoolTx where
+    put (MempoolTx h) = do
+        putWord8 0x07
+        put h
     get = do
-        guard . (== 0x06) =<< getWord8
-        mempoolSpent <- get
-        return MempoolSpent {..}
+        guard . (== 0x07) =<< getWord8
+        h <- get
+        return (MempoolTx h)
+
+instance Serialize OrphanTx where
+    put (OrphanTx h) = do
+        putWord8 0x08
+        put h
+    get = do
+        guard . (== 0x08) =<< getWord8
+        h <- get
+        return (OrphanTx h)
+
+instance Serialize MempoolKey where
+    put MempoolKey = do
+        putWord8 0x07
+    get = do
+        guard . (== 0x07) =<< getWord8
+        return MempoolKey
+
+instance Serialize OrphanKey where
+    put OrphanKey = do
+        putWord8 0x08
+    get = do
+        guard . (== 0x08) =<< getWord8
+        return OrphanKey
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
