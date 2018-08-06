@@ -145,9 +145,11 @@ data DetailedOutput = DetailedOutput
     } deriving (Show, Eq, Ord)
 
 data AddressBalance = AddressBalance
-    { addressBalAddress      :: !Address
-    , addressBalConfirmed    :: !Word64
-    , addressBalUnconfirmed  :: !Int64
+    { addressBalAddress     :: !Address
+    , addressBalConfirmed   :: !Word64
+    , addressBalUnconfirmed :: !Int64
+    , addressOutputCount    :: !Word64
+    , addressSpentCount     :: !Word64
     } deriving (Show, Eq, Ord)
 
 data TxRecord = TxRecord
@@ -649,6 +651,8 @@ addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "confirmed" .= addressBalConfirmed
     , "unconfirmed" .= addressBalUnconfirmed
+    , "outputs" .= addressOutputCount
+    , "spent" .= addressSpentCount
     ]
 
 instance FromJSON NewTx where

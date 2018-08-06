@@ -223,6 +223,8 @@ getBalance addr db s =
                 { addressBalAddress = addr
                 , addressBalConfirmed = balanceValue
                 , addressBalUnconfirmed = balanceUnconfirmed
+                , addressOutputCount = balanceOutputCount
+                , addressSpentCount = balanceSpentCount
                 }
         Nothing ->
             return
@@ -230,6 +232,8 @@ getBalance addr db s =
                 { addressBalAddress = addr
                 , addressBalConfirmed = 0
                 , addressBalUnconfirmed = 0
+                , addressOutputCount = 0
+                , addressSpentCount = 0
                 }
 
 getTxs :: MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
@@ -908,8 +912,8 @@ importMempool txs' = do
             i = foldl' f (Just 0) (ins tx)
             o = sum (map outValue (txOut tx))
         in case (>= o) <$> i of
-               Nothing -> TxOrphan
-               Just True -> TxValid
+               Nothing    -> TxOrphan
+               Just True  -> TxValid
                Just False -> TxLowFunds
     ins tx = filter ((/= nullOutPoint) . prevOutput) (txIn tx)
     dep s t = any (flip S.member s . outPointHash . prevOutput) (txIn t)
