@@ -52,7 +52,7 @@ WORKDIR /usr/src/haskoin
 
 ADD . /usr/src/haskoin
 
-RUN stack --extra-lib-dirs=/usr/local/lib install haskoin-store
+RUN stack --extra-lib-dirs=/usr/local/lib install
 
 RUN cp /root/.local/bin/haskoin-store /usr/local/bin
 

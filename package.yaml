@@ -1,0 +1,83 @@
+name: haskoin-store
+version: '0.1.0.0'
+synopsis: Storage and index for Bitcoin wallets
+description: 'Store all blocks, transactions, and addresses required for a Bitcoin or Bitcoin Cash wallet or block explorer to function.'
+category: Bitcoin, Finance, Network
+author: Jean-Pierre Rupp
+maintainer: xenog@protonmail.com
+license: PublicDomain
+license-file: UNLICENSE
+github: haskoin/haskoin.git
+homepage: http://github.com/haskoin/haskoin#readme
+bug-reports: http://github.com/haskoin/haskoin/issues
+dependencies:
+- base >=4.7 && <5
+- data-default
+- directory
+- filepath
+- haskoin-core
+- haskoin-node
+- rocksdb-haskell
+- monad-logger
+- mtl
+- nqe
+- string-conversions
+library:
+  source-dirs: src
+  exposed-modules:
+  - Network.Haskoin.Store
+  dependencies:
+  - aeson
+  - bytestring
+  - cereal
+  - containers
+  - deepseq
+  - either
+  - exceptions
+  - lifted-async
+  - lifted-base
+  - monad-control
+  - network
+  - resourcet
+  - stm
+  - text
+  - time
+  - transformers
+  - transformers-base
+executables:
+  haskoin-store:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - aeson
+    - haskoin-store
+    - http-types
+    - optparse-applicative
+    - scotty
+    - temporary
+    - text
+tests:
+  haskoin-store-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - bytestring
+    - exceptions
+    - haskoin-store
+    - hspec
+    - lifted-async
+    - lifted-base
+    - monad-control
+    - network
+    - random
+    - stm
+    - temporary
+    - transformers-base
