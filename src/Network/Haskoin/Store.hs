@@ -35,14 +35,11 @@ module Network.Haskoin.Store
     ) where
 
 import           Control.Concurrent.NQE
-import           Control.Monad.Base
 import           Control.Monad.Catch
 import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Control
 import           Data.Maybe
-import           Data.Monoid
 import           Data.Text                   (Text)
 import           Database.RocksDB            (DB)
 import           Network.Haskoin.Network
@@ -52,11 +49,10 @@ import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
 import           Network.Socket              (SockAddr (..))
+import           UnliftIO
 
 type MonadStore m
-     = ( MonadBase IO m
-       , MonadThrow m
-       , MonadBaseControl IO m
+     = ( MonadThrow m
        , MonadLoggerIO m
        , MonadReader StoreRead m)
 
@@ -68,10 +64,7 @@ data StoreRead = StoreRead
     , myListener   :: !(Listen StoreEvent)
     }
 
-store ::
-       (MonadLoggerIO m, MonadBaseControl IO m, MonadMask m, Forall (Pure m))
-    => StoreConfig
-    -> m ()
+store :: (MonadLoggerIO m, MonadUnliftIO m, MonadMask m) => StoreConfig -> m ()
 store StoreConfig {..} = do
     $(logInfo) $ logMe <> "Launching store"
     ns <- Inbox <$> liftIO newTQueueIO

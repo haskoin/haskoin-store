@@ -3,12 +3,13 @@
 module Network.Haskoin.Store.Common where
 
 import           Control.Monad
-import           Control.Monad.Trans
+import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
-import           Data.ByteString              (ByteString)
+import           Data.ByteString           (ByteString)
 import           Data.Default
-import           Data.Serialize               (Serialize, decode, encode)
+import           Data.Serialize            (Serialize, decode, encode)
 import           Database.RocksDB
+import           UnliftIO
 
 class (Eq k, Eq v, Serialize k, Serialize v) =>
       Record k v | k -> v

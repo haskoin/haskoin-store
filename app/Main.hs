@@ -9,13 +9,11 @@ import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Trans
 import           Data.Aeson                  (ToJSON (..), Value (..), object,
                                               (.=))
 import           Data.Bits
 import           Data.Default                (def)
 import           Data.Maybe
-import           Data.Monoid
 import           Data.String.Conversions
 import qualified Data.Text                   as T
 import qualified Database.RocksDB            as RocksDB
@@ -32,6 +30,7 @@ import           System.Exit                 (die)
 import           System.FilePath
 import           System.IO.Unsafe
 import           Text.Read                   (readMaybe)
+import           UnliftIO
 import           Web.Scotty.Trans
 
 type StoreM = ActionT Except IO

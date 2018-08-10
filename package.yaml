@@ -19,9 +19,9 @@ dependencies:
 - haskoin-node
 - rocksdb-haskell
 - monad-logger
-- mtl
 - nqe
 - string-conversions
+- unliftio
 library:
   source-dirs: src
   exposed-modules:
@@ -34,16 +34,12 @@ library:
   - deepseq
   - either
   - exceptions
-  - lifted-async
-  - lifted-base
-  - monad-control
+  - mtl
   - network
   - resourcet
-  - stm
   - text
   - time
   - transformers
-  - transformers-base
 executables:
   haskoin-store:
     main: Main.hs
@@ -58,7 +54,6 @@ executables:
     - http-types
     - optparse-applicative
     - scotty
-    - temporary
     - text
 tests:
   haskoin-store-test:
@@ -73,11 +68,6 @@ tests:
     - exceptions
     - haskoin-store
     - hspec
-    - lifted-async
-    - lifted-base
-    - monad-control
     - network
     - random
     - stm
-    - temporary
-    - transformers-base

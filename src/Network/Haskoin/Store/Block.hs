@@ -28,11 +28,9 @@ module Network.Haskoin.Store.Block
 import           Control.Applicative
 import           Control.Arrow
 import           Control.Concurrent.NQE
-import           Control.Monad.Base
 import           Control.Monad.Catch
 import           Control.Monad.Logger
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Control
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Short        as BSS
@@ -41,7 +39,6 @@ import           Data.List
 import           Data.Map                     (Map)
 import qualified Data.Map.Strict              as M
 import           Data.Maybe
-import           Data.Monoid
 import           Data.Serialize               (encode)
 import           Data.String.Conversions
 import           Data.Text                    (Text)
@@ -56,6 +53,7 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
+import           UnliftIO
 
 data BlockRead = BlockRead
     { myBlockDB    :: !DB
@@ -69,11 +67,7 @@ data BlockRead = BlockRead
     }
 
 type MonadBlock m
-     = ( MonadBase IO m
-       , MonadThrow m
-       , MonadBaseControl IO m
-       , MonadLoggerIO m
-       , MonadReader BlockRead m)
+     = (MonadThrow m, MonadLoggerIO m, MonadReader BlockRead m)
 
 data AddressDelta = AddressDelta
     { addressDeltaOutput      :: !OutputMap
@@ -83,16 +77,8 @@ data AddressDelta = AddressDelta
     , addressDeltaSpentCount  :: !Word64
     } deriving (Show, Eq)
 
-instance Monoid AddressDelta where
-    mempty =
-        AddressDelta
-        { addressDeltaOutput = M.empty
-        , addressDeltaBalance = 0
-        , addressDeltaTxCount = 0
-        , addressDeltaOutputCount = 0
-        , addressDeltaSpentCount = 0
-        }
-    a `mappend` b =
+instance Semigroup AddressDelta where
+    a <> b =
         AddressDelta
         { addressDeltaOutput =
               addressDeltaOutput b `M.union` addressDeltaOutput a
@@ -104,6 +90,17 @@ instance Monoid AddressDelta where
               addressDeltaSpentCount a + addressDeltaSpentCount b
         }
 
+instance Monoid AddressDelta where
+    mempty =
+        AddressDelta
+        { addressDeltaOutput = M.empty
+        , addressDeltaBalance = 0
+        , addressDeltaTxCount = 0
+        , addressDeltaOutputCount = 0
+        , addressDeltaSpentCount = 0
+        }
+    mappend = (<>)
+
 type PrevOutMap = Map OutPoint PrevOut
 type OutputMap = Map OutPoint Output
 type AddressMap = Map Address AddressDelta
@@ -114,6 +111,14 @@ data BlockData = BlockData
     , blockNewOutMap  :: !OutputMap
     } deriving (Show, Eq)
 
+instance Semigroup BlockData where
+    a <> b =
+        BlockData
+        { blockPrevOutMap = blockPrevOutMap b `M.union` blockPrevOutMap a
+        , blockAddrMap = M.unionWith (<>) (blockAddrMap a) (blockAddrMap b)
+        , blockNewOutMap = blockNewOutMap b `M.union` blockNewOutMap a
+        }
+
 instance Monoid BlockData where
     mempty =
         BlockData
@@ -121,20 +126,13 @@ instance Monoid BlockData where
         , blockAddrMap = M.empty
         , blockNewOutMap = M.empty
         }
-    a `mappend` b =
-        BlockData
-        { blockPrevOutMap = blockPrevOutMap b `M.union` blockPrevOutMap a
-        , blockAddrMap = M.unionWith (<>) (blockAddrMap a) (blockAddrMap b)
-        , blockNewOutMap = blockNewOutMap b `M.union` blockNewOutMap a
-        }
+    mappend = (<>)
 
 blockStore ::
-       ( MonadBase IO m
-       , MonadBaseControl IO m
+       ( MonadUnliftIO m
        , MonadThrow m
        , MonadLoggerIO m
        , MonadMask m
-       , Forall (Pure m)
        )
     => BlockConfig
     -> m ()

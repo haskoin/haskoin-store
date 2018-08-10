@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 0697f999e2744ce809aacaaae6f6edfe5173e30b55bb6a6f303801ff9cf748c8
+-- hash: d03d03d96199963484e44c7d0270f85343d7eabaa473f5116204f91c3522e87d
 
 name:           haskoin-store
 version:        0.1.0.0
@@ -39,21 +39,17 @@ library
     , filepath
     , haskoin-core
     , haskoin-node
-    , lifted-async
-    , lifted-base
-    , monad-control
     , monad-logger
     , mtl
     , network
     , nqe
     , resourcet
     , rocksdb-haskell
-    , stm
     , string-conversions
     , text
     , time
     , transformers
-    , transformers-base
+    , unliftio
   exposed-modules:
       Network.Haskoin.Store
   other-modules:
@@ -79,14 +75,13 @@ executable haskoin-store
     , haskoin-store
     , http-types
     , monad-logger
-    , mtl
     , nqe
     , optparse-applicative
     , rocksdb-haskell
     , scotty
     , string-conversions
-    , temporary
     , text
+    , unliftio
   other-modules:
       Paths_haskoin_store
   default-language: Haskell2010
@@ -108,19 +103,14 @@ test-suite haskoin-store-test
     , haskoin-node
     , haskoin-store
     , hspec
-    , lifted-async
-    , lifted-base
-    , monad-control
     , monad-logger
-    , mtl
     , network
     , nqe
     , random
     , rocksdb-haskell
     , stm
     , string-conversions
-    , temporary
-    , transformers-base
+    , unliftio
   other-modules:
       Paths_haskoin_store
   default-language: Haskell2010
