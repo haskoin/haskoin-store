@@ -31,6 +31,7 @@ import           Control.Monad.Catch
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
+import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Short        as BSS
 import           Data.Default
@@ -43,7 +44,6 @@ import           Data.Set                     (Set)
 import qualified Data.Set                     as S
 import           Data.String.Conversions
 import           Data.Text                    (Text)
-import           Data.Word
 import           Database.RocksDB             (DB, Snapshot)
 import qualified Database.RocksDB             as RocksDB
 import           Network.Haskoin.Block
@@ -753,7 +753,7 @@ getBlockOps om del bh bw bg txs = hop : gop : bop : tops
     tops = concat $ zipWith (\i tx -> getTxOps om del tx (r i)) [0 ..] txs
 
 getTxOps :: OutputMap -> Bool -> Tx -> Maybe BlockRef -> [RocksDB.BatchOp]
-getTxOps om del tx br = top : pops <> oops <> aiops <> aoops
+getTxOps om del tx br = tops <> pops <> oops <> aiops <> aoops
   where
     is = filter ((/= nullOutPoint) . prevOutput) (txIn tx)
     g p =
@@ -780,12 +780,17 @@ getTxOps om del tx br = top : pops <> oops <> aiops <> aoops
         if del
             then deleteOp (OutputKey p)
             else insertOp (OutputKey p) (g p)
-    top =
+    tops =
         let k = TxKey (txHash tx)
             v = TxRecord {txValueBlock = br, txValue = tx, txValuePrevOuts = ps}
-        in if del
-               then deleteOp k
-               else insertOp k v
+            mk = MempoolTx (txHash tx)
+        in if isJust br
+           then if del
+                then [deleteOp k]
+                else [insertOp k v]
+           else if del
+                then [deleteOp mk, deleteOp k]
+                else [insertOp mk tx, insertOp k v]
     pops = map fp is
     oops = map fo [0 .. length (txOut tx) - 1]
     bh = blockRefHeight <$> br
@@ -889,7 +894,7 @@ revertBestBlock = do
         RocksDB.write db def ops
         importMempool txs
 
--- TODO: parents may have second thoughts about orphans
+-- TODO: do something about orphan transactions
 importMempool :: MonadBlock m => [Tx] -> m ()
 importMempool txs' = do
     db <- asks myBlockDB
@@ -921,11 +926,6 @@ importMempool txs' = do
          | otherwise =
            let (ds, ns) = S.partition (dep (S.map txHash s)) s
            in S.toList ns <> fo ds
-
----------------------------------------------------------------------------
----------------------------------------------------------------------------
----------------------------------------------------------------------------
----------------------------------------------------------------------------
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = do
@@ -1038,10 +1038,6 @@ importBlock block@Block {..} = do
     addNewBlock block
     l <- asks myListener
     liftIO . atomically . l $ BestBlock (headerHash blockHeader)
-
------------------------
---- HERE BE DRAGONS ---
------------------------
 
 getSpentOutputs :: BlockRef -> PrevOutMap -> Tx -> OutputMap
 getSpentOutputs block prevMap tx =

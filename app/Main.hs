@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE GADTs             #-}
-{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -14,8 +13,6 @@ import           Data.Aeson                  (ToJSON (..), Value (..), object,
 import           Data.Bits
 import           Data.Default                (def)
 import           Data.Maybe
-import           Data.Monoid
-import           Data.Serialize              (decodeLazy)
 import           Data.String.Conversions
 import qualified Data.Text                   as T
 import qualified Database.RocksDB            as RocksDB
@@ -207,14 +204,14 @@ main =
         supervisor
             KillAll
             s
-            [runWeb (configPort conf) db mgr, runStore conf mgr b db]
+            [runWeb (configPort conf) db, runStore conf mgr b db]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port db mgr =
+    runWeb port db =
         scottyT port id $ do
             defaultHandler defHandler
             get "/block/best" $ getBestBlock db Nothing >>= json
