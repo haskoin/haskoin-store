@@ -9,7 +9,6 @@ import           Data.ByteString           (ByteString)
 import           Data.Default
 import           Data.Serialize            (Serialize, decode, encode)
 import           Database.RocksDB
-import           UnliftIO
 
 class (Eq k, Eq v, Serialize k, Serialize v) =>
       Record k v | k -> v

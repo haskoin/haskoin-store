@@ -1,5 +1,5 @@
 name: haskoin-store
-version: '0.1.0.0'
+version: 1.0.0
 synopsis: Storage and index for Bitcoin wallets
 description: 'Store all blocks, transactions, and addresses required for a Bitcoin or Bitcoin Cash wallet or block explorer to function.'
 category: Bitcoin, Finance, Network
@@ -10,6 +10,9 @@ license-file: UNLICENSE
 github: haskoin/haskoin.git
 homepage: http://github.com/haskoin/haskoin#readme
 bug-reports: http://github.com/haskoin/haskoin/issues
+extra-source-files:
+- README.md
+- CHANGELOG.md
 dependencies:
 - base >=4.7 && <5
 - data-default

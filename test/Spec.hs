@@ -17,7 +17,7 @@ import           UnliftIO
 
 main :: IO ()
 main = do
-    setTestnet3Network
+    setBTCtest
     hspec . describe "Download" $ do
         it "gets 8 blocks" $
             withTestStore "eight-blocks" $ \(_db, _b, c, e) -> do

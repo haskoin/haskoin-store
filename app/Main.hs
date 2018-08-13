@@ -54,7 +54,7 @@ defPort :: Int
 defPort = 3000
 
 defNetwork :: Network
-defNetwork = bitcoinNetwork
+defNetwork = btc
 
 defDiscovery :: Bool
 defDiscovery = False
@@ -127,7 +127,7 @@ config =
              (metavar "NETWORK" <> long "network" <> short 'n' <>
               help
                   ("Network to use: " <>
-                   "bitcoin|bitcoincash|testnet3|cashtest|regtest (default: " <>
+                   "btc|btc-test|btc-regtest|bch|bch-test|bch-regtest (default: " <>
                    getNetworkName defNetwork <>
                    ")"))) <*>
     optional (switch (long "discover" <> help "Enable peer discovery")) <*>
@@ -141,11 +141,12 @@ config =
 
 networkReader :: String -> Either String Network
 networkReader s
-    | s == getNetworkName bitcoinNetwork = Right bitcoinNetwork
-    | s == getNetworkName testnet3Network = Right testnet3Network
-    | s == getNetworkName bitcoinCashNetwork = Right bitcoinCashNetwork
-    | s == getNetworkName regTestNetwork = Right regTestNetwork
-    | s == getNetworkName cashTestNetwork = Right cashTestNetwork
+    | s == getNetworkName btc = Right btc
+    | s == getNetworkName btcTest = Right btcTest
+    | s == getNetworkName btcRegTest = Right btcRegTest
+    | s == getNetworkName bch = Right bch
+    | s == getNetworkName bchTest = Right bchTest
+    | s == getNetworkName bchRegTest = Right bchRegTest
     | otherwise = Left "Network name invalid"
 
 peerReader :: String -> Either String [(Host, Maybe Port)]

@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: d03d03d96199963484e44c7d0270f85343d7eabaa473f5116204f91c3522e87d
+-- hash: 900a6b6c0b6b1dd588ff5c59773e9f85b13b032b9d960bec7180c9e2bf6abc96
 
 name:           haskoin-store
 version:        0.1.0.0
@@ -17,6 +17,10 @@ license:        PublicDomain
 license-file:   UNLICENSE
 build-type:     Simple
 cabal-version:  >= 1.10
+
+extra-source-files:
+    CHANGELOG.md
+    README.md
 
 source-repository head
   type: git
