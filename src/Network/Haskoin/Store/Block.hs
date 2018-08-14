@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TupleSections              #-}
 module Network.Haskoin.Store.Block
@@ -24,7 +25,6 @@ module Network.Haskoin.Store.Block
     , getUnspents
     ) where
 
-import           Control.Applicative
 import           Control.Arrow
 import           Control.Concurrent.NQE
 import           Control.Monad.Catch
@@ -32,26 +32,25 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
-import qualified Data.ByteString              as BS
-import qualified Data.ByteString.Short        as BSS
-import           Data.Default
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Short       as BSS
 import           Data.List
-import           Data.Map                     (Map)
-import qualified Data.Map.Strict              as M
+import           Data.Map                    (Map)
+import qualified Data.Map.Strict             as M
 import           Data.Maybe
-import           Data.Serialize               (encode)
-import           Data.Set                     (Set)
-import qualified Data.Set                     as S
+import           Data.Serialize              (encode)
+import           Data.Set                    (Set)
+import qualified Data.Set                    as S
 import           Data.String.Conversions
-import           Data.Text                    (Text)
-import           Database.RocksDB             (DB, Snapshot)
-import qualified Database.RocksDB             as RocksDB
+import           Data.Text                   (Text)
+import           Database.RocksDB            (DB, Snapshot)
+import qualified Database.RocksDB            as R
+import           Database.RocksDB.Query
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
-import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
 import           UnliftIO
@@ -70,7 +69,6 @@ data BlockRead = BlockRead
 type MonadBlock m
      = (MonadThrow m, MonadLoggerIO m, MonadReader BlockRead m)
 
-type PrevOutMap = Map OutPoint PrevOut
 type OutputMap = Map OutPoint Output
 type AddressMap = Map Address Balance
 
@@ -108,17 +106,17 @@ blockStore BlockConfig {..} = do
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
     loadBest =
-        retrieveValue BestBlockKey blockConfDB Nothing >>= \case
+        retrieve blockConfDB Nothing BestBlockKey >>= \case
             Nothing -> importBlock genesisBlock
-            Just _ -> return ()
+            Just (_ :: BlockHash) -> return ()
 
 getBestBlockHash :: MonadIO m => DB -> Maybe Snapshot -> m (Maybe BlockHash)
-getBestBlockHash = retrieveValue BestBlockKey
+getBestBlockHash db snapshot = retrieve db snapshot BestBlockKey
 
 getBestBlock :: MonadIO m => DB -> Maybe Snapshot -> m (Maybe BlockValue)
 getBestBlock db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' =
@@ -130,7 +128,7 @@ getBlocksAtHeights ::
     MonadIO m => [BlockHeight] -> DB -> Maybe Snapshot -> m [BlockValue]
 getBlocksAtHeights bhs db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' =
@@ -141,18 +139,18 @@ getBlockAtHeight ::
        MonadIO m => BlockHeight -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
 getBlockAtHeight height db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' =
         runMaybeT $ do
-            h <- MaybeT (retrieveValue (HeightKey height) db s')
-            MaybeT (retrieveValue (BlockKey h) db s')
+            h <- MaybeT (retrieve db s' (HeightKey height))
+            MaybeT (retrieve db s' (BlockKey h))
 
 getBlocks :: MonadIO m => [BlockHash] -> DB -> Maybe Snapshot -> m [BlockValue]
 getBlocks bids db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' =
@@ -160,55 +158,57 @@ getBlocks bids db s =
 
 getBlock ::
        MonadIO m => BlockHash -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
-getBlock = retrieveValue . BlockKey
+getBlock bh db snapshot = retrieve db snapshot (BlockKey bh)
 
 getAddrsSpent ::
-       MonadIO m
+       MonadUnliftIO m
     => [Address]
     -> DB
     -> Maybe Snapshot
     -> m [(AddrOutputKey, Output)]
 getAddrsSpent as db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' = concat <$> mapM (\a -> getAddrSpent a db s') (nub as)
 
 getAddrSpent ::
-       MonadIO m
+       MonadUnliftIO m
     => Address
     -> DB
     -> Maybe Snapshot
     -> m [(AddrOutputKey, Output)]
-getAddrSpent = valuesForKey . MultiAddrOutputKey True
+getAddrSpent addr db snapshot =
+    matchingAsList db snapshot (MultiAddrOutputKey True addr)
 
 getAddrsUnspent ::
-       MonadIO m
+       MonadUnliftIO m
     => [Address]
     -> DB
     -> Maybe Snapshot
     -> m [(AddrOutputKey, Output)]
 getAddrsUnspent as db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' = concat <$> mapM (\a -> getAddrUnspent a db s') (nub as)
 
 getAddrUnspent ::
-       MonadIO m
+       MonadUnliftIO m
     => Address
     -> DB
     -> Maybe Snapshot
     -> m [(AddrOutputKey, Output)]
-getAddrUnspent = valuesForKey . MultiAddrOutputKey False
+getAddrUnspent addr db snapshot =
+    matchingAsList db snapshot (MultiAddrOutputKey False addr)
 
 getBalances ::
     MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressBalance]
 getBalances addrs db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' = forM (nub addrs) $ \a -> getBalance a db s'
@@ -216,7 +216,7 @@ getBalances addrs db s =
 getBalance ::
        MonadIO m => Address -> DB -> Maybe Snapshot -> m AddressBalance
 getBalance addr db s =
-    retrieveValue (BalanceKey addr) db s >>= \case
+    retrieve db s (BalanceKey addr) >>= \case
         Just Balance {..} ->
             return
                 AddressBalance
@@ -236,30 +236,32 @@ getBalance addr db s =
                 , addressSpentCount = 0
                 }
 
-getTxs :: MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
+getTxs :: MonadUnliftIO m => [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
 getTxs ths db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' = fmap catMaybes . forM (nub ths) $ \th -> getTx th db s'
 
 getTx ::
-       MonadIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
-getTx th db s =
-    runMaybeT $ do
-        xs <- valuesForKey (BaseTxKey th) db s
-        TxRecord {..} <- MaybeT (return (findTx xs))
-        let os = map (uncurry output) (filterOutputs xs)
-            is = map (input txValuePrevOuts) (txIn txValue)
-        return
-            DetailedTx
-            { detailedTxData = txValue
-            , detailedTxFee = fee is os
-            , detailedTxBlock = txValueBlock
-            , detailedTxInputs = is
-            , detailedTxOutputs = os
-            }
+       MonadUnliftIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
+getTx th db s = do
+    xs <- matchingAsList db s (BaseTxKey th)
+    case findTx xs of
+        Just TxRecord {..} ->
+            let os = map (uncurry output) (filterOutputs xs)
+                is = map (input txValuePrevOuts) (txIn txValue)
+            in return $
+               Just
+                   DetailedTx
+                   { detailedTxData = txValue
+                   , detailedTxFee = fee is os
+                   , detailedTxBlock = txValueBlock
+                   , detailedTxInputs = is
+                   , detailedTxOutputs = os
+                   }
+        Nothing -> return Nothing
   where
     fee is os =
         if any isCoinbase is
@@ -293,7 +295,7 @@ getTx th db s =
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _             -> False
+                  _ -> False
             , let MultiTx t = v
             ]
     filterOutputs xs =
@@ -301,15 +303,15 @@ getTx th db s =
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxKeyOutput {}, MultiTxOutput {}) -> True
-              _                                       -> False
+              _ -> False
         , let MultiTxKeyOutput (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
     e = error "Colud not locate previous output from transaction record"
 
-getTxRecords ::
-       MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [Maybe TxRecord]
-getTxRecords hs db s = forM hs (\h -> retrieveValue (TxKey h) db s)
+-- getTxRecords ::
+--        MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [Maybe TxRecord]
+-- getTxRecords hs db s = forM hs (retrieve db s . TxKey)
 
 getOutPoints :: MonadIO m => OutputMap -> [OutPoint] -> DB -> Maybe Snapshot -> m OutputMap
 getOutPoints om os db s = foldM f om os
@@ -320,7 +322,7 @@ getOutPoints om os db s = foldM f om os
             Just o -> return $ M.insert op o om'
     g om' op =
         case M.lookup op om' of
-            Nothing -> retrieveValue (OutputKey op) db s
+            Nothing -> retrieve db s (OutputKey op)
             Just o  -> return (Just o)
 
 txOutputMap ::
@@ -342,7 +344,7 @@ txOutputMap om tx mb db s = do
             om'
 
 addrBalance :: MonadIO m => Address -> DB -> Maybe Snapshot -> m (Maybe Balance)
-addrBalance = retrieveValue . BalanceKey
+addrBalance addr db snapshot = retrieve db snapshot (BalanceKey addr)
 
 addrBalances ::
        MonadIO m
@@ -367,41 +369,41 @@ deleteTransaction ::
     -- ^ updated maps and sets of transactions to delete
 deleteTransaction om am th db s = execStateT go (om, am, S.empty)
   where
-    getTx = retrieveValue (TxKey th) db s
-    getOutput op = do
+    get_tx = retrieve db s (TxKey th)
+    get_output op = do
         (omap, _, _) <- get
         mo <-
             case M.lookup op omap of
-                Nothing -> retrieveValue (OutputKey op) db s
+                Nothing -> retrieve db s (OutputKey op)
                 Just o  -> return (Just o)
         case mo of
             Nothing -> do
                 $(logError) $ "Output not found: " <> logShow op
                 error $ "Output not found: " <> show op
             Just o -> return o
-    getBalance a = do
+    get_balance a = do
         (_, amap, _) <- get
         bm <-
             case M.lookup a amap of
                 Just b  -> return $ Just b
-                Nothing -> retrieveValue (BalanceKey a) db s
+                Nothing -> retrieve db s (BalanceKey a)
         case bm of
             Nothing -> do
                 $(logError) $ "Balance not found: " <> logShow a
                 error $ "Balance not found: " <> show a
             Just b -> return b
-    putOutput op o =
+    put_output op o =
         modify $ \(omap, amap, ts) -> (M.insert op o omap, amap, ts)
-    putBalance a b =
+    put_balance a b =
         modify $ \(omap, amap, ts) -> (omap, M.insert a b amap, ts)
-    delTx = modify $ \(omap, amap, ts) -> (omap, amap, S.insert th ts)
-    delSpender spender = do
+    delete_tx = modify $ \(omap, amap, ts) -> (omap, amap, S.insert th ts)
+    delete_spender spender = do
         (omap, amap, ts) <- get
-        let th = spenderHash spender
-        (omap', amap', ts') <- deleteTransaction omap amap th db s
+        let th' = spenderHash spender
+        (omap', amap', ts') <- deleteTransaction omap amap th' db s
         put (omap', amap', ts <> ts')
-    unspendOutput o = o {outSpender = Nothing}
-    unspendBalance conf o b =
+    unspend_output o = o {outSpender = Nothing}
+    unspend_balance conf o b =
         if isJust (outBlock o) && conf
             then b
                  { balanceValue = balanceValue b + outputValue o
@@ -412,7 +414,7 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty)
                        balanceUnconfirmed b + fromIntegral (outputValue o)
                  , balanceMempoolTxs = delete th (balanceMempoolTxs b)
                  }
-    removeOutput o b =
+    remove_output o b =
         case outBlock o of
             Nothing ->
                 b
@@ -426,88 +428,86 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty)
                 , balanceOutputCount = balanceOutputCount b - 1
                 }
     go =
-        getTx >>= \case
+        get_tx >>= \case
             Nothing -> return ()
             Just TxRecord {..} -> do
                 let pos =
                         filter (/= nullOutPoint) (map prevOutput (txIn txValue))
                     conf = isJust txValueBlock
                 forM_ pos $ \op -> do
-                    o <- getOutput op
-                    putOutput op (unspendOutput o)
+                    o <- get_output op
+                    put_output op (unspend_output o)
                     case scriptToAddressBS (outScript o) of
                         Nothing -> return ()
                         Just a ->
-                            getBalance a >>=
-                            putBalance a . unspendBalance conf o
-                forM_ (zip [0 ..] (txOut txValue)) $ \(i, to) -> do
+                            get_balance a >>=
+                            put_balance a . unspend_balance conf o
+                forM_ (zip [0 ..] (txOut txValue)) $ \(i, _) -> do
                     let op = OutPoint th i
-                    o <- getOutput op
-                    case outSpender o of
-                        Nothing      -> return ()
-                        Just spender -> delSpender spender
+                    o <- get_output op
+                    forM_ (outSpender o) delete_spender
                     case scriptToAddressBS (outScript o) of
                         Nothing -> return ()
-                        Just a -> getBalance a >>= putBalance a . removeOutput o
-                delTx
+                        Just a -> get_balance a >>= put_balance a . remove_output o
+                delete_tx
 
-blockOutBal ::
-       MonadLoggerIO m
-    => BlockHash
-    -> DB
-    -> Maybe Snapshot
-    -> m (Maybe (OutputMap, AddressMap))
-blockOutBal bh db s =
-    getBlock bh db s >>= \case
-        Nothing -> return Nothing
-        Just BlockValue {..} -> do
-            txs <- getTxs blockValueTxs db s
-            let om = M.fromList (concatMap f txs ++ concatMap h txs)
-                as =
-                    S.fromList
-                        (mapMaybe (scriptToAddressBS . outScript) (M.elems om))
-            bm <- M.fromList <$> mapM l (S.toList as)
-            return (Just (om, bm))
-  where
-    f dtx@DetailedTx {..} = zipWith (g dtx) [0 ..] detailedTxOutputs
-    g DetailedTx {..} i DetailedOutput {..} =
-        let x =
-                OutPoint
-                {outPointHash = txHash detailedTxData, outPointIndex = i}
-            y =
-                Output
-                { outputValue = detOutValue
-                , outBlock = detailedTxBlock
-                , outScript = detOutScript
-                , outSpender = detOutSpender
-                }
-        in (x, y)
-    h dtx@DetailedTx {..} =
-        map
-            (uncurry (j dtx))
-            (filter (not . isCoinbase . snd) (zip [0 ..] detailedTxInputs))
-    j DetailedTx {..} i DetailedInput {..} =
-        let x = detInOutPoint
-            y =
-                Output
-                { outputValue = detInValue
-                , outBlock = detInBlock
-                , outScript = detInPkScript
-                , outSpender =
-                      Just
-                          Spender
-                          { spenderHash = txHash detailedTxData
-                          , spenderIndex = i
-                          , spenderBlock = detailedTxBlock
-                          }
-                }
-        in (x, y)
-    l a =
-        retrieveValue (BalanceKey a) db s >>= \case
-            Nothing -> do
-                $(logError) $ "Balance not found: " <> logShow a
-                error $ "Balance not found: " <> show a
-            Just b -> return (a, b)
+-- blockOutBal ::
+--        (MonadLoggerIO m, MonadUnliftIO m)
+--     => BlockHash
+--     -> DB
+--     -> Maybe Snapshot
+--     -> m (Maybe (OutputMap, AddressMap))
+-- blockOutBal bh db s =
+--     getBlock bh db s >>= \case
+--         Nothing -> return Nothing
+--         Just BlockValue {..} -> do
+--             txs <- getTxs blockValueTxs db s
+--             let om = M.fromList (concatMap f txs ++ concatMap h txs)
+--                 as =
+--                     S.fromList
+--                         (mapMaybe (scriptToAddressBS . outScript) (M.elems om))
+--             bm <- M.fromList <$> mapM l (S.toList as)
+--             return (Just (om, bm))
+--   where
+--     f dtx@DetailedTx {..} = zipWith (g dtx) [0 ..] detailedTxOutputs
+--     g DetailedTx {..} i DetailedOutput {..} =
+--         let x =
+--                 OutPoint
+--                 {outPointHash = txHash detailedTxData, outPointIndex = i}
+--             y =
+--                 Output
+--                 { outputValue = detOutValue
+--                 , outBlock = detailedTxBlock
+--                 , outScript = detOutScript
+--                 , outSpender = detOutSpender
+--                 }
+--         in (x, y)
+--     h dtx@DetailedTx {..} =
+--         map
+--             (uncurry (j dtx))
+--             (filter (not . isCoinbase . snd) (zip [0 ..] detailedTxInputs))
+--     j DetailedTx {..} i DetailedInput {..} =
+--         let x = detInOutPoint
+--             y =
+--                 Output
+--                 { outputValue = detInValue
+--                 , outBlock = detInBlock
+--                 , outScript = detInPkScript
+--                 , outSpender =
+--                       Just
+--                           Spender
+--                           { spenderHash = txHash detailedTxData
+--                           , spenderIndex = i
+--                           , spenderBlock = detailedTxBlock
+--                           }
+--                 }
+--         in (x, y)
+--     l a =
+--         retrieve db s (BalanceKey a) >>= \case
+--             Nothing -> do
+--                 $(logError) $ "Balance not found: " <> logShow a
+--                 error $ "Balance not found: " <> show a
+--             Just b -> return (a, b)
 
 updateTxBalances ::
        OutputMap
@@ -537,7 +537,7 @@ updateTxBalances om am bl tx = execState go (om, am)
             Just a -> do
                 c@Balance {..} <- b a
                 case bl of
-                    Nothing -> do
+                    Nothing ->
                         upbal
                             a
                             c
@@ -556,27 +556,27 @@ updateTxBalances om am bl tx = execState go (om, am)
                             , balanceSpentCount = balanceSpentCount + 1
                             }
     fo i TxOut {..} = do
-        o@Output {..} <-
+        Output {..} <-
             g OutPoint {outPointIndex = i, outPointHash = txHash tx}
         when (isJust outSpender) $
             error "I jumped off the aircraft with no parachute"
         case scriptToAddressBS outScript of
             Nothing -> return ()
             Just a -> do
-                b@Balance {..} <- b a
+                b'@Balance {..} <- b a
                 case bl of
-                    Nothing -> do
+                    Nothing ->
                         upbal
                             a
-                            b
+                            b'
                             { balanceUnconfirmed =
                                   balanceUnconfirmed + fromIntegral outputValue
                             , balanceMempoolTxs = txHash tx : balanceMempoolTxs
                             }
-                    Just _ -> do
+                    Just _ ->
                         upbal
                             a
-                            b
+                            b'
                             { balanceValue = balanceValue + outputValue
                             , balanceOutputCount = balanceOutputCount + 1
                             }
@@ -599,9 +599,9 @@ updateTxBalances om am bl tx = execState go (om, am)
                     , balanceSpentCount = 0
                     , balanceMempoolTxs = []
                     }
-            Just b -> return b
+            Just b' -> return b'
     upout p o = modify . first $ M.insert p o
-    upbal a b = modify . second $ M.insert a b
+    upbal a b' = modify . second $ M.insert a b'
 
 addNewBlock :: MonadBlock m => Block -> m ()
 addNewBlock Block {..} = addNewTxs (Just blockHeader) blockTxns
@@ -697,12 +697,10 @@ addNewTxs mbh txs =
                     Nothing ->
                         concatMap (\tx -> getTxOps om False tx Nothing) txs
         db <- asks myBlockDB
-        RocksDB.write db def ops
-    gtx h =
-        runMaybeT $ do
-            db <- asks myBlockDB
-            TxRecord {..} <- MaybeT (retrieveValue (TxKey h) db Nothing)
-            return txValue
+        writeBatch db ops
+    gtx h = do
+        db <- asks myBlockDB
+        fmap txValue <$> retrieve db Nothing (TxKey h)
 
 getBlockOps ::
        OutputMap
@@ -711,7 +709,7 @@ getBlockOps ::
     -> BlockWork
     -> BlockHeight
     -> [Tx]
-    -> [RocksDB.BatchOp]
+    -> [R.BatchOp]
 getBlockOps om del bh bw bg txs = hop : gop : bop : tops
   where
     b = Block {blockHeader = bh, blockTxns = txs}
@@ -743,7 +741,7 @@ getBlockOps om del bh bw bg txs = hop : gop : bop : tops
                then insertOp k p
                else insertOp k v
     r i =
-        Just $
+        Just
         BlockRef
         { blockRefHash = headerHash bh
         , blockRefHeight = bg
@@ -752,7 +750,7 @@ getBlockOps om del bh bw bg txs = hop : gop : bop : tops
         }
     tops = concat $ zipWith (\i tx -> getTxOps om del tx (r i)) [0 ..] txs
 
-getTxOps :: OutputMap -> Bool -> Tx -> Maybe BlockRef -> [RocksDB.BatchOp]
+getTxOps :: OutputMap -> Bool -> Tx -> Maybe BlockRef -> [R.BatchOp]
 getTxOps om del tx br = tops <> pops <> oops <> aiops <> aoops
   where
     is = filter ((/= nullOutPoint) . prevOutput) (txIn tx)
@@ -852,7 +850,7 @@ getTxOps om del tx br = tops <> pops <> oops <> aiops <> aoops
     aiops = concatMap ai (filter ((/= nullOutPoint) . prevOutput) (txIn tx))
     aoops = concatMap ao [0 .. length (txOut tx) - 1]
 
-getBalanceOps :: AddressMap -> [RocksDB.BatchOp]
+getBalanceOps :: AddressMap -> [R.BatchOp]
 getBalanceOps am = map (\(a, b) -> insertOp (BalanceKey a) b) (M.toAscList am)
 
 revertBestBlock :: MonadBlock m => m ()
@@ -874,7 +872,7 @@ revertBestBlock = do
     gtx h =
         runMaybeT $ do
             db <- asks myBlockDB
-            TxRecord {..} <- MaybeT (retrieveValue (TxKey h) db Nothing)
+            TxRecord {..} <- MaybeT (retrieve db Nothing (TxKey h))
             return txValue
     deleteTxs ths =
         forM_ ths $ \t -> do
@@ -891,7 +889,7 @@ revertBestBlock = do
                 concatMap (\tx -> getTxOps om True tx Nothing) mts <>
                 getBlockOps om True bh bw bg txs <>
                 getBalanceOps am
-        RocksDB.write db def ops
+        writeBatch db ops
         importMempool txs
 
 -- TODO: do something about orphan transactions
@@ -900,20 +898,20 @@ importMempool txs' = do
     db <- asks myBlockDB
     om <- foldM (\m t -> txOutputMap m t Nothing db Nothing) M.empty txs
     let tvs = map (\tx -> (tx, vtx om tx)) txs
-        os = map fst $ filter ((== TxOrphan) . snd) tvs
+        _os = map fst $ filter ((== TxOrphan) . snd) tvs
         vs = map fst $ filter ((== TxValid) . snd) tvs
     addNewTxs Nothing vs
   where
     txs = fo (S.fromList txs')
     vtx om tx = maximum [inputSpent om tx, fundsLow om tx]
     inputSpent om tx =
-        let t = maybe True (\o -> isNothing (outSpender o))
+        let t = maybe True (isNothing . outSpender)
             b = all (\i -> t (M.lookup (prevOutput i) om)) (ins tx)
         in if b
                then TxValid
                else TxInputSpent
     fundsLow om tx =
-        let f a i = (+) <$> a <*> (outputValue <$> M.lookup (prevOutput i) om)
+        let f a i' = (+) <$> a <*> (outputValue <$> M.lookup (prevOutput i') om)
             i = foldl' f (Just 0) (ins tx)
             o = sum (map outValue (txOut tx))
         in case (>= o) <$> i of
@@ -1039,70 +1037,70 @@ importBlock block@Block {..} = do
     l <- asks myListener
     liftIO . atomically . l $ BestBlock (headerHash blockHeader)
 
-getSpentOutputs :: BlockRef -> PrevOutMap -> Tx -> OutputMap
-getSpentOutputs block prevMap tx =
-    M.fromList (mapMaybe f (zip [0 ..] (txIn tx)))
-  where
-    f (i, TxIn {..}) =
-        if outPointHash prevOutput == zero
-            then Nothing
-            else let prev = fromMaybe e (prevOutput `M.lookup` prevMap)
-                     spender =
-                         Spender
-                         { spenderHash = txHash tx
-                         , spenderIndex = i
-                         , spenderBlock = Just block
-                         }
-                     unspent = prevOutToOutput prev
-                     spent = unspent {outSpender = Just spender}
-                 in Just (prevOutput, spent)
-    e = error "Could not find expcted previous output"
+-- getSpentOutputs :: BlockRef -> PrevOutMap -> Tx -> OutputMap
+-- getSpentOutputs block prevMap tx =
+--     M.fromList (mapMaybe f (zip [0 ..] (txIn tx)))
+--   where
+--     f (i, TxIn {..}) =
+--         if outPointHash prevOutput == zero
+--             then Nothing
+--             else let prev = fromMaybe e (prevOutput `M.lookup` prevMap)
+--                      spender =
+--                          Spender
+--                          { spenderHash = txHash tx
+--                          , spenderIndex = i
+--                          , spenderBlock = Just block
+--                          }
+--                      unspent = prevOutToOutput prev
+--                      spent = unspent {outSpender = Just spender}
+--                  in Just (prevOutput, spent)
+--     e = error "Could not find expcted previous output"
 
-getNewOutputs :: BlockRef -> Tx -> OutputMap
-getNewOutputs block tx = foldl' f M.empty (zip [0 ..] (txOut tx))
-  where
-    f m (i, TxOut {..}) =
-        let key = OutPoint (txHash tx) i
-            val =
-                Output
-                { outputValue = outValue
-                , outBlock = Just block
-                , outScript = scriptOutput
-                , outSpender = Nothing
-                }
-        in M.insert key val m
+-- getNewOutputs :: BlockRef -> Tx -> OutputMap
+-- getNewOutputs block tx = foldl' f M.empty (zip [0 ..] (txOut tx))
+--   where
+--     f m (i, TxOut {..}) =
+--         let key = OutPoint (txHash tx) i
+--             val =
+--                 Output
+--                 { outputValue = outValue
+--                 , outBlock = Just block
+--                 , outScript = scriptOutput
+--                 , outSpender = Nothing
+--                 }
+--         in M.insert key val m
 
-getPrevOutputs :: MonadBlock m => Tx -> PrevOutMap -> m PrevOutMap
-getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
-  where
-    f m outpoint@OutPoint {..} = do
-        let key = outpoint
-        maybeOutput <-
-            if outPointHash == zero
-                then return Nothing
-                else do
-                    maybeOutput <- getOutPointData key prevOutMap
-                    case maybeOutput of
-                        Just output -> return (Just output)
-                        Nothing -> do
-                            let msg = "Could not get previous output"
-                            $(logError) $ logMe <> cs msg
-                            error msg
-        case maybeOutput of
-            Nothing     -> return m
-            Just output -> return (M.insert key output m)
+-- getPrevOutputs :: MonadBlock m => Tx -> PrevOutMap -> m PrevOutMap
+-- getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
+--   where
+--     f m outpoint@OutPoint {..} = do
+--         let key = outpoint
+--         maybeOutput <-
+--             if outPointHash == zero
+--                 then return Nothing
+--                 else do
+--                     maybeOutput <- getOutPointData key prevOutMap
+--                     case maybeOutput of
+--                         Just output -> return (Just output)
+--                         Nothing -> do
+--                             let msg = "Could not get previous output"
+--                             $(logError) $ logMe <> cs msg
+--                             error msg
+--         case maybeOutput of
+--             Nothing     -> return m
+--             Just output -> return (M.insert key output m)
 
-getOutPointData ::
-       MonadBlock m
-    => OutPoint
-    -> PrevOutMap
-    -> m (Maybe PrevOut)
-getOutPointData key os = runMaybeT (fromMap <|> fromDB)
-  where
-    fromMap = MaybeT (return (M.lookup key os))
-    fromDB = do
-        db <- asks myBlockDB
-        outputToPrevOut <$> MaybeT (retrieveValue (OutputKey key) db Nothing)
+-- getOutPointData ::
+--        MonadBlock m
+--     => OutPoint
+--     -> PrevOutMap
+--     -> m (Maybe PrevOut)
+-- getOutPointData key os = runMaybeT (fromMap <|> fromDB)
+--   where
+--     fromMap = MaybeT (return (M.lookup key os))
+--     fromDB = do
+--         db <- asks myBlockDB
+--         outputToPrevOut <$> MaybeT (retrieve db Nothing (OutputKey key))
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
@@ -1151,13 +1149,15 @@ processBlockMessage (BlockNotReceived p h) = do
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
-getAddrTxs :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
+processBlockMessage _ = return ()
+
+getAddrTxs :: MonadUnliftIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrTxs addr = getAddrsTxs [addr]
 
-getAddrsTxs :: MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressTx]
+getAddrsTxs :: MonadUnliftIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressTx]
 getAddrsTxs addrs db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ g . Just
+        Nothing -> R.withSnapshot db $ g . Just
         Just _  -> g s
   where
     g s' = do
@@ -1197,15 +1197,15 @@ getAddrsTxs addrs db s =
         return $ sort (itx ++ stx ++ utx)
     e = error "Could not get spender from spent output"
 
-getUnspents :: MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [Unspent]
+getUnspents :: MonadUnliftIO m => [Address] -> DB -> Maybe Snapshot -> m [Unspent]
 getUnspents addrs db s =
     case s of
-        Nothing -> RocksDB.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
     f s' = fmap (sort . concat) $ forM addrs $ \addr -> getUnspent addr db s'
 
-getUnspent :: MonadIO m => Address -> DB -> Maybe Snapshot -> m [Unspent]
+getUnspent :: MonadUnliftIO m => Address -> DB -> Maybe Snapshot -> m [Unspent]
 getUnspent addr db s = do
     xs <- getAddrUnspent addr db s
     return $ map (uncurry toUnspent) xs
@@ -1219,6 +1219,7 @@ getUnspent addr db s = do
         , unspentValue = outputValue
         , unspentBlock = outBlock
         }
+    toUnspent _ _ = error "Error decoding AddrOutputKey data structure"
 
 logMe :: Text
 logMe = "[Block] "

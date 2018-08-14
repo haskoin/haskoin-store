@@ -10,23 +10,23 @@ import           Control.Applicative
 import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad.Reader
-import           Data.Aeson
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
-import           Data.ByteString.Short        (ShortByteString)
-import qualified Data.ByteString.Short        as BSS
+import           Data.Aeson                  as A
+import           Data.ByteString             (ByteString)
+import qualified Data.ByteString             as BS
+import           Data.ByteString.Short       (ShortByteString)
+import qualified Data.ByteString.Short       as BSS
 import           Data.Function
 import           Data.Int
 import           Data.Maybe
-import           Data.Serialize               as S
+import           Data.Serialize              as S
 import           Data.String.Conversions
 import           Data.Word
-import           Database.RocksDB             (DB)
+import           Database.RocksDB            (DB)
+import           Database.RocksDB.Query      as R
 import           Network.Haskoin.Block
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
-import           Network.Haskoin.Store.Common
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
 
@@ -81,17 +81,14 @@ data TxReject
 
 type BlockStore = Inbox BlockMessage
 
-data MultiAddrOutputKey = MultiAddrOutputKey
-    { multiAddrOutputSpent   :: !Bool
-    , multiAddrOutputAddress :: !Address
-    } deriving (Show, Eq, Ord)
-
-data AddrOutputKey = AddrOutputKey
-    { addrOutputSpent   :: !Bool
-    , addrOutputAddress :: !Address
-    , addrOutputHeight  :: !(Maybe BlockHeight)
-    , addrOutPoint      :: !OutPoint
-    } deriving (Show, Eq, Ord)
+data AddrOutputKey
+    = AddrOutputKey { addrOutputSpent   :: !Bool
+                    , addrOutputAddress :: !Address
+                    , addrOutputHeight  :: !(Maybe BlockHeight)
+                    , addrOutPoint      :: !OutPoint }
+    | MultiAddrOutputKey { addrOutputSpent   :: !Bool
+                         , addrOutputAddress :: !Address }
+    deriving (Show, Eq, Ord)
 
 data BlockValue = BlockValue
     { blockValueHeight    :: !BlockHeight
@@ -198,13 +195,10 @@ data Spender = Spender
     , spenderBlock :: !(Maybe BlockRef)
     } deriving (Show, Eq, Ord)
 
-newtype BaseTxKey =
-    BaseTxKey TxHash
-    deriving (Show, Eq, Ord)
-
 data MultiTxKey
     = MultiTxKey !TxKey
     | MultiTxKeyOutput !OutputKey
+    | BaseTxKey !TxHash
     deriving (Show, Eq, Ord)
 
 data MultiTxValue
@@ -216,18 +210,14 @@ newtype TxKey =
     TxKey TxHash
     deriving (Show, Eq, Ord)
 
-newtype MempoolTx =
-    MempoolTx TxHash
+data MempoolTx
+    = MempoolTx TxHash
+    | MempoolKey
     deriving (Show, Eq, Ord)
 
-newtype OrphanTx =
-    OrphanTx TxHash
-    deriving (Show, Eq, Ord)
-
-data MempoolKey = MempoolKey
-    deriving (Show, Eq, Ord)
-
-data OrphanKey = OrphanKey
+data OrphanTx
+    = OrphanTx TxHash
+    | OrphanKey
     deriving (Show, Eq, Ord)
 
 newtype BlockKey =
@@ -288,52 +278,48 @@ instance Ord Unspent where
       where
         f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
 
-instance Record BlockKey BlockValue
-instance Record TxKey TxRecord
-instance Record HeightKey BlockHash
-instance Record BestBlockKey BlockHash
-instance Record OutputKey Output
-instance Record MultiTxKey MultiTxValue
-instance Record AddrOutputKey Output
-instance Record BalanceKey Balance
-instance Record MempoolTx Tx
-instance Record OrphanTx Tx
-instance MultiRecord MultiAddrOutputKey AddrOutputKey Output
-instance MultiRecord BaseTxKey MultiTxKey MultiTxValue
-instance MultiRecord MempoolKey MempoolTx Tx
-instance MultiRecord OrphanKey OrphanTx Tx
+instance Key BlockKey
+instance Key HeightKey
+instance Key OutputKey
+instance Key TxKey
+instance Key MempoolTx
+instance Key AddrOutputKey
+instance R.KeyValue BlockKey BlockValue
+instance R.KeyValue TxKey TxRecord
+instance R.KeyValue HeightKey BlockHash
+instance R.KeyValue BestBlockKey BlockHash
+instance R.KeyValue OutputKey Output
+instance R.KeyValue MultiTxKey MultiTxValue
+instance R.KeyValue AddrOutputKey Output
+instance R.KeyValue BalanceKey Balance
+instance R.KeyValue MempoolTx Tx
+instance R.KeyValue OrphanTx Tx
 
 instance Serialize MempoolTx where
     put (MempoolTx h) = do
         putWord8 0x07
         put h
+    put MempoolKey = putWord8 0x07
     get = do
         guard . (== 0x07) =<< getWord8
-        h <- get
-        return (MempoolTx h)
+        record <|> return MempoolKey
+      where
+        record = do
+            h <- get
+            return (MempoolTx h)
 
 instance Serialize OrphanTx where
     put (OrphanTx h) = do
         putWord8 0x08
         put h
+    put OrphanKey = putWord8 0x08
     get = do
         guard . (== 0x08) =<< getWord8
-        h <- get
-        return (OrphanTx h)
-
-instance Serialize MempoolKey where
-    put MempoolKey = do
-        putWord8 0x07
-    get = do
-        guard . (== 0x07) =<< getWord8
-        return MempoolKey
-
-instance Serialize OrphanKey where
-    put OrphanKey = do
-        putWord8 0x08
-    get = do
-        guard . (== 0x08) =<< getWord8
-        return OrphanKey
+        record <|> return OrphanKey
+      where
+        record = do
+            h <- get
+            return (OrphanTx h)
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
@@ -367,6 +353,11 @@ instance Serialize AddrOutputKey where
         put addrOutputAddress
         put (maxBound - fromMaybe 0 addrOutputHeight)
         put addrOutPoint
+    put MultiAddrOutputKey {..} = do
+        if addrOutputSpent
+            then putWord8 0x03
+            else putWord8 0x05
+        put addrOutputAddress
     get = do
         addrOutputSpent <-
             getWord8 >>= \case
@@ -374,44 +365,33 @@ instance Serialize AddrOutputKey where
                 0x05 -> return False
                 _ -> mzero
         addrOutputAddress <- get
-        h <- (maxBound -) <$> get
-        let addrOutputHeight = if h == maxBound then Nothing else Just h
-        addrOutPoint <- get
-        return AddrOutputKey {..}
-
-instance Serialize MultiAddrOutputKey where
-    put MultiAddrOutputKey {..} = do
-        if multiAddrOutputSpent
-            then putWord8 0x03
-            else putWord8 0x05
-        put multiAddrOutputAddress
-    get = do
-        multiAddrOutputSpent <-
-            getWord8 >>= \case
-                0x03 -> return True
-                0x05 -> return False
-                _ -> mzero
-        multiAddrOutputAddress <- get
-        return MultiAddrOutputKey {..}
+        record addrOutputSpent addrOutputAddress <|>
+            return MultiAddrOutputKey {..}
+      where
+        record addrOutputSpent addrOutputAddress = do
+            h <- (maxBound -) <$> get
+            let addrOutputHeight =
+                    if h == maxBound
+                        then Nothing
+                        else Just h
+            addrOutPoint <- get
+            return AddrOutputKey {..}
 
 instance Serialize MultiTxKey where
     put (MultiTxKey k)       = put k
     put (MultiTxKeyOutput k) = put k
-    get = (MultiTxKey <$> get) <|> (MultiTxKeyOutput <$> get)
+    put (BaseTxKey k)        = putWord8 0x02 >> put k
+    get = MultiTxKey <$> get <|> MultiTxKeyOutput <$> get <|> base
+      where
+        base = do
+            guard . (== 0x02) =<< getWord8
+            k <- get
+            return (BaseTxKey k)
 
 instance Serialize MultiTxValue where
     put (MultiTx v)       = put v
     put (MultiTxOutput v) = put v
     get = (MultiTx <$> get) <|> (MultiTxOutput <$> get)
-
-instance Serialize BaseTxKey where
-    put (BaseTxKey k) = do
-        putWord8 0x02
-        put k
-    get = do
-        guard . (== 0x02) =<< getWord8
-        k <- get
-        return (BaseTxKey k)
 
 instance Serialize Spender where
     put Spender {..} = do
@@ -514,7 +494,7 @@ instance Serialize BlockValue where
         blockValueTxs <- get
         return BlockValue {..}
 
-blockValuePairs :: KeyValue kv => BlockValue -> [kv]
+blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
     [ "hash" .= headerHash blockValueHeader
     , "height" .= blockValueHeight
@@ -536,7 +516,7 @@ instance ToJSON Spender where
     toJSON = object . spenderPairs
     toEncoding = pairs . mconcat . spenderPairs
 
-blockRefPairs :: KeyValue kv => BlockRef -> [kv]
+blockRefPairs :: A.KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
     if blockRefMainChain
         then [ "block" .= blockRefHash
@@ -545,18 +525,18 @@ blockRefPairs BlockRef {..} =
              ]
         else []
 
-spenderPairs :: KeyValue kv => Spender -> [kv]
+spenderPairs :: A.KeyValue kv => Spender -> [kv]
 spenderPairs Spender {..} =
     ["txid" .= spenderHash, "vin" .= spenderIndex] ++
     maybe [] blockRefPairs spenderBlock
 
-scriptAddress :: KeyValue kv => ByteString -> [kv]
+scriptAddress :: A.KeyValue kv => ByteString -> [kv]
 scriptAddress bs =
     case scriptToAddressBS bs of
         Nothing   -> []
         Just addr -> ["address" .= addr]
 
-detailedOutputPairs :: KeyValue kv => DetailedOutput -> [kv]
+detailedOutputPairs :: A.KeyValue kv => DetailedOutput -> [kv]
 detailedOutputPairs DetailedOutput {..} =
     [ "value" .= detOutValue
     , "pkscript" .= String (cs (encodeHex detOutScript))
@@ -568,7 +548,7 @@ instance ToJSON DetailedOutput where
     toJSON = object . detailedOutputPairs
     toEncoding = pairs . mconcat . detailedOutputPairs
 
-detailedInputPairs :: KeyValue kv => DetailedInput -> [kv]
+detailedInputPairs :: A.KeyValue kv => DetailedInput -> [kv]
 detailedInputPairs DetailedInput {..} =
     [ "txid" .= outPointHash detInOutPoint
     , "vout" .= outPointIndex detInOutPoint
@@ -591,7 +571,7 @@ instance ToJSON DetailedInput where
     toJSON = object . detailedInputPairs
     toEncoding = pairs . mconcat . detailedInputPairs
 
-detailedTxPairs :: KeyValue kv => DetailedTx -> [kv]
+detailedTxPairs :: A.KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
     [ "txid" .= txHash detailedTxData
     , "size" .= BS.length (S.encode detailedTxData)
@@ -612,7 +592,7 @@ instance ToJSON BlockRef where
     toJSON = object . blockRefPairs
     toEncoding = pairs . mconcat . blockRefPairs
 
-addrTxPairs :: KeyValue kv => AddressTx -> [kv]
+addrTxPairs :: A.KeyValue kv => AddressTx -> [kv]
 addrTxPairs AddressTxIn {..} =
     [ "address" .= addressTxAddress
     , "txid" .= addressTxId
@@ -632,7 +612,7 @@ instance ToJSON AddressTx where
     toJSON = object . addrTxPairs
     toEncoding = pairs . mconcat . addrTxPairs
 
-unspentPairs :: KeyValue kv => Unspent -> [kv]
+unspentPairs :: A.KeyValue kv => Unspent -> [kv]
 unspentPairs Unspent {..} =
     [ "pkscript" .= String (cs (encodeHex unspentPkScript))
     , "txid" .= unspentTxId
@@ -646,7 +626,7 @@ instance ToJSON Unspent where
     toJSON = object . unspentPairs
     toEncoding = pairs . mconcat . unspentPairs
 
-addressBalancePairs :: KeyValue kv => AddressBalance -> [kv]
+addressBalancePairs :: A.KeyValue kv => AddressBalance -> [kv]
 addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "confirmed" .= addressBalConfirmed

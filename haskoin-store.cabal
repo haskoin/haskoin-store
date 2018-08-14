@@ -2,10 +2,10 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 900a6b6c0b6b1dd588ff5c59773e9f85b13b032b9d960bec7180c9e2bf6abc96
+-- hash: 60804c7264c1dd3ecb7f252fe35d7a2c3b73c5a4ba8064b62f96b5d5ac6f0000
 
 name:           haskoin-store
-version:        0.1.0.0
+version:        1.0.0
 synopsis:       Storage and index for Bitcoin wallets
 description:    Store all blocks, transactions, and addresses required for a Bitcoin or Bitcoin Cash wallet or block explorer to function.
 category:       Bitcoin, Finance, Network
@@ -49,6 +49,7 @@ library
     , nqe
     , resourcet
     , rocksdb-haskell
+    , rocksdb-query
     , string-conversions
     , text
     , time
@@ -58,7 +59,6 @@ library
       Network.Haskoin.Store
   other-modules:
       Network.Haskoin.Store.Block
-      Network.Haskoin.Store.Common
       Network.Haskoin.Store.Types
       Paths_haskoin_store
   default-language: Haskell2010

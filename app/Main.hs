@@ -230,22 +230,22 @@ main =
                 getBlocks blocks db Nothing >>= json
             get "/transaction/:txid" $ do
                 txid <- param "txid"
-                getTx txid db Nothing >>= maybeJSON
+                liftIO (getTx txid db Nothing) >>= maybeJSON
             get "/transactions" $ do
                 txids <- param "txids"
-                getTxs txids db Nothing >>= json
+                liftIO (getTxs txids db Nothing) >>= json
             get "/address/:address/transactions" $ do
                 address <- param "address"
-                getAddrTxs address db Nothing >>= json
+                liftIO (getAddrTxs address db Nothing) >>= json
             get "/address/transactions" $ do
                 addresses <- param "addresses"
-                getAddrsTxs addresses db Nothing >>= json
+                liftIO (getAddrsTxs addresses db Nothing) >>= json
             get "/address/:address/unspent" $ do
                 address <- param "address"
-                getUnspent address db Nothing >>= json
+                liftIO (getUnspent address db Nothing) >>= json
             get "/address/unspent" $ do
                 addresses <- param "addresses"
-                getUnspents addresses db Nothing >>= json
+                liftIO (getUnspents addresses db Nothing) >>= json
             get "/address/:address/balance" $ do
                 address <- param "address"
                 getBalance address db Nothing >>= json
