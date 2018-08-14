@@ -11,7 +11,6 @@ import           Control.Monad.Logger
 import           Data.Aeson                  (ToJSON (..), Value (..), object,
                                               (.=))
 import           Data.Bits
-import           Data.Default                (def)
 import           Data.Maybe
 import           Data.String.Conversions
 import qualified Data.Text                   as T
@@ -195,7 +194,7 @@ main =
         db <-
             RocksDB.open
                 (wdir </> "blocks")
-                def
+                RocksDB.defaultOptions
                 { RocksDB.createIfMissing = True
                 , RocksDB.compression = RocksDB.SnappyCompression
                 , RocksDB.maxOpenFiles = -1

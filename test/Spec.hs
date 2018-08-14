@@ -3,7 +3,6 @@
 import           Control.Concurrent.NQE
 import           Control.Monad
 import           Control.Monad.Logger
-import           Data.Default
 import           Data.Maybe
 import           Database.RocksDB            (DB)
 import qualified Database.RocksDB            as RocksDB
@@ -74,7 +73,7 @@ withTestStore t f =
             db <-
                 RocksDB.open
                     w
-                    def
+                    RocksDB.defaultOptions
                     { RocksDB.createIfMissing = True
                     , RocksDB.compression = RocksDB.SnappyCompression
                     }

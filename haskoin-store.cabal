@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 60804c7264c1dd3ecb7f252fe35d7a2c3b73c5a4ba8064b62f96b5d5ac6f0000
+-- hash: 7b3e161335e1cc0ffe7ad430bb4f34a27afe48eb34bab929fbf1c26233982f9b
 
 name:           haskoin-store
 version:        1.0.0
@@ -35,25 +35,15 @@ library
     , bytestring
     , cereal
     , containers
-    , data-default
-    , deepseq
-    , directory
-    , either
-    , exceptions
-    , filepath
     , haskoin-core
     , haskoin-node
     , monad-logger
     , mtl
     , network
     , nqe
-    , resourcet
     , rocksdb-haskell
     , rocksdb-query
     , string-conversions
-    , text
-    , time
-    , transformers
     , unliftio
   exposed-modules:
       Network.Haskoin.Store
@@ -71,7 +61,7 @@ executable haskoin-store
   build-depends:
       aeson
     , base >=4.7 && <5
-    , data-default
+    , bytestring
     , directory
     , filepath
     , haskoin-core
@@ -97,23 +87,16 @@ test-suite haskoin-store-test
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , base >=4.7 && <5
     , bytestring
-    , data-default
-    , directory
-    , exceptions
-    , filepath
     , haskoin-core
     , haskoin-node
     , haskoin-store
     , hspec
     , monad-logger
-    , network
     , nqe
-    , random
     , rocksdb-haskell
-    , stm
-    , string-conversions
     , unliftio
   other-modules:
       Paths_haskoin_store

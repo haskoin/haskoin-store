@@ -14,16 +14,15 @@ extra-source-files:
 - README.md
 - CHANGELOG.md
 dependencies:
+- aeson
 - base >=4.7 && <5
-- data-default
-- directory
-- filepath
+- bytestring
+# - data-default
 - haskoin-core
 - haskoin-node
 - rocksdb-haskell
 - monad-logger
 - nqe
-- string-conversions
 - unliftio
 library:
   source-dirs: src
@@ -31,19 +30,12 @@ library:
   - Network.Haskoin.Store
   dependencies:
   - aeson
-  - bytestring
   - cereal
   - containers
-  - deepseq
-  - either
-  - exceptions
   - mtl
   - network
-  - resourcet
   - rocksdb-query
-  - text
-  - time
-  - transformers
+  - string-conversions
 executables:
   haskoin-store:
     main: Main.hs
@@ -53,11 +45,13 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - aeson
+    - directory
+    - filepath
     - haskoin-store
     - http-types
     - optparse-applicative
     - scotty
+    - string-conversions
     - text
 tests:
   haskoin-store-test:
@@ -68,10 +62,5 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - bytestring
-    - exceptions
     - haskoin-store
     - hspec
-    - network
-    - random
-    - stm
