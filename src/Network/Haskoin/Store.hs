@@ -32,7 +32,6 @@ module Network.Haskoin.Store
     , getUnspents
     , getBalance
     , getBalances
-    -- , postTransaction
     ) where
 
 import           Control.Concurrent.NQE
@@ -62,7 +61,7 @@ store StoreConfig {..} = do
     $(logInfo) $ logMe <> "Launching store"
     ns <- Inbox <$> liftIO newTQueueIO
     sm <- Inbox <$> liftIO newTQueueIO
-    let nodeCfg =
+    let node_cfg =
             NodeConfig
             { maxPeers = storeConfMaxPeers
             , database = storeConfDB
@@ -74,14 +73,14 @@ store StoreConfig {..} = do
             , nodeChain = storeConfChain
             , nodeManager = storeConfManager
             }
-    let storeRead = StoreRead
+    let store_read = StoreRead
             { myMailbox = sm
             , myBlockStore = storeConfBlocks
             , myChain = storeConfChain
             , myManager = storeConfManager
             , myListener = storeConfListener
             }
-    let blockCfg = BlockConfig
+    let block_cfg = BlockConfig
             { blockConfMailbox = storeConfBlocks
             , blockConfChain = storeConfChain
             , blockConfManager = storeConfManager
@@ -91,7 +90,7 @@ store StoreConfig {..} = do
     supervisor
         KillAll
         storeConfSupervisor
-        [runReaderT run storeRead, node nodeCfg, blockStore blockCfg]
+        [runReaderT run store_read, node node_cfg, blockStore block_cfg]
   where
     run =
         forever $ do
@@ -123,11 +122,6 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
     BlockNotReceived p hash `send` b
 
 storeDispatch (PeerEvent _) = return ()
-
--- postTransaction ::
---        MonadIO m => DB -> Mempool -> Tx -> m (Maybe MempoolException)
--- postTransaction db mem tx = do
---     SendTx tx `query` mem
 
 logMe :: IsString a => a
 logMe = "[Store] "

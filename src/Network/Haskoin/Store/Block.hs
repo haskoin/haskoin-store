@@ -88,7 +88,7 @@ blockStore BlockConfig {..} = do
     dbox <- liftIO $ newTVarIO []
     prb <- liftIO $ newTVarIO Nothing
     runReaderT
-        (loadBest >> syncBlocks >> run)
+        (load_best >> syncBlocks >> run)
         BlockRead
         { mySelf = blockConfMailbox
         , myBlockDB = blockConfDB
@@ -101,7 +101,7 @@ blockStore BlockConfig {..} = do
         }
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
-    loadBest =
+    load_best =
         retrieve blockConfDB Nothing BestBlockKey >>= \case
             Nothing -> importBlock genesisBlock
             Just (_ :: BlockHash) -> return ()
@@ -248,9 +248,9 @@ getTx ::
        MonadUnliftIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
 getTx th db s = do
     xs <- matchingAsList db s (BaseTxKey th)
-    case findTx xs of
+    case find_tx xs of
         Just TxRecord {..} ->
-            let os = map (uncurry output) (filterOutputs xs)
+            let os = map (uncurry output) (filter_outputs xs)
                 is = map (input txValuePrevOuts) (txIn txValue)
             in return $
                Just
@@ -289,7 +289,7 @@ getTx th db s = do
         , detOutScript = outScript
         , detOutSpender = outSpender
         }
-    findTx xs =
+    find_tx xs =
         listToMaybe
             [ t
             | (k, v) <- xs
@@ -298,7 +298,7 @@ getTx th db s = do
                   _             -> False
             , let MultiTx t = v
             ]
-    filterOutputs xs =
+    filter_outputs xs =
         [ (p, o)
         | (k, v) <- xs
         , case (k, v) of
@@ -308,10 +308,6 @@ getTx th db s = do
         , let MultiTxOutput o = v
         ]
     e = error "Colud not locate previous output from transaction record"
-
--- getTxRecords ::
---        MonadIO m => [TxHash] -> DB -> Maybe Snapshot -> m [Maybe TxRecord]
--- getTxRecords hs db s = forM hs (retrieve db s . TxKey)
 
 getOutPoints :: MonadIO m => OutputMap -> [OutPoint] -> DB -> Maybe Snapshot -> m OutputMap
 getOutPoints om os db s = foldM f om os
@@ -450,64 +446,6 @@ deleteTransaction om am th db s = execStateT go (om, am, S.empty)
                         Nothing -> return ()
                         Just a -> get_balance a >>= put_balance a . remove_output o
                 delete_tx
-
--- blockOutBal ::
---        (MonadLoggerIO m, MonadUnliftIO m)
---     => BlockHash
---     -> DB
---     -> Maybe Snapshot
---     -> m (Maybe (OutputMap, AddressMap))
--- blockOutBal bh db s =
---     getBlock bh db s >>= \case
---         Nothing -> return Nothing
---         Just BlockValue {..} -> do
---             txs <- getTxs blockValueTxs db s
---             let om = M.fromList (concatMap f txs ++ concatMap h txs)
---                 as =
---                     S.fromList
---                         (mapMaybe (scriptToAddressBS . outScript) (M.elems om))
---             bm <- M.fromList <$> mapM l (S.toList as)
---             return (Just (om, bm))
---   where
---     f dtx@DetailedTx {..} = zipWith (g dtx) [0 ..] detailedTxOutputs
---     g DetailedTx {..} i DetailedOutput {..} =
---         let x =
---                 OutPoint
---                 {outPointHash = txHash detailedTxData, outPointIndex = i}
---             y =
---                 Output
---                 { outputValue = detOutValue
---                 , outBlock = detailedTxBlock
---                 , outScript = detOutScript
---                 , outSpender = detOutSpender
---                 }
---         in (x, y)
---     h dtx@DetailedTx {..} =
---         map
---             (uncurry (j dtx))
---             (filter (not . isCoinbase . snd) (zip [0 ..] detailedTxInputs))
---     j DetailedTx {..} i DetailedInput {..} =
---         let x = detInOutPoint
---             y =
---                 Output
---                 { outputValue = detInValue
---                 , outBlock = detInBlock
---                 , outScript = detInPkScript
---                 , outSpender =
---                       Just
---                           Spender
---                           { spenderHash = txHash detailedTxData
---                           , spenderIndex = i
---                           , spenderBlock = detailedTxBlock
---                           }
---                 }
---         in (x, y)
---     l a =
---         retrieve db s (BalanceKey a) >>= \case
---             Nothing -> do
---                 $(logError) $ "Balance not found: " <> logShow a
---                 error $ "Balance not found: " <> show a
---             Just b -> return (a, b)
 
 updateTxBalances ::
        OutputMap
@@ -859,18 +797,31 @@ getBalanceOps am = map (\(a, b) -> insertOp (BalanceKey a) b) (M.toAscList am)
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
     db <- asks myBlockDB
-    best <- getBestBlockHash db Nothing
+    best@BlockValue {..} <- getBestBlock db Nothing
     when
-        (best == headerHash genesisHeader)
+        (blockValueHeader == genesisHeader)
         (error "Attempted to revert genesis block")
-    $(logWarn) $ logMe <> "Reverting block " <> logShow best
-    BlockValue {..} <-
-        fromMaybe (error "Bad robot") <$> getBlock best db Nothing
+    $(logWarn) $
+        logMe <> "Reverting block " <> logShow blockValueHeight
     txs <- mapM gtx blockValueTxs
     flip evalStateT (M.empty, M.empty, S.empty) $ do
+        init_outputs best txs
         delete_txs blockValueTxs
         update_database blockValueHeader blockValueWork blockValueHeight txs
   where
+    bref BlockValue {..} i =
+        BlockRef
+        { blockRefHash = headerHash blockValueHeader
+        , blockRefHeight = blockValueHeight
+        , blockRefMainChain = True
+        , blockRefPos = i
+        }
+    init_outputs block@BlockValue {..} txs = do
+        db <- asks myBlockDB
+        let f om' (i, t) = txOutputMap om' t (Just (bref block i)) db Nothing
+        (om, am, ts) <- get
+        om' <- foldM f om (zip [0 ..] txs)
+        put (om', am, ts)
     gtx h = do
         db <- asks myBlockDB
         retrieve db Nothing (TxKey h) >>= \case
@@ -906,14 +857,14 @@ importMempool txs' = do
     addNewTxs Nothing vs
   where
     txs = fo (S.fromList txs')
-    vtx om tx = maximum [inputSpent om tx, fundsLow om tx]
-    inputSpent om tx =
+    vtx om tx = maximum [input_spent om tx, funds_low om tx]
+    input_spent om tx =
         let t = maybe True (isNothing . outSpender)
             b = all (\i -> t (M.lookup (prevOutput i) om)) (ins tx)
         in if b
                then TxValid
                else TxInputSpent
-    fundsLow om tx =
+    funds_low om tx =
         let f a i' = (+) <$> a <*> (outputValue <$> M.lookup (prevOutput i') om)
             i = foldl' f (Just 0) (ins tx)
             o = sum (map outValue (txOut tx))
@@ -972,9 +923,9 @@ syncBlocks = do
         split_block <- chainGetSplitBlock chain_best highest_block ch
         db <- asks myBlockDB
         best_block <- getBestBlock db Nothing
-        when (nodeHeight split_block < blockValueHeight best_block) $
-            chainIsSynced ch >>= \synced ->
-                when synced $ revert_until (headerHash (nodeHeader split_block))
+        when (nodeHeight split_block < blockValueHeight best_block) $ do
+            s <- chainIsSynced ch
+            when s (revert_until (headerHash (nodeHeader split_block)))
         let sync_height =
                 min (nodeHeight chain_best) (nodeHeight split_block + 500)
         target_block <-
@@ -985,32 +936,20 @@ syncBlocks = do
                              throwString
                                  "Could not get block ancestor from chain"
                          Just b -> return b
-                -- Request up to target block
         blocks_to_get <-
             map (headerHash . nodeHeader) . (++ [target_block]) <$>
             chainGetParents (nodeHeight split_block + 1) target_block ch
         download_blocks p blocks_to_get
-    get_peer = do
-        my_peer <- asks myPeer
-        maybe_peer <-
-            liftIO . atomically $ do
-                maybe_peer <- readTVar my_peer
-                case maybe_peer of
-                    Nothing -> return Nothing
-                    Just p -> do
-                        writeTVar my_peer (Just p)
-                        return (Just p)
-        case maybe_peer of
-            Just p -> return (Just p)
-            Nothing -> do
-                maybe_peer' <-
-                    listToMaybe <$> (asks myManager >>= managerGetPeers)
-                case maybe_peer' of
-                    Just p ->
-                        liftIO . atomically $ do
-                            writeTVar my_peer (Just p)
+    get_peer =
+        asks myPeer >>= \my ->
+            liftIO (atomically (readTVar my)) >>= \case
+                Just p -> return (Just p)
+                Nothing ->
+                    asks myManager >>= managerGetPeers >>= \case
+                        [] -> return Nothing
+                        p:_ -> do
+                            liftIO (atomically (writeTVar my (Just p)))
                             return (Just p)
-                    Nothing -> return Nothing
     revert_until_known = do
         ch <- asks myChain
         db <- asks myBlockDB
@@ -1058,71 +997,6 @@ importBlock block@Block {..} = do
     addNewBlock block
     l <- asks myListener
     liftIO . atomically . l $ BestBlock (headerHash blockHeader)
-
--- getSpentOutputs :: BlockRef -> PrevOutMap -> Tx -> OutputMap
--- getSpentOutputs block prevMap tx =
---     M.fromList (mapMaybe f (zip [0 ..] (txIn tx)))
---   where
---     f (i, TxIn {..}) =
---         if outPointHash prevOutput == zero
---             then Nothing
---             else let prev = fromMaybe e (prevOutput `M.lookup` prevMap)
---                      spender =
---                          Spender
---                          { spenderHash = txHash tx
---                          , spenderIndex = i
---                          , spenderBlock = Just block
---                          }
---                      unspent = prevOutToOutput prev
---                      spent = unspent {outSpender = Just spender}
---                  in Just (prevOutput, spent)
---     e = error "Could not find expcted previous output"
-
--- getNewOutputs :: BlockRef -> Tx -> OutputMap
--- getNewOutputs block tx = foldl' f M.empty (zip [0 ..] (txOut tx))
---   where
---     f m (i, TxOut {..}) =
---         let key = OutPoint (txHash tx) i
---             val =
---                 Output
---                 { outputValue = outValue
---                 , outBlock = Just block
---                 , outScript = scriptOutput
---                 , outSpender = Nothing
---                 }
---         in M.insert key val m
-
--- getPrevOutputs :: MonadBlock m => Tx -> PrevOutMap -> m PrevOutMap
--- getPrevOutputs tx prevOutMap = foldM f M.empty (map prevOutput (txIn tx))
---   where
---     f m outpoint@OutPoint {..} = do
---         let key = outpoint
---         maybeOutput <-
---             if outPointHash == zero
---                 then return Nothing
---                 else do
---                     maybeOutput <- getOutPointData key prevOutMap
---                     case maybeOutput of
---                         Just output -> return (Just output)
---                         Nothing -> do
---                             let msg = "Could not get previous output"
---                             $(logError) $ logMe <> cs msg
---                             error msg
---         case maybeOutput of
---             Nothing     -> return m
---             Just output -> return (M.insert key output m)
-
--- getOutPointData ::
---        MonadBlock m
---     => OutPoint
---     -> PrevOutMap
---     -> m (Maybe PrevOut)
--- getOutPointData key os = runMaybeT (fromMap <|> fromDB)
---   where
---     fromMap = MaybeT (return (M.lookup key os))
---     fromDB = do
---         db <- asks myBlockDB
---         outputToPrevOut <$> MaybeT (retrieve db Nothing (OutputKey key))
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
@@ -1230,9 +1104,9 @@ getUnspents addrs db s =
 getUnspent :: MonadUnliftIO m => Address -> DB -> Maybe Snapshot -> m [Unspent]
 getUnspent addr db s = do
     xs <- getAddrUnspent addr db s
-    return $ map (uncurry toUnspent) xs
+    return $ map (uncurry to_unspent) xs
   where
-    toUnspent AddrOutputKey {..} Output {..} =
+    to_unspent AddrOutputKey {..} Output {..} =
         Unspent
         { unspentAddress = Just addrOutputAddress
         , unspentPkScript = outScript
@@ -1241,7 +1115,7 @@ getUnspent addr db s = do
         , unspentValue = outputValue
         , unspentBlock = outBlock
         }
-    toUnspent _ _ = error "Error decoding AddrOutputKey data structure"
+    to_unspent _ _ = error "Error decoding AddrOutputKey data structure"
 
 logMe :: IsString a => a
 logMe = "[Block] "
