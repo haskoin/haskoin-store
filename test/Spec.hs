@@ -21,7 +21,7 @@ main = do
         it "gets 8 blocks" $
             withTestStore "eight-blocks" $ \(_db, _b, c, e) -> do
                 bs <-
-                    replicateM 9 $ do
+                    replicateM 8 $ do
                         BlockEvent (BestBlock b) <- receive e
                         return b
                 withAsync (dummyEventHandler e) $ \_ -> do
@@ -34,7 +34,7 @@ main = do
         it "get a block and its transactions" $
             withTestStore "get-block-txs" $ \(db, _b, _c, e) -> do
                 bs <-
-                    replicateM 382 $ do
+                    replicateM 381 $ do
                         BlockEvent (BestBlock bb) <- receive e
                         return bb
                 withAsync (dummyEventHandler e) $ \_ -> do

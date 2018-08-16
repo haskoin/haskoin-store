@@ -65,7 +65,6 @@ data BlockMessage
                     !Block
     | BlockNotReceived !Peer
                        !BlockHash
-    | BlockProcess
     | TxReceived !Peer !Tx
     | TxRejected !Peer !TxReject !TxHash
     | PongReceived !Peer !Word64
@@ -679,11 +678,11 @@ instance Serialize TxKey where
 newtype StoreEvent =
     BlockEvent BlockEvent
 
-type StoreSupervisor = Inbox SupervisorMessage
+type StoreSupervisor n = Inbox (SupervisorMessage n)
 
-data StoreConfig = StoreConfig
+data StoreConfig n = StoreConfig
     { storeConfBlocks     :: !BlockStore
-    , storeConfSupervisor :: !StoreSupervisor
+    , storeConfSupervisor :: !(StoreSupervisor n)
     , storeConfManager    :: !Manager
     , storeConfChain      :: !Chain
     , storeConfListener   :: !(Listen StoreEvent)

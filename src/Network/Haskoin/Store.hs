@@ -56,7 +56,7 @@ data StoreRead = StoreRead
     , myListener   :: !(Listen StoreEvent)
     }
 
-store :: (MonadLoggerIO m, MonadUnliftIO m) => StoreConfig -> m ()
+store :: (MonadLoggerIO m, MonadUnliftIO m) => StoreConfig m -> m ()
 store StoreConfig {..} = do
     $(logInfo) $ logMe <> "Launching store"
     ns <- Inbox <$> liftIO newTQueueIO

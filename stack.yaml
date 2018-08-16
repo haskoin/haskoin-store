@@ -1,13 +1,13 @@
 resolver: lts-12.5
 extra-deps:
 - git: https://github.com/haskoin/haskoin-core.git
-  commit: 8fa966a48a79809e2caba5b66342024c3e8177fc
+  commit: f2c8d75c44fbdd88a194d3753df395eb0e5b8fd6
 - git: https://github.com/xenog/nqe.git
-  commit: c663fabb2f197f7db49ccbc1361150cd13c1f553
+  commit: 10bc2c02f589a5438b33dbd5356bbb460c9d3a3a
 - git: https://github.com/xenog/rocksdb-query.git
   commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
 - git: https://github.com/haskoin/haskoin-node.git
-  commit: 52fde9dff72e3b57944a9e222e539e4d9a4ba826
+  commit: 727b2258b8597e393d910ee2e8db6d15ba9b1dc7
 - rocksdb-haskell-1.0.1
 - murmur3-1.0.3
 - secp256k1-0.5.3

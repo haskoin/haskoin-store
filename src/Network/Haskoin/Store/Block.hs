@@ -26,6 +26,7 @@ module Network.Haskoin.Store.Block
     ) where
 
 import           Control.Concurrent.NQE
+import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
@@ -54,14 +55,13 @@ import           Network.Haskoin.Transaction
 import           UnliftIO
 
 data BlockRead = BlockRead
-    { myBlockDB    :: !DB
-    , mySelf       :: !BlockStore
-    , myChain      :: !Chain
-    , myManager    :: !Manager
-    , myListener   :: !(Listen BlockEvent)
-    , myPending    :: !(TVar [BlockHash])
-    , myDownloaded :: !(TVar [Block])
-    , myPeer       :: !(TVar (Maybe Peer))
+    { myBlockDB  :: !DB
+    , mySelf     :: !BlockStore
+    , myChain    :: !Chain
+    , myManager  :: !Manager
+    , myListener :: !(Listen BlockEvent)
+    , myPending  :: !(TVar BlockHeight)
+    , myPeer     :: !(TVar (Maybe Peer))
     }
 
 type MonadBlock m
@@ -81,7 +81,7 @@ data ImportState = ImportState { outputMap  :: !OutputMap
                                , addressMap :: !AddressMap
                                , deleteTxs  :: !(Set TxHash) }
 
-type MonadImport m = (MonadState ImportState m)
+type MonadImport m = MonadState ImportState m
 
 runMonadImport :: Monad m => StateT ImportState m a -> m a
 runMonadImport f =
@@ -92,9 +92,8 @@ runMonadImport f =
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
-    pbox <- liftIO $ newTVarIO []
-    dbox <- liftIO $ newTVarIO []
-    prb <- liftIO $ newTVarIO Nothing
+    pending_box <- liftIO (newTVarIO 0)
+    peer_box <- liftIO (newTVarIO Nothing)
     runReaderT
         (load_best >> syncBlocks >> run)
         BlockRead
@@ -103,15 +102,14 @@ blockStore BlockConfig {..} = do
         , myChain = blockConfChain
         , myManager = blockConfManager
         , myListener = blockConfListener
-        , myPending = pbox
-        , myDownloaded = dbox
-        , myPeer = prb
+        , myPending = pending_box
+        , myPeer = peer_box
         }
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
     load_best =
         retrieve blockConfDB Nothing BestBlockKey >>= \case
-            Nothing -> importBlock genesisBlock
+            Nothing -> addNewBlock genesisBlock
             Just (_ :: BlockHash) -> return ()
 
 getBestBlockHash :: MonadIO m => DB -> Maybe Snapshot -> m BlockHash
@@ -395,7 +393,7 @@ deleteTransaction th db snapshot =
         mo <-
             case M.lookup op outputMap of
                 Nothing -> retrieve db snapshot (OutputKey op)
-                Just o -> return (Just o)
+                Just o  -> return (Just o)
         case mo of
             Nothing -> do
                 $(logError) $ "Output not found: " <> logShow op
@@ -405,7 +403,7 @@ deleteTransaction th db snapshot =
         ImportState {..} <- get
         bm <-
             case M.lookup a addressMap of
-                Just b -> return $ Just b
+                Just b  -> return $ Just b
                 Nothing -> retrieve db snapshot (BalanceKey a)
         case bm of
             Nothing -> do
@@ -867,55 +865,41 @@ importMempool txs' = do
            in S.toList ns <> fo ds
 
 syncBlocks :: MonadBlock m => m ()
-syncBlocks = do
-    ch <- asks myChain
-    revert_until_known
-    chain_best <- chainGetBest ch
-    let chain_best_hash = headerHash (nodeHeader chain_best)
-    db <- asks myBlockDB
-    best_block_hash <- getBestBlockHash db Nothing
-    when (best_block_hash /= chain_best_hash) $ do
-        pending_box <- asks myPending
-        downloaded_box <- asks myDownloaded
-        maybe_pending_highest_hash <-
-            liftIO . atomically $ do
-                pending <- readTVar pending_box
-                downloaded <- readTVar downloaded_box
-                let pending_highest_hash
-                        | not (null pending) = last pending
-                        | not (null downloaded) =
-                            headerHash (blockHeader (head downloaded))
-                            -- Last downloaded is head
-                        | otherwise = best_block_hash
-                    -- Avoid pending & downloaded blocks to be empty
-                    ready_for_more = length pending + length downloaded < 250
-                if ready_for_more && pending_highest_hash /= chain_best_hash
-                    then return (Just pending_highest_hash)
-                    else return Nothing
-        case maybe_pending_highest_hash of
-            Nothing -> return ()
-            Just pending_highest_hash ->
-                get_peer >>= \case
-                    Nothing -> return ()
-                    Just p -> sync_with_peer pending_highest_hash chain_best p
+syncBlocks =
+    runExceptT sync >>= \case
+        Left (Just l) -> $(logError) l
+        _ -> return ()
   where
-    sync_with_peer pending_highest_hash chain_best p = do
+    sync = do
         ch <- asks myChain
-        highest_block <-
-            chainGetBlock pending_highest_hash ch >>= \case
+        revert_until_in_chain
+        chain_best <- chainGetBest ch
+        best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
+        let best_hash = headerHash (blockValueHeader best)
+            chain_hash = headerHash (nodeHeader chain_best)
+        when (best_hash == chain_hash) (throwError Nothing) -- all done
+        p <- get_peer (blockValueHeight best)
+        pending <- asks myPending >>= readTVarIO
+        sync_with_peer pending chain_best best p
+    sync_with_peer pending chain_best best p = do
+        ch <- asks myChain
+        highest <-
+            chainGetAncestor pending chain_best ch >>= \case
                 Nothing ->
-                    throwString
-                        "Could not get pending highest header from chain"
+                    throwError
+                        (Just "Could not get pending highest header from chain")
                 Just b -> return b
-        split_block <- chainGetSplitBlock chain_best highest_block ch
-        db <- asks myBlockDB
-        best_block <- getBestBlock db Nothing
-        when (nodeHeight split_block < blockValueHeight best_block) $ do
-            s <- chainIsSynced ch
-            when s (revert_until (headerHash (nodeHeader split_block)))
-        let sync_height =
-                min (nodeHeight chain_best) (nodeHeight split_block + 500)
-        target_block <-
+        split <- chainGetSplitBlock chain_best highest ch
+        when
+            (nodeHeight split < blockValueHeight best)
+            (revert_until (headerHash (nodeHeader split)))
+        let sync_height = min (nodeHeight chain_best) (nodeHeight split + 500)
+        pending_box <- asks myPending
+        peer_box <- asks myPeer
+        atomically $ do
+            writeTVar pending_box sync_height
+            writeTVar peer_box (Just p)
+        target <-
             if sync_height == nodeHeight chain_best
                 then return chain_best
                 else chainGetAncestor sync_height chain_best ch >>= \case
@@ -923,67 +907,48 @@ syncBlocks = do
                              throwString
                                  "Could not get block ancestor from chain"
                          Just b -> return b
-        blocks_to_get <-
-            map (headerHash . nodeHeader) . (++ [target_block]) <$>
-            chainGetParents (nodeHeight split_block + 1) target_block ch
-        download_blocks p blocks_to_get
-    get_peer =
-        asks myPeer >>= \my ->
-            liftIO (atomically (readTVar my)) >>= \case
-                Just p -> return (Just p)
-                Nothing ->
-                    asks myManager >>= managerGetPeers >>= \case
-                        [] -> return Nothing
-                        p:_ -> do
-                            liftIO (atomically (writeTVar my (Just p)))
-                            return (Just p)
-    revert_until_known = do
-        ch <- asks myChain
-        db <- asks myBlockDB
-        y <- chainIsSynced ch
-        b <- getBestBlockHash db Nothing
-        chainGetBlock b ch >>= \x ->
-            when (isNothing x && y) $ do
+        pars <- chainGetParents (nodeHeight split + 1) target ch
+        let blocks_to_get = map (headerHash . nodeHeader) (pars ++ [target])
+        peerGetBlocks p blocks_to_get
+    get_peer best_height = do
+        peer_box <- asks myPeer
+        pending <- asks myPending >>= readTVarIO
+        when (best_height >= pending) (atomically (writeTVar peer_box Nothing))
+        readTVarIO peer_box >>= \case
+            Just p
+                | pending >= best_height + 200 ->
+                    (throwError Nothing) -- at least 200 blocks still pending
+                | otherwise -> return p
+            Nothing ->
+                asks myManager >>= managerGetPeers >>= \case
+                    [] -> throwError (Just "Could not get a peer to sync")
+                    p:_ -> return p
+    revert_until_in_chain = do
+        best <- asks myBlockDB >>= \db -> getBestBlockHash db Nothing
+        asks myChain >>= chainGetBlock best >>= \mb ->
+            when (isNothing mb) $ do
                 revertBestBlock
-                revert_until_known
+                revert_until_in_chain
     revert_until sb = do
         revertBestBlock
-        db <- asks myBlockDB
-        bb <- getBestBlockHash db Nothing
+        bb <- asks myBlockDB >>= (`getBestBlockHash` Nothing)
         unless (bb == sb) (revert_until sb)
-    download_blocks p bhs = do
-        peerGetBlocks p bhs
-        pbox <- asks myPending
-        liftIO (atomically (modifyTVar pbox (++ bhs)))
 
-importBlocks :: MonadBlock m => m ()
-importBlocks = do
-    dbox <- asks myDownloaded
-    m <-
-        liftIO . atomically $
-        readTVar dbox >>= \case
-            [] -> return Nothing
-            ds -> do
-                writeTVar dbox (init ds)
-                return (Just (last ds))
-    case m of
-        Just b -> do
-            importBlock b
-            mbox <- asks mySelf
-            BlockProcess `send` mbox
-        Nothing -> syncBlocks
-
-importBlock :: MonadBlock m => Block -> m ()
+importBlock :: (MonadError String m, MonadBlock m) => Block -> m ()
 importBlock block@Block {..} = do
-    ch <- asks myChain
     bn <-
-        chainGetBlock (headerHash blockHeader) ch >>= \case
+        asks myChain >>= chainGetBlock (headerHash blockHeader) >>= \case
             Just bn -> return bn
-            Nothing -> error "Could not obtain block from chain"
+            Nothing -> throwError "Could not obtain block from chain"
+    best <- asks myBlockDB >>= (`getBestBlock` Nothing)
+    let best_hash = headerHash (blockValueHeader best)
+        prev_hash = prevBlock blockHeader
+    unless
+        (prev_hash == best_hash)
+        (throwError "Block does not build on best")
     $(logInfo) $ logMe <> "Importing block " <> logShow (nodeHeight bn)
     addNewBlock block
-    l <- asks myListener
-    liftIO . atomically . l $ BestBlock (headerHash blockHeader)
+    asks myListener >>= atomically . ($ BestBlock (headerHash blockHeader))
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
@@ -992,40 +957,25 @@ processBlockMessage (BlockChainNew _) = syncBlocks
 processBlockMessage (BlockPeerConnect _) = syncBlocks
 
 processBlockMessage (BlockReceived p b) = do
-    pbox <- asks myPending
-    dbox <- asks myDownloaded
-    let hash = headerHash (blockHeader b)
-    ok <-
-        liftIO . atomically $
-        readTVar pbox >>= \case
-            [] -> return False
-            x:xs ->
-                if hash == x
-                    then do
-                        modifyTVar dbox (b :)
-                        writeTVar pbox xs
-                        return True
-                    else return False
-    if ok
-        then do
-            mbox <- asks mySelf
-            BlockProcess `send` mbox
-        else do
-            mgr <- asks myManager
-            managerKill (PeerMisbehaving "Peer sent unexpected block") p mgr
-
-processBlockMessage BlockProcess = importBlocks
+    runExceptT (importBlock b) >>= \case
+        Left e -> do
+            let hash = headerHash (blockHeader b)
+            $(logError) ("Could not import block " <> logShow hash)
+            $(logError) (fromString e)
+            asks myManager >>= managerKill (PeerMisbehaving e) p
+        Right () -> return ()
+    syncBlocks
 
 processBlockMessage (BlockPeerDisconnect p) = do
-    prb <- asks myPeer
-    pbox <- asks myPending
-    liftIO . atomically $
-        readTVar prb >>= \x ->
-            when (Just p == x) $ do
-                writeTVar prb Nothing
-                writeTVar pbox []
-    mbox <- asks mySelf
-    BlockProcess `send` mbox
+    peer_box <- asks myPeer
+    pending_box <- asks myPending
+    best <- asks myBlockDB >>= (`getBestBlock` Nothing)
+    atomically $
+        readTVar peer_box >>= \x ->
+            when (x == Just p) $ do
+                writeTVar peer_box Nothing
+                writeTVar pending_box (blockValueHeight best)
+    syncBlocks
 
 processBlockMessage (BlockNotReceived p h) = do
     $(logError) $ logMe <> "Block not found: " <> cs (show h)
