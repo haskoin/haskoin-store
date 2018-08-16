@@ -30,6 +30,7 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
+import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Short       as BSS
 import           Data.List
@@ -55,13 +56,13 @@ import           Network.Haskoin.Transaction
 import           UnliftIO
 
 data BlockRead = BlockRead
-    { myBlockDB  :: !DB
-    , mySelf     :: !BlockStore
-    , myChain    :: !Chain
-    , myManager  :: !Manager
-    , myListener :: !(Listen BlockEvent)
-    , myPending  :: !(TVar BlockHeight)
-    , myPeer     :: !(TVar (Maybe Peer))
+    { myBlockDB    :: !DB
+    , mySelf       :: !BlockStore
+    , myChain      :: !Chain
+    , myManager    :: !Manager
+    , myListener   :: !(Listen BlockEvent)
+    , myBaseHeight :: !(TVar BlockHeight)
+    , myPeer       :: !(TVar (Maybe Peer))
     }
 
 type MonadBlock m
@@ -92,7 +93,7 @@ runMonadImport f =
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
-    pending_box <- liftIO (newTVarIO 0)
+    base_height_box <- liftIO (newTVarIO 0)
     peer_box <- liftIO (newTVarIO Nothing)
     runReaderT
         (load_best >> syncBlocks >> run)
@@ -102,7 +103,7 @@ blockStore BlockConfig {..} = do
         , myChain = blockConfChain
         , myManager = blockConfManager
         , myListener = blockConfListener
-        , myPending = pending_box
+        , myBaseHeight = base_height_box
         , myPeer = peer_box
         }
   where
@@ -110,7 +111,10 @@ blockStore BlockConfig {..} = do
     load_best =
         retrieve blockConfDB Nothing BestBlockKey >>= \case
             Nothing -> addNewBlock genesisBlock
-            Just (_ :: BlockHash) -> return ()
+            Just (_ :: BlockHash) ->
+                getBestBlock blockConfDB Nothing >>= \BlockValue {..} -> do
+                    base_height_box <- asks myBaseHeight
+                    atomically $ writeTVar base_height_box blockValueHeight
 
 getBestBlockHash :: MonadIO m => DB -> Maybe Snapshot -> m BlockHash
 getBestBlockHash db snapshot =
@@ -280,7 +284,10 @@ getTx th db s = do
                  , detInSequence = txInSequence
                  , detInSigScript = scriptInput
                  }
-            else let PrevOut {..} = fromMaybe e (lookup prevOutput prevs)
+            else let PrevOut {..} =
+                         fromMaybe
+                             (error "Could not locate previous output")
+                             (lookup prevOutput prevs)
                  in DetailedInput
                     { detInOutPoint = prevOutput
                     , detInSequence = txInSequence
@@ -313,7 +320,6 @@ getTx th db s = do
         , let MultiTxKeyOutput (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
-    e = error "Colud not locate previous output from transaction record"
 
 txOutputMap ::
        MonadIO m => OutputMap -> Tx -> Maybe BlockRef -> DB -> Maybe Snapshot -> m OutputMap
@@ -395,10 +401,8 @@ deleteTransaction th db snapshot =
                 Nothing -> retrieve db snapshot (OutputKey op)
                 Just o  -> return (Just o)
         case mo of
-            Nothing -> do
-                $(logError) $ "Output not found: " <> logShow op
-                error $ "Output not found: " <> show op
-            Just o -> return o
+            Nothing -> error $ "Output not found: " <> show op
+            Just o  -> return o
     get_balance a = do
         ImportState {..} <- get
         bm <-
@@ -406,10 +410,8 @@ deleteTransaction th db snapshot =
                 Just b  -> return $ Just b
                 Nothing -> retrieve db snapshot (BalanceKey a)
         case bm of
-            Nothing -> do
-                $(logError) $ "Balance not found: " <> logShow a
-                error $ "Balance not found: " <> show a
-            Just b -> return b
+            Nothing -> error $ "Balance not found: " <> show a
+            Just b  -> return b
     put_output op o = modify $ \s -> s {outputMap = M.insert op o (outputMap s)}
     put_balance a b =
         modify $ \s -> s {addressMap = M.insert a b (addressMap s)}
@@ -801,13 +803,14 @@ revertBestBlock = do
     BlockValue {..} <- getBestBlock db Nothing
     when
         (blockValueHeader == genesisHeader)
-        (error "Attempted to revert genesis block")
+        (throwString "Attempted to revert genesis block")
     $(logWarn) $ logMe <> "Reverting block " <> logShow blockValueHeight
     txs <- mapM gtx blockValueTxs
     runMonadImport $ do
         initOutputBalances (Just (blockValueHeader, blockValueHeight)) txs
         delete_txs blockValueTxs
         update_database blockValueHeader blockValueWork blockValueHeight txs
+    reset_peer (blockValueHeight - 1)
   where
     gtx h = do
         db <- asks myBlockDB
@@ -830,6 +833,12 @@ revertBestBlock = do
                 getBalanceOps addressMap
         writeBatch db ops
         importMempool txs
+    reset_peer height = do
+        base_height_box <- asks myBaseHeight
+        peer_box <- asks myPeer
+        atomically $ do
+            writeTVar base_height_box height
+            writeTVar peer_box Nothing
 
 -- TODO: do something about orphan transactions
 importMempool :: MonadBlock m => [Tx] -> m ()
@@ -865,87 +874,93 @@ importMempool txs' = do
            in S.toList ns <> fo ds
 
 syncBlocks :: MonadBlock m => m ()
-syncBlocks =
-    runExceptT sync >>= \case
-        Left (Just l) -> $(logError) l
-        _ -> return ()
+syncBlocks = void (runMaybeT sync)
   where
     sync = do
+        (best_height, chain_best) <- revert_if_needed
+        let chain_height = nodeHeight chain_best
+        base_height_box <- asks myBaseHeight
+        when (best_height == chain_height) $ do
+            reset_peer best_height
+            fail "Already synced"
+        base_height <- readTVarIO base_height_box
+        p <- get_peer
+        when (base_height > best_height + 500) $ fail "Enough blocks pending"
+        when (base_height >= chain_height) $
+            fail "All blocks have been already requested"
         ch <- asks myChain
-        revert_until_in_chain
-        chain_best <- chainGetBest ch
-        best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
-        let best_hash = headerHash (blockValueHeader best)
-            chain_hash = headerHash (nodeHeader chain_best)
-        when (best_hash == chain_hash) (throwError Nothing) -- all done
-        p <- get_peer (blockValueHeight best)
-        pending <- asks myPending >>= readTVarIO
-        sync_with_peer pending chain_best best p
-    sync_with_peer pending chain_best best p = do
-        ch <- asks myChain
-        highest <-
-            chainGetAncestor pending chain_best ch >>= \case
-                Nothing ->
-                    throwError
-                        (Just "Could not get pending highest header from chain")
-                Just b -> return b
-        split <- chainGetSplitBlock chain_best highest ch
-        when
-            (nodeHeight split < blockValueHeight best)
-            (revert_until (headerHash (nodeHeader split)))
-        let sync_height = min (nodeHeight chain_best) (nodeHeight split + 500)
-        pending_box <- asks myPending
-        peer_box <- asks myPeer
-        atomically $ do
-            writeTVar pending_box sync_height
-            writeTVar peer_box (Just p)
-        target <-
-            if sync_height == nodeHeight chain_best
+        let sync_lowest = min chain_height (base_height + 1)
+            sync_highest = min chain_height (base_height + 501)
+        sync_top <-
+            if sync_highest == chain_height
                 then return chain_best
-                else chainGetAncestor sync_height chain_best ch >>= \case
+                else chainGetAncestor sync_highest chain_best ch >>= \case
                          Nothing ->
                              throwString
-                                 "Could not get block ancestor from chain"
+                                 "Could not get syncing header from chain"
                          Just b -> return b
-        pars <- chainGetParents (nodeHeight split + 1) target ch
-        let blocks_to_get = map (headerHash . nodeHeader) (pars ++ [target])
-        peerGetBlocks p blocks_to_get
-    get_peer best_height = do
-        peer_box <- asks myPeer
-        pending <- asks myPending >>= readTVarIO
-        when (best_height >= pending) (atomically (writeTVar peer_box Nothing))
-        readTVarIO peer_box >>= \case
-            Just p
-                | pending >= best_height + 200 ->
-                    (throwError Nothing) -- at least 200 blocks still pending
-                | otherwise -> return p
+        sync_blocks <-
+            (++ [sync_top]) <$>
+            if sync_lowest == chain_height
+                then return []
+                else chainGetParents sync_lowest sync_top ch
+        update_peer sync_highest (Just p)
+        peerGetBlocks p (map (headerHash . nodeHeader) sync_blocks)
+    get_peer =
+        asks myPeer >>= readTVarIO >>= \case
+            Just p -> return p
             Nothing ->
                 asks myManager >>= managerGetPeers >>= \case
-                    [] -> throwError (Just "Could not get a peer to sync")
+                    [] -> fail "No peer to sync against"
                     p:_ -> return p
-    revert_until_in_chain = do
-        best <- asks myBlockDB >>= \db -> getBestBlockHash db Nothing
-        asks myChain >>= chainGetBlock best >>= \mb ->
-            when (isNothing mb) $ do
+    reset_peer best_height = update_peer best_height Nothing
+    update_peer height mp = do
+        base_height_box <- asks myBaseHeight
+        peer_box <- asks myPeer
+        atomically $ do
+            writeTVar base_height_box height
+            writeTVar peer_box mp
+    revert_if_needed = do
+        db <- asks myBlockDB
+        ch <- asks myChain
+        best <- getBestBlock db Nothing
+        chain_best <- chainGetBest ch
+        let best_hash = headerHash (blockValueHeader best)
+            chain_hash = headerHash (nodeHeader chain_best)
+        if best_hash == chain_hash
+            then let best_height = blockValueHeight best
+                 in return (best_height, chain_best)
+            else chainGetBlock best_hash ch >>= \case
+                     Nothing -> do
+                         revertBestBlock
+                         revert_if_needed
+                     Just best_node -> do
+                         split_hash <-
+                             headerHash . nodeHeader <$>
+                             chainGetSplitBlock chain_best best_node ch
+                         best_height <- revert_until split_hash
+                         return (best_height, chain_best)
+    revert_until split = do
+        db <- asks myBlockDB
+        best <- getBestBlock db Nothing
+        let best_hash = headerHash (blockValueHeader best)
+            best_height = blockValueHeight best
+        if best_hash == split
+            then return best_height
+            else do
                 revertBestBlock
-                revert_until_in_chain
-    revert_until sb = do
-        revertBestBlock
-        bb <- asks myBlockDB >>= (`getBestBlockHash` Nothing)
-        unless (bb == sb) (revert_until sb)
+                revert_until split
 
 importBlock :: (MonadError String m, MonadBlock m) => Block -> m ()
 importBlock block@Block {..} = do
     bn <-
         asks myChain >>= chainGetBlock (headerHash blockHeader) >>= \case
             Just bn -> return bn
-            Nothing -> throwError "Could not obtain block from chain"
-    best <- asks myBlockDB >>= (`getBestBlock` Nothing)
+            Nothing -> throwString "Could not obtain block from chain"
+    best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
     let best_hash = headerHash (blockValueHeader best)
         prev_hash = prevBlock blockHeader
-    unless
-        (prev_hash == best_hash)
-        (throwError "Block does not build on best")
+    when (prev_hash /= best_hash) (throwError "does not build on best")
     $(logInfo) $ logMe <> "Importing block " <> logShow (nodeHeight bn)
     addNewBlock block
     asks myListener >>= atomically . ($ BestBlock (headerHash blockHeader))
@@ -956,26 +971,30 @@ processBlockMessage (BlockChainNew _) = syncBlocks
 
 processBlockMessage (BlockPeerConnect _) = syncBlocks
 
-processBlockMessage (BlockReceived p b) = do
+processBlockMessage (BlockReceived _ b) =
     runExceptT (importBlock b) >>= \case
         Left e -> do
             let hash = headerHash (blockHeader b)
-            $(logError) ("Could not import block " <> logShow hash)
-            $(logError) (fromString e)
-            asks myManager >>= managerKill (PeerMisbehaving e) p
-        Right () -> return ()
-    syncBlocks
+            $(logError) $
+                logMe <> "Could not import block " <> logShow hash <> ": " <>
+                fromString e
+        Right () -> syncBlocks
 
 processBlockMessage (BlockPeerDisconnect p) = do
     peer_box <- asks myPeer
-    pending_box <- asks myPending
-    best <- asks myBlockDB >>= (`getBestBlock` Nothing)
-    atomically $
+    base_height_box <- asks myBaseHeight
+    db <- asks myBlockDB
+    best <- getBestBlock db Nothing
+    is_my_peer <-
+        atomically $
         readTVar peer_box >>= \x ->
-            when (x == Just p) $ do
-                writeTVar peer_box Nothing
-                writeTVar pending_box (blockValueHeight best)
-    syncBlocks
+            if x == Just p
+                then do
+                    writeTVar peer_box Nothing
+                    writeTVar base_height_box (blockValueHeight best)
+                    return True
+                else return False
+    when is_my_peer syncBlocks
 
 processBlockMessage (BlockNotReceived p h) = do
     $(logError) $ logMe <> "Block not found: " <> cs (show h)

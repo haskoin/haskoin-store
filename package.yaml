@@ -17,7 +17,6 @@ dependencies:
 - aeson
 - base >=4.7 && <5
 - bytestring
-# - data-default
 - haskoin-core
 - haskoin-node
 - rocksdb-haskell
@@ -36,6 +35,7 @@ library:
   - network
   - rocksdb-query
   - string-conversions
+  - transformers
 executables:
   haskoin-store:
     main: Main.hs

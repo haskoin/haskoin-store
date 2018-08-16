@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7b3e161335e1cc0ffe7ad430bb4f34a27afe48eb34bab929fbf1c26233982f9b
+-- hash: b9a139a1f26dca7912cc07e9de83c0ddf2a3e3b3a4d253bd68d882ee590c758e
 
 name:           haskoin-store
 version:        1.0.0
@@ -44,6 +44,7 @@ library
     , rocksdb-haskell
     , rocksdb-query
     , string-conversions
+    , transformers
     , unliftio
   exposed-modules:
       Network.Haskoin.Store
