@@ -121,6 +121,12 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
     b <- asks myBlockStore
     BlockNotReceived p hash `send` b
 
+storeDispatch (PeerEvent (p, TxAvail hash)) = peerGetTxs p [hash]
+
+storeDispatch (PeerEvent (p, GotTx tx)) = do
+    b <- asks myBlockStore
+    TxReceived p tx `send` b
+
 storeDispatch (PeerEvent _) = return ()
 
 logMe :: IsString a => a

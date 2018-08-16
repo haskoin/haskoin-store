@@ -322,32 +322,31 @@ getTx th db s = do
         ]
 
 txOutputMap ::
-       MonadIO m => OutputMap -> Tx -> Maybe BlockRef -> DB -> Maybe Snapshot -> m OutputMap
-txOutputMap om tx mb db s = do
-    let is = filter (/= nullOutPoint) (map prevOutput (txIn tx))
-    om' <- get_outpoints is
-    return $ foldl f om' (zip [0 ..] (txOut tx))
+       (MonadImport m, MonadBlock m) => Tx -> Maybe BlockRef -> m ()
+txOutputMap tx mb = do
+    insert_inputs
+    insert_outputs
   where
-    f om' (i, o) =
-        M.insert
-            OutPoint {outPointHash = txHash tx, outPointIndex = i}
-            Output
-            { outputValue = outValue o
-            , outBlock = mb
-            , outScript = scriptOutput o
-            , outSpender = Nothing
-            }
-            om'
-    get_outpoints =
-        let h om' op =
-                g om' op >>= \case
-                    Nothing -> return om'
-                    Just o -> return $ M.insert op o om'
-            g om' op =
-                case M.lookup op om' of
-                    Nothing -> retrieve db s (OutputKey op)
-                    Just o  -> return (Just o)
-        in foldM h om
+    out_points = filter (/= nullOutPoint) (map prevOutput (txIn tx))
+    insert_outputs =
+        forM_ (zip [0 ..] (txOut tx)) $ \(i, TxOut {..}) ->
+            let op = OutPoint {outPointHash = txHash tx, outPointIndex = i}
+                o =
+                    Output
+                    { outputValue = outValue
+                    , outBlock = mb
+                    , outScript = scriptOutput
+                    , outSpender = Nothing
+                    }
+            in modify $ \s -> s {outputMap = M.insert op o (outputMap s)}
+    insert_inputs =
+        forM_ out_points $ \op ->
+            void . runMaybeT $ do
+                om <- gets outputMap
+                guard (isNothing (M.lookup op om))
+                db <- asks myBlockDB
+                o <- MaybeT (retrieve db Nothing (OutputKey op))
+                modify $ \s -> s {outputMap = M.insert op o (outputMap s)}
 
 addrBalance :: MonadIO m => Address -> DB -> Maybe Snapshot -> m (Maybe Balance)
 addrBalance addr db snapshot = retrieve db snapshot (BalanceKey addr)
@@ -544,16 +543,7 @@ addNewTxs mbh txs =
         update_balances mh
         update_database
   where
-    bref mh i = do
-        bh <- mbh
-        h <- mh
-        return
-            BlockRef
-            { blockRefHash = headerHash bh
-            , blockRefHeight = h
-            , blockRefMainChain = True
-            , blockRefPos = i
-            }
+    bref mh i = blockRef <$> mbh <*> mh <*> pure i
     get_height =
         case mbh of
             Nothing -> return Nothing
@@ -650,14 +640,7 @@ getBlockOps om del bh bw bg txs = hop : gop : bop : tops
         in if del
                then insertOp k p
                else insertOp k v
-    r i =
-        Just
-        BlockRef
-        { blockRefHash = headerHash bh
-        , blockRefHeight = bg
-        , blockRefMainChain = True
-        , blockRefPos = i
-        }
+    r i = Just (blockRef bh bg i)
     tops = concat $ zipWith (\i tx -> getTxOps om del tx (r i)) [0 ..] txs
 
 getTxOps :: OutputMap -> Bool -> Tx -> Maybe BlockRef -> [R.BatchOp]
@@ -782,20 +765,15 @@ initOutputBalances mbh txs = do
     init_balances
   where
     bref i = uncurry blockRef <$> mbh <*> pure i
-    init_outputs = do
-        db <- asks myBlockDB
-        let f om' (i, t) = txOutputMap om' t (bref i) db Nothing
-        s@ImportState {..} <- get
-        om' <- foldM f outputMap (zip [0 ..] txs)
-        put s {outputMap = om'}
+    init_outputs = forM_ (zip [0 ..] txs) $ \(i, t) -> txOutputMap t (bref i)
     init_balances = do
-        db <- asks myBlockDB
         s@ImportState {..} <- get
-        let as =
-                S.fromList . catMaybes $
-                map (scriptToAddressBS . outScript) (M.elems outputMap)
-        am <- addrBalances as db Nothing
-        put s {addressMap = am}
+        let addrs =
+                S.fromList $
+                mapMaybe (scriptToAddressBS . outScript) (M.elems outputMap)
+        db <- asks myBlockDB
+        am <- addrBalances addrs db Nothing
+        put s {addressMap = am <> addressMap}
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
@@ -843,19 +821,25 @@ revertBestBlock = do
 -- TODO: do something about orphan transactions
 importMempool :: MonadBlock m => [Tx] -> m ()
 importMempool txs' = do
-    db <- asks myBlockDB
-    om <- foldM (\m t -> txOutputMap m t Nothing db Nothing) M.empty txs
-    let tvs = map (\tx -> (tx, vtx om tx)) txs
-        _os = map fst $ filter ((== TxOrphan) . snd) tvs
-        vs = map fst $ filter ((== TxValid) . snd) tvs
-    addNewTxs Nothing vs
+    om <-
+        runMonadImport $ do
+            forM_ txs $ \tx -> txOutputMap tx Nothing
+            gets outputMap
+    let validated_txs = map (\tx -> (tx, validate om tx)) txs
+        orphan_txs = filter_only TxOrphan validated_txs
+        double_spent = filter_only TxInputSpent validated_txs
+        spam_txs = filter_only TxLowFunds validated_txs
+        valid_txs = filter_only TxValid validated_txs
+    addNewTxs Nothing valid_txs
   where
+    filter_only expect validated_txs =
+        [tx | (tx, validity) <- validated_txs, validity == expect]
     txs = fo (S.fromList txs')
-    vtx om tx = maximum [input_spent om tx, funds_low om tx]
+    validate om tx = maximum [input_spent om tx, funds_low om tx]
     input_spent om tx =
-        let t = maybe True (isNothing . outSpender)
-            b = all (\i -> t (M.lookup (prevOutput i) om)) (ins tx)
-        in if b
+        let test = maybe True (isNothing . outSpender)
+            unspent = all (\i -> test (M.lookup (prevOutput i) om)) (ins tx)
+        in if unspent
                then TxValid
                else TxInputSpent
     funds_low om tx =
@@ -863,15 +847,16 @@ importMempool txs' = do
             i = foldl' f (Just 0) (ins tx)
             o = sum (map outValue (txOut tx))
         in case (>= o) <$> i of
-               Nothing    -> TxOrphan
-               Just True  -> TxValid
+               Nothing -> TxOrphan
+               Just True -> TxValid
                Just False -> TxLowFunds
     ins tx = filter ((/= nullOutPoint) . prevOutput) (txIn tx)
     dep s t = any (flip S.member s . outPointHash . prevOutput) (txIn t)
-    fo s | S.null s = []
-         | otherwise =
-           let (ds, ns) = S.partition (dep (S.map txHash s)) s
-           in S.toList ns <> fo ds
+    fo s
+        | S.null s = []
+        | otherwise =
+            let (ds, ns) = S.partition (dep (S.map txHash s)) s
+            in S.toList ns <> fo ds
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = void (runMaybeT sync)
@@ -979,6 +964,10 @@ processBlockMessage (BlockReceived _ b) =
                 logMe <> "Could not import block " <> logShow hash <> ": " <>
                 fromString e
         Right () -> syncBlocks
+
+processBlockMessage (TxReceived _ tx) = do
+    $(logDebug) $ logMe <> "Importing transaction " <> logShow (txHash tx)
+    importMempool [tx]
 
 processBlockMessage (BlockPeerDisconnect p) = do
     peer_box <- asks myPeer
