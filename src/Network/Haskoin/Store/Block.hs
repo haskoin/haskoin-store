@@ -9,22 +9,23 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TupleSections              #-}
 module Network.Haskoin.Store.Block
-    ( blockStore
-    , getBestBlock
-    , getBlocksAtHeights
-    , getBlockAtHeight
-    , getBlock
-    , getBlocks
-    , getUnspent
-    , getAddrTxs
-    , getAddrsTxs
-    , getBalance
-    , getBalances
-    , getTx
-    , getTxs
-    , getUnspents
-    ) where
+      ( blockStore
+      , getBestBlock
+      , getBlocksAtHeights
+      , getBlockAtHeight
+      , getBlock
+      , getBlocks
+      , getUnspent
+      , getAddrTxs
+      , getAddrsTxs
+      , getBalance
+      , getBalances
+      , getTx
+      , getTxs
+      , getUnspents
+      ) where
 
+import           Control.Applicative
 import           Control.Concurrent.NQE
 import           Control.Monad.Except
 import           Control.Monad.Logger
@@ -32,7 +33,6 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Short       as BSS
 import           Data.List
 import           Data.Map                    (Map)
 import qualified Data.Map.Strict             as M
@@ -42,8 +42,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as S
 import           Data.String
 import           Data.String.Conversions
-import           Data.Word
-import           Database.RocksDB            (DB, Snapshot)
+import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query
 import           Network.Haskoin.Block
@@ -70,6 +69,7 @@ type MonadBlock m
 
 type OutputMap = Map OutPoint Output
 type AddressMap = Map Address Balance
+type TxMap = Map TxHash ImportTx
 
 data TxStatus
     = TxValid
@@ -78,18 +78,42 @@ data TxStatus
     | TxInputSpent
     deriving (Eq, Show, Ord)
 
-data ImportState = ImportState { outputMap  :: !OutputMap
-                               , addressMap :: !AddressMap
-                               , deleteTxs  :: !(Set TxHash) }
+data ImportTx = ImportTx
+    { importTx      :: !Tx
+    , importTxBlock :: !(Maybe BlockRef)
+    }
+
+data ImportState = ImportState
+    { outputMap   :: !OutputMap
+    , addressMap  :: !AddressMap
+    , deleteTxs   :: !(Set TxHash)
+    , newTxs      :: !TxMap
+    , blockAction :: !(Maybe BlockAction)
+    }
 
 type MonadImport m = MonadState ImportState m
 
-runMonadImport :: Monad m => StateT ImportState m a -> m a
+data BlockAction = RevertBlock | ImportBlock !Block
+
+runMonadImport :: MonadBlock m => StateT ImportState m a -> m a
 runMonadImport f =
     evalStateT
-        f
+        (f >>= \a -> update_database >> return a)
         ImportState
-        {outputMap = M.empty, addressMap = M.empty, deleteTxs = S.empty}
+        { outputMap = M.empty
+        , addressMap = M.empty
+        , deleteTxs = S.empty
+        , newTxs = M.empty
+        , blockAction = Nothing
+        }
+  where
+    update_database = do
+        ops <-
+            concat <$>
+            sequence
+                [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
+        db <- asks myBlockDB
+        writeBatch db ops
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
@@ -292,7 +316,7 @@ getTx th db s = do
                     { detInOutPoint = prevOutput
                     , detInSequence = txInSequence
                     , detInSigScript = scriptInput
-                    , detInPkScript = BSS.fromShort prevOutScript
+                    , detInPkScript = prevOutScript
                     , detInValue = prevOutValue
                     , detInBlock = prevOutBlock
                     }
@@ -321,459 +345,386 @@ getTx th db s = do
         , let MultiTxOutput o = v
         ]
 
-txOutputMap ::
-       (MonadImport m, MonadBlock m) => Tx -> Maybe BlockRef -> m ()
-txOutputMap tx mb = do
-    insert_inputs
-    insert_outputs
+getOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m (Maybe Output)
+getOutput out_point = runMaybeT $ MaybeT map_lookup <|> MaybeT db_lookup
   where
-    out_points = filter (/= nullOutPoint) (map prevOutput (txIn tx))
-    insert_outputs =
-        forM_ (zip [0 ..] (txOut tx)) $ \(i, TxOut {..}) ->
-            let op = OutPoint {outPointHash = txHash tx, outPointIndex = i}
-                o =
-                    Output
-                    { outputValue = outValue
-                    , outBlock = mb
-                    , outScript = scriptOutput
-                    , outSpender = Nothing
-                    }
-            in modify $ \s -> s {outputMap = M.insert op o (outputMap s)}
-    insert_inputs =
-        forM_ out_points $ \op ->
-            void . runMaybeT $ do
-                om <- gets outputMap
-                guard (isNothing (M.lookup op om))
-                db <- asks myBlockDB
-                o <- MaybeT (retrieve db Nothing (OutputKey op))
-                modify $ \s -> s {outputMap = M.insert op o (outputMap s)}
+    map_lookup = M.lookup out_point <$> gets outputMap
+    db_key = OutputKey out_point
+    db_lookup = asks myBlockDB >>= \db -> retrieve db Nothing db_key
 
-addrBalance :: MonadIO m => Address -> DB -> Maybe Snapshot -> m (Maybe Balance)
-addrBalance addr db snapshot = retrieve db snapshot (BalanceKey addr)
+getAddress :: (MonadBlock m, MonadImport m) => Address -> m Balance
+getAddress address =
+    fromMaybe emptyBalance <$>
+    runMaybeT (MaybeT map_lookup <|> MaybeT db_lookup)
+  where
+    map_lookup = M.lookup address <$> gets addressMap
+    db_key = BalanceKey address
+    db_lookup = asks myBlockDB >>= \db -> retrieve db Nothing db_key
 
-addrBalances ::
-       MonadIO m
-    => Set Address
-    -> DB
-    -> Maybe Snapshot
-    -> m AddressMap
-addrBalances as db s =
-    fmap (M.fromList . catMaybes) . forM (S.toList as) $ \a ->
-        addrBalance a db s >>= \case
-            Nothing -> return Nothing
-            Just b -> return $ Just (a, b)
+getDeleteTxs :: MonadImport m => m (Set TxHash)
+getDeleteTxs = gets deleteTxs
+
+shouldDelete :: MonadImport m => TxHash -> m Bool
+shouldDelete tx_hash = S.member tx_hash <$> getDeleteTxs
+
+addBlock :: MonadImport m => Block -> m ()
+addBlock block = modify $ \s -> s {blockAction = Just (ImportBlock block)}
+
+revertBlock :: MonadImport m => m ()
+revertBlock = modify $ \s -> s {blockAction = Just RevertBlock}
+
+deleteTx :: MonadImport m => TxHash -> m ()
+deleteTx tx_hash =
+    modify $ \s -> s {deleteTxs = S.insert tx_hash (deleteTxs s)}
+
+insertTx :: MonadImport m => Tx -> Maybe BlockRef -> m ()
+insertTx tx maybe_block_ref =
+    modify $ \s -> s {newTxs = M.insert (txHash tx) import_tx (newTxs s)}
+  where
+    import_tx = ImportTx {importTx = tx, importTxBlock = maybe_block_ref}
+
+updateOutput :: MonadImport m => OutPoint -> Output -> m ()
+updateOutput out_point output =
+    modify $ \s -> s {outputMap = M.insert out_point output (outputMap s)}
+
+updateAddress :: MonadImport m => Address -> Balance -> m ()
+updateAddress address balance =
+    modify $ \s -> s {addressMap = M.insert address balance (addressMap s)}
+
+spendOutput :: (MonadBlock m, MonadImport m) => OutPoint -> Spender -> m ()
+spendOutput out_point spender@Spender {..} =
+    void . runMaybeT $ do
+        guard (out_point /= nullOutPoint)
+        output@Output {..} <-
+            getOutput out_point >>= \case
+                Nothing -> throwString "Could not get output to spend"
+                Just output -> return output
+        when (isJust outSpender) $
+            throwString "Output to spend is already spent"
+        updateOutput out_point output {outSpender = Just spender}
+        address <- MaybeT (return (scriptToAddressBS outScript))
+        balance@Balance {..} <- getAddress address
+        updateAddress address $
+            if isJust spenderBlock
+                then balance
+                     { balanceValue = balanceValue - outputValue
+                     , balanceSpentCount = balanceSpentCount + 1
+                     }
+                else balance
+                     { balanceUnconfirmed =
+                           balanceUnconfirmed - fromIntegral outputValue
+                     , balanceSpentCount = balanceSpentCount + 1
+                     }
+
+unspendOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m ()
+unspendOutput out_point =
+    void . runMaybeT $ do
+        guard (out_point /= nullOutPoint)
+        output@Output {..} <- getOutput out_point >>= \case
+            Nothing -> throwString "Could not get output to unspend"
+            Just output -> return output
+        Spender {..} <- MaybeT (return outSpender)
+        updateOutput out_point output {outSpender = Nothing}
+        address <- MaybeT (return (scriptToAddressBS outScript))
+        balance@Balance {..} <- getAddress address
+        updateAddress address $
+            if isJust spenderBlock
+                then balance
+                     { balanceValue = balanceValue + outputValue
+                     , balanceSpentCount = balanceSpentCount - 1
+                     }
+                else balance
+                     { balanceUnconfirmed =
+                           balanceUnconfirmed + fromIntegral outputValue
+                     , balanceSpentCount = balanceSpentCount - 1
+                     }
+
+removeOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m ()
+removeOutput out_point@OutPoint {..} =
+    void . runMaybeT $ do
+        Output {..} <-
+            getOutput out_point >>= \case
+                Nothing ->
+                    throwString $
+                    "Could not get output to remove: " <> show out_point
+                Just o -> return o
+        when (isJust outSpender) . throwString $
+            "Cannot delete output because it is spent: " <> show out_point
+        address <- MaybeT (return (scriptToAddressBS outScript))
+        balance@Balance {..} <- getAddress address
+        updateAddress address $
+            if isJust outBlock
+                then balance
+                     { balanceValue = balanceValue - outputValue
+                     , balanceOutputCount = balanceOutputCount - 1
+                     }
+                else balance
+                     { balanceUnconfirmed =
+                           balanceUnconfirmed - fromIntegral outputValue
+                     , balanceOutputCount = balanceOutputCount - 1
+                     }
+
+addOutput :: (MonadBlock m, MonadImport m) => OutPoint -> Output -> m ()
+addOutput out_point@OutPoint {..} output@Output {..} =
+    void . runMaybeT $ do
+        updateOutput out_point output
+        address <- MaybeT (return (scriptToAddressBS outScript))
+        balance@Balance {..} <- getAddress address
+        updateAddress address $
+            if isJust outBlock
+                then balance
+                     { balanceValue = balanceValue + outputValue
+                     , balanceOutputCount = balanceOutputCount + 1
+                     }
+                else balance
+                     { balanceUnconfirmed =
+                           balanceUnconfirmed + fromIntegral outputValue
+                     , balanceOutputCount = balanceOutputCount + 1
+                     }
+
+getTxRecord :: MonadBlock m => TxHash -> m (Maybe TxRecord)
+getTxRecord tx_hash =
+    asks myBlockDB >>= \db -> retrieve db Nothing (TxKey tx_hash)
 
 deleteTransaction ::
-       (MonadImport m, MonadLoggerIO m)
+       (MonadBlock m, MonadImport m)
     => TxHash
-    -> DB
-    -> Maybe Snapshot
     -> m ()
-    -- ^ updated maps and sets of transactions to delete
-deleteTransaction th db snapshot =
-    get_tx >>= \case
-        Nothing -> return ()
-        Just TxRecord {..} -> do
-            let pos = filter (/= nullOutPoint) (map prevOutput (txIn txValue))
-                conf = isJust txValueBlock
-            forM_ pos $ \op -> do
-                o <- get_output op
-                put_output op (unspend_output o)
-                case scriptToAddressBS (outScript o) of
-                    Nothing -> return ()
-                    Just a ->
-                        get_balance a >>= put_balance a . unspend_balance conf o
-            forM_ (zip [0 ..] (txOut txValue)) $ \(i, _) -> do
-                let op = OutPoint th i
-                o <- get_output op
-                forM_ (outSpender o) delete_spender
-                case scriptToAddressBS (outScript o) of
-                    Nothing -> return ()
-                    Just a -> get_balance a >>= put_balance a . remove_output o
-            delete_tx
+deleteTransaction tx_hash = do
+    $(logInfo) $ logMe <> "Deleting transaction: " <> logShow tx_hash
+    void . runMaybeT $ do
+        shouldDelete tx_hash >>= \d ->
+            when d $ do
+                $(logInfo) $
+                    logMe <> "Transaction already scheduled for removal: " <>
+                    logShow tx_hash
+                empty
+        TxRecord {..} <-
+            getTxRecord tx_hash >>= \case
+                Nothing ->
+                    throwString $
+                    "Could not get transaction to delete: " <> show tx_hash
+                Just r -> return r
+        let n_out = length (txOut txValue)
+            prevs = map prevOutput (txIn txValue)
+        remove_spenders n_out
+        remove_outputs n_out
+        unspend_inputs prevs
+        deleteTx tx_hash
   where
-    get_tx = retrieve db snapshot (TxKey th)
-    get_output op = do
-        ImportState {..} <- get
-        mo <-
-            case M.lookup op outputMap of
-                Nothing -> retrieve db snapshot (OutputKey op)
-                Just o  -> return (Just o)
-        case mo of
-            Nothing -> error $ "Output not found: " <> show op
-            Just o  -> return o
-    get_balance a = do
-        ImportState {..} <- get
-        bm <-
-            case M.lookup a addressMap of
-                Just b  -> return $ Just b
-                Nothing -> retrieve db snapshot (BalanceKey a)
-        case bm of
-            Nothing -> error $ "Balance not found: " <> show a
-            Just b  -> return b
-    put_output op o = modify $ \s -> s {outputMap = M.insert op o (outputMap s)}
-    put_balance a b =
-        modify $ \s -> s {addressMap = M.insert a b (addressMap s)}
-    delete_tx = modify $ \s -> s {deleteTxs = S.insert th (deleteTxs s)}
-    delete_spender spender = deleteTransaction (spenderHash spender) db snapshot
-    unspend_output o = o {outSpender = Nothing}
-    unspend_balance conf o b =
-        if isJust (outBlock o) && conf
-            then b
-                 { balanceValue = balanceValue b + outputValue o
-                 , balanceSpentCount = balanceSpentCount b - 1
-                 }
-            else b
-                 { balanceUnconfirmed =
-                       balanceUnconfirmed b + fromIntegral (outputValue o)
-                 , balanceMempoolTxs = delete th (balanceMempoolTxs b)
-                 }
-    remove_output o b =
-        case outBlock o of
-            Nothing ->
-                b
-                { balanceUnconfirmed =
-                      balanceUnconfirmed b - fromIntegral (outputValue o)
-                , balanceMempoolTxs = delete th (balanceMempoolTxs b)
-                }
-            Just _ ->
-                b
-                { balanceValue = balanceValue b - outputValue o
-                , balanceOutputCount = balanceOutputCount b - 1
-                }
-
-injectTransaction :: MonadImport m => Maybe BlockRef -> Tx -> m ()
-injectTransaction br tx = do
-    forM_ ins (uncurry fi)
-    forM_ outs (uncurry fo)
-  where
-    fi i TxIn {..} = do
-        o@Output {..} <- g prevOutput
-        when
-            (isJust outSpender)
-            (error "You are in a maze of twisty little passages, all alike")
-        upout
-            prevOutput
-            o
-            { outSpender =
-                  Just
-                      Spender
-                      { spenderHash = txHash tx
-                      , spenderIndex = i
-                      , spenderBlock = br
-                      }
-            }
-        case scriptToAddressBS outScript of
-            Nothing -> return ()
-            Just a -> do
-                c@Balance {..} <- b a
-                case br of
-                    Nothing ->
-                        upbal
-                            a
-                            c
-                            { balanceUnconfirmed =
-                                  balanceUnconfirmed - fromIntegral outputValue
-                            , balanceMempoolTxs = txHash tx : balanceMempoolTxs
-                            }
-                    Just _ -> do
-                        when
-                            (outputValue > balanceValue)
-                            (error "Waste not, want not")
-                        upbal
-                            a
-                            c
-                            { balanceValue = balanceValue - outputValue
-                            , balanceSpentCount = balanceSpentCount + 1
-                            }
-    fo i TxOut {..} = do
-        Output {..} <- g OutPoint {outPointIndex = i, outPointHash = txHash tx}
-        when (isJust outSpender) $
-            error "I jumped off the aircraft with no parachute"
-        case scriptToAddressBS outScript of
-            Nothing -> return ()
-            Just a -> do
-                b'@Balance {..} <- b a
-                case br of
-                    Nothing ->
-                        upbal
-                            a
-                            b'
-                            { balanceUnconfirmed =
-                                  balanceUnconfirmed + fromIntegral outputValue
-                            , balanceMempoolTxs = txHash tx : balanceMempoolTxs
-                            }
-                    Just _ ->
-                        upbal
-                            a
-                            b'
-                            { balanceValue = balanceValue + outputValue
-                            , balanceOutputCount = balanceOutputCount + 1
-                            }
-    outs = zip [0 ..] (txOut tx)
-    ins = filter ((/= nullOutPoint) . prevOutput . snd) (zip [0 ..] (txIn tx))
-    g op =
-        fromMaybe (error "Don't feed the dwarves anything but coal") <$>
-        gets (M.lookup op . outputMap)
-    b a =
-        gets (M.lookup a . addressMap) >>= \case
-            Nothing ->
-                return
-                    Balance
-                    { balanceValue = 0
-                    , balanceUnconfirmed = 0
-                    , balanceOutputCount = 0
-                    , balanceSpentCount = 0
-                    , balanceMempoolTxs = []
-                    }
-            Just b' -> return b'
-    upout p o = modify $ \s -> s {outputMap = M.insert p o (outputMap s)}
-    upbal a b' = modify $ \s -> s {addressMap = M.insert a b' (addressMap s)}
+    remove_spenders n_out =
+        forM_ (take n_out [0 ..]) $ \i ->
+            let out_point = OutPoint tx_hash i
+            in getOutput out_point >>= \case
+                   Nothing ->
+                       throwString $
+                       "Could not get spent output: " <> show out_point
+                   Just Output {outSpender = Just Spender {..}} -> do
+                       $(logInfo) $
+                           logMe <> "Recursively deleting transaction: " <>
+                           logShow spenderHash
+                       deleteTransaction spenderHash
+                   Just _ -> return ()
+    remove_outputs n_out =
+        mapM_ (removeOutput . OutPoint tx_hash) (take n_out [0 ..])
+    unspend_inputs = mapM_ unspendOutput
 
 addNewBlock :: MonadBlock m => Block -> m ()
-addNewBlock Block {..} = addNewTxs (Just blockHeader) blockTxns
-
-addNewTxs ::
-       MonadBlock m => Maybe BlockHeader -> [Tx] -> m ()
-addNewTxs mbh txs =
+addNewBlock block@Block {..} =
     runMonadImport $ do
-        mh <- get_height
-        initOutputBalances ((,) <$> mbh <*> mh) txs
-        unspend_outputs
-        update_balances mh
-        update_database
+        new_height <- get_new_height
+        import_txs new_height
+        addBlock block
   where
-    bref mh i = blockRef <$> mbh <*> mh <*> pure i
-    get_height =
-        case mbh of
-            Nothing -> return Nothing
-            Just bh
-                | bh == genesisHeader -> return (Just 0)
-                | otherwise -> do
-                    db <- asks myBlockDB
-                    BlockValue {..} <- getBestBlock db Nothing
-                    when
-                        (headerHash blockValueHeader /= prevBlock bh)
-                        (throwString "New block doesn't build on best")
-                    return (Just (blockValueHeight + 1))
-    unspend_outputs = do
-        ImportState {..} <- get
-        db <- asks myBlockDB
-        let find_spender op = do
-                o <- M.lookup op outputMap
-                s <- outSpender o
-                return (spenderHash s)
-            prev_outputs Tx {..} = map prevOutput txIn
-            delete_txs =
-                S.fromList $ mapMaybe find_spender (concatMap prev_outputs txs)
-        forM_ (S.toList delete_txs) $ \t -> deleteTransaction t db Nothing
-    update_balances hm =
-        forM_ (zip [0 ..] txs) $ \(i, t) -> injectTransaction (bref hm i) t
-    update_database = do
-        mbn <-
-            case mbh of
-                Nothing -> return Nothing
-                Just bh -> do
-                    ch <- asks myChain
-                    chainGetBlock (headerHash bh) ch >>= \case
-                        Nothing ->
-                            throwString
-                                "Block not found while importing transaction"
-                        Just b -> return (Just b)
-        ImportState{..} <- get
-        ds <- catMaybes <$> mapM gtx (S.toList deleteTxs)
-        let ops =
-                concatMap (\tx -> getTxOps outputMap True tx Nothing) ds <>
-                getBalanceOps addressMap <>
-                case mbn of
-                    Just bn ->
-                        getBlockOps
-                            outputMap
-                            False
-                            (nodeHeader bn)
-                            (nodeWork bn)
-                            (nodeHeight bn)
-                            txs
-                    Nothing ->
-                        concatMap (\tx -> getTxOps outputMap False tx Nothing) txs
-        db <- asks myBlockDB
-        writeBatch db ops
-    gtx h = do
-        db <- asks myBlockDB
-        fmap txValue <$> retrieve db Nothing (TxKey h)
+    import_txs new_height =
+        mapM_
+            (uncurry (import_tx (BlockRef new_hash new_height)))
+            (zip [0 ..] blockTxns)
+    import_tx block_ref i tx = importTransaction tx (Just (block_ref i))
+    new_hash = headerHash blockHeader
+    prev_block = prevBlock blockHeader
+    get_new_height =
+        if blockHeader == genesisHeader
+            then return 0
+            else do
+                db <- asks myBlockDB
+                best <- getBestBlock db Nothing
+                let best_hash = headerHash (blockValueHeader best)
+                when (prev_block /= best_hash) . throwString $
+                    "Block does not build on best: " <> show new_hash
+                return $ blockValueHeight best + 1
 
-getBlockOps ::
-       OutputMap
-    -> Bool
-    -> BlockHeader
-    -> BlockWork
-    -> BlockHeight
-    -> [Tx]
-    -> [R.BatchOp]
-getBlockOps om del bh bw bg txs = hop : gop : bop : tops
+getBlockOps :: (MonadBlock m, MonadImport m) => m [BatchOp]
+getBlockOps =
+    gets blockAction >>= \case
+        Nothing -> return []
+        Just RevertBlock -> get_block_remove_ops
+        Just (ImportBlock block) -> get_block_insert_ops block
   where
-    b = Block {blockHeader = bh, blockTxns = txs}
-    hop =
-        let k = BlockKey (headerHash bh)
-            v =
+    get_block_insert_ops block@Block {..} = do
+        let block_hash = headerHash blockHeader
+        ch <- asks myChain
+        bn <-
+            chainGetBlock block_hash ch >>= \case
+                Just bn -> return bn
+                Nothing ->
+                    throwString $
+                    "Could not obtain block from chain: " <> logShow block_hash
+        let block_value =
                 BlockValue
-                { blockValueHeight = bg
-                , blockValueWork = bw
-                , blockValueHeader = bh
-                , blockValueSize = fromIntegral (BS.length (encode b))
-                , blockValueMainChain = True
-                , blockValueTxs = map txHash txs
+                { blockValueHeight = nodeHeight bn
+                , blockValueWork = nodeWork bn
+                , blockValueHeader = nodeHeader bn
+                , blockValueSize = fromIntegral (BS.length (encode block))
+                , blockValueTxs = map txHash blockTxns
                 }
-        in if del
-               then deleteOp k
-               else insertOp k v
-    gop =
-        let k = HeightKey bg
-            v = headerHash bh
-        in if del
-               then deleteOp k
-               else insertOp k v
-    bop =
-        let k = BestBlockKey
-            v = headerHash bh
-            p = prevBlock bh
-        in if del
-               then insertOp k p
-               else insertOp k v
-    r i = Just (blockRef bh bg i)
-    tops = concat $ zipWith (\i tx -> getTxOps om del tx (r i)) [0 ..] txs
-
-getTxOps :: OutputMap -> Bool -> Tx -> Maybe BlockRef -> [R.BatchOp]
-getTxOps om del tx br = tops <> pops <> oops <> aiops <> aoops
-  where
-    is = filter ((/= nullOutPoint) . prevOutput) (txIn tx)
-    g p =
-        fromMaybe
-            (error "Transaction output expected but not provided")
-            (M.lookup p om)
-    prev Output {..} =
-        PrevOut
-        { prevOutValue = outputValue
-        , prevOutBlock = outBlock
-        , prevOutScript = BSS.toShort outScript
-        }
-    ps = map (\TxIn {..} -> (prevOutput, prev (g prevOutput))) is
-    fo n =
-        let p =
-                OutPoint
-                {outPointHash = txHash tx, outPointIndex = fromIntegral n}
-            k = OutputKey {outPoint = p}
-            v = g p
-        in if del
-               then deleteOp k
-               else insertOp k v
-    fp TxIn {prevOutput = p} =
-        if del
-            then deleteOp (OutputKey p)
-            else insertOp (OutputKey p) (g p)
-    tops =
-        let k = TxKey (txHash tx)
-            v = TxRecord {txValueBlock = br, txValue = tx, txValuePrevOuts = ps}
-            mk = MempoolTx (txHash tx)
-        in if isJust br
-           then if del
-                then [deleteOp k]
-                else [insertOp k v]
-           else if del
-                then [deleteOp mk, deleteOp k]
-                else [insertOp mk tx, insertOp k v]
-    pops = map fp is
-    oops = map fo [0 .. length (txOut tx) - 1]
-    bh = blockRefHeight <$> br
-    ai TxIn {prevOutput = p} =
-        let k a =
-                AddrOutputKey
-                { addrOutputSpent = isJust (outSpender (g p))
-                , addrOutputAddress = a
-                , addrOutputHeight = blockRefHeight <$> outBlock (g p)
-                , addrOutPoint = p
-                }
-        in case scriptToAddressBS (outScript (g p)) of
-               Nothing -> []
-               Just a ->
-                   if del
-                       then [ deleteOp
-                                  (k a)
-                                  { addrOutputSpent =
-                                        not (addrOutputSpent (k a))
-                                  }
-                            , deleteOp (k a)
-                            ]
-                       else [ deleteOp
-                                  (k a)
-                                  { addrOutputSpent =
-                                        not (addrOutputSpent (k a))
-                                  }
-                            , insertOp (k a) (g p)
-                            ]
-    ao n =
-        let p =
-                OutPoint
-                {outPointHash = txHash tx, outPointIndex = fromIntegral n}
-            k a =
-                AddrOutputKey
-                { addrOutputSpent = isJust (outSpender (g p))
-                , addrOutputAddress = a
-                , addrOutputHeight = bh
-                , addrOutPoint = p
-                }
-        in case scriptToAddressBS (outScript (g p)) of
-               Nothing -> []
-               Just a ->
-                   if del
-                       then [ deleteOp
-                                  (k a)
-                                  { addrOutputSpent =
-                                        not (addrOutputSpent (k a))
-                                  }
-                            , deleteOp (k a)
-                            ]
-                       else [ deleteOp
-                                  (k a)
-                                  { addrOutputSpent =
-                                        not (addrOutputSpent (k a))
-                                  }
-                            , insertOp (k a) (g p)
-                            ]
-    aiops = concatMap ai (filter ((/= nullOutPoint) . prevOutput) (txIn tx))
-    aoops = concatMap ao [0 .. length (txOut tx) - 1]
-
-getBalanceOps :: AddressMap -> [R.BatchOp]
-getBalanceOps am = map (\(a, b) -> insertOp (BalanceKey a) b) (M.toAscList am)
-
-blockRef :: BlockHeader -> BlockHeight -> Word32 -> BlockRef
-blockRef b h i =
-    BlockRef
-    { blockRefHash = headerHash b
-    , blockRefHeight = h
-    , blockRefMainChain = True
-    , blockRefPos = i
-    }
-
-initOutputBalances ::
-       (MonadImport m, MonadBlock m)
-    => Maybe (BlockHeader, BlockHeight)
-    -> [Tx]
-    -> m ()
-initOutputBalances mbh txs = do
-    init_outputs
-    init_balances
-  where
-    bref i = uncurry blockRef <$> mbh <*> pure i
-    init_outputs = forM_ (zip [0 ..] txs) $ \(i, t) -> txOutputMap t (bref i)
-    init_balances = do
-        s@ImportState {..} <- get
-        let addrs =
-                S.fromList $
-                mapMaybe (scriptToAddressBS . outScript) (M.elems outputMap)
+        return
+            [ insertOp (BlockKey block_hash) block_value
+            , insertOp (HeightKey (nodeHeight bn)) block_hash
+            , insertOp BestBlockKey block_hash
+            ]
+    get_block_remove_ops = do
         db <- asks myBlockDB
-        am <- addrBalances addrs db Nothing
-        put s {addressMap = am <> addressMap}
+        BlockValue {..} <- getBestBlock db Nothing
+        let block_hash = headerHash blockValueHeader
+            block_key = BlockKey block_hash
+            height_key = HeightKey blockValueHeight
+            prev_block = prevBlock blockValueHeader
+        return
+            [ deleteOp block_key
+            , deleteOp height_key
+            , insertOp BestBlockKey prev_block
+            ]
+
+outputOps :: (MonadBlock m, MonadImport m) => OutPoint -> m [BatchOp]
+outputOps out_point@OutPoint {..}
+    | out_point == nullOutPoint = return []
+    | otherwise = do
+        output@Output {..} <-
+            getOutput out_point >>= \case
+                Nothing ->
+                    throwString $
+                    "Could not get output to unspend: " <> show out_point
+                Just o -> return o
+        let output_op = insertOp (OutputKey out_point) output
+            addr_ops = addressOutOps out_point output
+        return $ output_op : addr_ops
+
+addressOutOps :: OutPoint -> Output -> [BatchOp]
+addressOutOps out_point output@Output {..} =
+    case scriptToAddressBS outScript of
+        Nothing -> []
+        Just address ->
+            let key =
+                    AddrOutputKey
+                    { addrOutputSpent = isJust outSpender
+                    , addrOutputAddress = address
+                    , addrOutputHeight = blockRefHeight <$> outBlock
+                    , addrOutPoint = out_point
+                    }
+                key_delete = key {addrOutputSpent = isNothing outSpender}
+            in [insertOp key output, deleteOp key_delete]
+
+delAddressOutOps :: OutPoint -> Output -> [BatchOp]
+delAddressOutOps out_point Output {..} =
+    case scriptToAddressBS outScript of
+        Nothing -> []
+        Just address ->
+            let key =
+                    AddrOutputKey
+                    { addrOutputSpent = isJust outSpender
+                    , addrOutputAddress = address
+                    , addrOutputHeight = blockRefHeight <$> outBlock
+                    , addrOutPoint = out_point
+                    }
+                key_delete = key {addrOutputSpent = isNothing outSpender}
+            in [deleteOp key, deleteOp key_delete]
+
+deleteOutOps :: (MonadBlock m, MonadImport m) => OutPoint -> m [BatchOp]
+deleteOutOps out_point@OutPoint {..} = do
+    output@Output {..} <-
+        getOutput out_point >>= \case
+            Nothing ->
+                throwString $
+                "Could not get output to delete: " <> show out_point
+            Just o -> return o
+    let output_op = deleteOp (OutputKey out_point)
+        addr_ops = delAddressOutOps out_point output
+    return $ output_op : addr_ops
+
+deleteTxOps :: TxHash -> [BatchOp]
+deleteTxOps tx_hash = [deleteOp (TxKey tx_hash), deleteOp (MempoolTx tx_hash)]
+
+getSimpleTx :: MonadBlock m => TxHash -> m Tx
+getSimpleTx tx_hash =
+    getTxRecord tx_hash >>= \case
+        Nothing -> throwString $ "Tx record not found: " <> show tx_hash
+        Just TxRecord {..} -> return txValue
+
+getTxOutPoints :: Tx -> [OutPoint]
+getTxOutPoints tx@Tx {..} =
+    let tx_hash = txHash tx
+    in [OutPoint tx_hash i | i <- take (length txOut) [0 ..]]
+
+getPrevOutPoints :: Tx -> [OutPoint]
+getPrevOutPoints Tx {..} = map prevOutput txIn
+
+getDeleteTxOps :: (MonadBlock m, MonadImport m) => m [BatchOp]
+getDeleteTxOps = do
+    del_txs <- S.toList <$> getDeleteTxs
+    txs <- mapM getSimpleTx del_txs
+    let prev_outs = concatMap getPrevOutPoints txs
+        tx_outs = concatMap getTxOutPoints txs
+        tx_ops = concatMap deleteTxOps del_txs
+    prev_out_ops <- concat <$> mapM outputOps prev_outs
+    tx_out_ops <- concat <$> mapM deleteOutOps tx_outs
+    return $ prev_out_ops <> tx_out_ops <> tx_ops
+
+insertTxOps :: (MonadBlock m, MonadImport m) => ImportTx -> m [BatchOp]
+insertTxOps ImportTx {..} = do
+    prev_outputs <- get_prev_outputs importTx
+    let key = TxKey (txHash importTx)
+        mempool_key = MempoolTx (txHash importTx)
+        value =
+            TxRecord
+            { txValueBlock = importTxBlock
+            , txValue = importTx
+            , txValuePrevOuts = prev_outputs
+            }
+    case importTxBlock of
+        Nothing -> return [insertOp key value, insertOp mempool_key importTx]
+        Just _ -> return [insertOp key value, deleteOp mempool_key]
+  where
+    get_prev_outputs Tx {..} =
+        forM (filter ((/= nullOutPoint) . prevOutput) txIn) $ \TxIn {..} -> do
+            Output {..} <-
+                getOutput prevOutput >>= \case
+                    Nothing ->
+                        throwString "Cannot get output to import transaction"
+                    Just out -> return out
+            return
+                ( prevOutput
+                , PrevOut
+                  { prevOutValue = outputValue
+                  , prevOutBlock = outBlock
+                  , prevOutScript = outScript
+                  })
+
+getInsertTxOps :: (MonadBlock m, MonadImport m) => m [BatchOp]
+getInsertTxOps = do
+    new_txs <- M.elems <$> gets newTxs
+    let txs = map importTx new_txs
+    let prev_outs = concatMap getPrevOutPoints txs
+        tx_outs = concatMap getTxOutPoints txs
+    prev_out_ops <- concat <$> mapM outputOps prev_outs
+    tx_out_ops <- concat <$> mapM outputOps tx_outs
+    tx_ops <- concat <$> mapM insertTxOps new_txs
+    return $ prev_out_ops <> tx_out_ops <> tx_ops
+
+getBalanceOps :: MonadImport m => m [BatchOp]
+getBalanceOps = do
+    address_map <- gets addressMap
+    return $ map (uncurry (insertOp . BalanceKey)) (M.toList address_map)
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
@@ -783,34 +734,13 @@ revertBestBlock = do
         (blockValueHeader == genesisHeader)
         (throwString "Attempted to revert genesis block")
     $(logWarn) $ logMe <> "Reverting block " <> logShow blockValueHeight
-    txs <- mapM gtx blockValueTxs
+    import_txs <- mapM getSimpleTx (tail blockValueTxs)
     runMonadImport $ do
-        initOutputBalances (Just (blockValueHeader, blockValueHeight)) txs
-        delete_txs blockValueTxs
-        update_database blockValueHeader blockValueWork blockValueHeight txs
+        mapM_ deleteTransaction blockValueTxs
+        revertBlock
     reset_peer (blockValueHeight - 1)
+    runMonadImport $ mapM_ (`importTransaction` Nothing) import_txs
   where
-    gtx h = do
-        db <- asks myBlockDB
-        retrieve db Nothing (TxKey h) >>= \case
-            Nothing ->
-                throwString "Colud not find transacion in block to revert"
-            Just TxRecord {..} -> return txValue
-    delete_txs ths =
-        forM_ ths $ \t -> do
-            db <- asks myBlockDB
-            deleteTransaction t db Nothing
-    update_database bh bw bg txs = do
-        ImportState {..} <- get
-        db <- asks myBlockDB
-        let mhs = S.difference deleteTxs (S.fromList (map txHash txs))
-        mts <- mapM gtx (S.toList mhs)
-        let ops =
-                concatMap (\tx -> getTxOps outputMap True tx Nothing) mts <>
-                getBlockOps outputMap True bh bw bg txs <>
-                getBalanceOps addressMap
-        writeBatch db ops
-        importMempool txs
     reset_peer height = do
         base_height_box <- asks myBaseHeight
         peer_box <- asks myPeer
@@ -818,45 +748,68 @@ revertBestBlock = do
             writeTVar base_height_box height
             writeTVar peer_box Nothing
 
--- TODO: do something about orphan transactions
-importMempool :: MonadBlock m => [Tx] -> m ()
-importMempool txs' = do
-    om <-
-        runMonadImport $ do
-            forM_ txs $ \tx -> txOutputMap tx Nothing
-            gets outputMap
-    let validated_txs = map (\tx -> (tx, validate om tx)) txs
-        orphan_txs = filter_only TxOrphan validated_txs
-        double_spent = filter_only TxInputSpent validated_txs
-        spam_txs = filter_only TxLowFunds validated_txs
-        valid_txs = filter_only TxValid validated_txs
-    addNewTxs Nothing valid_txs
+importTransaction :: (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m ()
+importTransaction tx maybe_block_ref =
+    runExceptT validate_tx >>= \case
+        Left e ->
+            $(logError) $
+            logMe <> "Not importing tx: " <> logShow (txHash tx) <> ": " <> e
+        Right () ->
+            void . runMaybeT $ do
+                delete_spenders
+                spend_inputs
+                insert_outputs
+                $(logInfo) $
+                    logMe <> "Importing transaction: " <> logShow (txHash tx)
+                insertTx tx maybe_block_ref
   where
-    filter_only expect validated_txs =
-        [tx | (tx, validity) <- validated_txs, validity == expect]
-    txs = fo (S.fromList txs')
-    validate om tx = maximum [input_spent om tx, funds_low om tx]
-    input_spent om tx =
-        let test = maybe True (isNothing . outSpender)
-            unspent = all (\i -> test (M.lookup (prevOutput i) om)) (ins tx)
-        in if unspent
-               then TxValid
-               else TxInputSpent
-    funds_low om tx =
-        let f a i' = (+) <$> a <*> (outputValue <$> M.lookup (prevOutput i') om)
-            i = foldl' f (Just 0) (ins tx)
-            o = sum (map outValue (txOut tx))
-        in case (>= o) <$> i of
-               Nothing -> TxOrphan
-               Just True -> TxValid
-               Just False -> TxLowFunds
-    ins tx = filter ((/= nullOutPoint) . prevOutput) (txIn tx)
-    dep s t = any (flip S.member s . outPointHash . prevOutput) (txIn t)
-    fo s
-        | S.null s = []
-        | otherwise =
-            let (ds, ns) = S.partition (dep (S.map txHash s)) s
-            in S.toList ns <> fo ds
+    validate_tx
+        | isJust maybe_block_ref = return () -- only validate unconfirmed
+        | otherwise = do
+            guard . isNothing =<< getTxRecord (txHash tx)
+            prev_outs <-
+                forM (txIn tx) $ \TxIn {..} ->
+                    getOutput prevOutput >>= \case
+                        Nothing -> throwError "Previous output not found"
+                        Just output -> return output
+            when (any (isJust . outSpender) prev_outs) $
+                throwError "Double-spend attempt rejected"
+            let sum_inputs = sum (map outputValue prev_outs)
+                sum_outputs = sum (map outValue (txOut tx))
+            when (sum_outputs > sum_inputs) $
+                throwError "Spends more than available"
+    delete_spenders =
+        forM_ (txIn tx) $ \TxIn {..} ->
+            getOutput prevOutput >>= \case
+                Nothing ->
+                    unless (prevOutput == nullOutPoint) . throwString $
+                    "Could not get output for transaction being imported: " <>
+                    show (txHash tx)
+                Just Output {outSpender = Just Spender {..}} -> do
+                    $(logInfo) $
+                        logMe <> "Deleting transaction to free its inputs: " <>
+                        logShow spenderHash
+                    deleteTransaction spenderHash
+                _ -> return ()
+    spend_inputs =
+        forM_ (zip [0 ..] (txIn tx)) $ \(i, TxIn {..}) ->
+            spendOutput
+                prevOutput
+                Spender
+                { spenderHash = txHash tx
+                , spenderIndex = i
+                , spenderBlock = maybe_block_ref
+                }
+    insert_outputs =
+        forM_ (zip [0 ..] (txOut tx)) $ \(i, TxOut {..}) ->
+            addOutput
+                OutPoint {outPointHash = txHash tx, outPointIndex = i}
+                Output
+                { outputValue = outValue
+                , outBlock = maybe_block_ref
+                , outScript = scriptOutput
+                , outSpender = Nothing
+                }
 
 syncBlocks :: MonadBlock m => m ()
 syncBlocks = void (runMaybeT sync)
@@ -966,8 +919,7 @@ processBlockMessage (BlockReceived _ b) =
         Right () -> syncBlocks
 
 processBlockMessage (TxReceived _ tx) = do
-    $(logDebug) $ logMe <> "Importing transaction " <> logShow (txHash tx)
-    importMempool [tx]
+    runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (BlockPeerDisconnect p) = do
     peer_box <- asks myPeer
@@ -1006,7 +958,7 @@ getAddrsTxs addrs db s =
         ss <- getAddrsSpent addrs db s'
         let utx =
                 [ AddressTxOut
-                { addressTxAddress = addrOutputAddress
+                { addressTxPkScript = outScript
                 , addressTxId = outPointHash addrOutPoint
                 , addressTxAmount = fromIntegral outputValue
                 , addressTxBlock = outBlock
@@ -1016,7 +968,7 @@ getAddrsTxs addrs db s =
                 ]
             stx =
                 [ AddressTxOut
-                { addressTxAddress = addrOutputAddress
+                { addressTxPkScript = outScript
                 , addressTxId = outPointHash addrOutPoint
                 , addressTxAmount = fromIntegral outputValue
                 , addressTxBlock = outBlock
@@ -1026,7 +978,7 @@ getAddrsTxs addrs db s =
                 ]
             itx =
                 [ AddressTxIn
-                { addressTxAddress = addrOutputAddress
+                { addressTxPkScript = outScript
                 , addressTxId = spenderHash
                 , addressTxAmount = -fromIntegral outputValue
                 , addressTxBlock = spenderBlock
@@ -1053,8 +1005,7 @@ getUnspent addr db s = do
   where
     to_unspent AddrOutputKey {..} Output {..} =
         Unspent
-        { unspentAddress = Just addrOutputAddress
-        , unspentPkScript = outScript
+        { unspentPkScript = outScript
         , unspentTxId = outPointHash addrOutPoint
         , unspentIndex = outPointIndex addrOutPoint
         , unspentValue = outputValue

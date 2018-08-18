@@ -13,8 +13,6 @@ import           Control.Monad.Reader
 import           Data.Aeson                  as A
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as BS
-import           Data.ByteString.Short       (ShortByteString)
-import qualified Data.ByteString.Short       as BSS
 import           Data.Function
 import           Data.Int
 import           Data.Maybe
@@ -90,19 +88,17 @@ data AddrOutputKey
     deriving (Show, Eq, Ord)
 
 data BlockValue = BlockValue
-    { blockValueHeight    :: !BlockHeight
-    , blockValueWork      :: !BlockWork
-    , blockValueHeader    :: !BlockHeader
-    , blockValueSize      :: !Word32
-    , blockValueMainChain :: !Bool
-    , blockValueTxs       :: ![TxHash]
+    { blockValueHeight :: !BlockHeight
+    , blockValueWork   :: !BlockWork
+    , blockValueHeader :: !BlockHeader
+    , blockValueSize   :: !Word32
+    , blockValueTxs    :: ![TxHash]
     } deriving (Show, Eq, Ord)
 
 data BlockRef = BlockRef
-    { blockRefHash      :: !BlockHash
-    , blockRefHeight    :: !BlockHeight
-    , blockRefMainChain :: !Bool
-    , blockRefPos       :: !Word32
+    { blockRefHash   :: !BlockHash
+    , blockRefHeight :: !BlockHeight
+    , blockRefPos    :: !Word32
     } deriving (Show, Eq)
 
 instance Ord BlockRef where
@@ -161,7 +157,7 @@ newtype OutputKey = OutputKey
 data PrevOut = PrevOut
     { prevOutValue  :: !Word64
     , prevOutBlock  :: !(Maybe BlockRef)
-    , prevOutScript :: !ShortByteString
+    , prevOutScript :: !ByteString
     } deriving (Show, Eq, Ord)
 
 data Output = Output
@@ -176,7 +172,7 @@ outputToPrevOut Output {..} =
     PrevOut
     { prevOutValue = outputValue
     , prevOutBlock = outBlock
-    , prevOutScript = BSS.toShort outScript
+    , prevOutScript = outScript
     }
 
 prevOutToOutput :: PrevOut -> Output
@@ -184,7 +180,7 @@ prevOutToOutput PrevOut {..} =
     Output
     { outputValue = prevOutValue
     , outBlock = prevOutBlock
-    , outScript = BSS.fromShort prevOutScript
+    , outScript = prevOutScript
     , outSpender = Nothing
     }
 
@@ -236,22 +232,30 @@ data Balance = Balance
     , balanceUnconfirmed :: !Int64
     , balanceOutputCount :: !Word64
     , balanceSpentCount  :: !Word64
-    , balanceMempoolTxs  :: ![TxHash]
     } deriving (Show, Eq, Ord)
+
+emptyBalance :: Balance
+emptyBalance =
+    Balance
+    { balanceValue = 0
+    , balanceUnconfirmed = 0
+    , balanceOutputCount = 0
+    , balanceSpentCount = 0
+    }
 
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
 
 data AddressTx
-    = AddressTxIn { addressTxAddress :: !Address
-                  , addressTxId      :: !TxHash
-                  , addressTxAmount  :: !Int64
-                  , addressTxBlock   :: !(Maybe BlockRef)
-                  , addressTxVin     :: !Word32 }
-    | AddressTxOut { addressTxAddress :: !Address
-                   , addressTxId      :: !TxHash
-                   , addressTxAmount  :: !Int64
-                   , addressTxBlock   :: !(Maybe BlockRef)
-                   , addressTxVout    :: !Word32 }
+    = AddressTxIn { addressTxPkScript :: !ByteString
+                  , addressTxId       :: !TxHash
+                  , addressTxAmount   :: !Int64
+                  , addressTxBlock    :: !(Maybe BlockRef)
+                  , addressTxVin      :: !Word32 }
+    | AddressTxOut { addressTxPkScript :: !ByteString
+                   , addressTxId       :: !TxHash
+                   , addressTxAmount   :: !Int64
+                   , addressTxBlock    :: !(Maybe BlockRef)
+                   , addressTxVout     :: !Word32 }
     deriving (Eq, Show)
 
 instance Ord AddressTx where
@@ -263,8 +267,7 @@ instance Ord AddressTx where
         f AddressTxOut {..} = (isNothing addressTxBlock, addressTxBlock, True)
 
 data Unspent = Unspent
-    { unspentAddress  :: !(Maybe Address)
-    , unspentPkScript :: !ByteString
+    { unspentPkScript :: !ByteString
     , unspentTxId     :: !TxHash
     , unspentIndex    :: !Word32
     , unspentValue    :: !Word64
@@ -335,13 +338,11 @@ instance Serialize Balance where
         put balanceUnconfirmed
         put balanceOutputCount
         put balanceSpentCount
-        put balanceMempoolTxs
     get = do
         balanceValue <- get
         balanceUnconfirmed <- get
         balanceOutputCount <- get
         balanceSpentCount <- get
-        balanceMempoolTxs <- get
         return Balance {..}
 
 instance Serialize AddrOutputKey where
@@ -421,12 +422,12 @@ instance Serialize PrevOut where
     put PrevOut {..} = do
         put prevOutValue
         put prevOutBlock
-        put (BSS.length prevOutScript)
-        putShortByteString prevOutScript
+        put (BS.length prevOutScript)
+        putByteString prevOutScript
     get = do
         prevOutValue <- get
         prevOutBlock <- get
-        prevOutScript <- getShortByteString =<< get
+        prevOutScript <- getByteString =<< get
         return PrevOut {..}
 
 instance Serialize Output where
@@ -448,12 +449,10 @@ instance Serialize BlockRef where
     put BlockRef {..} = do
         put blockRefHash
         put blockRefHeight
-        put blockRefMainChain
         put blockRefPos
     get = do
         blockRefHash <- get
         blockRefHeight <- get
-        blockRefMainChain <- get
         blockRefPos <- get
         return BlockRef {..}
 
@@ -482,14 +481,12 @@ instance Serialize BlockValue where
         put blockValueWork
         put blockValueHeader
         put blockValueSize
-        put blockValueMainChain
         put blockValueTxs
     get = do
         blockValueHeight <- get
         blockValueWork <- get
         blockValueHeader <- get
         blockValueSize <- get
-        blockValueMainChain <- get
         blockValueTxs <- get
         return BlockValue {..}
 
@@ -497,14 +494,13 @@ blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
     [ "hash" .= headerHash blockValueHeader
     , "height" .= blockValueHeight
-    , "mainchain" .= blockValueMainChain
     , "previous" .= prevBlock blockValueHeader
-    , "timestamp" .= blockTimestamp blockValueHeader
+    , "time" .= blockTimestamp blockValueHeader
     , "version" .= blockVersion blockValueHeader
     , "bits" .= blockBits blockValueHeader
     , "nonce" .= bhNonce blockValueHeader
     , "size" .= blockValueSize
-    , "transactions" .= blockValueTxs
+    , "tx" .= blockValueTxs
     ]
 
 instance ToJSON BlockValue where
@@ -517,31 +513,23 @@ instance ToJSON Spender where
 
 blockRefPairs :: A.KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
-    if blockRefMainChain
-        then [ "block" .= blockRefHash
-             , "height" .= blockRefHeight
-             , "pos" .= blockRefPos
-             ]
-        else []
+    [ "hash" .= blockRefHash
+    , "height" .= blockRefHeight
+    , "position" .= blockRefPos
+    ]
 
 spenderPairs :: A.KeyValue kv => Spender -> [kv]
 spenderPairs Spender {..} =
-    ["txid" .= spenderHash, "vin" .= spenderIndex] ++
-    maybe [] blockRefPairs spenderBlock
-
-scriptAddress :: A.KeyValue kv => ByteString -> [kv]
-scriptAddress bs =
-    case scriptToAddressBS bs of
-        Nothing   -> []
-        Just addr -> ["address" .= addr]
+    ["txid" .= spenderHash, "input" .= spenderIndex, "block" .= spenderBlock]
 
 detailedOutputPairs :: A.KeyValue kv => DetailedOutput -> [kv]
 detailedOutputPairs DetailedOutput {..} =
-    [ "value" .= detOutValue
+    [ "address" .= scriptToAddressBS detOutScript
     , "pkscript" .= String (cs (encodeHex detOutScript))
+    , "value" .= detOutValue
     , "spent" .= isJust detOutSpender
-    ] ++
-    scriptAddress detOutScript ++ maybe [] spenderPairs detOutSpender
+    , "spender" .= detOutSpender
+    ]
 
 instance ToJSON DetailedOutput where
     toJSON = object . detailedOutputPairs
@@ -550,20 +538,25 @@ instance ToJSON DetailedOutput where
 detailedInputPairs :: A.KeyValue kv => DetailedInput -> [kv]
 detailedInputPairs DetailedInput {..} =
     [ "txid" .= outPointHash detInOutPoint
-    , "vout" .= outPointIndex detInOutPoint
+    , "output" .= outPointIndex detInOutPoint
     , "coinbase" .= False
     , "sequence" .= detInSequence
     , "sigscript" .= String (cs (encodeHex detInSigScript))
     , "pkscript" .= String (cs (encodeHex detInPkScript))
+    , "address" .= scriptToAddressBS detInPkScript
     , "value" .= detInValue
-    ] ++
-    scriptAddress detInPkScript ++ maybe [] blockRefPairs detInBlock
+    , "block" .= detInBlock
+    ]
 detailedInputPairs DetailedCoinbase {..} =
     [ "txid" .= outPointHash detInOutPoint
-    , "vout" .= outPointIndex detInOutPoint
+    , "output" .= outPointIndex detInOutPoint
     , "coinbase" .= True
     , "sequence" .= detInSequence
     , "sigscript" .= String (cs (encodeHex detInSigScript))
+    , "pkscript" .= Null
+    , "address" .= Null
+    , "value" .= Null
+    , "block" .= Null
     ]
 
 instance ToJSON DetailedInput where
@@ -577,11 +570,11 @@ detailedTxPairs DetailedTx {..} =
     , "version" .= txVersion detailedTxData
     , "locktime" .= txLockTime detailedTxData
     , "fee" .= detailedTxFee
-    , "vin" .= detailedTxInputs
-    , "vout" .= detailedTxOutputs
+    , "inputs" .= detailedTxInputs
+    , "outputs" .= detailedTxOutputs
     , "hex" .= String (cs (encodeHex (S.encode detailedTxData)))
-    ] ++
-    maybe [] blockRefPairs detailedTxBlock
+    , "block" .= detailedTxBlock
+    ]
 
 instance ToJSON DetailedTx where
     toJSON = object . detailedTxPairs
@@ -593,19 +586,21 @@ instance ToJSON BlockRef where
 
 addrTxPairs :: A.KeyValue kv => AddressTx -> [kv]
 addrTxPairs AddressTxIn {..} =
-    [ "address" .= addressTxAddress
+    [ "address" .= scriptToAddressBS addressTxPkScript
+    , "pkscript" .= String (cs (encodeHex addressTxPkScript))
     , "txid" .= addressTxId
+    , "input" .= addressTxVin
     , "amount" .= addressTxAmount
-    , "vin" .= addressTxVin
-    ] ++
-    maybe [] blockRefPairs addressTxBlock
+    , "block" .= addressTxBlock
+    ]
 addrTxPairs AddressTxOut {..} =
-    [ "address" .= addressTxAddress
+    [ "address" .= scriptToAddressBS addressTxPkScript
+    , "pkscript" .= String (cs (encodeHex addressTxPkScript))
     , "txid" .= addressTxId
+    , "output" .= addressTxVout
     , "amount" .= addressTxAmount
-    , "vout" .= addressTxVout
-    ] ++
-    maybe [] blockRefPairs addressTxBlock
+    , "block" .= addressTxBlock
+    ]
 
 instance ToJSON AddressTx where
     toJSON = object . addrTxPairs
@@ -613,13 +608,13 @@ instance ToJSON AddressTx where
 
 unspentPairs :: A.KeyValue kv => Unspent -> [kv]
 unspentPairs Unspent {..} =
-    [ "pkscript" .= String (cs (encodeHex unspentPkScript))
+    [ "address" .= scriptToAddressBS unspentPkScript
+    , "pkscript" .= String (cs (encodeHex unspentPkScript))
     , "txid" .= unspentTxId
-    , "vout" .= unspentIndex
+    , "output" .= unspentIndex
     , "value" .= unspentValue
-    ] ++
-    maybe [] (\a -> ["address" .= a]) unspentAddress ++
-    maybe [] blockRefPairs unspentBlock
+    , "block" .= unspentBlock
+    ]
 
 instance ToJSON Unspent where
     toJSON = object . unspentPairs
@@ -631,7 +626,7 @@ addressBalancePairs AddressBalance {..} =
     , "confirmed" .= addressBalConfirmed
     , "unconfirmed" .= addressBalUnconfirmed
     , "outputs" .= addressOutputCount
-    , "spent" .= addressSpentCount
+    , "utxo" .= (addressOutputCount - addressSpentCount)
     ]
 
 instance FromJSON NewTx where
