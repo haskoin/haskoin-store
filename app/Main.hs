@@ -8,6 +8,7 @@ import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
+import           Control.Monad.Trans
 import           Data.Aeson                  (ToJSON (..), Value (..), object,
                                               (.=))
 import           Data.Bits
@@ -227,6 +228,7 @@ main =
             get "/blocks" $ do
                 blocks <- param "blocks"
                 getBlocks blocks db Nothing >>= json
+            get "/mempool" $ lift (getMempool db Nothing) >>= json
             get "/transaction/:txid" $ do
                 txid <- param "txid"
                 liftIO (getTx txid db Nothing) >>= maybeJSON

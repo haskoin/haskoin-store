@@ -294,7 +294,7 @@ instance R.KeyValue OutputKey Output
 instance R.KeyValue MultiTxKey MultiTxValue
 instance R.KeyValue AddrOutputKey Output
 instance R.KeyValue BalanceKey Balance
-instance R.KeyValue MempoolTx Tx
+instance R.KeyValue MempoolTx ()
 instance R.KeyValue OrphanTx Tx
 
 instance Serialize MempoolTx where

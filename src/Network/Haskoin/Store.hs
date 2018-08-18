@@ -32,6 +32,7 @@ module Network.Haskoin.Store
     , getUnspents
     , getBalance
     , getBalances
+    , getMempool
     ) where
 
 import           Control.Concurrent.NQE

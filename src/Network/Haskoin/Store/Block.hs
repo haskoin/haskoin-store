@@ -23,6 +23,7 @@ module Network.Haskoin.Store.Block
       , getTx
       , getTxs
       , getUnspents
+      , getMempool
       ) where
 
 import           Control.Applicative
@@ -269,6 +270,11 @@ getBalance addr db s =
                 , addressOutputCount = 0
                 , addressSpentCount = 0
                 }
+
+getMempool :: MonadUnliftIO m => DB -> Maybe Snapshot -> m [TxHash]
+getMempool db snapshot = get_hashes <$> matchingAsList db snapshot MempoolKey
+  where
+    get_hashes mempool_txs = [tx_hash | (MempoolTx tx_hash, ()) <- mempool_txs]
 
 getTxs :: MonadUnliftIO m => [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
 getTxs ths db s =
@@ -607,11 +613,11 @@ outputOps out_point@OutPoint {..}
                     "Could not get output to unspend: " <> show out_point
                 Just o -> return o
         let output_op = insertOp (OutputKey out_point) output
-            addr_ops = addressOutOps out_point output
+            addr_ops = addressOutOps out_point output False
         return $ output_op : addr_ops
 
-addressOutOps :: OutPoint -> Output -> [BatchOp]
-addressOutOps out_point output@Output {..} =
+addressOutOps :: OutPoint -> Output -> Bool -> [BatchOp]
+addressOutOps out_point output@Output {..} del =
     case scriptToAddressBS outScript of
         Nothing -> []
         Just address ->
@@ -622,23 +628,20 @@ addressOutOps out_point output@Output {..} =
                     , addrOutputHeight = blockRefHeight <$> outBlock
                     , addrOutPoint = out_point
                     }
+                key_mempool = key {addrOutputHeight = Nothing}
                 key_delete = key {addrOutputSpent = isNothing outSpender}
-            in [insertOp key output, deleteOp key_delete]
-
-delAddressOutOps :: OutPoint -> Output -> [BatchOp]
-delAddressOutOps out_point Output {..} =
-    case scriptToAddressBS outScript of
-        Nothing -> []
-        Just address ->
-            let key =
-                    AddrOutputKey
-                    { addrOutputSpent = isJust outSpender
-                    , addrOutputAddress = address
-                    , addrOutputHeight = blockRefHeight <$> outBlock
-                    , addrOutPoint = out_point
-                    }
-                key_delete = key {addrOutputSpent = isNothing outSpender}
-            in [deleteOp key, deleteOp key_delete]
+                key_delete_mempool = key_delete {addrOutputHeight = Nothing}
+                op =
+                    if del
+                        then deleteOp key
+                        else insertOp key output
+            in if isJust outBlock
+                   then [ op
+                        , deleteOp key_delete
+                        , deleteOp key_mempool
+                        , deleteOp key_delete_mempool
+                        ]
+                   else [op, deleteOp key_delete]
 
 deleteOutOps :: (MonadBlock m, MonadImport m) => OutPoint -> m [BatchOp]
 deleteOutOps out_point@OutPoint {..} = do
@@ -649,7 +652,7 @@ deleteOutOps out_point@OutPoint {..} = do
                 "Could not get output to delete: " <> show out_point
             Just o -> return o
     let output_op = deleteOp (OutputKey out_point)
-        addr_ops = delAddressOutOps out_point output
+        addr_ops = addressOutOps out_point output True
     return $ output_op : addr_ops
 
 deleteTxOps :: TxHash -> [BatchOp]
@@ -692,7 +695,7 @@ insertTxOps ImportTx {..} = do
             , txValuePrevOuts = prev_outputs
             }
     case importTxBlock of
-        Nothing -> return [insertOp key value, insertOp mempool_key importTx]
+        Nothing -> return [insertOp key value, insertOp mempool_key ()]
         Just _ -> return [insertOp key value, deleteOp mempool_key]
   where
     get_prev_outputs Tx {..} =
@@ -918,7 +921,7 @@ processBlockMessage (BlockReceived _ b) =
                 fromString e
         Right () -> syncBlocks
 
-processBlockMessage (TxReceived _ tx) = do
+processBlockMessage (TxReceived _ tx) =
     runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (BlockPeerDisconnect p) = do
