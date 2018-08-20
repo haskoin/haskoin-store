@@ -3,11 +3,11 @@ extra-deps:
 - git: https://github.com/haskoin/haskoin-core.git
   commit: f2c8d75c44fbdd88a194d3753df395eb0e5b8fd6
 - git: https://github.com/xenog/nqe.git
-  commit: 10bc2c02f589a5438b33dbd5356bbb460c9d3a3a
+  commit: d93eebf1cce5fd58079be587dee78b50455e2a9c
 - git: https://github.com/xenog/rocksdb-query.git
   commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
 - git: https://github.com/haskoin/haskoin-node.git
-  commit: e84a0fb2fda39514f1a6cce51639d3c9edac3384
+  commit: 44c3e9087496e4e72fa49cd5c6f783077a52fe5b
 - rocksdb-haskell-1.0.1
 - murmur3-1.0.3
 - secp256k1-0.5.3

@@ -15,7 +15,7 @@ import           Data.Bits
 import           Data.Maybe
 import           Data.String.Conversions
 import qualified Data.Text                   as T
-import qualified Database.RocksDB            as RocksDB
+import           Database.RocksDB            hiding (get)
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
@@ -31,8 +31,6 @@ import           System.IO.Unsafe
 import           Text.Read                   (readMaybe)
 import           UnliftIO
 import           Web.Scotty.Trans
-
-type StoreM = ActionT Except IO
 
 data OptConfig = OptConfig
     { optConfigDir      :: !(Maybe FilePath)
@@ -166,14 +164,14 @@ peerReader = mapM hp . ls
         return (host, port)
     ls = map T.unpack . T.split (== ',') . T.pack
 
-defHandler :: Except -> StoreM ()
+defHandler :: Monad m => Except -> ActionT Except m ()
 defHandler ServerError   = json ServerError
 defHandler NotFound      = status status404 >> json NotFound
 defHandler BadRequest    = status status400 >> json BadRequest
 defHandler (UserError s) = status status400 >> json (UserError s)
 defHandler e             = status status400 >> json e
 
-maybeJSON :: ToJSON a => Maybe a -> StoreM ()
+maybeJSON :: (Monad m, ToJSON a) => Maybe a -> ActionT Except m ()
 maybeJSON Nothing  = raise NotFound
 maybeJSON (Just x) = json x
 
@@ -183,117 +181,124 @@ myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
 
 main :: IO ()
 main =
-    execParser opts >>= \opt -> do
+    runStderrLoggingT $ do
+        opt <- liftIO (execParser opts)
         let conf = optToConfig opt
-        when (null (configPeers conf) && not (configDiscover conf)) $
+        when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
             die "Specify --discover or --peers [PEER,...]"
-        setNetwork $ configNetwork conf
-        b <- Inbox <$> liftIO newTQueueIO
-        s <- Inbox <$> liftIO newTQueueIO
+        liftIO . setNetwork $ configNetwork conf
+        b <- Inbox <$> newTQueueIO
+        s <- Inbox <$> newTQueueIO
         let wdir = configDir conf </> networkName
         liftIO $ createDirectoryIfMissing True wdir
         db <-
-            RocksDB.open
+            open
                 (wdir </> "blocks")
-                RocksDB.defaultOptions
-                { RocksDB.createIfMissing = True
-                , RocksDB.compression = RocksDB.SnappyCompression
-                , RocksDB.maxOpenFiles = -1
-                , RocksDB.writeBufferSize = 2 `shift` 30
+                defaultOptions
+                { createIfMissing = True
+                , compression = SnappyCompression
+                , maxOpenFiles = -1
+                , writeBufferSize = 2 `shift` 30
                 }
-        mgr <- Inbox <$> liftIO newTQueueIO
+        mgr <- Inbox <$> newTQueueIO
+        pub <- Inbox <$> newTQueueIO
         supervisor
             KillAll
             s
-            [runWeb (configPort conf) db, runStore conf mgr b db]
+            [runWeb conf pub mgr db, runStore conf pub mgr b db]
   where
     opts =
         info
             (helper <*> config)
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
-    runWeb port db =
-        scottyT port id $ do
-            defaultHandler defHandler
-            get "/block/best" $ getBestBlock db Nothing >>= json
-            get "/block/:block" $ do
-                block <- param "block"
-                getBlock block db Nothing >>= maybeJSON
-            get "/block/height/:height" $ do
-                height <- param "height"
-                getBlockAtHeight height db Nothing >>= maybeJSON
-            get "/block/heights" $ do
-                heights <- param "heights"
-                getBlocksAtHeights heights db Nothing >>= json
-            get "/blocks" $ do
-                blocks <- param "blocks"
-                getBlocks blocks db Nothing >>= json
-            get "/mempool" $ lift (getMempool db Nothing) >>= json
-            get "/transaction/:txid" $ do
-                txid <- param "txid"
-                liftIO (getTx txid db Nothing) >>= maybeJSON
-            get "/transactions" $ do
-                txids <- param "txids"
-                liftIO (getTxs txids db Nothing) >>= json
-            get "/address/:address/transactions" $ do
-                address <- param "address"
-                liftIO (getAddrTxs address db Nothing) >>= json
-            get "/address/transactions" $ do
-                addresses <- param "addresses"
-                liftIO (getAddrsTxs addresses db Nothing) >>= json
-            get "/address/:address/unspent" $ do
-                address <- param "address"
-                liftIO (getUnspent address db Nothing) >>= json
-            get "/address/unspent" $ do
-                addresses <- param "addresses"
-                liftIO (getUnspents addresses db Nothing) >>= json
-            get "/address/:address/balance" $ do
-                address <- param "address"
-                getBalance address db Nothing >>= json
-            get "/address/balances" $ do
-                addresses <- param "addresses"
-                getBalances addresses db Nothing >>= json
-            -- post "/transaction" $ do
-            --     te <- decodeLazy <$> body
-            --     case te of
-            --         Left _ -> do
-            --             status status400
-            --             json (UserError "Invalid transaction")
-            --         Right tx ->
-            --             postTransaction db mem tx >>= \case
-            --                 Just DoubleSpend -> do
-            --                     status status400
-            --                     json (UserError "Input already spent")
-            --                 Just InvalidOutput -> do
-            --                     status status400
-            --                     json (UserError "Invalid previous output")
-            --                 Just OverSpend -> do
-            --                     status status400
-            --                     json (UserError "Spends excessive amount")
-            --                 Just NoPeers -> do
-            --                     status status500
-            --                     json (UserError "No peers connected")
-            --                 Nothing -> json (SentTx (txHash tx))
-            get "/dbstats" $
-                RocksDB.getProperty db RocksDB.Stats >>= text . cs . fromJust
-            notFound $ raise NotFound
-    runStore conf mgr b db =
-        runStderrLoggingT $ do
-            s <- Inbox <$> liftIO newTQueueIO
-            c <- Inbox <$> liftIO newTQueueIO
-            let cfg =
-                    StoreConfig
-                    { storeConfBlocks = b
-                    , storeConfSupervisor = s
-                    , storeConfChain = c
-                    , storeConfManager = mgr
-                    , storeConfListener = const (return ())
-                    , storeConfMaxPeers = 20
-                    , storeConfInitPeers =
-                          map
-                              (second (fromMaybe defaultPort))
-                              (configPeers conf)
-                    , storeConfDiscover = configDiscover conf
-                    , storeConfDB = db
-                    }
-            store cfg
+
+runWeb ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Config
+    -> Publisher Inbox StoreEvent
+    -> Manager
+    -> DB
+    -> m ()
+runWeb conf pub mgr db = do
+    l <- askLoggerIO
+    scottyT (configPort conf) (runner l) $ do
+        defaultHandler defHandler
+        get "/block/best" $ getBestBlock db Nothing >>= json
+        get "/block/:block" $ do
+            block <- param "block"
+            getBlock block db Nothing >>= maybeJSON
+        get "/block/height/:height" $ do
+            height <- param "height"
+            getBlockAtHeight height db Nothing >>= maybeJSON
+        get "/block/heights" $ do
+            heights <- param "heights"
+            getBlocksAtHeights heights db Nothing >>= json
+        get "/blocks" $ do
+            blocks <- param "blocks"
+            getBlocks blocks db Nothing >>= json
+        get "/mempool" $ lift (getMempool db Nothing) >>= json
+        get "/transaction/:txid" $ do
+            txid <- param "txid"
+            lift (getTx txid db Nothing) >>= maybeJSON
+        get "/transactions" $ do
+            txids <- param "txids"
+            lift (getTxs txids db Nothing) >>= json
+        get "/address/:address/transactions" $ do
+            address <- param "address"
+            lift (getAddrTxs address db Nothing) >>= json
+        get "/address/transactions" $ do
+            addresses <- param "addresses"
+            lift (getAddrsTxs addresses db Nothing) >>= json
+        get "/address/:address/unspent" $ do
+            address <- param "address"
+            lift (getUnspent address db Nothing) >>= json
+        get "/address/unspent" $ do
+            addresses <- param "addresses"
+            lift (getUnspents addresses db Nothing) >>= json
+        get "/address/:address/balance" $ do
+            address <- param "address"
+            getBalance address db Nothing >>= json
+        get "/address/balances" $ do
+            addresses <- param "addresses"
+            getBalances addresses db Nothing >>= json
+        post "/transactions" $ do
+            NewTx tx <- jsonData
+            d <- lift (publishTx pub mgr db tx)
+            case d of
+                Left e -> do
+                    status status400
+                    json (UserError ("Invalid transaction: " <> show e))
+                Right j -> json j
+        get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
+        notFound $ raise NotFound
+  where
+    runner f l = do
+        u <- askUnliftIO
+        unliftIO u (runLoggingT l f)
+
+runStore ::
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => Config
+    -> Publisher Inbox StoreEvent
+    -> Manager
+    -> BlockStore
+    -> DB
+    -> m ()
+runStore conf pub mgr b db = do
+    s <- Inbox <$> newTQueueIO
+    c <- Inbox <$> newTQueueIO
+    let cfg =
+            StoreConfig
+            { storeConfBlocks = b
+            , storeConfSupervisor = s
+            , storeConfChain = c
+            , storeConfManager = mgr
+            , storeConfPublisher = pub
+            , storeConfMaxPeers = 20
+            , storeConfInitPeers =
+                  map (second (fromMaybe defaultPort)) (configPeers conf)
+            , storeConfDiscover = configDiscover conf
+            , storeConfDB = db
+            }
+    store cfg

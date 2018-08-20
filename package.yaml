@@ -17,6 +17,7 @@ dependencies:
 - aeson
 - base >=4.7 && <5
 - bytestring
+- cereal
 - haskoin-core
 - haskoin-node
 - monad-logger
@@ -30,7 +31,6 @@ library:
   - Network.Haskoin.Store
   dependencies:
   - aeson
-  - cereal
   - containers
   - network
   - rocksdb-query

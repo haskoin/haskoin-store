@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: ac7bd2bdd6b8e8e359a2ba658043daaffa43b89674e37d6e3cb8843d4f21ec9f
+-- hash: 95147071df35e20016375cf553c69f6d84a971e37479eaeaef560a452ff9105f
 
 name:           haskoin-store
 version:        1.0.0
@@ -63,6 +63,7 @@ executable haskoin-store
       aeson
     , base >=4.7 && <5
     , bytestring
+    , cereal
     , directory
     , filepath
     , haskoin-core
@@ -92,6 +93,7 @@ test-suite haskoin-store-test
       aeson
     , base >=4.7 && <5
     , bytestring
+    , cereal
     , haskoin-core
     , haskoin-node
     , haskoin-store

@@ -28,32 +28,54 @@ import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
 
-data MempoolException
+data TxException
     = DoubleSpend
-    | InvalidOutput
     | OverSpend
+    | OrphanTx
+    | NonStandard
+    | LowFee
+    | Dust
     | NoPeers
-    deriving (Show, Eq, Ord)
+    | InvalidTx
+    | CouldNotImport
+    | PeerIsGone
+    | AlreadyImported
+    deriving (Eq, Ord)
 
-instance Exception MempoolException
+instance Show TxException where
+    show InvalidTx       = "invalid"
+    show DoubleSpend     = "double-spend"
+    show OverSpend       = "not enough funds"
+    show OrphanTx        = "orphan"
+    show AlreadyImported = "already imported"
+    show NoPeers         = "no peers"
+    show NonStandard     = "non-standard"
+    show LowFee          = "low fee"
+    show Dust            = "dust"
+    show PeerIsGone      = "peer disconnected"
+    show CouldNotImport  = "could not import"
+
+instance Exception TxException
 
 newtype NewTx = NewTx
     { newTx :: Tx
-    } deriving (Show, Eq, Ord)
-
-newtype SentTx = SentTx
-    { sentTx :: TxHash
     } deriving (Show, Eq, Ord)
 
 data BlockConfig = BlockConfig
     { blockConfMailbox  :: !BlockStore
     , blockConfManager  :: !Manager
     , blockConfChain    :: !Chain
-    , blockConfListener :: !(Listen BlockEvent)
+    , blockConfListener :: !(Listen StoreEvent)
     , blockConfDB       :: !DB
     }
 
-newtype BlockEvent = BestBlock BlockHash
+data StoreEvent
+    = BestBlock !BlockHash
+    | MempoolNew !TxHash
+    | TxException !TxHash
+                  !TxException
+    | PeerConnected !Peer
+    | PeerDisconnected !Peer
 
 data BlockMessage
     = BlockChainNew !BlockNode
@@ -64,17 +86,7 @@ data BlockMessage
     | BlockNotReceived !Peer
                        !BlockHash
     | TxReceived !Peer !Tx
-    | TxRejected !Peer !TxReject !TxHash
     | PongReceived !Peer !Word64
-    | SendTx !Tx !(Reply (Maybe MempoolException))
-
-data TxReject
-    = RejectInvalidTx
-    | RejectDoubleSpend
-    | RejectNonStandard
-    | RejectDust
-    | RejectLowFee
-    deriving (Show, Eq, Ord)
 
 type BlockStore = Inbox BlockMessage
 
@@ -211,7 +223,7 @@ data MempoolTx
     deriving (Show, Eq, Ord)
 
 data OrphanTx
-    = OrphanTx TxHash
+    = OrphanTxKey TxHash
     | OrphanKey
     deriving (Show, Eq, Ord)
 
@@ -311,7 +323,7 @@ instance Serialize MempoolTx where
             return (MempoolTx h)
 
 instance Serialize OrphanTx where
-    put (OrphanTx h) = do
+    put (OrphanTxKey h) = do
         putWord8 0x08
         put h
     put OrphanKey = putWord8 0x08
@@ -321,7 +333,7 @@ instance Serialize OrphanTx where
       where
         record = do
             h <- get
-            return (OrphanTx h)
+            return (OrphanTxKey h)
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
@@ -632,10 +644,6 @@ addressBalancePairs AddressBalance {..} =
 instance FromJSON NewTx where
     parseJSON = withObject "transaction" $ \v -> NewTx <$> v .: "transaction"
 
-instance ToJSON SentTx where
-    toJSON (SentTx txid) = object ["txid" .= txid]
-    toEncoding (SentTx txid) = pairs ("txid" .= txid)
-
 instance ToJSON AddressBalance where
     toJSON = object . addressBalancePairs
     toEncoding = pairs . mconcat . addressBalancePairs
@@ -670,9 +678,6 @@ instance Serialize TxKey where
         guard . (== 0x00) =<< getWord8
         return (TxKey hash)
 
-newtype StoreEvent =
-    BlockEvent BlockEvent
-
 type StoreSupervisor n = Inbox (SupervisorMessage n)
 
 data StoreConfig n = StoreConfig
@@ -680,7 +685,7 @@ data StoreConfig n = StoreConfig
     , storeConfSupervisor :: !(StoreSupervisor n)
     , storeConfManager    :: !Manager
     , storeConfChain      :: !Chain
-    , storeConfListener   :: !(Listen StoreEvent)
+    , storeConfPublisher  :: !(Publisher Inbox StoreEvent)
     , storeConfMaxPeers   :: !Int
     , storeConfInitPeers  :: ![HostPort]
     , storeConfDiscover   :: !Bool

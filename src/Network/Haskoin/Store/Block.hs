@@ -60,7 +60,7 @@ data BlockRead = BlockRead
     , mySelf       :: !BlockStore
     , myChain      :: !Chain
     , myManager    :: !Manager
-    , myListener   :: !(Listen BlockEvent)
+    , myListener   :: !(Listen StoreEvent)
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
     }
@@ -115,6 +115,19 @@ runMonadImport f =
                 [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
         db <- asks myBlockDB
         writeBatch db ops
+        txs <- gets newTxs
+        l <- asks myListener
+        forM_ txs $ \ImportTx {..} -> do
+            $(logInfo) $ logMe <> "Imported tx " <> logShow (txHash importTx)
+            atomically (l (MempoolNew (txHash importTx)))
+        gets blockAction >>= \case
+            Just (ImportBlock Block {..}) -> do
+                $(logInfo) $
+                    logMe <> "Imported block " <>
+                    logShow (headerHash blockHeader)
+                atomically (l (BestBlock (headerHash blockHeader)))
+            Just RevertBlock -> $(logWarn) $ logMe <> "Reverted best block"
+            _ -> return ()
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
@@ -539,6 +552,7 @@ addNewBlock :: MonadBlock m => Block -> m ()
 addNewBlock block@Block {..} =
     runMonadImport $ do
         new_height <- get_new_height
+        $(logInfo) $ logMe <> "Importing block " <> logShow new_height
         import_txs new_height
         addBlock block
   where
@@ -751,36 +765,49 @@ revertBestBlock = do
             writeTVar base_height_box height
             writeTVar peer_box Nothing
 
+validateTx :: Monad m => OutputMap -> Tx -> ExceptT TxException m ()
+validateTx outputs tx = do
+    prev_outs <-
+        forM (txIn tx) $ \TxIn {..} ->
+            case M.lookup prevOutput outputs of
+                Nothing -> throwError OrphanTx
+                Just o -> return o
+    when (any (isJust . outSpender) prev_outs) (throwError DoubleSpend)
+    let sum_inputs = sum (map outputValue prev_outs)
+        sum_outputs = sum (map outValue (txOut tx))
+    when (sum_outputs > sum_inputs) (throwError OverSpend)
+
 importTransaction :: (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m ()
 importTransaction tx maybe_block_ref =
     runExceptT validate_tx >>= \case
-        Left e ->
-            $(logError) $
-            logMe <> "Not importing tx: " <> logShow (txHash tx) <> ": " <> e
-        Right () ->
-            void . runMaybeT $ do
-                delete_spenders
-                spend_inputs
-                insert_outputs
-                $(logInfo) $
-                    logMe <> "Importing transaction: " <> logShow (txHash tx)
-                insertTx tx maybe_block_ref
+        Left e -> do
+            case e of
+                AlreadyImported ->
+                    $(logDebug) $
+                    logMe <> "Already imported tx " <> logShow (txHash tx)
+                _ ->
+                    $(logError) $
+                    logMe <> "When importing tx " <> logShow (txHash tx) <> ": " <>
+                    logShow e
+            asks myListener >>= \l ->
+                atomically (l (TxException (txHash tx) e))
+        Right () -> do
+            delete_spenders
+            spend_inputs
+            insert_outputs
+            insertTx tx maybe_block_ref
   where
     validate_tx
         | isJust maybe_block_ref = return () -- only validate unconfirmed
         | otherwise = do
-            guard . isNothing =<< getTxRecord (txHash tx)
+            getTxRecord (txHash tx) >>= \maybe_tx ->
+                when (isJust maybe_tx) (throwError AlreadyImported)
             prev_outs <-
-                forM (txIn tx) $ \TxIn {..} ->
+                fmap (M.fromList . catMaybes) . forM (txIn tx) $ \TxIn {..} ->
                     getOutput prevOutput >>= \case
-                        Nothing -> throwError "Previous output not found"
-                        Just output -> return output
-            when (any (isJust . outSpender) prev_outs) $
-                throwError "Double-spend attempt rejected"
-            let sum_inputs = sum (map outputValue prev_outs)
-                sum_outputs = sum (map outValue (txOut tx))
-            when (sum_outputs > sum_inputs) $
-                throwError "Spends more than available"
+                        Nothing -> return Nothing
+                        Just o -> return $ Just (prevOutput, o)
+            validateTx prev_outs tx
     delete_spenders =
         forM_ (txIn tx) $ \TxIn {..} ->
             getOutput prevOutput >>= \case
@@ -894,17 +921,13 @@ syncBlocks = void (runMaybeT sync)
 
 importBlock :: (MonadError String m, MonadBlock m) => Block -> m ()
 importBlock block@Block {..} = do
-    bn <-
-        asks myChain >>= chainGetBlock (headerHash blockHeader) >>= \case
-            Just bn -> return bn
-            Nothing -> throwString "Could not obtain block from chain"
+    bn <- asks myChain >>= chainGetBlock (headerHash blockHeader)
+    when (isNothing bn) (throwString "Could not obtain block from chain")
     best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
     let best_hash = headerHash (blockValueHeader best)
         prev_hash = prevBlock blockHeader
     when (prev_hash /= best_hash) (throwError "does not build on best")
-    $(logInfo) $ logMe <> "Importing block " <> logShow (nodeHeight bn)
     addNewBlock block
-    asks myListener >>= atomically . ($ BestBlock (headerHash blockHeader))
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
