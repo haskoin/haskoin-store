@@ -115,11 +115,23 @@ runMonadImport f =
                 [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
         db <- asks myBlockDB
         writeBatch db ops
-        txs <- gets newTxs
         l <- asks myListener
-        forM_ txs $ \ImportTx {..} -> do
-            $(logInfo) $ logMe <> "Imported tx " <> logShow (txHash importTx)
-            atomically (l (MempoolNew (txHash importTx)))
+        gets deleteTxs >>= \ths ->
+            forM_ ths $ \th ->
+                $(logInfo) $ logMe <> "Deleted transaction " <> logShow th
+        gets newTxs >>= \txs ->
+            forM_ txs $ \ImportTx {..} ->
+                case importTxBlock of
+                    Nothing -> do
+                        $(logInfo) $
+                            logMe <> "Imported mempool tx " <>
+                            logShow (txHash importTx)
+                        atomically (l (MempoolNew (txHash importTx)))
+                    Just BlockRef {..} ->
+                        $(logInfo) $
+                        logMe <> "Imported tx " <> logShow (txHash importTx) <>
+                        " in block " <>
+                        logShow blockRefHeight
         gets blockAction >>= \case
             Just (ImportBlock Block {..}) -> do
                 $(logInfo) $
@@ -509,15 +521,9 @@ deleteTransaction ::
        (MonadBlock m, MonadImport m)
     => TxHash
     -> m ()
-deleteTransaction tx_hash = do
-    $(logInfo) $ logMe <> "Deleting transaction: " <> logShow tx_hash
-    void . runMaybeT $ do
-        shouldDelete tx_hash >>= \d ->
-            when d $ do
-                $(logInfo) $
-                    logMe <> "Transaction already scheduled for removal: " <>
-                    logShow tx_hash
-                empty
+deleteTransaction tx_hash = shouldDelete tx_hash >>= \d -> unless d delete_it
+  where
+    delete_it = do
         TxRecord {..} <-
             getTxRecord tx_hash >>= \case
                 Nothing ->
@@ -530,7 +536,6 @@ deleteTransaction tx_hash = do
         remove_outputs n_out
         unspend_inputs prevs
         deleteTx tx_hash
-  where
     remove_spenders n_out =
         forM_ (take n_out [0 ..]) $ \i ->
             let out_point = OutPoint tx_hash i
