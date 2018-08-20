@@ -7,7 +7,7 @@ extra-deps:
 - git: https://github.com/xenog/rocksdb-query.git
   commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
 - git: https://github.com/haskoin/haskoin-node.git
-  commit: 44c3e9087496e4e72fa49cd5c6f783077a52fe5b
+  commit: 691a9dcaf5e5c2e1da6cd00d8034f259052fb81a
 - rocksdb-haskell-1.0.1
 - murmur3-1.0.3
 - secp256k1-0.5.3

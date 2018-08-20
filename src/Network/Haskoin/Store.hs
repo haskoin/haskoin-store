@@ -40,13 +40,16 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
+import           Data.List
+import           Data.Maybe
 import           Data.Serialize
 import           Data.String
 import           Data.String.Conversions
+import           Database.RocksDB
+import           Database.RocksDB.Query
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
-import Database.RocksDB
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
@@ -62,6 +65,7 @@ data StoreRead = StoreRead
     , myManager    :: !Manager
     , myListener   :: !(Listen StoreEvent)
     , myPublisher  :: !(Publisher Inbox StoreEvent)
+    , myBlockDB    :: !DB
     }
 
 store :: (MonadLoggerIO m, MonadUnliftIO m) => StoreConfig m -> m ()
@@ -90,6 +94,7 @@ store StoreConfig {..} = do
             , myManager = storeConfManager
             , myPublisher = storeConfPublisher
             , myListener = (`sendSTM` ls)
+            , myBlockDB = storeConfDB
             }
     let block_cfg =
             BlockConfig
@@ -119,6 +124,7 @@ storeDispatch (ManagerEvent (ManagerConnect p)) = do
     b <- asks myBlockStore
     l <- asks myListener
     atomically (l (PeerConnected p))
+    MMempool `sendMessage` p
     BlockPeerConnect p `send` b
 
 storeDispatch (ManagerEvent (ManagerDisconnect p)) = do
@@ -141,7 +147,14 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
     b <- asks myBlockStore
     BlockNotReceived p hash `send` b
 
-storeDispatch (PeerEvent (p, TxAvail hash)) = peerGetTxs p [hash]
+storeDispatch (PeerEvent (p, TxAvail hs)) = do
+    db <- asks myBlockDB
+    has <-
+        fmap catMaybes . forM hs $ \h ->
+            retrieve db Nothing (TxKey h) >>= \case
+                Nothing -> return Nothing
+                Just TxRecord {} -> return (Just h)
+    peerGetTxs p (hs \\ has)
 
 storeDispatch (PeerEvent (p, GotTx tx)) = do
     b <- asks myBlockStore
@@ -220,7 +233,7 @@ publishTx pub mgr db tx =
         ExceptT . withPubSub pub $ \sub -> runExceptT (send_it sub p)
     send_it sub p = do
         MTx tx `sendMessage` p
-        peerGetTxs p [txHash tx]
+        MMempool `sendMessage` p
         recv_loop sub p
         maybeToExceptT CouldNotImport (MaybeT (getTx (txHash tx) db Nothing))
     recv_loop sub p =

@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE GADTs             #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -264,8 +265,7 @@ runWeb conf pub mgr db = do
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
-            d <- lift (publishTx pub mgr db tx)
-            case d of
+            lift (publishTx pub mgr db tx) >>= \case
                 Left e -> do
                     status status400
                     json (UserError ("Invalid transaction: " <> show e))
