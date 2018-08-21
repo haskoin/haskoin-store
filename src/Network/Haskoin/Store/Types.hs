@@ -40,7 +40,8 @@ data TxException
     | CouldNotImport
     | PeerIsGone
     | AlreadyImported
-    deriving (Eq, Ord)
+    | PublishTimeout
+    deriving (Eq)
 
 instance Show TxException where
     show InvalidTx       = "invalid"
@@ -54,6 +55,7 @@ instance Show TxException where
     show Dust            = "dust"
     show PeerIsGone      = "peer disconnected"
     show CouldNotImport  = "could not import"
+    show PublishTimeout  = "publish timeout"
 
 instance Exception TxException
 

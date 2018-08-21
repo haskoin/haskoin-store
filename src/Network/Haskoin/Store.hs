@@ -231,7 +231,10 @@ publishTx ::
 publishTx pub mgr db tx =
     getTx (txHash tx) db Nothing >>= \case
         Just d -> return (Right d)
-        Nothing -> runExceptT go
+        Nothing ->
+            timeout 10000000 (runExceptT go) >>= \case
+                Nothing -> return (Left PublishTimeout)
+                Just e -> return e
   where
     go = do
         $(logDebug) $

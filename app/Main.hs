@@ -73,15 +73,15 @@ optToConfig OptConfig {..} =
 
 instance Parsable BlockHash where
     parseParam =
-        maybe (Left "Could not decode block hash") Right . hexToBlockHash . cs
+        maybe (Left "could not decode block hash") Right . hexToBlockHash . cs
 
 instance Parsable TxHash where
     parseParam =
-        maybe (Left "Could not decode tx hash") Right . hexToTxHash . cs
+        maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
 
 instance Parsable Address where
     parseParam =
-        maybe (Left "Could not decode address") Right . base58ToAddr . cs
+        maybe (Left "could not decode address") Right . base58ToAddr . cs
 
 data Except
     = NotFound
@@ -98,10 +98,10 @@ instance ScottyError Except where
     showError = cs . show
 
 instance ToJSON Except where
-    toJSON NotFound = object ["error" .= String "Not found"]
-    toJSON BadRequest = object ["error" .= String "Bad request"]
-    toJSON ServerError = object ["error" .= String "You made me kill a unicorn"]
-    toJSON (StringError _) = object ["error" .= String "You made me kill a unicorn"]
+    toJSON NotFound = object ["error" .= String "not found"]
+    toJSON BadRequest = object ["error" .= String "bad request"]
+    toJSON ServerError = object ["error" .= String "you made me kill a unicorn"]
+    toJSON (StringError _) = object ["error" .= String "you made me kill a unicorn"]
     toJSON (UserError s) = object ["error" .= s]
 
 config :: Parser OptConfig
@@ -266,9 +266,12 @@ runWeb conf pub mgr db = do
         post "/transactions" $ do
             NewTx tx <- jsonData
             lift (publishTx pub mgr db tx) >>= \case
+                Left PublishTimeout -> do
+                    status status500
+                    json (UserError (show PublishTimeout))
                 Left e -> do
                     status status400
-                    json (UserError ("Invalid transaction: " <> show e))
+                    json (UserError (show e))
                 Right j -> json j
         get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
         notFound $ raise NotFound
