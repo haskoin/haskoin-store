@@ -137,10 +137,13 @@ storeDispatch (ChainEvent (ChainNewBest bn)) = do
     BlockChainNew bn `send` b
 
 storeDispatch (ChainEvent (ChainSynced cb)) = do
+    $(logInfo) $ logMe <> "Headers considered synced at height " <> logShow (nodeHeight cb)
     m <- asks myManager
     db <- asks myBlockDB
     bb <- getBestBlockHash db Nothing
-    when (headerHash (nodeHeader cb) == bb) $
+    when (headerHash (nodeHeader cb) == bb) $ do
+        $(logInfo) $
+            logMe <> "Syncing mempool as best block is same as best header"
         managerGetPeers m >>= \ps -> forM_ ps $ \p -> MMempool `sendMessage` p
 
 storeDispatch (ChainEvent _) = return ()
