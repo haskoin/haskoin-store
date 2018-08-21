@@ -137,7 +137,9 @@ storeDispatch (ChainEvent (ChainNewBest bn)) = do
     BlockChainNew bn `send` b
 
 storeDispatch (ChainEvent (ChainSynced cb)) = do
-    $(logInfo) $ logMe <> "Headers considered synced at height " <> logShow (nodeHeight cb)
+    $(logInfo) $
+        logMe <> "Headers considered synced at height " <>
+        logShow (nodeHeight cb)
     m <- asks myManager
     db <- asks myBlockDB
     bb <- getBestBlockHash db Nothing
