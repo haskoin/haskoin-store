@@ -11,6 +11,7 @@
 module Network.Haskoin.Store.Block
       ( blockStore
       , getBestBlock
+      , getBestBlockHash
       , getBlocksAtHeights
       , getBlockAtHeight
       , getBlock

@@ -124,7 +124,6 @@ storeDispatch (ManagerEvent (ManagerConnect p)) = do
     b <- asks myBlockStore
     l <- asks myListener
     atomically (l (PeerConnected p))
-    MMempool `sendMessage` p
     BlockPeerConnect p `send` b
 
 storeDispatch (ManagerEvent (ManagerDisconnect p)) = do
@@ -136,6 +135,13 @@ storeDispatch (ManagerEvent (ManagerDisconnect p)) = do
 storeDispatch (ChainEvent (ChainNewBest bn)) = do
     b <- asks myBlockStore
     BlockChainNew bn `send` b
+
+storeDispatch (ChainEvent (ChainSynced cb)) = do
+    m <- asks myManager
+    db <- asks myBlockDB
+    bb <- getBestBlockHash db Nothing
+    when (headerHash (nodeHeader cb) == bb) $
+        managerGetPeers m >>= \ps -> forM_ ps $ \p -> MMempool `sendMessage` p
 
 storeDispatch (ChainEvent _) = return ()
 
@@ -151,9 +157,9 @@ storeDispatch (PeerEvent (p, TxAvail hs)) = do
     db <- asks myBlockDB
     has <-
         fmap catMaybes . forM hs $ \h ->
-            retrieve db Nothing (TxKey h) >>= \case
+            retrieve db Nothing (MempoolTx h) >>= \case
                 Nothing -> return Nothing
-                Just TxRecord {} -> return (Just h)
+                Just () -> return (Just h)
     peerGetTxs p (hs \\ has)
 
 storeDispatch (PeerEvent (p, GotTx tx)) = do
