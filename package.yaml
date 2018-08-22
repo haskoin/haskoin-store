@@ -1,7 +1,7 @@
 name: haskoin-store
 version: 1.0.0
-synopsis: Storage and index for Bitcoin wallets
-description: 'Store all blocks, transactions, and addresses required for a Bitcoin or Bitcoin Cash wallet or block explorer to function.'
+synopsis: Storage and index for Bitcoin and Bitcoin Cash
+description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
 author: Jean-Pierre Rupp
 maintainer: xenog@protonmail.com

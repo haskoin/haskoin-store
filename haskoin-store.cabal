@@ -2,12 +2,12 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 95147071df35e20016375cf553c69f6d84a971e37479eaeaef560a452ff9105f
+-- hash: 13c7f4bed370e1ad1cab79b7d35617d9df064ebead0901401df8814bdd7b399c
 
 name:           haskoin-store
 version:        1.0.0
-synopsis:       Storage and index for Bitcoin wallets
-description:    Store all blocks, transactions, and addresses required for a Bitcoin or Bitcoin Cash wallet or block explorer to function.
+synopsis:       Storage and index for Bitcoin and Bitcoin Cash
+description:    Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category:       Bitcoin, Finance, Network
 homepage:       http://github.com/haskoin/haskoin#readme
 bug-reports:    http://github.com/haskoin/haskoin/issues

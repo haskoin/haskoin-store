@@ -10,9 +10,10 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
-import           Data.Aeson                  (ToJSON (..), Value (..), object,
-                                              (.=))
+import           Data.Aeson                  (ToJSON (..), Value (..), encode,
+                                              object, (.=))
 import           Data.Bits
+import           Data.ByteString.Builder     (lazyByteString)
 import           Data.Maybe
 import           Data.String.Conversions
 import qualified Data.Text                   as T
@@ -103,6 +104,15 @@ instance ToJSON Except where
     toJSON ServerError = object ["error" .= String "you made me kill a unicorn"]
     toJSON (StringError _) = object ["error" .= String "you made me kill a unicorn"]
     toJSON (UserError s) = object ["error" .= s]
+
+data JsonEvent
+    = JsonEventTx TxHash
+    | JsonEventBlock BlockHash
+    deriving (Eq, Show)
+
+instance ToJSON JsonEvent where
+    toJSON (JsonEventTx tx_hash) = object ["tx" .= tx_hash]
+    toJSON (JsonEventBlock block_hash) = object ["block" .= block_hash]
 
 config :: Parser OptConfig
 config =
@@ -274,6 +284,19 @@ runWeb conf pub mgr db = do
                     json (UserError (show e))
                 Right j -> json j
         get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
+        get "/events" $ do
+            setHeader "Content-Type" "application/x-json-stream"
+            stream $ \io flush ->
+                withPubSub pub $ \sub ->
+                    forever $
+                    flush >> receive sub >>= \case
+                        BestBlock block_hash -> do
+                            let bs = encode (JsonEventBlock block_hash) <> "\n"
+                            io (lazyByteString bs)
+                        MempoolNew tx_hash -> do
+                            let bs = encode (JsonEventTx tx_hash) <> "\n"
+                            io (lazyByteString bs)
+                        _ -> return ()
         notFound $ raise NotFound
   where
     runner f l = do

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Support for Bitcoin (BTC) and Bitcoin Cash (BCH) networks.
 - RocksDB database.
 - Can index blocks and transactions in the blockchain.
+- Mempool support.
+- Supports HTTP streaming for events.
 
 ### Changed
 - Split out of former `haskoin` repository.
