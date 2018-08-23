@@ -111,8 +111,10 @@ data JsonEvent
     deriving (Eq, Show)
 
 instance ToJSON JsonEvent where
-    toJSON (JsonEventTx tx_hash) = object ["tx" .= tx_hash]
-    toJSON (JsonEventBlock block_hash) = object ["block" .= block_hash]
+    toJSON (JsonEventTx tx_hash) =
+        object ["type" .= String "tx", "id" .= tx_hash]
+    toJSON (JsonEventBlock block_hash) =
+        object ["type" .= String "block", "id" .= block_hash]
 
 config :: Parser OptConfig
 config =
