@@ -41,6 +41,7 @@ data TxException
     | PeerIsGone
     | AlreadyImported
     | PublishTimeout
+    | PeerRejectOther
     deriving (Eq)
 
 instance Show TxException where
@@ -56,6 +57,7 @@ instance Show TxException where
     show PeerIsGone      = "peer disconnected"
     show CouldNotImport  = "could not import"
     show PublishTimeout  = "publish timeout"
+    show PeerRejectOther = "peer rejected for unknown reason"
 
 instance Exception TxException
 

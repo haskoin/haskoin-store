@@ -835,10 +835,7 @@ importTransaction tx maybe_block_ref =
                     unless (prevOutput == nullOutPoint) . throwString $
                     "Could not get output for importing tx hash: " <>
                     show (txHash tx)
-                Just Output {outSpender = Just Spender {..}} -> do
-                    $(logInfo) $
-                        logMe <> "Deleting to free inputs used by tx hash: " <>
-                        logShow spenderHash
+                Just Output {outSpender = Just Spender {..}} ->
                     deleteTransaction spenderHash
                 _ -> return ()
     spend_inputs =

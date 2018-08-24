@@ -174,43 +174,43 @@ storeDispatch (PeerEvent (p, GotTx tx)) = do
 storeDispatch (PeerEvent (_, Rejected Reject {..})) =
     void . runMaybeT $ do
         l <- asks myListener
+        guard (rejectMessage == MCTx)
+        tx_hash <- decode_tx_hash rejectData
         case rejectCode of
-            RejectMalformed ->
-                $(logError) $ logMe <> "Peer rejected malformed data from us"
             RejectInvalid -> do
-                tx_hash <- decode_tx_hash rejectData
                 $(logError) $
-                    logMe <> "Peer rejected invalid: " <> logShow tx_hash
+                    logMe <> "Peer rejected invalid tx hash: " <>
+                    logShow tx_hash
                 atomically (l (TxException tx_hash InvalidTx))
             RejectDuplicate -> do
-                tx_hash <- decode_tx_hash rejectData
                 $(logError) $
-                    logMe <> "Peer rejected double-spend: " <> logShow tx_hash
+                    logMe <> "Peer rejected double-spend tx hash: " <>
+                    logShow tx_hash
                 atomically (l (TxException tx_hash DoubleSpend))
             RejectNonStandard -> do
-                tx_hash <- decode_tx_hash rejectData
                 $(logError) $
-                    logMe <> "Peer rejected non-standard: " <> logShow tx_hash
+                    logMe <> "Peer rejected non-standard tx hash: " <>
+                    logShow tx_hash
                 atomically (l (TxException tx_hash NonStandard))
             RejectDust -> do
-                tx_hash <- decode_tx_hash rejectData
-                $(logError) $ logMe <> "Peer rejected dust: " <> logShow tx_hash
+                $(logError) $
+                    logMe <> "Peer rejected dust tx hash: " <> logShow tx_hash
                 atomically (l (TxException tx_hash Dust))
             RejectInsufficientFee -> do
-                tx_hash <- decode_tx_hash rejectData
                 $(logError) $
-                    logMe <> "Peer rejected low fee: " <> logShow tx_hash
+                    logMe <> "Peer rejected low fee tx hash: " <>
+                    logShow tx_hash
                 atomically (l (TxException tx_hash LowFee))
-            _ ->
+            _ -> do
                 $(logError) $
-                logMe <> "Peer rejected something: " <> logShow rejectCode
+                    logMe <> "Peer rejected tx hash: " <> logShow rejectCode
+                atomically (l (TxException tx_hash PeerRejectOther))
   where
     decode_tx_hash bytes =
         case decode bytes of
             Left e -> do
                 $(logError) $
-                    logMe <>
-                    "Colud not decode hash from peer tx/block rejection: " <>
+                    logMe <> "Colud not decode from peer tx rejection hash: " <>
                     cs e
                 MaybeT (return Nothing)
             Right h -> return h
