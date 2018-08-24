@@ -50,6 +50,7 @@ import           Database.RocksDB.Query
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
+import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Types
@@ -126,8 +127,9 @@ runMonadImport f =
                     logMe <> "Imported tx hash: " <> logShow (txHash importTx)
                 atomically (l (MempoolNew (txHash importTx)))
         gets blockAction >>= \case
-            Just (ImportBlock Block {..}) ->
+            Just (ImportBlock Block {..}) -> do
                 atomically (l (BestBlock (headerHash blockHeader)))
+                syncMempool
             Just RevertBlock -> $(logWarn) $ logMe <> "Reverted best block"
             _ -> return ()
 
@@ -166,7 +168,7 @@ getBestBlock :: MonadIO m => DB -> Maybe Snapshot -> m BlockValue
 getBestBlock db s =
     case s of
         Nothing -> R.withSnapshot db $ f . Just
-        Just _ -> f s
+        Just _  -> f s
   where
     f s' =
         getBestBlockHash db s' >>= \bh ->
@@ -356,7 +358,7 @@ getTx th db s = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _ -> False
+                  _             -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -364,7 +366,7 @@ getTx th db s = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxKeyOutput {}, MultiTxOutput {}) -> True
-              _ -> False
+              _                                       -> False
         , let MultiTxKeyOutput (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
@@ -724,7 +726,7 @@ insertTxOps ImportTx {..} = do
             }
     case importTxBlock of
         Nothing -> return [insertOp key value, insertOp mempool_key ()]
-        Just _ -> return [insertOp key value, deleteOp mempool_key]
+        Just _  -> return [insertOp key value, deleteOp mempool_key]
   where
     get_prev_outputs =
         let real_inputs =
@@ -991,6 +993,17 @@ processBlockMessage (BlockNotReceived p h) = do
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
+processBlockMessage (TxAvailable p ts) =
+    isAtHeight >>= \h ->
+        when h $ do
+            db <- asks myBlockDB
+            has <-
+                fmap catMaybes . forM ts $ \t ->
+                    retrieve db Nothing (MempoolTx t) >>= \case
+                        Nothing -> return Nothing
+                        Just () -> return (Just t)
+            peerGetTxs p (ts \\ has)
+
 processBlockMessage _ = return ()
 
 getAddrTxs :: MonadUnliftIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
@@ -1061,6 +1074,23 @@ getUnspent addr db s = do
         , unspentBlock = outBlock
         }
     to_unspent _ _ = error "Error decoding AddrOutputKey data structure"
+
+syncMempool :: MonadBlock m => m ()
+syncMempool =
+    isAtHeight >>= \h ->
+        when h $ do
+            $(logInfo) $ logMe <> "Syncing mempool"
+            m <- asks myManager
+            managerGetPeers m >>= \ps ->
+                forM_ ps $ \p -> MMempool `sendMessage` p
+
+isAtHeight :: MonadBlock m => m Bool
+isAtHeight = do
+    db <- asks myBlockDB
+    bb <- getBestBlockHash db Nothing
+    ch <- asks myChain
+    cb <- chainGetBest ch
+    return (headerHash (nodeHeader cb) == bb)
 
 logMe :: IsString a => a
 logMe = "[Block] "

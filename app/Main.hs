@@ -215,10 +215,11 @@ main =
                 }
         mgr <- Inbox <$> newTQueueIO
         pub <- Inbox <$> newTQueueIO
+        ch <- Inbox <$> newTQueueIO
         supervisor
             KillAll
             s
-            [runWeb conf pub mgr db, runStore conf pub mgr b db]
+            [runWeb conf pub mgr ch db, runStore conf pub mgr ch b db]
   where
     opts =
         info
@@ -231,9 +232,10 @@ runWeb ::
     => Config
     -> Publisher Inbox StoreEvent
     -> Manager
+    -> Chain
     -> DB
     -> m ()
-runWeb conf pub mgr db = do
+runWeb conf pub mgr ch db = do
     l <- askLoggerIO
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
@@ -277,7 +279,7 @@ runWeb conf pub mgr db = do
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
-            lift (publishTx pub mgr db tx) >>= \case
+            lift (publishTx pub mgr ch db tx) >>= \case
                 Left PublishTimeout -> do
                     status status500
                     json (UserError (show PublishTimeout))
@@ -310,17 +312,17 @@ runStore ::
     => Config
     -> Publisher Inbox StoreEvent
     -> Manager
+    -> Chain
     -> BlockStore
     -> DB
     -> m ()
-runStore conf pub mgr b db = do
+runStore conf pub mgr ch b db = do
     s <- Inbox <$> newTQueueIO
-    c <- Inbox <$> newTQueueIO
     let cfg =
             StoreConfig
             { storeConfBlocks = b
             , storeConfSupervisor = s
-            , storeConfChain = c
+            , storeConfChain = ch
             , storeConfManager = mgr
             , storeConfPublisher = pub
             , storeConfMaxPeers = 20

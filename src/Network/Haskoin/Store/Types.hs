@@ -42,6 +42,7 @@ data TxException
     | AlreadyImported
     | PublishTimeout
     | PeerRejectOther
+    | NotAtHeight
     deriving (Eq)
 
 instance Show TxException where
@@ -58,6 +59,7 @@ instance Show TxException where
     show CouldNotImport  = "could not import"
     show PublishTimeout  = "publish timeout"
     show PeerRejectOther = "peer rejected for unknown reason"
+    show NotAtHeight     = "not at height"
 
 instance Exception TxException
 
@@ -89,8 +91,12 @@ data BlockMessage
                     !Block
     | BlockNotReceived !Peer
                        !BlockHash
-    | TxReceived !Peer !Tx
-    | PongReceived !Peer !Word64
+    | TxReceived !Peer
+                 !Tx
+    | TxAvailable !Peer
+                  ![TxHash]
+    | PongReceived !Peer
+                   !Word64
 
 type BlockStore = Inbox BlockMessage
 

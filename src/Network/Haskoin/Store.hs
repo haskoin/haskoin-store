@@ -40,13 +40,10 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
-import           Data.List
-import           Data.Maybe
 import           Data.Serialize
 import           Data.String
 import           Data.String.Conversions
 import           Database.RocksDB
-import           Database.RocksDB.Query
 import           Network.Haskoin.Block
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
@@ -136,21 +133,9 @@ storeDispatch (ChainEvent (ChainNewBest bn)) = do
     b <- asks myBlockStore
     BlockChainNew bn `send` b
 
-storeDispatch (ChainEvent (ChainSynced cb)) = do
-    $(logInfo) $
-        logMe <> "Headers considered synced at height " <>
-        logShow (nodeHeight cb)
-    m <- asks myManager
-    db <- asks myBlockDB
-    bb <- getBestBlockHash db Nothing
-    when (headerHash (nodeHeader cb) == bb) $ do
-        $(logInfo) $
-            logMe <> "Syncing mempool as best block is same as best header"
-        managerGetPeers m >>= \ps -> forM_ ps $ \p -> MMempool `sendMessage` p
-
 storeDispatch (ChainEvent _) = return ()
 
-storeDispatch (PeerEvent (p, GotBlock block@Block {..})) = do
+storeDispatch (PeerEvent (p, GotBlock block)) = do
     b <- asks myBlockStore
     BlockReceived p block `send` b
 
@@ -158,14 +143,9 @@ storeDispatch (PeerEvent (p, BlockNotFound hash)) = do
     b <- asks myBlockStore
     BlockNotReceived p hash `send` b
 
-storeDispatch (PeerEvent (p, TxAvail hs)) = do
-    db <- asks myBlockDB
-    has <-
-        fmap catMaybes . forM hs $ \h ->
-            retrieve db Nothing (MempoolTx h) >>= \case
-                Nothing -> return Nothing
-                Just () -> return (Just h)
-    peerGetTxs p (hs \\ has)
+storeDispatch (PeerEvent (p, TxAvail ts)) = do
+    b <- asks myBlockStore
+    TxAvailable p ts `send` b
 
 storeDispatch (PeerEvent (p, GotTx tx)) = do
     b <- asks myBlockStore
@@ -225,10 +205,11 @@ publishTx ::
        (Mailbox mbox, MonadUnliftIO m, MonadLoggerIO m)
     => Publisher mbox StoreEvent
     -> Manager
+    -> Chain
     -> DB
     -> Tx
     -> m (Either TxException DetailedTx)
-publishTx pub mgr db tx =
+publishTx pub mgr ch db tx =
     getTx (txHash tx) db Nothing >>= \case
         Just d -> return (Right d)
         Nothing ->
@@ -246,6 +227,8 @@ publishTx pub mgr db tx =
         $(logInfo) $ "Got a peer to publish transaction"
         ExceptT . withPubSub pub $ \sub -> runExceptT (send_it sub p)
     send_it sub p = do
+        h <- is_at_height
+        unless h $ throwError NotAtHeight
         MTx tx `sendMessage` p
         MMempool `sendMessage` p
         recv_loop sub p
@@ -261,6 +244,10 @@ publishTx pub mgr db tx =
             TxException h x
                 | h == txHash tx -> ExceptT (return (Left x))
             _ -> recv_loop sub p
+    is_at_height = do
+        bb <- getBestBlockHash db Nothing
+        cb <- chainGetBest ch
+        return (headerHash (nodeHeader cb) == bb)
 
 logMe :: IsString a => a
 logMe = "[Store] "
