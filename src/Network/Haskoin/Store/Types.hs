@@ -302,6 +302,9 @@ instance Ord Unspent where
       where
         f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
 
+newtype StoreAddress = StoreAddress Address
+    deriving (Show, Eq, Read)
+
 instance Key BlockKey
 instance Key HeightKey
 instance Key OutputKey
@@ -348,10 +351,10 @@ instance Serialize OrphanTx where
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
         putWord8 0x04
-        put balanceAddress
+        put (StoreAddress balanceAddress)
     get = do
         guard . (== 0x04) =<< getWord8
-        balanceAddress <- get
+        StoreAddress balanceAddress <- get
         return BalanceKey {..}
 
 instance Serialize Balance where
@@ -372,21 +375,21 @@ instance Serialize AddrOutputKey where
         if addrOutputSpent
             then putWord8 0x03
             else putWord8 0x05
-        put addrOutputAddress
+        put (StoreAddress addrOutputAddress)
         put (maxBound - fromMaybe 0 addrOutputHeight)
         put addrOutPoint
     put MultiAddrOutputKey {..} = do
         if addrOutputSpent
             then putWord8 0x03
             else putWord8 0x05
-        put addrOutputAddress
+        put (StoreAddress addrOutputAddress)
     get = do
         addrOutputSpent <-
             getWord8 >>= \case
                 0x03 -> return True
                 0x05 -> return False
                 _ -> mzero
-        addrOutputAddress <- get
+        StoreAddress addrOutputAddress <- get
         record addrOutputSpent addrOutputAddress <|>
             return MultiAddrOutputKey {..}
       where
@@ -511,6 +514,40 @@ instance Serialize BlockValue where
         blockValueSize <- get
         blockValueTxs <- get
         return BlockValue {..}
+
+instance Serialize StoreAddress where
+    put (StoreAddress addr) =
+        case addr of
+            PubKeyAddress h -> do
+                putWord8 0x01
+                put h
+            ScriptAddress h -> do
+                putWord8 0x02
+                put h
+            WitnessPubKeyAddress h -> do
+                putWord8 0x03
+                put h
+            WitnessScriptAddress h -> do
+                putWord8 0x04
+                put h
+    get = fmap StoreAddress $ pk <|> sa <|> wa <|> ws
+      where
+        pk = do
+            guard . (== 0x01) =<< getWord8
+            h <- get
+            return (PubKeyAddress h)
+        sa = do
+            guard . (== 0x02) =<< getWord8
+            h <- get
+            return (ScriptAddress h)
+        wa = do
+            guard . (== 0x03) =<< getWord8
+            h <- get
+            return (WitnessPubKeyAddress h)
+        ws = do
+            guard . (== 0x04) =<< getWord8
+            h <- get
+            return (WitnessScriptAddress h)
 
 blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =

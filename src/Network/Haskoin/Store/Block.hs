@@ -34,6 +34,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
+import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as BS
 import           Data.List
 import           Data.Map                    (Map)
@@ -120,11 +121,12 @@ runMonadImport f =
         l <- asks myListener
         gets deleteTxs >>= \ths ->
             forM_ ths $ \th ->
-                $(logInfo) $ logMe <> "Deleted tx hash: " <> logShow th
+                $(logInfo) $ logMe <> "Deleted tx hash: " <> cs (txHashToHex th)
         gets newTxs >>= \txs ->
             forM_ (M.filter (isNothing . importTxBlock) txs) $ \ImportTx {..} -> do
                 $(logInfo) $
-                    logMe <> "Imported tx hash: " <> logShow (txHash importTx)
+                    logMe <> "Imported tx hash: " <>
+                    cs (txHashToHex (txHash importTx))
                 atomically (l (MempoolNew (txHash importTx)))
         gets blockAction >>= \case
             Just (ImportBlock Block {..}) -> do
@@ -175,7 +177,8 @@ getBestBlock db s =
             getBlock bh db s' >>= \case
                 Nothing ->
                     throwString $
-                    "Best block not available at hash: " <> logShow bh
+                    "Best block not available at hash: " <>
+                    cs (blockHashToHex bh)
                 Just b -> return b
 
 getBlocksAtHeights ::
@@ -336,7 +339,7 @@ getTx th db s = do
                          fromMaybe
                              (error
                                   ("Could not locate outpoint: " <>
-                                   logShow prevOutput))
+                                   showOutPoint prevOutput))
                              (lookup prevOutput prevs)
                  in DetailedInput
                     { detInOutPoint = prevOutput
@@ -358,7 +361,7 @@ getTx th db s = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _             -> False
+                  _ -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -366,7 +369,7 @@ getTx th db s = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxKeyOutput {}, MultiTxOutput {}) -> True
-              _                                       -> False
+              _ -> False
         , let MultiTxKeyOutput (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
@@ -426,10 +429,10 @@ spendOutput out_point spender@Spender {..} =
                 Nothing ->
                     throwString $
                     "Could not get output to spend at outpoint: " <>
-                    logShow out_point
+                    showOutPoint out_point
                 Just output -> return output
         when (isJust outSpender) . throwString $
-            "Output to spend already spent at outpoint: " <> logShow out_point
+            "Output to spend already spent at outpoint: " <> showOutPoint out_point
         updateOutput out_point output {outSpender = Just spender}
         address <- MaybeT (return (scriptToAddressBS outScript))
         balance@Balance {..} <- getAddress address
@@ -454,7 +457,7 @@ unspendOutput out_point =
                 Nothing ->
                     throwString $
                     "Could not get output to unspend at outpoint: " <>
-                    logShow out_point
+                    showOutPoint out_point
                 Just output -> return output
         Spender {..} <- MaybeT (return outSpender)
         updateOutput out_point output {outSpender = Nothing}
@@ -532,7 +535,7 @@ deleteTransaction tx_hash = shouldDelete tx_hash >>= \d -> unless d delete_it
                 Nothing ->
                     throwString $
                     "Could not get tx to delete at hash: " <>
-                    show tx_hash
+                    cs (txHashToHex tx_hash)
                 Just r -> return r
         let n_out = length (txOut txValue)
             prevs = map prevOutput (txIn txValue)
@@ -550,7 +553,7 @@ deleteTransaction tx_hash = shouldDelete tx_hash >>= \d -> unless d delete_it
                    Just Output {outSpender = Just Spender {..}} -> do
                        $(logInfo) $
                            logMe <> "Recursively deleting tx hash: " <>
-                           logShow spenderHash
+                           cs (txHashToHex spenderHash)
                        deleteTransaction spenderHash
                    Just _ -> return ()
     remove_outputs n_out =
@@ -562,11 +565,11 @@ addNewBlock block@Block {..} =
     runMonadImport $ do
         new_height <- get_new_height
         $(logInfo) $
-            logMe <> "Importing block height: " <> logShow new_height <>
+            logMe <> "Importing block height: " <> cs (show new_height) <>
             " txs: " <>
-            logShow (length blockTxns) <>
+            cs (show (length blockTxns)) <>
             " hash: " <>
-            logShow (headerHash blockHeader)
+            cs (blockHashToHex (headerHash blockHeader))
         import_txs new_height
         addBlock block
   where
@@ -604,7 +607,7 @@ getBlockOps =
                 Nothing ->
                     throwString $
                     "Could not get block header for hash: " <>
-                    logShow block_hash
+                    cs (blockHashToHex block_hash)
         let block_value =
                 BlockValue
                 { blockValueHeight = nodeHeight bn
@@ -726,7 +729,7 @@ insertTxOps ImportTx {..} = do
             }
     case importTxBlock of
         Nothing -> return [insertOp key value, insertOp mempool_key ()]
-        Just _  -> return [insertOp key value, deleteOp mempool_key]
+        Just _ -> return [insertOp key value, deleteOp mempool_key]
   where
     get_prev_outputs =
         let real_inputs =
@@ -737,9 +740,9 @@ insertTxOps ImportTx {..} = do
                        Nothing ->
                            throwString $
                            "While importing tx hash: " <>
-                           logShow (txHash importTx) <>
+                           cs (txHashToHex (txHash importTx)) <>
                            "could not get outpoint: " <>
-                           logShow prevOutput
+                           showOutPoint prevOutput
                        Just out -> return out
                return
                    ( prevOutput
@@ -771,8 +774,8 @@ revertBestBlock = do
     BlockValue {..} <- getBestBlock db Nothing
     when (blockValueHeader == genesisHeader) . throwString $
         "Attempted to revert genesis block hash: " <>
-        logShow (headerHash genesisHeader)
-    $(logWarn) $ logMe <> "Reverting block hash: " <> logShow blockValueHeight
+        cs (blockHashToHex (headerHash genesisHeader))
+    $(logWarn) $ logMe <> "Reverting block hash: " <> cs (show blockValueHeight)
     import_txs <- mapM getSimpleTx (tail blockValueTxs)
     runMonadImport $ do
         mapM_ deleteTransaction blockValueTxs
@@ -806,12 +809,14 @@ importTransaction tx maybe_block_ref =
             case e of
                 AlreadyImported ->
                     $(logDebug) $
-                    logMe <> "Already imported tx hash: " <> logShow (txHash tx)
+                    logMe <> "Already imported tx hash: " <>
+                    cs (txHashToHex (txHash tx))
                 _ ->
                     $(logError) $
-                    logMe <> "When importing tx hash: " <> logShow (txHash tx) <>
+                    logMe <> "When importing tx hash: " <>
+                    cs (txHashToHex (txHash tx)) <>
                     ": " <>
-                    logShow e
+                    cs (show e)
             asks myListener >>= \l -> atomically (l (TxException (txHash tx) e))
         Right () -> do
             delete_spenders
@@ -945,7 +950,7 @@ importBlock block@Block {..} = do
     when (isNothing bn) $
         throwString $
         "Could not obtain from chain block hash" <>
-        logShow (headerHash blockHeader)
+        cs (blockHashToHex (headerHash blockHeader))
     best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
     let best_hash = headerHash (blockValueHeader best)
         prev_hash = prevBlock blockHeader
@@ -963,7 +968,8 @@ processBlockMessage (BlockReceived _ b) =
         Left e -> do
             let hash = headerHash (blockHeader b)
             $(logError) $
-                logMe <> "Could not import block hash:" <> logShow hash <>
+                logMe <> "Could not import block hash:" <>
+                cs (blockHashToHex hash) <>
                 " error: " <>
                 fromString e
         Right () -> syncBlocks
@@ -1097,3 +1103,7 @@ logMe = "[Block] "
 
 zero :: TxHash
 zero = "0000000000000000000000000000000000000000000000000000000000000000"
+
+showOutPoint :: (IsString a, ConvertibleStrings ByteString a) => OutPoint -> a
+showOutPoint OutPoint {..} =
+    cs $ txHashToHex outPointHash <> ":" <> cs (show outPointIndex)

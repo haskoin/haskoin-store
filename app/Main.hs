@@ -82,7 +82,7 @@ instance Parsable TxHash where
 
 instance Parsable Address where
     parseParam =
-        maybe (Left "could not decode address") Right . base58ToAddr . cs
+        maybe (Left "could not decode address") Right . stringToAddr . cs
 
 data Except
     = NotFound

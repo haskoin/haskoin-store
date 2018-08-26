@@ -160,30 +160,31 @@ storeDispatch (PeerEvent (_, Rejected Reject {..})) =
             RejectInvalid -> do
                 $(logError) $
                     logMe <> "Peer rejected invalid tx hash: " <>
-                    logShow tx_hash
+                    cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash InvalidTx))
             RejectDuplicate -> do
                 $(logError) $
                     logMe <> "Peer rejected double-spend tx hash: " <>
-                    logShow tx_hash
+                    cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash DoubleSpend))
             RejectNonStandard -> do
                 $(logError) $
                     logMe <> "Peer rejected non-standard tx hash: " <>
-                    logShow tx_hash
+                    cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash NonStandard))
             RejectDust -> do
                 $(logError) $
-                    logMe <> "Peer rejected dust tx hash: " <> logShow tx_hash
+                    logMe <> "Peer rejected dust tx hash: " <>
+                    cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash Dust))
             RejectInsufficientFee -> do
                 $(logError) $
                     logMe <> "Peer rejected low fee tx hash: " <>
-                    logShow tx_hash
+                    cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash LowFee))
             _ -> do
                 $(logError) $
-                    logMe <> "Peer rejected tx hash: " <> logShow rejectCode
+                    logMe <> "Peer rejected tx hash: " <> cs (show rejectCode)
                 atomically (l (TxException tx_hash PeerRejectOther))
   where
     decode_tx_hash bytes =
@@ -219,7 +220,7 @@ publishTx pub mgr ch db tx =
   where
     go = do
         $(logDebug) $
-            "Attempting to publish transaction: " <> logShow (txHash tx)
+            "Attempting to publish tx hash: " <> cs (txHashToHex (txHash tx))
         p <-
             managerGetPeers mgr >>= \case
                 [] -> throwError NoPeers
