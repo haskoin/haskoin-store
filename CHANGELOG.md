@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Can index blocks and transactions in the blockchain.
 - Mempool support.
 - Supports HTTP streaming for events.
+- Support for CashAddr addresses.
+- Support for SegWit addresses.
 
 ### Changed
 - Split out of former `haskoin` repository.

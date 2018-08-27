@@ -10,10 +10,9 @@ Full blockchain index & store featuring:
 To install `haskoin-store`:
 
 - Get [Stack](https://haskell-lang.org/get-started)
-- Get [RocksDB](http://rocksdb.org/)
+- Get [Nix](https://nixos.org/nix/)
 - Clone this repository `git clone https://github.com/haskoin/haskoin-store`
 - From the root of this repository run `stack install`
-
-You may need to get additional libraries if installation fails.
+- Executable will be found in `~/.local/bin/haskoin-store`
 
 [Swagger API Documentation](https://app.swaggerhub.com/apis/haskoin/blockchain-api/1.0.0-oas3)
