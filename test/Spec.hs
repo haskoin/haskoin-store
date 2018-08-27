@@ -16,10 +16,10 @@ import           Test.Hspec
 import           UnliftIO
 
 data TestStore = TestStore
-    { testStoreDB :: !DB
+    { testStoreDB         :: !DB
     , testStoreBlockStore :: !BlockStore
-    , testStoreChain :: !Chain
-    , testStoreEvents :: !(Inbox StoreEvent)
+    , testStoreChain      :: !Chain
+    , testStoreEvents     :: !(Inbox StoreEvent)
     }
 
 main :: IO ()
@@ -99,7 +99,7 @@ withTestStore t f =
                     , storeConfManager = m
                     }
             withAsync (store cfg) $ \a ->
-                withPubSub p $ \sub -> do
+                withBoundedPubSub 100 p $ \sub -> do
                     link a
                     x <-
                         liftIO $
@@ -108,7 +108,7 @@ withTestStore t f =
                             { testStoreDB = db
                             , testStoreBlockStore = b
                             , testStoreChain = c
-                            , testStoreEvents = sub
+                            , testStoreEvents = Inbox sub
                             }
                     stopSupervisor s
                     wait a

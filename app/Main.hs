@@ -230,7 +230,7 @@ main =
 runWeb ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => Config
-    -> Publisher Inbox StoreEvent
+    -> Publisher Inbox TBQueue StoreEvent
     -> Manager
     -> Chain
     -> DB
@@ -291,7 +291,7 @@ runWeb conf pub mgr ch db = do
         get "/events" $ do
             setHeader "Content-Type" "application/x-json-stream"
             stream $ \io flush ->
-                withPubSub pub $ \sub ->
+                withBoundedPubSub 100 pub $ \sub ->
                     forever $
                     flush >> receive sub >>= \case
                         BestBlock block_hash -> do
@@ -310,7 +310,7 @@ runWeb conf pub mgr ch db = do
 runStore ::
        (MonadLoggerIO m, MonadUnliftIO m)
     => Config
-    -> Publisher Inbox StoreEvent
+    -> Publisher Inbox TBQueue StoreEvent
     -> Manager
     -> Chain
     -> BlockStore

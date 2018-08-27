@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a832c4b76d483e0e6503913e8834985b3aff85060c348769ee60eaa9b7b8374a
+-- hash: f85172ed26f6a26a49260f48037353e24605f1dff0a126f9e8618486313097ae
 
 name:           haskoin-store
 version:        1.0.0
@@ -34,15 +34,22 @@ library
     , bytestring
     , cereal
     , containers
+    , directory
+    , filepath
     , haskoin-core
     , haskoin-node
+    , hspec
+    , http-types
     , monad-logger
     , mtl
     , network
     , nqe
+    , optparse-applicative
     , rocksdb-haskell
     , rocksdb-query
+    , scotty
     , string-conversions
+    , text
     , transformers
     , unliftio
   exposed-modules:
@@ -68,6 +75,7 @@ executable haskoin-store
     , haskoin-core
     , haskoin-node
     , haskoin-store
+    , hspec
     , http-types
     , monad-logger
     , mtl
@@ -93,14 +101,21 @@ test-suite haskoin-store-test
     , base >=4.7 && <5
     , bytestring
     , cereal
+    , directory
+    , filepath
     , haskoin-core
     , haskoin-node
     , haskoin-store
     , hspec
+    , http-types
     , monad-logger
     , mtl
     , nqe
+    , optparse-applicative
     , rocksdb-haskell
+    , scotty
+    , string-conversions
+    , text
     , unliftio
   other-modules:
       Paths_haskoin_store

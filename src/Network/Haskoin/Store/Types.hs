@@ -27,6 +27,7 @@ import           Network.Haskoin.Node
 import           Network.Haskoin.Script
 import           Network.Haskoin.Transaction
 import           Network.Haskoin.Util
+import           UnliftIO
 
 data TxException
     = DoubleSpend
@@ -732,7 +733,7 @@ data StoreConfig n = StoreConfig
     , storeConfSupervisor :: !(StoreSupervisor n)
     , storeConfManager    :: !Manager
     , storeConfChain      :: !Chain
-    , storeConfPublisher  :: !(Publisher Inbox StoreEvent)
+    , storeConfPublisher  :: !(Publisher Inbox TBQueue StoreEvent)
     , storeConfMaxPeers   :: !Int
     , storeConfInitPeers  :: ![HostPort]
     , storeConfDiscover   :: !Bool

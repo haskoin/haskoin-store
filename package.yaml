@@ -18,12 +18,20 @@ dependencies:
 - base >=4.7 && <5
 - bytestring
 - cereal
+- directory
+- filepath
 - haskoin-core
 - haskoin-node
+- hspec
+- http-types
 - monad-logger
 - mtl
 - nqe
+- optparse-applicative
 - rocksdb-haskell
+- scotty
+- string-conversions
+- text
 - unliftio
 library:
   source-dirs: src
@@ -45,14 +53,7 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - directory
-    - filepath
     - haskoin-store
-    - http-types
-    - optparse-applicative
-    - scotty
-    - string-conversions
-    - text
 tests:
   haskoin-store-test:
     main: Spec.hs
@@ -63,4 +64,3 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - haskoin-store
-    - hspec

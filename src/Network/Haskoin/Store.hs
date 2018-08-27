@@ -61,7 +61,7 @@ data StoreRead = StoreRead
     , myChain      :: !Chain
     , myManager    :: !Manager
     , myListener   :: !(Listen StoreEvent)
-    , myPublisher  :: !(Publisher Inbox StoreEvent)
+    , myPublisher  :: !(Publisher Inbox TBQueue StoreEvent)
     , myBlockDB    :: !DB
     }
 
@@ -107,7 +107,7 @@ store StoreConfig {..} = do
         [ runReaderT run store_read
         , node node_cfg
         , blockStore block_cfg
-        , publisher storeConfPublisher ls
+        , boundedPublisher storeConfPublisher ls
         ]
   where
     run =
@@ -203,8 +203,8 @@ storeDispatch (PeerEvent (_, TxNotFound tx_hash)) = do
 storeDispatch (PeerEvent _) = return ()
 
 publishTx ::
-       (Mailbox mbox, MonadUnliftIO m, MonadLoggerIO m)
-    => Publisher mbox StoreEvent
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Publisher Inbox TBQueue StoreEvent
     -> Manager
     -> Chain
     -> DB
@@ -226,7 +226,8 @@ publishTx pub mgr ch db tx =
                 [] -> throwError NoPeers
                 p:_ -> return p
         $(logInfo) $ "Got a peer to publish transaction"
-        ExceptT . withPubSub pub $ \sub -> runExceptT (send_it sub p)
+        ExceptT . withBoundedPubSub 1000 pub $ \sub ->
+            runExceptT (send_it sub p)
     send_it sub p = do
         h <- is_at_height
         unless h $ throwError NotAtHeight
