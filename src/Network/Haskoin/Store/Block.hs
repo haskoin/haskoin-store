@@ -48,15 +48,9 @@ import           Data.String.Conversions
 import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query
-import           Network.Haskoin.Block
-import           Network.Haskoin.Constants
-import           Network.Haskoin.Constants
-import           Network.Haskoin.Crypto
-import           Network.Haskoin.Network
+import           Network.Haskoin.Core
 import           Network.Haskoin.Node
-import           Network.Haskoin.Script
 import           Network.Haskoin.Store.Types
-import           Network.Haskoin.Transaction
 import           UnliftIO
 
 data BlockRead = BlockRead
@@ -1048,7 +1042,7 @@ getAddrsTxs addrs db s = do
         throwString "Not all addresses in same network"
     case s of
         Nothing -> R.withSnapshot db $ g . Just
-        Just _ -> g s
+        Just _  -> g s
   where
     net = getAddrNet (head addrs)
     g s' = do

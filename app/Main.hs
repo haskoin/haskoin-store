@@ -10,27 +10,24 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
-import           Data.Aeson                  (ToJSON (..), Value (..), encode,
-                                              object, (.=))
+import           Data.Aeson              (ToJSON (..), Value (..), encode,
+                                          object, (.=))
 import           Data.Bits
-import           Data.ByteString.Builder     (lazyByteString)
+import           Data.ByteString.Builder (lazyByteString)
 import           Data.Maybe
 import           Data.String.Conversions
-import qualified Data.Text                   as T
-import           Database.RocksDB            hiding (get)
-import           Network.Haskoin.Block
-import           Network.Haskoin.Constants
-import           Network.Haskoin.Crypto
+import qualified Data.Text               as T
+import           Database.RocksDB        hiding (get)
+import           Network.Haskoin.Core
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store
-import           Network.Haskoin.Transaction
 import           Network.HTTP.Types
 import           Options.Applicative
 import           System.Directory
-import           System.Exit                 (die)
+import           System.Exit             (die)
 import           System.FilePath
 import           System.IO.Unsafe
-import           Text.Read                   (readMaybe)
+import           Text.Read               (readMaybe)
 import           UnliftIO
 import           Web.Scotty.Trans
 
@@ -81,7 +78,7 @@ instance Parsable TxHash where
         maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
 
 data Except
-    = NotFound
+    = ThingNotFound
     | ServerError
     | BadRequest
     | UserError String
@@ -95,7 +92,7 @@ instance ScottyError Except where
     showError = cs . show
 
 instance ToJSON Except where
-    toJSON NotFound = object ["error" .= String "not found"]
+    toJSON ThingNotFound = object ["error" .= String "not found"]
     toJSON BadRequest = object ["error" .= String "bad request"]
     toJSON ServerError = object ["error" .= String "you made me kill a unicorn"]
     toJSON (StringError _) = object ["error" .= String "you made me kill a unicorn"]
@@ -175,13 +172,13 @@ peerReader = mapM hp . ls
 
 defHandler :: Monad m => Except -> ActionT Except m ()
 defHandler ServerError   = json ServerError
-defHandler NotFound      = status status404 >> json NotFound
+defHandler ThingNotFound = status status404 >> json ThingNotFound
 defHandler BadRequest    = status status400 >> json BadRequest
 defHandler (UserError s) = status status400 >> json (UserError s)
 defHandler e             = status status400 >> json e
 
 maybeJSON :: (Monad m, ToJSON a) => Maybe a -> ActionT Except m ()
-maybeJSON Nothing  = raise NotFound
+maybeJSON Nothing  = raise ThingNotFound
 maybeJSON (Just x) = json x
 
 myDirectory :: FilePath
@@ -297,7 +294,7 @@ runWeb conf pub mgr ch db = do
                             let bs = encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
-        notFound $ raise NotFound
+        notFound $ raise ThingNotFound
   where
     parse_address = do
         address <- param "address"
