@@ -80,10 +80,6 @@ instance Parsable TxHash where
     parseParam =
         maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
 
-instance Parsable Address where
-    parseParam =
-        maybe (Left "could not decode address") Right . stringToAddr . cs
-
 data Except
     = NotFound
     | ServerError
@@ -199,10 +195,10 @@ main =
         let conf = optToConfig opt
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
             die "Specify --discover or --peers [PEER,...]"
-        liftIO . setNetwork $ configNetwork conf
+        let net = configNetwork conf
         b <- Inbox <$> newTQueueIO
         s <- Inbox <$> newTQueueIO
-        let wdir = configDir conf </> networkName
+        let wdir = configDir conf </> getNetworkName net
         liftIO $ createDirectoryIfMissing True wdir
         db <-
             open
@@ -255,31 +251,31 @@ runWeb conf pub mgr ch db = do
         get "/mempool" $ lift (getMempool db Nothing) >>= json
         get "/transaction/:txid" $ do
             txid <- param "txid"
-            lift (getTx txid db Nothing) >>= maybeJSON
+            lift (getTx net txid db Nothing) >>= maybeJSON
         get "/transactions" $ do
             txids <- param "txids"
-            lift (getTxs txids db Nothing) >>= json
+            lift (getTxs net txids db Nothing) >>= json
         get "/address/:address/transactions" $ do
-            address <- param "address"
+            address <- parse_address
             lift (getAddrTxs address db Nothing) >>= json
         get "/address/transactions" $ do
-            addresses <- param "addresses"
+            addresses <- parse_addresses
             lift (getAddrsTxs addresses db Nothing) >>= json
         get "/address/:address/unspent" $ do
-            address <- param "address"
+            address <- parse_address
             lift (getUnspent address db Nothing) >>= json
         get "/address/unspent" $ do
-            addresses <- param "addresses"
+            addresses <- parse_addresses
             lift (getUnspents addresses db Nothing) >>= json
         get "/address/:address/balance" $ do
-            address <- param "address"
+            address <- parse_address
             getBalance address db Nothing >>= json
         get "/address/balances" $ do
-            addresses <- param "addresses"
+            addresses <- parse_addresses
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
-            lift (publishTx pub mgr ch db tx) >>= \case
+            lift (publishTx net pub mgr ch db tx) >>= \case
                 Left PublishTimeout -> do
                     status status500
                     json (UserError (show PublishTimeout))
@@ -303,6 +299,18 @@ runWeb conf pub mgr ch db = do
                         _ -> return ()
         notFound $ raise NotFound
   where
+    parse_address = do
+        address <- param "address"
+        case stringToAddr net address of
+            Nothing -> next
+            Just a  -> return a
+    parse_addresses = do
+        addresses <- param "addresses"
+        let as = mapMaybe (stringToAddr net) addresses
+        if length as == length addresses
+           then return as
+           else next
+    net = configNetwork conf
     runner f l = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
@@ -318,17 +326,21 @@ runStore ::
     -> m ()
 runStore conf pub mgr ch b db = do
     s <- Inbox <$> newTQueueIO
-    let cfg =
+    let net = configNetwork conf
+        cfg =
             StoreConfig
-            { storeConfBlocks = b
-            , storeConfSupervisor = s
-            , storeConfChain = ch
-            , storeConfManager = mgr
-            , storeConfPublisher = pub
-            , storeConfMaxPeers = 20
-            , storeConfInitPeers =
-                  map (second (fromMaybe defaultPort)) (configPeers conf)
-            , storeConfDiscover = configDiscover conf
-            , storeConfDB = db
-            }
+                { storeConfBlocks = b
+                , storeConfSupervisor = s
+                , storeConfChain = ch
+                , storeConfManager = mgr
+                , storeConfPublisher = pub
+                , storeConfMaxPeers = 20
+                , storeConfInitPeers =
+                      map
+                          (second (fromMaybe (getDefaultPort net)))
+                          (configPeers conf)
+                , storeConfDiscover = configDiscover conf
+                , storeConfDB = db
+                , storeConfNetwork = net
+                }
     store cfg

@@ -24,10 +24,10 @@ data TestStore = TestStore
 
 main :: IO ()
 main = do
-    setBTCtest
+    let net = btcTest
     hspec . describe "Download" $ do
         it "gets 8 blocks" $
-            withTestStore "eight-blocks" $ \TestStore {..} -> do
+            withTestStore net "eight-blocks" $ \TestStore {..} -> do
                 bs <-
                     replicateM 9 . receiveMatch testStoreEvents $ \case
                         BestBlock b -> Just b
@@ -40,7 +40,7 @@ main = do
                         bestHeight = nodeHeight bestNode
                     bestHeight `shouldBe` 8
         it "get a block and its transactions" $
-            withTestStore "get-block-txs" $ \TestStore {..} -> do
+            withTestStore net "get-block-txs" $ \TestStore {..} -> do
                 bs <-
                     replicateM 382 $
                     receiveMatch testStoreEvents $ \case
@@ -59,10 +59,10 @@ main = do
                             "7e621eeb02874ab039a8566fd36f4591e65eca65313875221842c53de6907d6c"
                     head blockValueTxs `shouldBe` h1
                     last blockValueTxs `shouldBe` h2
-                    t1 <- getTx h1 testStoreDB Nothing
+                    t1 <- getTx net h1 testStoreDB Nothing
                     t1 `shouldSatisfy` isJust
                     txHash (detailedTxData (fromJust t1)) `shouldBe` h1
-                    t2 <- getTx h2 testStoreDB Nothing
+                    t2 <- getTx net h2 testStoreDB Nothing
                     t2 `shouldSatisfy` isJust
                     txHash (detailedTxData (fromJust t2)) `shouldBe` h2
 
@@ -70,8 +70,8 @@ dummyEventHandler :: (MonadIO m, Mailbox b) => b a -> m ()
 dummyEventHandler = forever . void . receive
 
 withTestStore ::
-       String -> (TestStore -> IO ()) -> IO ()
-withTestStore t f =
+       Network -> String -> (TestStore -> IO ()) -> IO ()
+withTestStore net t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
         runNoLoggingT $ do
             s <- Inbox <$> liftIO newTQueueIO
@@ -97,6 +97,7 @@ withTestStore t f =
                     , storeConfDiscover = True
                     , storeConfDB = db
                     , storeConfManager = m
+                    , storeConfNetwork = net
                     }
             withAsync (store cfg) $ \a ->
                 withBoundedPubSub 100 p $ \sub -> do

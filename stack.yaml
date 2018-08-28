@@ -1,4 +1,4 @@
-resolver: lts-12.5
+resolver: lts-12.7
 nix:
   enable: true
   packages:
@@ -10,13 +10,13 @@ nix:
     - zlib
 extra-deps:
 - git: https://github.com/haskoin/haskoin-core.git
-  commit: 57b1b207330d3f48976c5b5f0644df9c804c5dfe
+  commit: 220ea1d4c811ef5dfc24d5bd73d2e3a820d6e330
 - git: https://github.com/xenog/nqe.git
   commit: 43661fd297bd2e8d1ab61e7a9cf8030130b7e82e
 - git: https://github.com/xenog/rocksdb-query.git
   commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
 - git: https://github.com/haskoin/haskoin-node.git
-  commit: a9a73fb8eaf278c0274a49a8c5647a9b64160806
+  commit: cde589a23af8def6e041fa534e39904e5b896aa2
 - rocksdb-haskell-1.0.1
 - murmur3-1.0.3
 - secp256k1-0.5.3

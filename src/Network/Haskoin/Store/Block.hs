@@ -50,6 +50,7 @@ import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query
 import           Network.Haskoin.Block
 import           Network.Haskoin.Constants
+import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
@@ -66,6 +67,7 @@ data BlockRead = BlockRead
     , myListener   :: !(Listen StoreEvent)
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
+    , myNetwork    :: !Network
     }
 
 type MonadBlock m
@@ -149,12 +151,13 @@ blockStore BlockConfig {..} = do
         , myListener = blockConfListener
         , myBaseHeight = base_height_box
         , myPeer = peer_box
+        , myNetwork = blockConfNet
         }
   where
     run = forever (processBlockMessage =<< receive blockConfMailbox)
     load_best =
         retrieve blockConfDB Nothing BestBlockKey >>= \case
-            Nothing -> addNewBlock genesisBlock
+            Nothing -> addNewBlock (genesisBlock blockConfNet)
             Just (_ :: BlockHash) ->
                 getBestBlock blockConfDB Nothing >>= \BlockValue {..} -> do
                     base_height_box <- asks myBaseHeight
@@ -297,17 +300,17 @@ getMempool db snapshot = get_hashes <$> matchingAsList db snapshot MempoolKey
   where
     get_hashes mempool_txs = [tx_hash | (MempoolTx tx_hash, ()) <- mempool_txs]
 
-getTxs :: MonadUnliftIO m => [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
-getTxs ths db s =
+getTxs :: MonadUnliftIO m => Network -> [TxHash] -> DB -> Maybe Snapshot -> m [DetailedTx]
+getTxs net ths db s =
     case s of
         Nothing -> R.withSnapshot db $ f . Just
         Just _  -> f s
   where
-    f s' = fmap catMaybes . forM (nub ths) $ \th -> getTx th db s'
+    f s' = fmap catMaybes . forM (nub ths) $ \th -> getTx net th db s'
 
 getTx ::
-       MonadUnliftIO m => TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
-getTx th db s = do
+       MonadUnliftIO m => Network -> TxHash -> DB -> Maybe Snapshot -> m (Maybe DetailedTx)
+getTx net th db s = do
     xs <- matchingAsList db s (BaseTxKey th)
     case find_tx xs of
         Just TxRecord {..} ->
@@ -334,6 +337,7 @@ getTx th db s = do
                  { detInOutPoint = prevOutput
                  , detInSequence = txInSequence
                  , detInSigScript = scriptInput
+                 , detInNetwork = net
                  }
             else let PrevOut {..} =
                          fromMaybe
@@ -348,12 +352,14 @@ getTx th db s = do
                     , detInPkScript = prevOutScript
                     , detInValue = prevOutValue
                     , detInBlock = prevOutBlock
+                    , detInNetwork = net
                     }
     output OutPoint {..} Output {..} =
         DetailedOutput
         { detOutValue = outputValue
         , detOutScript = outScript
         , detOutSpender = outSpender
+        , detOutNetwork = net
         }
     find_tx xs =
         listToMaybe
@@ -361,7 +367,7 @@ getTx th db s = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _ -> False
+                  _             -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -369,7 +375,7 @@ getTx th db s = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxKeyOutput {}, MultiTxOutput {}) -> True
-              _ -> False
+              _                                       -> False
         , let MultiTxKeyOutput (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
@@ -423,6 +429,7 @@ updateAddress address balance =
 spendOutput :: (MonadBlock m, MonadImport m) => OutPoint -> Spender -> m ()
 spendOutput out_point spender@Spender {..} =
     void . runMaybeT $ do
+        net <- asks myNetwork
         guard (out_point /= nullOutPoint)
         output@Output {..} <-
             getOutput out_point >>= \case
@@ -434,7 +441,7 @@ spendOutput out_point spender@Spender {..} =
         when (isJust outSpender) . throwString $
             "Output to spend already spent at outpoint: " <> showOutPoint out_point
         updateOutput out_point output {outSpender = Just spender}
-        address <- MaybeT (return (scriptToAddressBS outScript))
+        address <- MaybeT (return (scriptToAddressBS net outScript))
         balance@Balance {..} <- getAddress address
         updateAddress address $
             if isJust spenderBlock
@@ -451,6 +458,7 @@ spendOutput out_point spender@Spender {..} =
 unspendOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m ()
 unspendOutput out_point =
     void . runMaybeT $ do
+        net <- asks myNetwork
         guard (out_point /= nullOutPoint)
         output@Output {..} <-
             getOutput out_point >>= \case
@@ -461,7 +469,7 @@ unspendOutput out_point =
                 Just output -> return output
         Spender {..} <- MaybeT (return outSpender)
         updateOutput out_point output {outSpender = Nothing}
-        address <- MaybeT (return (scriptToAddressBS outScript))
+        address <- MaybeT (return (scriptToAddressBS net outScript))
         balance@Balance {..} <- getAddress address
         updateAddress address $
             if isJust spenderBlock
@@ -478,6 +486,7 @@ unspendOutput out_point =
 removeOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m ()
 removeOutput out_point@OutPoint {..} =
     void . runMaybeT $ do
+        net <- asks myNetwork
         Output {..} <-
             getOutput out_point >>= \case
                 Nothing ->
@@ -487,7 +496,7 @@ removeOutput out_point@OutPoint {..} =
                 Just o -> return o
         when (isJust outSpender) . throwString $
             "Cannot delete because spent outpoint: " <> show out_point
-        address <- MaybeT (return (scriptToAddressBS outScript))
+        address <- MaybeT (return (scriptToAddressBS net outScript))
         balance@Balance {..} <- getAddress address
         updateAddress address $
             if isJust outBlock
@@ -504,8 +513,9 @@ removeOutput out_point@OutPoint {..} =
 addOutput :: (MonadBlock m, MonadImport m) => OutPoint -> Output -> m ()
 addOutput out_point@OutPoint {..} output@Output {..} =
     void . runMaybeT $ do
+        net <- asks myNetwork
         updateOutput out_point output
-        address <- MaybeT (return (scriptToAddressBS outScript))
+        address <- MaybeT (return (scriptToAddressBS net outScript))
         balance@Balance {..} <- getAddress address
         updateAddress address $
             if isJust outBlock
@@ -580,8 +590,9 @@ addNewBlock block@Block {..} =
     import_tx block_ref i tx = importTransaction tx (Just (block_ref i))
     new_hash = headerHash blockHeader
     prev_block = prevBlock blockHeader
-    get_new_height =
-        if blockHeader == genesisHeader
+    get_new_height = do
+        net <- asks myNetwork
+        if blockHeader == getGenesisHeader net
             then return 0
             else do
                 db <- asks myBlockDB
@@ -638,6 +649,7 @@ outputOps :: (MonadBlock m, MonadImport m) => OutPoint -> m [BatchOp]
 outputOps out_point@OutPoint {..}
     | out_point == nullOutPoint = return []
     | otherwise = do
+        net <- asks myNetwork
         output@Output {..} <-
             getOutput out_point >>= \case
                 Nothing ->
@@ -646,12 +658,12 @@ outputOps out_point@OutPoint {..}
                     show out_point
                 Just o -> return o
         let output_op = insertOp (OutputKey out_point) output
-            addr_ops = addressOutOps out_point output False
+            addr_ops = addressOutOps net out_point output False
         return $ output_op : addr_ops
 
-addressOutOps :: OutPoint -> Output -> Bool -> [BatchOp]
-addressOutOps out_point output@Output {..} del =
-    case scriptToAddressBS outScript of
+addressOutOps :: Network -> OutPoint -> Output -> Bool -> [BatchOp]
+addressOutOps net out_point output@Output {..} del =
+    case scriptToAddressBS net outScript of
         Nothing -> []
         Just address ->
             let key =
@@ -678,6 +690,7 @@ addressOutOps out_point output@Output {..} del =
 
 deleteOutOps :: (MonadBlock m, MonadImport m) => OutPoint -> m [BatchOp]
 deleteOutOps out_point@OutPoint {..} = do
+    net <- asks myNetwork
     output@Output {..} <-
         getOutput out_point >>= \case
             Nothing ->
@@ -685,7 +698,7 @@ deleteOutOps out_point@OutPoint {..} = do
                 "Could not get output to delete at outpoint: " <> show out_point
             Just o -> return o
     let output_op = deleteOp (OutputKey out_point)
-        addr_ops = addressOutOps out_point output True
+        addr_ops = addressOutOps net out_point output True
     return $ output_op : addr_ops
 
 deleteTxOps :: TxHash -> [BatchOp]
@@ -729,7 +742,7 @@ insertTxOps ImportTx {..} = do
             }
     case importTxBlock of
         Nothing -> return [insertOp key value, insertOp mempool_key ()]
-        Just _ -> return [insertOp key value, deleteOp mempool_key]
+        Just _  -> return [insertOp key value, deleteOp mempool_key]
   where
     get_prev_outputs =
         let real_inputs =
@@ -770,11 +783,12 @@ getBalanceOps = do
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
+    net <- asks myNetwork
     db <- asks myBlockDB
     BlockValue {..} <- getBestBlock db Nothing
-    when (blockValueHeader == genesisHeader) . throwString $
+    when (blockValueHeader == getGenesisHeader net) . throwString $
         "Attempted to revert genesis block hash: " <>
-        cs (blockHashToHex (headerHash genesisHeader))
+        cs (blockHashToHex (headerHash (getGenesisHeader net)))
     $(logWarn) $ logMe <> "Reverting block hash: " <> cs (show blockValueHeight)
     import_txs <- mapM getSimpleTx (tail blockValueTxs)
     runMonadImport $ do
@@ -869,6 +883,7 @@ syncBlocks :: MonadBlock m => m ()
 syncBlocks = void (runMaybeT sync)
   where
     sync = do
+        net <- asks myNetwork
         (best_height, chain_best) <- revert_if_needed
         let chain_height = nodeHeight chain_best
         base_height_box <- asks myBaseHeight
@@ -898,7 +913,7 @@ syncBlocks = void (runMaybeT sync)
                 then return []
                 else chainGetParents sync_lowest sync_top ch
         update_peer sync_highest (Just p)
-        peerGetBlocks p (map (headerHash . nodeHeader) sync_blocks)
+        peerGetBlocks net p (map (headerHash . nodeHeader) sync_blocks)
     get_peer =
         asks myPeer >>= readTVarIO >>= \case
             Just p -> return p
@@ -1002,56 +1017,74 @@ processBlockMessage (BlockNotReceived p h) = do
 processBlockMessage (TxAvailable p ts) =
     isAtHeight >>= \h ->
         when h $ do
+            net <- asks myNetwork
             db <- asks myBlockDB
             has <-
                 fmap catMaybes . forM ts $ \t ->
                     retrieve db Nothing (MempoolTx t) >>= \case
                         Nothing -> return Nothing
                         Just () -> return (Just t)
-            peerGetTxs p (ts \\ has)
+            peerGetTxs net p (ts \\ has)
 
 processBlockMessage _ = return ()
 
-getAddrTxs :: MonadUnliftIO m => Address -> DB -> Maybe Snapshot -> m [AddressTx]
+getAddrTxs ::
+       MonadUnliftIO m
+    => Address
+    -> DB
+    -> Maybe Snapshot
+    -> m [AddressTx]
 getAddrTxs addr = getAddrsTxs [addr]
 
-getAddrsTxs :: MonadUnliftIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressTx]
-getAddrsTxs addrs db s =
+getAddrsTxs ::
+       MonadUnliftIO m
+    => [Address]
+    -> DB
+    -> Maybe Snapshot
+    -> m [AddressTx]
+getAddrsTxs [] db s = return []
+getAddrsTxs addrs db s = do
+    when (not (all ((== net) . getAddrNet) addrs)) $
+        throwString "Not all addresses in same network"
     case s of
         Nothing -> R.withSnapshot db $ g . Just
-        Just _  -> g s
+        Just _ -> g s
   where
+    net = getAddrNet (head addrs)
     g s' = do
         us <- getAddrsUnspent addrs db s'
         ss <- getAddrsSpent addrs db s'
         let utx =
                 [ AddressTxOut
-                { addressTxPkScript = outScript
-                , addressTxId = outPointHash addrOutPoint
-                , addressTxAmount = fromIntegral outputValue
-                , addressTxBlock = outBlock
-                , addressTxVout = outPointIndex addrOutPoint
-                }
+                    { addressTxPkScript = outScript
+                    , addressTxId = outPointHash addrOutPoint
+                    , addressTxAmount = fromIntegral outputValue
+                    , addressTxBlock = outBlock
+                    , addressTxVout = outPointIndex addrOutPoint
+                    , addressTxNetwork = net
+                    }
                 | (AddrOutputKey {..}, Output {..}) <- us
                 ]
             stx =
                 [ AddressTxOut
-                { addressTxPkScript = outScript
-                , addressTxId = outPointHash addrOutPoint
-                , addressTxAmount = fromIntegral outputValue
-                , addressTxBlock = outBlock
-                , addressTxVout = outPointIndex addrOutPoint
-                }
+                    { addressTxPkScript = outScript
+                    , addressTxId = outPointHash addrOutPoint
+                    , addressTxAmount = fromIntegral outputValue
+                    , addressTxBlock = outBlock
+                    , addressTxVout = outPointIndex addrOutPoint
+                    , addressTxNetwork = net
+                    }
                 | (AddrOutputKey {..}, Output {..}) <- ss
                 ]
             itx =
                 [ AddressTxIn
-                { addressTxPkScript = outScript
-                , addressTxId = spenderHash
-                , addressTxAmount = -fromIntegral outputValue
-                , addressTxBlock = spenderBlock
-                , addressTxVin = spenderIndex
-                }
+                    { addressTxPkScript = outScript
+                    , addressTxId = spenderHash
+                    , addressTxAmount = -fromIntegral outputValue
+                    , addressTxBlock = spenderBlock
+                    , addressTxVin = spenderIndex
+                    , addressTxNetwork = net
+                    }
                 | (AddrOutputKey {..}, Output {..}) <- ss
                 , let Spender {..} = fromMaybe e outSpender
                 ]
@@ -1078,6 +1111,7 @@ getUnspent addr db s = do
         , unspentIndex = outPointIndex addrOutPoint
         , unspentValue = outputValue
         , unspentBlock = outBlock
+        , unspentNetwork = getAddrNet addr
         }
     to_unspent _ _ = error "Error decoding AddrOutputKey data structure"
 

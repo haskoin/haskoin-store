@@ -45,6 +45,7 @@ import           Data.String
 import           Data.String.Conversions
 import           Database.RocksDB
 import           Network.Haskoin.Block
+import           Network.Haskoin.Constants
 import           Network.Haskoin.Network
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store.Block
@@ -63,6 +64,7 @@ data StoreRead = StoreRead
     , myListener   :: !(Listen StoreEvent)
     , myPublisher  :: !(Publisher Inbox TBQueue StoreEvent)
     , myBlockDB    :: !DB
+    , myNetwork    :: !Network
     }
 
 store :: (MonadLoggerIO m, MonadUnliftIO m) => StoreConfig m -> m ()
@@ -82,6 +84,7 @@ store StoreConfig {..} = do
             , nodeSupervisor = ns
             , nodeChain = storeConfChain
             , nodeManager = storeConfManager
+            , nodeNet = storeConfNetwork
             }
     let store_read =
             StoreRead
@@ -92,6 +95,7 @@ store StoreConfig {..} = do
             , myPublisher = storeConfPublisher
             , myListener = (`sendSTM` ls)
             , myBlockDB = storeConfDB
+            , myNetwork = storeConfNetwork
             }
     let block_cfg =
             BlockConfig
@@ -100,6 +104,7 @@ store StoreConfig {..} = do
             , blockConfManager = storeConfManager
             , blockConfListener = (`sendSTM` ls)
             , blockConfDB = storeConfDB
+            , blockConfNet = storeConfNetwork
             }
     supervisor
         KillAll
@@ -204,14 +209,15 @@ storeDispatch (PeerEvent _) = return ()
 
 publishTx ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => Publisher Inbox TBQueue StoreEvent
+    => Network
+    -> Publisher Inbox TBQueue StoreEvent
     -> Manager
     -> Chain
     -> DB
     -> Tx
     -> m (Either TxException DetailedTx)
-publishTx pub mgr ch db tx =
-    getTx (txHash tx) db Nothing >>= \case
+publishTx net pub mgr ch db tx =
+    getTx net (txHash tx) db Nothing >>= \case
         Just d -> return (Right d)
         Nothing ->
             timeout 10000000 (runExceptT go) >>= \case
@@ -234,7 +240,9 @@ publishTx pub mgr ch db tx =
         MTx tx `sendMessage` p
         MMempool `sendMessage` p
         recv_loop sub p
-        maybeToExceptT CouldNotImport (MaybeT (getTx (txHash tx) db Nothing))
+        maybeToExceptT
+            CouldNotImport
+            (MaybeT (getTx net (txHash tx) db Nothing))
     recv_loop sub p =
         receive sub >>= \case
             MempoolNew h

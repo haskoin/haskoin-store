@@ -22,6 +22,7 @@ import           Data.Word
 import           Database.RocksDB            (DB)
 import           Database.RocksDB.Query      as R
 import           Network.Haskoin.Block
+import           Network.Haskoin.Constants
 import           Network.Haskoin.Crypto
 import           Network.Haskoin.Node
 import           Network.Haskoin.Script
@@ -74,6 +75,7 @@ data BlockConfig = BlockConfig
     , blockConfChain    :: !Chain
     , blockConfListener :: !(Listen StoreEvent)
     , blockConfDB       :: !DB
+    , blockConfNet      :: !Network
     }
 
 data StoreEvent
@@ -108,7 +110,7 @@ data AddrOutputKey
                     , addrOutPoint      :: !OutPoint }
     | MultiAddrOutputKey { addrOutputSpent   :: !Bool
                          , addrOutputAddress :: !Address }
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq)
 
 data BlockValue = BlockValue
     { blockValueHeight :: !BlockHeight
@@ -135,19 +137,21 @@ data DetailedTx = DetailedTx
     , detailedTxInputs  :: ![DetailedInput]
     , detailedTxOutputs :: ![DetailedOutput]
     , detailedTxBlock   :: !(Maybe BlockRef)
-    } deriving (Show, Eq, Ord)
+    } deriving (Show, Eq)
 
 data DetailedInput
     = DetailedCoinbase { detInOutPoint  :: !OutPoint
                        , detInSequence  :: !Word32
-                       , detInSigScript :: !ByteString }
+                       , detInSigScript :: !ByteString
+                       , detInNetwork   :: !Network }
     | DetailedInput { detInOutPoint  :: !OutPoint
                     , detInSequence  :: !Word32
                     , detInSigScript :: !ByteString
                     , detInPkScript  :: !ByteString
                     , detInValue     :: !Word64
-                    , detInBlock     :: !(Maybe BlockRef) }
-    deriving (Show, Eq, Ord)
+                    , detInBlock     :: !(Maybe BlockRef)
+                    , detInNetwork   :: !Network }
+    deriving (Show, Eq)
 
 isCoinbase :: DetailedInput -> Bool
 isCoinbase DetailedCoinbase {} = True
@@ -157,7 +161,8 @@ data DetailedOutput = DetailedOutput
     { detOutValue   :: !Word64
     , detOutScript  :: !ByteString
     , detOutSpender :: !(Maybe Spender)
-    } deriving (Show, Eq, Ord)
+    , detOutNetwork :: !Network
+    } deriving (Show, Eq)
 
 data AddressBalance = AddressBalance
     { addressBalAddress     :: !Address
@@ -165,7 +170,7 @@ data AddressBalance = AddressBalance
     , addressBalUnconfirmed :: !Int64
     , addressOutputCount    :: !Word64
     , addressSpentCount     :: !Word64
-    } deriving (Show, Eq, Ord)
+    } deriving (Show, Eq)
 
 data TxRecord = TxRecord
     { txValueBlock    :: !(Maybe BlockRef)
@@ -248,7 +253,7 @@ newtype HeightKey =
 
 newtype BalanceKey = BalanceKey
     { balanceAddress :: Address
-    } deriving (Show, Eq, Ord)
+    } deriving (Show, Eq)
 
 data Balance = Balance
     { balanceValue       :: !Word64
@@ -273,12 +278,14 @@ data AddressTx
                   , addressTxId       :: !TxHash
                   , addressTxAmount   :: !Int64
                   , addressTxBlock    :: !(Maybe BlockRef)
-                  , addressTxVin      :: !Word32 }
+                  , addressTxVin      :: !Word32
+                  , addressTxNetwork  :: !Network }
     | AddressTxOut { addressTxPkScript :: !ByteString
                    , addressTxId       :: !TxHash
                    , addressTxAmount   :: !Int64
                    , addressTxBlock    :: !(Maybe BlockRef)
-                   , addressTxVout     :: !Word32 }
+                   , addressTxVout     :: !Word32
+                   , addressTxNetwork  :: !Network }
     deriving (Eq, Show)
 
 instance Ord AddressTx where
@@ -295,6 +302,7 @@ data Unspent = Unspent
     , unspentIndex    :: !Word32
     , unspentValue    :: !Word64
     , unspentBlock    :: !(Maybe BlockRef)
+    , unspentNetwork  :: !Network
     } deriving (Eq, Show)
 
 instance Ord Unspent where
@@ -304,7 +312,7 @@ instance Ord Unspent where
         f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
 
 newtype StoreAddress = StoreAddress Address
-    deriving (Show, Eq, Read)
+    deriving (Show, Eq)
 
 instance Key BlockKey
 instance Key HeightKey
@@ -516,39 +524,69 @@ instance Serialize BlockValue where
         blockValueTxs <- get
         return BlockValue {..}
 
+netByte :: Network -> Word8
+netByte net | net == btc        = 0x00
+            | net == btcTest    = 0x01
+            | net == btcRegTest = 0x02
+            | net == bch        = 0x04
+            | net == bchTest    = 0x05
+            | net == bchRegTest = 0x06
+
+byteNet :: Word8 -> Maybe Network
+byteNet 0x00 = Just btc
+byteNet 0x01 = Just btcTest
+byteNet 0x02 = Just btcRegTest
+byteNet 0x04 = Just bch
+byteNet 0x05 = Just bchTest
+byteNet 0x06 = Just bchRegTest
+
+getByteNet :: Get Network
+getByteNet =
+    byteNet <$> getWord8 >>= \case
+        Nothing -> fail "Could not decode network byte"
+        Just net -> return net
+
 instance Serialize StoreAddress where
     put (StoreAddress addr) =
         case addr of
-            PubKeyAddress h -> do
+            PubKeyAddress h net -> do
                 putWord8 0x01
+                putWord8 (netByte net)
                 put h
-            ScriptAddress h -> do
+            ScriptAddress h net -> do
                 putWord8 0x02
+                putWord8 (netByte net)
                 put h
-            WitnessPubKeyAddress h -> do
+            WitnessPubKeyAddress h net -> do
                 putWord8 0x03
+                putWord8 (netByte net)
                 put h
-            WitnessScriptAddress h -> do
+            WitnessScriptAddress h net -> do
                 putWord8 0x04
+                putWord8 (netByte net)
                 put h
     get = fmap StoreAddress $ pk <|> sa <|> wa <|> ws
       where
         pk = do
             guard . (== 0x01) =<< getWord8
+            net <- getByteNet
             h <- get
-            return (PubKeyAddress h)
+            return (PubKeyAddress h net)
         sa = do
             guard . (== 0x02) =<< getWord8
+            net <- getByteNet
             h <- get
-            return (ScriptAddress h)
+            return (ScriptAddress h net)
         wa = do
             guard . (== 0x03) =<< getWord8
+            net <- getByteNet
             h <- get
-            return (WitnessPubKeyAddress h)
+            return (WitnessPubKeyAddress h net)
         ws = do
             guard . (== 0x04) =<< getWord8
+            net <- getByteNet
             h <- get
-            return (WitnessScriptAddress h)
+            return (WitnessScriptAddress h net)
 
 blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
@@ -584,7 +622,7 @@ spenderPairs Spender {..} =
 
 detailedOutputPairs :: A.KeyValue kv => DetailedOutput -> [kv]
 detailedOutputPairs DetailedOutput {..} =
-    [ "address" .= scriptToAddressBS detOutScript
+    [ "address" .= scriptToAddressBS detOutNetwork detOutScript
     , "pkscript" .= String (cs (encodeHex detOutScript))
     , "value" .= detOutValue
     , "spent" .= isJust detOutSpender
@@ -603,7 +641,7 @@ detailedInputPairs DetailedInput {..} =
     , "sequence" .= detInSequence
     , "sigscript" .= String (cs (encodeHex detInSigScript))
     , "pkscript" .= String (cs (encodeHex detInPkScript))
-    , "address" .= scriptToAddressBS detInPkScript
+    , "address" .= scriptToAddressBS detInNetwork detInPkScript
     , "value" .= detInValue
     , "block" .= detInBlock
     ]
@@ -646,7 +684,7 @@ instance ToJSON BlockRef where
 
 addrTxPairs :: A.KeyValue kv => AddressTx -> [kv]
 addrTxPairs AddressTxIn {..} =
-    [ "address" .= scriptToAddressBS addressTxPkScript
+    [ "address" .= scriptToAddressBS addressTxNetwork addressTxPkScript
     , "pkscript" .= String (cs (encodeHex addressTxPkScript))
     , "txid" .= addressTxId
     , "input" .= addressTxVin
@@ -654,7 +692,7 @@ addrTxPairs AddressTxIn {..} =
     , "block" .= addressTxBlock
     ]
 addrTxPairs AddressTxOut {..} =
-    [ "address" .= scriptToAddressBS addressTxPkScript
+    [ "address" .= scriptToAddressBS addressTxNetwork addressTxPkScript
     , "pkscript" .= String (cs (encodeHex addressTxPkScript))
     , "txid" .= addressTxId
     , "output" .= addressTxVout
@@ -668,7 +706,7 @@ instance ToJSON AddressTx where
 
 unspentPairs :: A.KeyValue kv => Unspent -> [kv]
 unspentPairs Unspent {..} =
-    [ "address" .= scriptToAddressBS unspentPkScript
+    [ "address" .= scriptToAddressBS unspentNetwork unspentPkScript
     , "pkscript" .= String (cs (encodeHex unspentPkScript))
     , "txid" .= unspentTxId
     , "output" .= unspentIndex
@@ -738,4 +776,5 @@ data StoreConfig n = StoreConfig
     , storeConfInitPeers  :: ![HostPort]
     , storeConfDiscover   :: !Bool
     , storeConfDB         :: !DB
+    , storeConfNetwork    :: !Network
     }
