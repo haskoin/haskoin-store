@@ -12,7 +12,7 @@ Full blockchain index & store featuring:
 * Get [Stack](https://haskell-lang.org/get-started).
 * Get [Nix](https://nixos.org/nix/).
 * Clone this repository `git clone https://github.com/haskoin/haskoin-store`.
-* From the root of this repository run `stack build --copy-bins`.
+* From the root of this repository run `stack --nix build --copy-bins`.
 * File will usually be installed in `~/.local/bin/haskoin-store`.
 
 ## API Documentation
