@@ -6,16 +6,17 @@ nix:
     - cacert
     - libtool
     - rocksdb
+    - secp256k1
     - zlib
 extra-deps:
 - git: https://github.com/haskoin/haskoin-core.git
-  commit: da78af63b08afc78b2de5e4325ab898854f555cf
+  commit: e3a81c232a1fa5358ccd3499c032f63bb148a599
 - git: https://github.com/xenog/nqe.git
   commit: 43661fd297bd2e8d1ab61e7a9cf8030130b7e82e
 - git: https://github.com/xenog/rocksdb-query.git
   commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
 - git: https://github.com/haskoin/haskoin-node.git
-  commit: e44f604603669c02c65a9e931f209d6aeab0ee72
+  commit: f9326baef7133d87cbed0b2433a796d87439d4c2
 - rocksdb-haskell-1.0.1
 - murmur3-1.0.3
-- secp256k1-0.5.3
+- secp256k1-1.1.0
