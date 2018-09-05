@@ -35,7 +35,7 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as BS
+import qualified Data.ByteString             as B
 import           Data.List
 import           Data.Map                    (Map)
 import qualified Data.Map.Strict             as M
@@ -47,7 +47,7 @@ import           Data.String
 import           Data.String.Conversions
 import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import qualified Database.RocksDB            as R
-import           Database.RocksDB.Query
+import           Database.RocksDB.Query      as R
 import           Network.Haskoin.Core
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store.Types
@@ -628,7 +628,7 @@ getBlockOps =
                 { blockValueHeight = nodeHeight bn
                 , blockValueWork = nodeWork bn
                 , blockValueHeader = nodeHeader bn
-                , blockValueSize = fromIntegral (BS.length (encode block))
+                , blockValueSize = fromIntegral (B.length (encode block))
                 , blockValueTxs = map txHash blockTxns
                 }
         return
@@ -823,7 +823,8 @@ validateTx outputs tx = do
         sum_outputs = sum (map outValue (txOut tx))
     when (sum_outputs > sum_inputs) (throwError OverSpend)
 
-importTransaction :: (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m ()
+importTransaction ::
+       (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m ()
 importTransaction tx maybe_block_ref =
     runExceptT validate_tx >>= \case
         Left e -> do
@@ -832,6 +833,7 @@ importTransaction tx maybe_block_ref =
                     $(logDebug) $
                     logMe <> "Already imported tx hash: " <>
                     cs (txHashToHex (txHash tx))
+                OrphanTx -> import_orphan
                 _ ->
                     $(logError) $
                     logMe <> "Could not import tx hash: " <>
@@ -844,7 +846,22 @@ importTransaction tx maybe_block_ref =
             spend_inputs
             insert_outputs
             insertTx tx maybe_block_ref
+            flush_orphans
   where
+    flush_orphans = do
+            orphans <- get_orphans
+            mapM_ (`importTransaction` Nothing) (map snd orphans)
+            orphans' <- get_orphans
+            when (length orphans' < length orphans) flush_orphans
+    get_orphans = do
+        db <- asks myBlockDB
+        liftIO $ R.matchingAsList db Nothing OrphanKey
+    import_orphan = do
+        $(logDebug) $
+            logMe <> "Storing orphan transaction hash: " <>
+            cs (txHashToHex (txHash tx))
+        db <- asks myBlockDB
+        R.insert db (OrphanTxKey (txHash tx)) tx
     validate_tx
         | isJust maybe_block_ref = return () -- only validate unconfirmed
         | otherwise = do
