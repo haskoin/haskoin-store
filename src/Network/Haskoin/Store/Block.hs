@@ -62,6 +62,7 @@ data BlockRead = BlockRead
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
     , myNetwork    :: !Network
+    , myHasMempool :: !(TVar Bool)
     }
 
 type MonadBlock m
@@ -128,15 +129,16 @@ runMonadImport f =
         gets blockAction >>= \case
             Just (ImportBlock Block {..}) -> do
                 atomically (l (BestBlock (headerHash blockHeader)))
-                syncMempool
+                syncMempoolOnce
             Just RevertBlock -> $(logWarn) $ logMe <> "Reverted best block"
             _ -> return ()
         $(logDebug) $ logMe <> "Database update complete"
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
-    base_height_box <- liftIO (newTVarIO 0)
-    peer_box <- liftIO (newTVarIO Nothing)
+    base_height_box <- newTVarIO 0
+    peer_box <- newTVarIO Nothing
+    mempool_box <- newTVarIO False
     runReaderT
         (load_best >> syncBlocks >> run)
         BlockRead
@@ -148,6 +150,7 @@ blockStore BlockConfig {..} = do
         , myBaseHeight = base_height_box
         , myPeer = peer_box
         , myNetwork = blockConfNet
+        , myHasMempool = mempool_box
         }
   where
     run = forever $ do
@@ -1146,14 +1149,19 @@ getUnspent addr db s = do
         }
     to_unspent _ _ = error "Error decoding AddrOutputKey data structure"
 
-syncMempool :: MonadBlock m => m ()
-syncMempool =
-    isAtHeight >>= \h ->
-        when h $ do
-            $(logInfo) $ logMe <> "Syncing mempool"
-            m <- asks myManager
-            managerGetPeers m >>= \ps ->
-                forM_ ps $ \p -> MMempool `sendMessage` p
+syncMempoolOnce :: MonadBlock m => m ()
+syncMempoolOnce =
+    void . runMaybeT $ do
+        n <- asks myHasMempool
+        x <- readTVarIO n
+        guard (not x)
+        guard =<< isAtHeight
+        m <- asks myManager
+        peers <- managerGetPeers m
+        guard (not (null peers))
+        $(logInfo) $ logMe <> "Syncing mempool"
+        mapM_ (MMempool `sendMessage`) peers
+        atomically $ writeTVar n True
 
 isAtHeight :: MonadBlock m => m Bool
 isAtHeight = do
