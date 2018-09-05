@@ -11,56 +11,57 @@ github: haskoin/haskoin.git
 homepage: http://github.com/haskoin/haskoin#readme
 bug-reports: http://github.com/haskoin/haskoin/issues
 extra-source-files:
-- README.md
-- CHANGELOG.md
+  - README.md
+  - CHANGELOG.md
 dependencies:
-- aeson
-- base >=4.7 && <5
-- bytestring
-- cereal
-- directory
-- filepath
-- haskoin-core
-- haskoin-node
-- hspec
-- http-types
-- monad-logger
-- mtl
-- nqe
-- optparse-applicative
-- rocksdb-haskell
-- scotty
-- string-conversions
-- text
-- unliftio
+  - aeson
+  - base >=4.7 && <5
+  - bytestring
+  - cereal
+  - directory
+  - filepath
+  - haskoin-core
+  - haskoin-node
+  - hspec
+  - http-types
+  - monad-logger
+  - mtl
+  - nqe
+  - optparse-applicative
+  - random
+  - rocksdb-haskell
+  - scotty
+  - string-conversions
+  - text
+  - unliftio
 library:
   source-dirs: src
   exposed-modules:
-  - Network.Haskoin.Store
+    - Network.Haskoin.Store
   dependencies:
-  - aeson
-  - containers
-  - network
-  - rocksdb-query
-  - string-conversions
-  - transformers
+    - aeson
+    - containers
+    - network
+    - rocksdb-query
+    - string-conversions
+    - transformers
 executables:
   haskoin-store:
     main: Main.hs
     source-dirs: app
     ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
     dependencies:
-    - haskoin-store
+      - haskoin-store
 tests:
   haskoin-store-test:
     main: Spec.hs
     source-dirs: test
     ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
     dependencies:
-    - haskoin-store
+      - haskoin-store

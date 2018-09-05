@@ -52,6 +52,7 @@ import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
 import           Network.Socket              (SockAddr (..))
+import           System.Random
 import           UnliftIO
 
 type MonadStore m = (MonadLoggerIO m, MonadReader StoreRead m)
@@ -237,23 +238,26 @@ publishTx net pub mgr ch db tx =
     send_it sub p = do
         h <- is_at_height
         unless h $ throwError NotAtHeight
+        r <- liftIO randomIO
         MTx tx `sendMessage` p
-        MMempool `sendMessage` p
-        recv_loop sub p
+        MPing (Ping r) `sendMessage` p
+        recv_loop sub p r
         maybeToExceptT
             CouldNotImport
             (MaybeT (getTx net (txHash tx) db Nothing))
-    recv_loop sub p =
+    recv_loop sub p r =
         receive sub >>= \case
+            PeerPong p' n
+                | p == p' && n == r -> return ()
             MempoolNew h
-                | h == txHash tx -> ExceptT (return (Right ()))
+                | h == txHash tx -> return ()
             PeerDisconnected p'
-                | p' == p -> ExceptT (return (Left PeerIsGone))
+                | p' == p -> throwError PeerIsGone
             TxException h AlreadyImported
-                | h == txHash tx -> ExceptT (return (Right ()))
+                | h == txHash tx -> return ()
             TxException h x
-                | h == txHash tx -> ExceptT (return (Left x))
-            _ -> recv_loop sub p
+                | h == txHash tx -> throwError x
+            _ -> recv_loop sub p r
     is_at_height = do
         bb <- getBestBlockHash db Nothing
         cb <- chainGetBest ch

@@ -1015,6 +1015,11 @@ processBlockMessage (TxReceived _ tx) = do
         logMe <> "Received transaction hash: " <> cs (txHashToHex (txHash tx))
     runMonadImport $ importTransaction tx Nothing
 
+processBlockMessage (TxPublished tx) = do
+    $(logDebug) $
+        logMe <> "Published transaction hash: " <> cs (txHashToHex (txHash tx))
+    runMonadImport $ importTransaction tx Nothing
+
 processBlockMessage (BlockPeerDisconnect p) = do
     $(logDebug) $ logMe <> "Peer disconnected"
     peer_box <- asks myPeer
@@ -1059,8 +1064,9 @@ processBlockMessage (TxAvailable p ts) = do
                     " new transactions"
                 peerGetTxs net p new
 
-processBlockMessage (PongReceived _ _) =
+processBlockMessage (PongReceived p n) = do
     $(logDebug) $ logMe <> "Pong received"
+    asks myListener >>= atomically . ($ PeerPong p n)
 
 getAddrTxs ::
        MonadUnliftIO m

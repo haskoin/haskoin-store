@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f85172ed26f6a26a49260f48037353e24605f1dff0a126f9e8618486313097ae
+-- hash: ce911478787d8b952616f672496f0df9a314ade23b418ab53462f713f06c6683
 
 name:           haskoin-store
 version:        1.0.0
@@ -45,6 +45,7 @@ library
     , network
     , nqe
     , optparse-applicative
+    , random
     , rocksdb-haskell
     , rocksdb-query
     , scotty
@@ -81,6 +82,7 @@ executable haskoin-store
     , mtl
     , nqe
     , optparse-applicative
+    , random
     , rocksdb-haskell
     , scotty
     , string-conversions
@@ -112,6 +114,7 @@ test-suite haskoin-store-test
     , mtl
     , nqe
     , optparse-applicative
+    , random
     , rocksdb-haskell
     , scotty
     , string-conversions

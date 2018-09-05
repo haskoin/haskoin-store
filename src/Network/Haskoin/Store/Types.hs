@@ -81,6 +81,8 @@ data StoreEvent
                   !TxException
     | PeerConnected !Peer
     | PeerDisconnected !Peer
+    | PeerPong !Peer
+               !Word64
 
 data BlockMessage
     = BlockChainNew !BlockNode
@@ -94,6 +96,7 @@ data BlockMessage
                  !Tx
     | TxAvailable !Peer
                   ![TxHash]
+    | TxPublished !Tx
     | PongReceived !Peer
                    !Word64
 
