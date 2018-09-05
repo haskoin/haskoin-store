@@ -111,18 +111,18 @@ runMonadImport f =
   where
     update_database = do
         $(logDebug) $ logMe <> "Updating database..."
+        oops <- purgeOrphanOps
         ops <-
-            concat <$>
+            ((<> oops) . concat) <$>
             sequence
-                [ getBlockOps
-                , getBalanceOps
-                , getDeleteTxOps
-                , getInsertTxOps
-                , purgeOrphanOps
-                ]
+                [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
         db <- asks myBlockDB
         writeBatch db ops
         l <- asks myListener
+        when (not (null oops)) $
+            $(logDebug) $
+            logMe <> "Deleted " <> cs (show (length oops)) <>
+            " orphan transactions"
         gets deleteTxs >>= \ths ->
             forM_ ths $ \th ->
                 $(logInfo) $ logMe <> "Deleted tx hash: " <> cs (txHashToHex th)
