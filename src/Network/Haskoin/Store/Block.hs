@@ -102,19 +102,24 @@ runMonadImport f =
     evalStateT
         (f >>= \a -> update_database >> return a)
         ImportState
-        { outputMap = M.empty
-        , addressMap = M.empty
-        , deleteTxs = S.empty
-        , newTxs = M.empty
-        , blockAction = Nothing
-        }
+            { outputMap = M.empty
+            , addressMap = M.empty
+            , deleteTxs = S.empty
+            , newTxs = M.empty
+            , blockAction = Nothing
+            }
   where
     update_database = do
         $(logDebug) $ logMe <> "Updating database..."
         ops <-
             concat <$>
             sequence
-                [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
+                [ getBlockOps
+                , getBalanceOps
+                , getDeleteTxOps
+                , getInsertTxOps
+                , purgeOrphanOps
+                ]
         db <- asks myBlockDB
         writeBatch db ops
         l <- asks myListener
@@ -716,6 +721,14 @@ deleteTxOps tx_hash =
     , deleteOp (MempoolTx tx_hash)
     , deleteOp (OrphanTxKey tx_hash)
     ]
+
+purgeOrphanOps :: (MonadBlock m) => m [BatchOp]
+purgeOrphanOps = do
+    db <- asks myBlockDB
+    liftIO . runResourceT . runConduit $
+        matching db Nothing OrphanKey .| mapC (\(k, Tx {}) -> deleteOp k) .|
+        sinkList
+
 
 getSimpleTx :: MonadBlock m => TxHash -> m Tx
 getSimpleTx tx_hash =
