@@ -1061,7 +1061,7 @@ processBlockMessage (BlockReceived _ b) = do
         Right () -> syncBlocks
 
 processBlockMessage (TxReceived _ tx) =
-    asks myMempool >>= readTVarIO >>= \x ->
+    isAtHeight >>= \x ->
         when x $ do
             $(logDebug) $
                 logMe <> "Received transaction hash: " <>
@@ -1098,11 +1098,11 @@ processBlockMessage (BlockNotReceived p h) = do
     managerKill (PeerMisbehaving "Block not found") p mgr
 
 processBlockMessage (TxAvailable p ts) = do
-    $(logDebug) $
-        logMe <> "Received " <> cs (show (length ts)) <>
-        " available transactions"
     isAtHeight >>= \h ->
         when h $ do
+            $(logDebug) $
+                logMe <> "Received " <> cs (show (length ts)) <>
+                " available transactions from a peer"
             net <- asks myNetwork
             db <- asks myBlockDB
             has <-
