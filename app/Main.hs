@@ -214,18 +214,18 @@ main =
             open
                 (wdir </> "blocks")
                 defaultOptions
-                { createIfMissing = True
-                , compression = SnappyCompression
-                , maxOpenFiles = -1
-                , writeBufferSize = 2 `shift` 30
-                }
+                    { createIfMissing = True
+                    , compression = SnappyCompression
+                    , maxOpenFiles = -1
+                    , writeBufferSize = 2 `shift` 30
+                    }
         mgr <- Inbox <$> newTQueueIO
         pub <- Inbox <$> newTQueueIO
         ch <- Inbox <$> newTQueueIO
         supervisor
             KillAll
             s
-            [runWeb conf pub mgr ch db, runStore conf pub mgr ch b db]
+            [runWeb conf pub mgr ch b db, runStore conf pub mgr ch b db]
   where
     opts =
         info
@@ -242,9 +242,10 @@ runWeb ::
     -> Publisher Inbox TBQueue StoreEvent
     -> Manager
     -> Chain
+    -> BlockStore
     -> DB
     -> m ()
-runWeb conf pub mgr ch db = do
+runWeb conf pub mgr ch bl db = do
     l <- askLoggerIO
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
@@ -294,7 +295,7 @@ runWeb conf pub mgr ch db = do
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
-            lift (publishTx net pub mgr ch db tx) >>= \case
+            lift (publishTx net pub mgr ch db bl tx) >>= \case
                 Left PublishTimeout -> do
                     status status500
                     json (UserError (show PublishTimeout))

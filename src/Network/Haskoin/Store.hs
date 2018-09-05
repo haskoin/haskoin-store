@@ -215,9 +215,10 @@ publishTx ::
     -> Manager
     -> Chain
     -> DB
+    -> BlockStore
     -> Tx
     -> m (Either TxException DetailedTx)
-publishTx net pub mgr ch db tx =
+publishTx net pub mgr ch db bl tx =
     getTx net (txHash tx) db Nothing >>= \case
         Just d -> return (Right d)
         Nothing ->
@@ -248,7 +249,9 @@ publishTx net pub mgr ch db tx =
     recv_loop sub p r =
         receive sub >>= \case
             PeerPong p' n
-                | p == p' && n == r -> return ()
+                | p == p' && n == r -> do
+                      TxPublished tx `send` bl
+                      recv_loop sub p r
             MempoolNew h
                 | h == txHash tx -> return ()
             PeerDisconnected p'
