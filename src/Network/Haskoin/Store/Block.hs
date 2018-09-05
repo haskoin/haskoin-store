@@ -108,6 +108,7 @@ runMonadImport f =
         }
   where
     update_database = do
+        $(logDebug) $ logMe <> "Updating database..."
         ops <-
             concat <$>
             sequence
@@ -130,6 +131,7 @@ runMonadImport f =
                 syncMempool
             Just RevertBlock -> $(logWarn) $ logMe <> "Reverted best block"
             _ -> return ()
+        $(logDebug) $ logMe <> "Database update complete"
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
@@ -478,50 +480,51 @@ unspendOutput out_point =
                      }
 
 removeOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m ()
-removeOutput out_point@OutPoint {..} =
-    void . runMaybeT $ do
-        net <- asks myNetwork
-        Output {..} <-
-            getOutput out_point >>= \case
-                Nothing ->
-                    throwString $
-                    "Could not get output to remove at outpoint: " <>
-                    show out_point
-                Just o -> return o
-        when (isJust outSpender) . throwString $
-            "Cannot delete because spent outpoint: " <> show out_point
-        address <- MaybeT (return (scriptToAddressBS net outScript))
-        balance@Balance {..} <- getAddress address
-        updateAddress address $
-            if isJust outBlock
-                then balance
-                     { balanceValue = balanceValue - outputValue
-                     , balanceOutputCount = balanceOutputCount - 1
-                     }
-                else balance
-                     { balanceUnconfirmed =
-                           balanceUnconfirmed - fromIntegral outputValue
-                     , balanceOutputCount = balanceOutputCount - 1
-                     }
+removeOutput out_point@OutPoint {..} = do
+    net <- asks myNetwork
+    Output {..} <-
+        getOutput out_point >>= \case
+            Nothing ->
+                throwString $
+                "Could not get output to remove at outpoint: " <> show out_point
+            Just o -> return o
+    when (isJust outSpender) . throwString $
+        "Cannot delete because spent outpoint: " <> show out_point
+    case scriptToAddressBS net outScript of
+        Nothing -> return ()
+        Just address -> do
+            balance@Balance {..} <- getAddress address
+            updateAddress address $
+                if isJust outBlock
+                    then balance
+                             { balanceValue = balanceValue - outputValue
+                             , balanceOutputCount = balanceOutputCount - 1
+                             }
+                    else balance
+                             { balanceUnconfirmed =
+                                   balanceUnconfirmed - fromIntegral outputValue
+                             , balanceOutputCount = balanceOutputCount - 1
+                             }
 
 addOutput :: (MonadBlock m, MonadImport m) => OutPoint -> Output -> m ()
-addOutput out_point@OutPoint {..} output@Output {..} =
-    void . runMaybeT $ do
-        net <- asks myNetwork
-        updateOutput out_point output
-        address <- MaybeT (return (scriptToAddressBS net outScript))
-        balance@Balance {..} <- getAddress address
-        updateAddress address $
-            if isJust outBlock
-                then balance
-                     { balanceValue = balanceValue + outputValue
-                     , balanceOutputCount = balanceOutputCount + 1
-                     }
-                else balance
-                     { balanceUnconfirmed =
-                           balanceUnconfirmed + fromIntegral outputValue
-                     , balanceOutputCount = balanceOutputCount + 1
-                     }
+addOutput out_point@OutPoint {..} output@Output {..} = do
+    net <- asks myNetwork
+    updateOutput out_point output
+    case scriptToAddressBS net outScript of
+        Nothing -> return ()
+        Just address -> do
+            balance@Balance {..} <- getAddress address
+            updateAddress address $
+                if isJust outBlock
+                    then balance
+                             { balanceValue = balanceValue + outputValue
+                             , balanceOutputCount = balanceOutputCount + 1
+                             }
+                    else balance
+                             { balanceUnconfirmed =
+                                   balanceUnconfirmed + fromIntegral outputValue
+                             , balanceOutputCount = balanceOutputCount + 1
+                             }
 
 getTxRecord :: MonadBlock m => TxHash -> m (Maybe TxRecord)
 getTxRecord tx_hash =
@@ -550,16 +553,16 @@ deleteTransaction tx_hash = shouldDelete tx_hash >>= \d -> unless d delete_it
     remove_spenders n_out =
         forM_ (take n_out [0 ..]) $ \i ->
             let out_point = OutPoint tx_hash i
-            in getOutput out_point >>= \case
-                   Nothing ->
-                       throwString $
-                       "Could not get spent outpoint: " <> show out_point
-                   Just Output {outSpender = Just Spender {..}} -> do
-                       $(logInfo) $
-                           logMe <> "Recursively deleting tx hash: " <>
-                           cs (txHashToHex spenderHash)
-                       deleteTransaction spenderHash
-                   Just _ -> return ()
+             in getOutput out_point >>= \case
+                    Nothing ->
+                        throwString $
+                        "Could not get spent outpoint: " <> show out_point
+                    Just Output {outSpender = Just Spender {..}} -> do
+                        $(logInfo) $
+                            logMe <> "Recursively deleting tx hash: " <>
+                            cs (txHashToHex spenderHash)
+                        deleteTransaction spenderHash
+                    Just _ -> return ()
     remove_outputs n_out =
         mapM_ (removeOutput . OutPoint tx_hash) (take n_out [0 ..])
     unspend_inputs = mapM_ unspendOutput
@@ -777,12 +780,12 @@ getBalanceOps = do
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
+    $(logDebug) $ logMe <> "Reverting best block..."
     net <- asks myNetwork
     db <- asks myBlockDB
     BlockValue {..} <- getBestBlock db Nothing
     when (blockValueHeader == getGenesisHeader net) . throwString $
-        "Attempted to revert genesis block hash: " <>
-        cs (blockHashToHex (headerHash (getGenesisHeader net)))
+        "Attempted to revert genesis block"
     $(logWarn) $ logMe <> "Reverting block hash: " <> cs (show blockValueHeight)
     import_txs <- mapM getSimpleTx (tail blockValueTxs)
     runMonadImport $ do
@@ -790,6 +793,9 @@ revertBestBlock = do
         revertBlock
     reset_peer (blockValueHeight - 1)
     runMonadImport $ mapM_ (`importTransaction` Nothing) import_txs
+    $(logDebug) $
+        logMe <> "Best block reverted. New best height: " <>
+        cs (show (blockValueHeight - 1))
   where
     reset_peer height = do
         base_height_box <- asks myBaseHeight
@@ -821,12 +827,14 @@ importTransaction tx maybe_block_ref =
                     cs (txHashToHex (txHash tx))
                 _ ->
                     $(logError) $
-                    logMe <> "When importing tx hash: " <>
+                    logMe <> "Could not import tx hash: " <>
                     cs (txHashToHex (txHash tx)) <>
-                    ": " <>
+                    " reason: " <>
                     cs (show e)
             asks myListener >>= \l -> atomically (l (TxException (txHash tx) e))
         Right () -> do
+            $(logDebug) $
+                logMe <> "Importing tx hash: " <> cs (txHashToHex (txHash tx))
             delete_spenders
             spend_inputs
             insert_outputs
@@ -848,7 +856,7 @@ importTransaction tx maybe_block_ref =
             getOutput prevOutput >>= \case
                 Nothing ->
                     unless (prevOutput == nullOutPoint) . throwString $
-                    "Could not get output for importing tx hash: " <>
+                    "Could not get output spent by tx hash: " <>
                     show (txHash tx)
                 Just Output {outSpender = Just Spender {..}} ->
                     deleteTransaction spenderHash
@@ -858,38 +866,45 @@ importTransaction tx maybe_block_ref =
             spendOutput
                 prevOutput
                 Spender
-                { spenderHash = txHash tx
-                , spenderIndex = i
-                , spenderBlock = maybe_block_ref
-                }
+                    { spenderHash = txHash tx
+                    , spenderIndex = i
+                    , spenderBlock = maybe_block_ref
+                    }
     insert_outputs =
         forM_ (zip [0 ..] (txOut tx)) $ \(i, TxOut {..}) ->
             addOutput
                 OutPoint {outPointHash = txHash tx, outPointIndex = i}
                 Output
-                { outputValue = outValue
-                , outBlock = maybe_block_ref
-                , outScript = scriptOutput
-                , outSpender = Nothing
-                }
+                    { outputValue = outValue
+                    , outBlock = maybe_block_ref
+                    , outScript = scriptOutput
+                    , outSpender = Nothing
+                    }
 
 syncBlocks :: MonadBlock m => m ()
-syncBlocks = void (runMaybeT sync)
-  where
-    sync = do
+syncBlocks = do
+    $(logDebug) $ logMe <> "Syncing blocks..."
+    void . runMaybeT $ do
         net <- asks myNetwork
-        (best_height, chain_best) <- revert_if_needed
+        chain_best <- asks myChain >>= chainGetBest
+        revert_if_needed chain_best
         let chain_height = nodeHeight chain_best
         base_height_box <- asks myBaseHeight
+        db <- asks myBlockDB
+        best_block <- getBestBlock db Nothing
+        let best_height = blockValueHeight best_block
         when (best_height == chain_height) $ do
             reset_peer best_height
-            fail "Already synced"
+            $(logDebug) $ logMe <> "Already synced"
+            empty
         base_height <- readTVarIO base_height_box
         p <- get_peer
-        when (base_height > best_height + 500) $
-            fail "Enough blocks already pending"
-        when (base_height >= chain_height) $
-            fail "All blocks have already been requested"
+        when (base_height > best_height + 500) $ do
+            $(logDebug) $ logMe <> "Enough blocks queued to download"
+            empty
+        when (base_height >= chain_height) $ do
+            $(logDebug) $ logMe <> "All blocks queued to download"
+            empty
         ch <- asks myChain
         let sync_lowest = min chain_height (base_height + 1)
             sync_highest = min chain_height (base_height + 501)
@@ -908,12 +923,15 @@ syncBlocks = void (runMaybeT sync)
                 else chainGetParents sync_lowest sync_top ch
         update_peer sync_highest (Just p)
         peerGetBlocks net p (map (headerHash . nodeHeader) sync_blocks)
+  where
     get_peer =
         asks myPeer >>= readTVarIO >>= \case
             Just p -> return p
             Nothing ->
                 asks myManager >>= managerGetPeers >>= \case
-                    [] -> fail "No peer to sync against"
+                    [] -> do
+                        $(logInfo) $ logMe <> "No peer to sync against"
+                        empty
                     p:_ -> return p
     reset_peer best_height = update_peer best_height Nothing
     update_peer height mp = do
@@ -922,43 +940,40 @@ syncBlocks = void (runMaybeT sync)
         atomically $ do
             writeTVar base_height_box height
             writeTVar peer_box mp
-    revert_if_needed = do
+    revert_if_needed chain_best = do
         db <- asks myBlockDB
         ch <- asks myChain
         best <- getBestBlock db Nothing
-        chain_best <- chainGetBest ch
         let best_hash = headerHash (blockValueHeader best)
             chain_hash = headerHash (nodeHeader chain_best)
-        if best_hash == chain_hash
-            then let best_height = blockValueHeight best
-                 in return (best_height, chain_best)
-            else chainGetBlock best_hash ch >>= \case
-                     Nothing -> do
-                         revertBestBlock
-                         revert_if_needed
-                     Just best_node -> do
-                         split_hash <-
-                             headerHash . nodeHeader <$>
-                             chainGetSplitBlock chain_best best_node ch
-                         best_height <- revert_until split_hash
-                         return (best_height, chain_best)
+        when (best_hash /= chain_hash) $
+            chainGetBlock best_hash ch >>= \case
+                Nothing -> do
+                    revertBestBlock
+                    revert_if_needed chain_best
+                Just best_node -> do
+                    split_hash <-
+                        headerHash . nodeHeader <$>
+                        chainGetSplitBlock chain_best best_node ch
+                    revert_until split_hash
     revert_until split = do
         db <- asks myBlockDB
         best <- getBestBlock db Nothing
         let best_hash = headerHash (blockValueHeader best)
             best_height = blockValueHeight best
-        if best_hash == split
-            then return best_height
-            else do
-                revertBestBlock
-                revert_until split
+        when (best_hash /= split) $ do
+            revertBestBlock
+            revert_until split
 
 importBlock :: (MonadError String m, MonadBlock m) => Block -> m ()
 importBlock block@Block {..} = do
+    $(logDebug) $
+        logMe <> "Importing block hash: " <>
+        cs (blockHashToHex (headerHash blockHeader))
     bn <- asks myChain >>= chainGetBlock (headerHash blockHeader)
     when (isNothing bn) $
         throwString $
-        "Could not obtain from chain block hash" <>
+        "Not in chain: block hash" <>
         cs (blockHashToHex (headerHash blockHeader))
     best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
     let best_hash = headerHash (blockValueHeader best)
@@ -972,7 +987,10 @@ processBlockMessage (BlockChainNew _) = syncBlocks
 
 processBlockMessage (BlockPeerConnect _) = syncBlocks
 
-processBlockMessage (BlockReceived _ b) =
+processBlockMessage (BlockReceived _ b) = do
+    $(logDebug) $
+        logMe <> "Received block hash: " <>
+        cs (blockHashToHex (headerHash (blockHeader b)))
     runExceptT (importBlock b) >>= \case
         Left e -> do
             let hash = headerHash (blockHeader b)
@@ -983,7 +1001,9 @@ processBlockMessage (BlockReceived _ b) =
                 fromString e
         Right () -> syncBlocks
 
-processBlockMessage (TxReceived _ tx) =
+processBlockMessage (TxReceived _ tx) = do
+    $(logDebug) $
+        logMe <> "Received transaction hash: " <> cs (txHashToHex (txHash tx))
     runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (BlockPeerDisconnect p) = do
@@ -1000,15 +1020,19 @@ processBlockMessage (BlockPeerDisconnect p) = do
                     writeTVar base_height_box (blockValueHeight best)
                     return True
                 else return False
-    when is_my_peer syncBlocks
+    when is_my_peer $ do
+        $(logDebug) $ logMe <> "Syncing peer disconnected"
+        syncBlocks
 
 processBlockMessage (BlockNotReceived p h) = do
-    $(logError) $
-        logMe <> "Syncing peer could not find block hash: " <> cs (show h)
+    $(logError) $ logMe <> "Peer unable to serve block hash: " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
-processBlockMessage (TxAvailable p ts) =
+processBlockMessage (TxAvailable p ts) = do
+    $(logDebug) $
+        logMe <> "Received " <> cs (show (length ts)) <>
+        " available transactions"
     isAtHeight >>= \h ->
         when h $ do
             net <- asks myNetwork
@@ -1018,7 +1042,12 @@ processBlockMessage (TxAvailable p ts) =
                     retrieve db Nothing (MempoolTx t) >>= \case
                         Nothing -> return Nothing
                         Just () -> return (Just t)
-            peerGetTxs net p (ts \\ has)
+            let new = ts \\ has
+            unless (null new) $ do
+                $(logDebug) $
+                    logMe <> "Requesting " <> cs (show (length new)) <>
+                    " new transactions"
+                peerGetTxs net p new
 
 processBlockMessage _ = return ()
 

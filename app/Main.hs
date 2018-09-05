@@ -37,6 +37,7 @@ data OptConfig = OptConfig
     , optConfigNetwork  :: !(Maybe Network)
     , optConfigDiscover :: !(Maybe Bool)
     , optConfigPeers    :: !(Maybe [(Host, Maybe Port)])
+    , optConfigMaxReqs  :: !(Maybe Int)
     }
 
 data Config = Config
@@ -45,7 +46,11 @@ data Config = Config
     , configNetwork  :: !Network
     , configDiscover :: !Bool
     , configPeers    :: ![(Host, Maybe Port)]
+    , configMaxReqs  :: !Int
     }
+
+defMaxReqs :: Int
+defMaxReqs = 500
 
 defPort :: Int
 defPort = 3000
@@ -67,6 +72,7 @@ optToConfig OptConfig {..} =
     , configNetwork = fromMaybe defNetwork optConfigNetwork
     , configDiscover = fromMaybe defDiscovery optConfigDiscover
     , configPeers = fromMaybe defPeers optConfigPeers
+    , configMaxReqs = fromMaybe defMaxReqs optConfigMaxReqs
     }
 
 instance Parsable BlockHash where
@@ -82,6 +88,7 @@ data Except
     | ServerError
     | BadRequest
     | UserError String
+    | OutOfBounds
     | StringError String
     deriving (Show, Eq)
 
@@ -95,6 +102,7 @@ instance ToJSON Except where
     toJSON ThingNotFound = object ["error" .= String "not found"]
     toJSON BadRequest = object ["error" .= String "bad request"]
     toJSON ServerError = object ["error" .= String "you made me kill a unicorn"]
+    toJSON OutOfBounds = object ["error" .= String "too many elements requested"]
     toJSON (StringError _) = object ["error" .= String "you made me kill a unicorn"]
     toJSON (UserError s) = object ["error" .= s]
 
@@ -141,7 +149,11 @@ config =
              (metavar "PEERS" <> long "peers" <>
               help
                   ("Comma-separated list of peers to connect to " <>
-                   "(i.e. localhost,peer.example.com:8333)")))
+                   "(i.e. localhost,peer.example.com:8333)"))) <*>
+    optional
+        (option
+            auto
+            (metavar "MAXREQ" <> long "maxreq" <> help ("Maximum requested element count")))
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -172,6 +184,7 @@ peerReader = mapM hp . ls
 
 defHandler :: Monad m => Except -> ActionT Except m ()
 defHandler ServerError   = json ServerError
+defHandler OutOfBounds   = status status413 >> json OutOfBounds
 defHandler ThingNotFound = status status404 >> json ThingNotFound
 defHandler BadRequest    = status status400 >> json BadRequest
 defHandler (UserError s) = status status400 >> json (UserError s)
@@ -220,6 +233,9 @@ main =
             (fullDesc <> progDesc "Blockchain store and API" <>
              Options.Applicative.header "haskoin-store: a blockchain indexer")
 
+testLength :: Monad m => Config -> Int -> ActionT Except m ()
+testLength conf l = when (l <= 0 || l > configMaxReqs conf) (raise OutOfBounds)
+
 runWeb ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => Config
@@ -241,9 +257,11 @@ runWeb conf pub mgr ch db = do
             getBlockAtHeight height db Nothing >>= maybeJSON
         get "/block/heights" $ do
             heights <- param "heights"
+            testLength conf (length heights)
             getBlocksAtHeights heights db Nothing >>= json
         get "/blocks" $ do
             blocks <- param "blocks"
+            testLength conf (length blocks)
             getBlocks blocks db Nothing >>= json
         get "/mempool" $ lift (getMempool db Nothing) >>= json
         get "/transaction/:txid" $ do
@@ -251,24 +269,28 @@ runWeb conf pub mgr ch db = do
             lift (getTx net txid db Nothing) >>= maybeJSON
         get "/transactions" $ do
             txids <- param "txids"
+            testLength conf (length txids)
             lift (getTxs net txids db Nothing) >>= json
         get "/address/:address/transactions" $ do
             address <- parse_address
             lift (getAddrTxs address db Nothing) >>= json
         get "/address/transactions" $ do
             addresses <- parse_addresses
+            testLength conf (length addresses)
             lift (getAddrsTxs addresses db Nothing) >>= json
         get "/address/:address/unspent" $ do
             address <- parse_address
             lift (getUnspent address db Nothing) >>= json
         get "/address/unspent" $ do
             addresses <- parse_addresses
+            testLength conf (length addresses)
             lift (getUnspents addresses db Nothing) >>= json
         get "/address/:address/balance" $ do
             address <- parse_address
             getBalance address db Nothing >>= json
         get "/address/balances" $ do
             addresses <- parse_addresses
+            testLength conf (length addresses)
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
@@ -300,13 +322,13 @@ runWeb conf pub mgr ch db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a  -> return a
+            Just a -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
         if length as == length addresses
-           then return as
-           else next
+            then return as
+            else next
     net = configNetwork conf
     runner f l = do
         u <- askUnliftIO
