@@ -722,12 +722,14 @@ deleteTxOps tx_hash =
     , deleteOp (OrphanTxKey tx_hash)
     ]
 
-purgeOrphanOps :: (MonadBlock m) => m [BatchOp]
-purgeOrphanOps = do
-    db <- asks myBlockDB
-    liftIO . runResourceT . runConduit $
-        matching db Nothing OrphanKey .| mapC (\(k, Tx {}) -> deleteOp k) .|
-        sinkList
+purgeOrphanOps :: (MonadBlock m, MonadImport m) => m [BatchOp]
+purgeOrphanOps =
+    fmap (fromMaybe []) . runMaybeT $ do
+        db <- asks myBlockDB
+        guard . isJust =<< gets blockAction
+        liftIO . runResourceT . runConduit $
+            matching db Nothing OrphanKey .| mapC (\(k, Tx {}) -> deleteOp k) .|
+            sinkList
 
 
 getSimpleTx :: MonadBlock m => TxHash -> m Tx
