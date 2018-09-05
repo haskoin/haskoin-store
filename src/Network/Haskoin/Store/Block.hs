@@ -129,7 +129,6 @@ runMonadImport f =
         gets blockAction >>= \case
             Just (ImportBlock Block {..}) -> do
                 atomically (l (BestBlock (headerHash blockHeader)))
-                syncMempoolOnce
             Just RevertBlock -> $(logWarn) $ logMe <> "Reverted best block"
             _ -> return ()
         $(logDebug) $ logMe <> "Database update complete"
@@ -918,6 +917,7 @@ syncBlocks = do
         when (best_height == chain_height) $ do
             reset_peer best_height
             $(logDebug) $ logMe <> "Already synced"
+            syncMempoolOnce
             empty
         base_height <- readTVarIO base_height_box
         p <- get_peer
