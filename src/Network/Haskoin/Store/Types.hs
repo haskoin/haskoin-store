@@ -318,6 +318,7 @@ instance Key HeightKey
 instance Key OutputKey
 instance Key TxKey
 instance Key MempoolTx
+instance Key OrphanTx
 instance Key AddrOutputKey
 instance R.KeyValue BlockKey BlockValue
 instance R.KeyValue TxKey TxRecord

@@ -36,6 +36,7 @@ import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B
+import           Conduit
 import           Data.List
 import           Data.Map                    (Map)
 import qualified Data.Map.Strict             as M
@@ -139,31 +140,36 @@ blockStore BlockConfig {..} = do
     peer_box <- newTVarIO Nothing
     mempool_box <- newTVarIO False
     runReaderT
-        (load_best >> syncBlocks >> run)
+        (init_db >> syncBlocks >> run)
         BlockRead
-        { mySelf = blockConfMailbox
-        , myBlockDB = blockConfDB
-        , myChain = blockConfChain
-        , myManager = blockConfManager
-        , myListener = blockConfListener
-        , myBaseHeight = base_height_box
-        , myPeer = peer_box
-        , myNetwork = blockConfNet
-        , myHasMempool = mempool_box
-        }
+            { mySelf = blockConfMailbox
+            , myBlockDB = blockConfDB
+            , myChain = blockConfChain
+            , myManager = blockConfManager
+            , myListener = blockConfListener
+            , myBaseHeight = base_height_box
+            , myPeer = peer_box
+            , myNetwork = blockConfNet
+            , myHasMempool = mempool_box
+            }
   where
-    run = forever $ do
-        $(logDebug) $ logMe <> "Awaiting message..."
-        msg <- receive blockConfMailbox
-        $(logDebug) $ logMe <> "Processing received message"
-        processBlockMessage msg
-    load_best =
-        retrieve blockConfDB Nothing BestBlockKey >>= \case
-            Nothing -> addNewBlock (genesisBlock blockConfNet)
-            Just (_ :: BlockHash) ->
-                getBestBlock blockConfDB Nothing >>= \BlockValue {..} -> do
-                    base_height_box <- asks myBaseHeight
-                    atomically $ writeTVar base_height_box blockValueHeight
+    run =
+        forever $ do
+            $(logDebug) $ logMe <> "Awaiting message..."
+            msg <- receive blockConfMailbox
+            $(logDebug) $ logMe <> "Processing received message"
+            processBlockMessage msg
+    init_db =
+        runResourceT $ do
+            runConduit $
+                matching blockConfDB Nothing OrphanKey .|
+                mapM_C (\(k, Tx {}) -> remove blockConfDB k)
+            retrieve blockConfDB Nothing BestBlockKey >>= \case
+                Nothing -> addNewBlock (genesisBlock blockConfNet)
+                Just (_ :: BlockHash) ->
+                    getBestBlock blockConfDB Nothing >>= \BlockValue {..} -> do
+                        base_height_box <- asks myBaseHeight
+                        atomically $ writeTVar base_height_box blockValueHeight
 
 getBestBlockHash :: MonadIO m => DB -> Maybe Snapshot -> m BlockHash
 getBestBlockHash db snapshot =
@@ -705,7 +711,11 @@ deleteOutOps out_point@OutPoint {..} = do
     return $ output_op : addr_ops
 
 deleteTxOps :: TxHash -> [BatchOp]
-deleteTxOps tx_hash = [deleteOp (TxKey tx_hash), deleteOp (MempoolTx tx_hash)]
+deleteTxOps tx_hash =
+    [ deleteOp (TxKey tx_hash)
+    , deleteOp (MempoolTx tx_hash)
+    , deleteOp (OrphanTxKey tx_hash)
+    ]
 
 getSimpleTx :: MonadBlock m => TxHash -> m Tx
 getSimpleTx tx_hash =
@@ -737,36 +747,44 @@ insertTxOps ImportTx {..} = do
     prev_outputs <- get_prev_outputs
     let key = TxKey (txHash importTx)
         mempool_key = MempoolTx (txHash importTx)
+        orphan_key = OrphanTxKey (txHash importTx)
         value =
             TxRecord
-            { txValueBlock = importTxBlock
-            , txValue = importTx
-            , txValuePrevOuts = prev_outputs
-            }
+                { txValueBlock = importTxBlock
+                , txValue = importTx
+                , txValuePrevOuts = prev_outputs
+                }
     case importTxBlock of
-        Nothing -> return [insertOp key value, insertOp mempool_key ()]
-        Just _  -> return [insertOp key value, deleteOp mempool_key]
+        Nothing ->
+            return
+                [ insertOp key value
+                , insertOp mempool_key ()
+                , deleteOp orphan_key
+                ]
+        Just _ ->
+            return
+                [insertOp key value, deleteOp mempool_key, deleteOp orphan_key]
   where
     get_prev_outputs =
         let real_inputs =
                 filter ((/= nullOutPoint) . prevOutput) (txIn importTx)
-        in forM real_inputs $ \TxIn {..} -> do
-               Output {..} <-
-                   getOutput prevOutput >>= \case
-                       Nothing ->
-                           throwString $
-                           "While importing tx hash: " <>
-                           cs (txHashToHex (txHash importTx)) <>
-                           "could not get outpoint: " <>
-                           showOutPoint prevOutput
-                       Just out -> return out
-               return
-                   ( prevOutput
-                   , PrevOut
-                     { prevOutValue = outputValue
-                     , prevOutBlock = outBlock
-                     , prevOutScript = outScript
-                     })
+         in forM real_inputs $ \TxIn {..} -> do
+                Output {..} <-
+                    getOutput prevOutput >>= \case
+                        Nothing ->
+                            throwString $
+                            "While importing tx hash: " <>
+                            cs (txHashToHex (txHash importTx)) <>
+                            "could not get outpoint: " <>
+                            showOutPoint prevOutput
+                        Just out -> return out
+                return
+                    ( prevOutput
+                    , PrevOut
+                          { prevOutValue = outputValue
+                          , prevOutBlock = outBlock
+                          , prevOutScript = outScript
+                          })
 
 getInsertTxOps :: (MonadBlock m, MonadImport m) => m [BatchOp]
 getInsertTxOps = do
