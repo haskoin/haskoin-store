@@ -150,7 +150,11 @@ blockStore BlockConfig {..} = do
         , myNetwork = blockConfNet
         }
   where
-    run = forever (processBlockMessage =<< receive blockConfMailbox)
+    run = forever $ do
+        $(logDebug) $ logMe <> "Awaiting message..."
+        msg <- receive blockConfMailbox
+        $(logDebug) $ logMe <> "Processing received message"
+        processBlockMessage msg
     load_best =
         retrieve blockConfDB Nothing BestBlockKey >>= \case
             Nothing -> addNewBlock (genesisBlock blockConfNet)
@@ -833,8 +837,6 @@ importTransaction tx maybe_block_ref =
                     cs (show e)
             asks myListener >>= \l -> atomically (l (TxException (txHash tx) e))
         Right () -> do
-            $(logDebug) $
-                logMe <> "Importing tx hash: " <> cs (txHashToHex (txHash tx))
             delete_spenders
             spend_inputs
             insert_outputs
@@ -983,9 +985,13 @@ importBlock block@Block {..} = do
 
 processBlockMessage :: MonadBlock m => BlockMessage -> m ()
 
-processBlockMessage (BlockChainNew _) = syncBlocks
+processBlockMessage (BlockChainNew _) = do
+    $(logDebug) $ logMe <> "Chain got a new block header"
+    syncBlocks
 
-processBlockMessage (BlockPeerConnect _) = syncBlocks
+processBlockMessage (BlockPeerConnect _) = do
+    $(logDebug) $ logMe <> "New peer connected"
+    syncBlocks
 
 processBlockMessage (BlockReceived _ b) = do
     $(logDebug) $
@@ -1007,6 +1013,7 @@ processBlockMessage (TxReceived _ tx) = do
     runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (BlockPeerDisconnect p) = do
+    $(logDebug) $ logMe <> "Peer disconnected"
     peer_box <- asks myPeer
     base_height_box <- asks myBaseHeight
     db <- asks myBlockDB
@@ -1049,7 +1056,8 @@ processBlockMessage (TxAvailable p ts) = do
                     " new transactions"
                 peerGetTxs net p new
 
-processBlockMessage _ = return ()
+processBlockMessage (PongReceived _ _) =
+    $(logDebug) $ logMe <> "Pong received"
 
 getAddrTxs ::
        MonadUnliftIO m
