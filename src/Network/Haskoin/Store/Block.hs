@@ -595,6 +595,9 @@ addNewBlock block@Block {..} =
             " hash: " <>
             cs (blockHashToHex (headerHash blockHeader))
         import_txs new_height
+        $(logDebug) $
+            logMe <> "Finished preprocessing transactions from block height: " <>
+            cs (show new_height)
         addBlock block
   where
     import_txs new_height =
@@ -856,38 +859,48 @@ validateTx outputs tx = do
     when (sum_outputs > sum_inputs) (throwError OverSpend)
 
 importTransaction ::
-       (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m ()
-importTransaction tx maybe_block_ref =
+       (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m Bool
+importTransaction tx maybe_block_ref = do
+    $(logDebug) $
+        logMe <> "Validating tx hash: " <> cs (txHashToHex (txHash tx))
     runExceptT validate_tx >>= \case
         Left e -> do
-            case e of
-                AlreadyImported ->
+            ret <- case e of
+                AlreadyImported -> do
                     $(logDebug) $
-                    logMe <> "Already imported tx hash: " <>
-                    cs (txHashToHex (txHash tx))
-                OrphanTx -> import_orphan
-                _ ->
+                        logMe <> "Already imported tx hash: " <>
+                        cs (txHashToHex (txHash tx))
+                    return True
+                OrphanTx -> do
+                    import_orphan
+                    return False
+                _ -> do
                     $(logError) $
-                    logMe <> "Could not import tx hash: " <>
-                    cs (txHashToHex (txHash tx)) <>
-                    " reason: " <>
-                    cs (show e)
+                        logMe <> "Could not import tx hash: " <>
+                        cs (txHashToHex (txHash tx)) <>
+                        " reason: " <>
+                        cs (show e)
+                    return False
             asks myListener >>= \l -> atomically (l (TxException (txHash tx) e))
+            return ret
         Right () -> do
+            $(logDebug) $
+                logMe <> "Validated tx hash: " <> cs (txHashToHex (txHash tx))
             delete_spenders
+            $(logDebug) $
+                logMe <> "Freed outputs spent by tx hash: " <>
+                cs (txHashToHex (txHash tx))
             spend_inputs
+            $(logDebug) $
+                logMe <> "Processed imponts spent by tx hash: " <>
+                cs (txHashToHex (txHash tx))
             insert_outputs
+            $(logDebug) $
+                logMe <> "Registered outputs created by tx hash: " <>
+                cs (txHashToHex (txHash tx))
             insertTx tx maybe_block_ref
-            flush_orphans
+            return True
   where
-    flush_orphans = do
-            orphans <- get_orphans
-            mapM_ (`importTransaction` Nothing) (map snd orphans)
-            orphans' <- get_orphans
-            when (length orphans' < length orphans) flush_orphans
-    get_orphans = do
-        db <- asks myBlockDB
-        liftIO $ R.matchingAsList db Nothing OrphanKey
     import_orphan = do
         $(logDebug) $
             logMe <> "Storing orphan transaction hash: " <>
@@ -1036,7 +1049,7 @@ importBlock block@Block {..} = do
     when (prev_hash /= best_hash) (throwError "does not build on best")
     addNewBlock block
 
-processBlockMessage :: MonadBlock m => BlockMessage -> m ()
+processBlockMessage :: (MonadUnliftIO m, MonadBlock m) => BlockMessage -> m ()
 
 processBlockMessage (BlockChainNew _) = do
     $(logDebug) $ logMe <> "Chain got a new block header"
@@ -1067,11 +1080,19 @@ processBlockMessage (TxReceived _ tx) =
                 logMe <> "Received transaction hash: " <>
                 cs (txHashToHex (txHash tx))
             runMonadImport $ importTransaction tx Nothing
+            import_orphans
+  where
+    import_orphans = do
+        db <- asks myBlockDB
+        ret <- runResourceT . runConduit $
+            matching db Nothing OrphanKey .| mapMC (import_tx . snd) .| anyC id
+        when ret import_orphans
+    import_tx tx = runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (TxPublished tx) = do
     $(logDebug) $
         logMe <> "Published transaction hash: " <> cs (txHashToHex (txHash tx))
-    runMonadImport $ importTransaction tx Nothing
+    void . runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (BlockPeerDisconnect p) = do
     $(logDebug) $ logMe <> "Peer disconnected"
