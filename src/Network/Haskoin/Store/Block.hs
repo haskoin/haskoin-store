@@ -1074,7 +1074,10 @@ processBlockMessage (TxAvailable p ts) = do
                     retrieve db Nothing (MempoolTx t) >>= \case
                         Nothing -> return Nothing
                         Just () -> return (Just t)
-            let new = ts \\ has
+            ors <-
+                map (\((OrphanTxKey h), Tx {}) -> h) <$>
+                liftIO (matchingAsList db Nothing OrphanKey)
+            let new = (ts \\ has) \\ ors
             unless (null new) $ do
                 $(logDebug) $
                     logMe <> "Requesting " <> cs (show (length new)) <>
@@ -1183,7 +1186,7 @@ syncMempoolOnce =
         peers <- managerGetPeers m
         guard (not (null peers))
         $(logInfo) $ logMe <> "Syncing mempool"
-        mapM_ (MMempool `sendMessage`) peers
+        MMempool `sendMessage` head peers
         atomically $ writeTVar n True
 
 isAtHeight :: MonadBlock m => m Bool
