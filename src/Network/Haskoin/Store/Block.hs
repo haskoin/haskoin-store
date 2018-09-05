@@ -27,6 +27,7 @@ module Network.Haskoin.Store.Block
       , getMempool
       ) where
 
+import           Conduit
 import           Control.Applicative
 import           Control.Concurrent.NQE
 import           Control.Monad.Except
@@ -36,7 +37,6 @@ import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B
-import           Conduit
 import           Data.List
 import           Data.Map                    (Map)
 import qualified Data.Map.Strict             as M
@@ -63,7 +63,7 @@ data BlockRead = BlockRead
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
     , myNetwork    :: !Network
-    , myHasMempool :: !(TVar Bool)
+    , myMempool    :: !(TVar Bool)
     }
 
 type MonadBlock m
@@ -150,7 +150,7 @@ blockStore BlockConfig {..} = do
             , myBaseHeight = base_height_box
             , myPeer = peer_box
             , myNetwork = blockConfNet
-            , myHasMempool = mempool_box
+            , myMempool = mempool_box
             }
   where
     run =
@@ -1045,10 +1045,13 @@ processBlockMessage (BlockReceived _ b) = do
                 fromString e
         Right () -> syncBlocks
 
-processBlockMessage (TxReceived _ tx) = do
-    $(logDebug) $
-        logMe <> "Received transaction hash: " <> cs (txHashToHex (txHash tx))
-    runMonadImport $ importTransaction tx Nothing
+processBlockMessage (TxReceived _ tx) =
+    asks myMempool >>= readTVarIO >>= \x ->
+        when x $ do
+            $(logDebug) $
+                logMe <> "Received transaction hash: " <>
+                cs (txHashToHex (txHash tx))
+            runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (TxPublished tx) = do
     $(logDebug) $
@@ -1196,7 +1199,7 @@ getUnspent addr db s = do
 syncMempoolOnce :: MonadBlock m => m ()
 syncMempoolOnce =
     void . runMaybeT $ do
-        n <- asks myHasMempool
+        n <- asks myMempool
         x <- readTVarIO n
         guard (not x)
         guard =<< isAtHeight
