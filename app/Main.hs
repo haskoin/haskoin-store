@@ -14,6 +14,7 @@ import           Data.Aeson              (ToJSON (..), Value (..), encode,
                                           object, (.=))
 import           Data.Bits
 import           Data.ByteString.Builder (lazyByteString)
+import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
 import qualified Data.Text               as T
@@ -117,6 +118,9 @@ instance ToJSON JsonEvent where
     toJSON (JsonEventBlock block_hash) =
         object ["type" .= String "block", "id" .= block_hash]
 
+netNames :: String
+netNames = intercalate "|" $ map getNetworkName allNets
+
 config :: Parser OptConfig
 config =
     OptConfig <$>
@@ -138,8 +142,7 @@ config =
              (eitherReader networkReader)
              (metavar "NETWORK" <> long "network" <> short 'n' <>
               help
-                  ("Network to use: " <>
-                   "btc|btc-test|btc-regtest|bch|bch-test|bch-regtest (default: " <>
+                  ("Network to use: " <> netNames <> "(default: " <>
                    getNetworkName defNetwork <>
                    ")"))) <*>
     optional (switch (long "discover" <> help "Enable peer discovery")) <*>
@@ -152,8 +155,9 @@ config =
                    "(i.e. localhost,peer.example.com:8333)"))) <*>
     optional
         (option
-            auto
-            (metavar "MAXREQ" <> long "maxreq" <> help ("Maximum requested element count")))
+             auto
+             (metavar "MAXREQ" <> long "maxreq" <>
+              help "Maximum requested element count"))
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -323,7 +327,7 @@ runWeb conf pub mgr ch bl db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a -> return a
+            Just a  -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
