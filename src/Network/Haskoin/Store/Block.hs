@@ -35,7 +35,6 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
-import           Data.ByteString             (ByteString)
 import qualified Data.ByteString             as B
 import           Data.List
 import           Data.Map                    (Map)
@@ -569,7 +568,7 @@ addNewBlock :: MonadBlock m => Block -> m ()
 addNewBlock block@Block {..} =
     runMonadImport $ do
         new_height <- get_new_height
-        $(logInfoS) "BlockStore " $
+        $(logInfoS) "BlockStore" $
             "Importing block height: " <> cs (show new_height)
         import_txs new_height
         addBlock block
