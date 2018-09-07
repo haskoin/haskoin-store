@@ -46,6 +46,7 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as S
 import           Data.String
 import           Data.String.Conversions
+import           Data.Text                   (Text)
 import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query      as R
@@ -110,34 +111,19 @@ runMonadImport f =
             }
   where
     update_database = do
-        $(logDebug) $ logMe <> "Updating database..."
         oops <- purgeOrphanOps
         ops <-
-            ((<> oops) . concat) <$>
+            (<> oops) . concat <$>
             sequence
                 [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
         db <- asks myBlockDB
         writeBatch db ops
         l <- asks myListener
-        when (not (null oops)) $
-            $(logDebug) $
-            logMe <> "Deleted " <> cs (show (length oops)) <>
-            " orphan transactions"
-        gets deleteTxs >>= \ths ->
-            forM_ ths $ \th ->
-                $(logInfo) $ logMe <> "Deleted tx hash: " <> cs (txHashToHex th)
-        gets newTxs >>= \txs ->
-            forM_ (M.filter (isNothing . importTxBlock) txs) $ \ImportTx {..} -> do
-                $(logInfo) $
-                    logMe <> "Imported tx hash: " <>
-                    cs (txHashToHex (txHash importTx))
-                atomically (l (MempoolNew (txHash importTx)))
         gets blockAction >>= \case
-            Just (ImportBlock Block {..}) -> do
+            Just (ImportBlock Block {..}) ->
                 atomically (l (BestBlock (headerHash blockHeader)))
-            Just RevertBlock -> $(logWarn) $ logMe <> "Reverted best block"
+            Just RevertBlock -> $(logWarnS) "BlockStore" "Reverted best block"
             _ -> return ()
-        $(logDebug) $ logMe <> "Database update complete"
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
@@ -160,9 +146,7 @@ blockStore BlockConfig {..} = do
   where
     run =
         forever $ do
-            $(logDebug) $ logMe <> "Awaiting message..."
             msg <- receive blockConfMailbox
-            $(logDebug) $ logMe <> "Processing received message"
             processBlockMessage msg
     init_db =
         runResourceT $ do
@@ -574,10 +558,7 @@ deleteTransaction tx_hash = shouldDelete tx_hash >>= \d -> unless d delete_it
                     Nothing ->
                         throwString $
                         "Could not get spent outpoint: " <> show out_point
-                    Just Output {outSpender = Just Spender {..}} -> do
-                        $(logInfo) $
-                            logMe <> "Recursively deleting tx hash: " <>
-                            cs (txHashToHex spenderHash)
+                    Just Output {outSpender = Just Spender {..}} ->
                         deleteTransaction spenderHash
                     Just _ -> return ()
     remove_outputs n_out =
@@ -588,16 +569,9 @@ addNewBlock :: MonadBlock m => Block -> m ()
 addNewBlock block@Block {..} =
     runMonadImport $ do
         new_height <- get_new_height
-        $(logInfo) $
-            logMe <> "Importing block height: " <> cs (show new_height) <>
-            " txs: " <>
-            cs (show (length blockTxns)) <>
-            " hash: " <>
-            cs (blockHashToHex (headerHash blockHeader))
+        $(logInfoS) "BlockStore " $
+            "Importing block height: " <> cs (show new_height)
         import_txs new_height
-        $(logDebug) $
-            logMe <> "Finished preprocessing transactions from block height: " <>
-            cs (show new_height)
         addBlock block
   where
     import_txs new_height =
@@ -612,10 +586,9 @@ addNewBlock block@Block {..} =
         if blockHeader == getGenesisHeader net
             then return 0
             else do
-                db <- asks myBlockDB
-                best <- getBestBlock db Nothing
-                let best_hash = headerHash (blockValueHeader best)
-                when (prev_block /= best_hash) . throwString $
+                best <- asks myBlockDB >>= \db -> getBestBlock db Nothing
+                when (prev_block /= headerHash (blockValueHeader best)) .
+                    throwString $
                     "Block does not build on best at hash: " <> show new_hash
                 return $ blockValueHeight best + 1
 
@@ -822,22 +795,17 @@ getBalanceOps = do
 
 revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
-    $(logDebug) $ logMe <> "Reverting best block..."
     net <- asks myNetwork
     db <- asks myBlockDB
     BlockValue {..} <- getBestBlock db Nothing
     when (blockValueHeader == getGenesisHeader net) . throwString $
         "Attempted to revert genesis block"
-    $(logWarn) $ logMe <> "Reverting block hash: " <> cs (show blockValueHeight)
     import_txs <- mapM getSimpleTx (tail blockValueTxs)
     runMonadImport $ do
         mapM_ deleteTransaction blockValueTxs
         revertBlock
     reset_peer (blockValueHeight - 1)
     runMonadImport $ mapM_ (`importTransaction` Nothing) import_txs
-    $(logDebug) $
-        logMe <> "Best block reverted. New best height: " <>
-        cs (show (blockValueHeight - 1))
   where
     reset_peer height = do
         base_height_box <- asks myBaseHeight
@@ -860,51 +828,35 @@ validateTx outputs tx = do
 
 importTransaction ::
        (MonadBlock m, MonadImport m) => Tx -> Maybe BlockRef -> m Bool
-importTransaction tx maybe_block_ref = do
-    $(logDebug) $
-        logMe <> "Validating tx hash: " <> cs (txHashToHex (txHash tx))
+importTransaction tx maybe_block_ref =
     runExceptT validate_tx >>= \case
         Left e -> do
-            ret <- case e of
-                AlreadyImported -> do
-                    $(logDebug) $
-                        logMe <> "Already imported tx hash: " <>
-                        cs (txHashToHex (txHash tx))
-                    return True
-                OrphanTx -> do
-                    import_orphan
-                    return False
-                _ -> do
-                    $(logError) $
-                        logMe <> "Could not import tx hash: " <>
-                        cs (txHashToHex (txHash tx)) <>
-                        " reason: " <>
-                        cs (show e)
-                    return False
+            ret <-
+                case e of
+                    AlreadyImported ->
+                        return True
+                    OrphanTx -> do
+                        import_orphan
+                        return False
+                    _ -> do
+                        $(logErrorS) "BlockStore" $
+                            "Could not import tx hash: " <>
+                            cs (txHashToHex (txHash tx)) <>
+                            " reason: " <>
+                            cs (show e)
+                        return False
             asks myListener >>= \l -> atomically (l (TxException (txHash tx) e))
             return ret
         Right () -> do
-            $(logDebug) $
-                logMe <> "Validated tx hash: " <> cs (txHashToHex (txHash tx))
             delete_spenders
-            $(logDebug) $
-                logMe <> "Freed outputs spent by tx hash: " <>
-                cs (txHashToHex (txHash tx))
             spend_inputs
-            $(logDebug) $
-                logMe <> "Processed imponts spent by tx hash: " <>
-                cs (txHashToHex (txHash tx))
             insert_outputs
-            $(logDebug) $
-                logMe <> "Registered outputs created by tx hash: " <>
-                cs (txHashToHex (txHash tx))
             insertTx tx maybe_block_ref
             return True
   where
     import_orphan = do
-        $(logDebug) $
-            logMe <> "Storing orphan transaction hash: " <>
-            cs (txHashToHex (txHash tx))
+        $(logInfoS) "BlockStore " $
+            "Got orphan tx hash: " <> cs (txHashToHex (txHash tx))
         db <- asks myBlockDB
         R.insert db (OrphanTxKey (txHash tx)) tx
     validate_tx
@@ -949,8 +901,7 @@ importTransaction tx maybe_block_ref = do
                     }
 
 syncBlocks :: MonadBlock m => m ()
-syncBlocks = do
-    $(logDebug) $ logMe <> "Syncing blocks..."
+syncBlocks =
     void . runMaybeT $ do
         net <- asks myNetwork
         chain_best <- asks myChain >>= chainGetBest
@@ -962,17 +913,12 @@ syncBlocks = do
         let best_height = blockValueHeight best_block
         when (best_height == chain_height) $ do
             reset_peer best_height
-            $(logDebug) $ logMe <> "Already synced"
             syncMempoolOnce
             empty
         base_height <- readTVarIO base_height_box
         p <- get_peer
-        when (base_height > best_height + 500) $ do
-            $(logDebug) $ logMe <> "Enough blocks queued to download"
-            empty
-        when (base_height >= chain_height) $ do
-            $(logDebug) $ logMe <> "All blocks queued to download"
-            empty
+        when (base_height > best_height + 500) empty
+        when (base_height >= chain_height) empty
         ch <- asks myChain
         let sync_lowest = min chain_height (base_height + 1)
             sync_highest = min chain_height (base_height + 501)
@@ -997,9 +943,7 @@ syncBlocks = do
             Just p -> return p
             Nothing ->
                 asks myManager >>= managerGetPeers >>= \case
-                    [] -> do
-                        $(logInfo) $ logMe <> "No peer to sync against"
-                        empty
+                    [] -> empty
                     p:_ -> return p
     reset_peer best_height = update_peer best_height Nothing
     update_peer height mp = do
@@ -1025,19 +969,15 @@ syncBlocks = do
                         chainGetSplitBlock chain_best best_node ch
                     revert_until split_hash
     revert_until split = do
-        db <- asks myBlockDB
-        best <- getBestBlock db Nothing
-        let best_hash = headerHash (blockValueHeader best)
-            best_height = blockValueHeight best
+        best_hash <-
+            asks myBlockDB >>= \db ->
+                headerHash . blockValueHeader <$> getBestBlock db Nothing
         when (best_hash /= split) $ do
             revertBestBlock
             revert_until split
 
 importBlock :: (MonadError String m, MonadBlock m) => Block -> m ()
 importBlock block@Block {..} = do
-    $(logDebug) $
-        logMe <> "Importing block hash: " <>
-        cs (blockHashToHex (headerHash blockHeader))
     bn <- asks myChain >>= chainGetBlock (headerHash blockHeader)
     when (isNothing bn) $
         throwString $
@@ -1051,24 +991,16 @@ importBlock block@Block {..} = do
 
 processBlockMessage :: (MonadUnliftIO m, MonadBlock m) => BlockMessage -> m ()
 
-processBlockMessage (BlockChainNew _) = do
-    $(logDebug) $ logMe <> "Chain got a new block header"
-    syncBlocks
+processBlockMessage (BlockChainNew _) = syncBlocks
 
-processBlockMessage (BlockPeerConnect _) = do
-    $(logDebug) $ logMe <> "New peer connected"
-    syncBlocks
+processBlockMessage (BlockPeerConnect _) = syncBlocks
 
-processBlockMessage (BlockReceived _ b) = do
-    $(logDebug) $
-        logMe <> "Received block hash: " <>
-        cs (blockHashToHex (headerHash (blockHeader b)))
+processBlockMessage (BlockReceived _ b) =
     runExceptT (importBlock b) >>= \case
         Left e -> do
             let hash = headerHash (blockHeader b)
-            $(logError) $
-                logMe <> "Could not import block hash:" <>
-                cs (blockHashToHex hash) <>
+            $(logErrorS) "BlockStore" $
+                "Could not import block hash:" <> cs (blockHashToHex hash) <>
                 " error: " <>
                 fromString e
         Right () -> syncBlocks
@@ -1076,26 +1008,21 @@ processBlockMessage (BlockReceived _ b) = do
 processBlockMessage (TxReceived _ tx) =
     isAtHeight >>= \x ->
         when x $ do
-            $(logDebug) $
-                logMe <> "Received transaction hash: " <>
-                cs (txHashToHex (txHash tx))
-            runMonadImport $ importTransaction tx Nothing
+            _ <- runMonadImport $ importTransaction tx Nothing
             import_orphans
   where
     import_orphans = do
         db <- asks myBlockDB
-        ret <- runResourceT . runConduit $
+        ret <-
+            runResourceT . runConduit $
             matching db Nothing OrphanKey .| mapMC (import_tx . snd) .| anyC id
         when ret import_orphans
-    import_tx tx = runMonadImport $ importTransaction tx Nothing
+    import_tx tx' = runMonadImport $ importTransaction tx' Nothing
 
-processBlockMessage (TxPublished tx) = do
-    $(logDebug) $
-        logMe <> "Published transaction hash: " <> cs (txHashToHex (txHash tx))
+processBlockMessage (TxPublished tx) =
     void . runMonadImport $ importTransaction tx Nothing
 
 processBlockMessage (BlockPeerDisconnect p) = do
-    $(logDebug) $ logMe <> "Peer disconnected"
     peer_box <- asks myPeer
     base_height_box <- asks myBaseHeight
     db <- asks myBlockDB
@@ -1109,20 +1036,18 @@ processBlockMessage (BlockPeerDisconnect p) = do
                     writeTVar base_height_box (blockValueHeight best)
                     return True
                 else return False
-    when is_my_peer $ do
-        $(logDebug) $ logMe <> "Syncing peer disconnected"
-        syncBlocks
+    when is_my_peer syncBlocks
 
 processBlockMessage (BlockNotReceived p h) = do
-    $(logError) $ logMe <> "Peer unable to serve block hash: " <> cs (show h)
+    $(logErrorS) "BlockStore" $ "Peer unable to serve block hash: " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
-processBlockMessage (TxAvailable p ts) = do
+processBlockMessage (TxAvailable p ts) =
     isAtHeight >>= \h ->
         when h $ do
-            $(logDebug) $
-                logMe <> "Received " <> cs (show (length ts)) <>
+            $(logDebugS) "BlockStore" $
+                "Received " <> cs (show (length ts)) <>
                 " available transactions from a peer"
             net <- asks myNetwork
             db <- asks myBlockDB
@@ -1132,17 +1057,17 @@ processBlockMessage (TxAvailable p ts) = do
                         Nothing -> return Nothing
                         Just () -> return (Just t)
             ors <-
-                map (\((OrphanTxKey h), Tx {}) -> h) <$>
+                map (\(OrphanTxKey k, Tx {}) -> k) <$>
                 liftIO (matchingAsList db Nothing OrphanKey)
             let new = (ts \\ has) \\ ors
             unless (null new) $ do
-                $(logDebug) $
-                    logMe <> "Requesting " <> cs (show (length new)) <>
-                    " new transactions"
+                $(logDebugS) "BlockStore" $
+                    "Requesting " <> cs (show (length new)) <>
+                    " new transactions from peer"
                 peerGetTxs net p new
 
 processBlockMessage (PongReceived p n) = do
-    $(logDebug) $ logMe <> "Pong received"
+    $(logDebugS) "BlockStore" $ "Pong received with nonce" <> cs (show n)
     asks myListener >>= atomically . ($ PeerPong p n)
 
 getAddrTxs ::
@@ -1159,9 +1084,9 @@ getAddrsTxs ::
     -> DB
     -> Maybe Snapshot
     -> m [AddressTx]
-getAddrsTxs [] db s = return []
+getAddrsTxs [] _ _ = return []
 getAddrsTxs addrs db s = do
-    when (not (all ((== net) . getAddrNet) addrs)) $
+    unless (all ((== net) . getAddrNet) addrs) $
         throwString "Not all addresses in same network"
     case s of
         Nothing -> R.withSnapshot db $ g . Just
@@ -1242,7 +1167,7 @@ syncMempoolOnce =
         m <- asks myManager
         peers <- managerGetPeers m
         guard (not (null peers))
-        $(logInfo) $ logMe <> "Syncing mempool"
+        $(logInfoS) "BlockStore" "Syncing mempool..."
         MMempool `sendMessage` head peers
         atomically $ writeTVar n True
 
@@ -1254,12 +1179,9 @@ isAtHeight = do
     cb <- chainGetBest ch
     return (headerHash (nodeHeader cb) == bb)
 
-logMe :: IsString a => a
-logMe = "[Block] "
-
 zero :: TxHash
 zero = "0000000000000000000000000000000000000000000000000000000000000000"
 
-showOutPoint :: (IsString a, ConvertibleStrings ByteString a) => OutPoint -> a
+showOutPoint :: (IsString a, ConvertibleStrings Text a) => OutPoint -> a
 showOutPoint OutPoint {..} =
     cs $ txHashToHex outPointHash <> ":" <> cs (show outPointIndex)

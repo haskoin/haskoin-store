@@ -340,9 +340,7 @@ instance Serialize MempoolTx where
         guard . (== 0x07) =<< getWord8
         record <|> return MempoolKey
       where
-        record = do
-            h <- get
-            return (MempoolTx h)
+        record = MempoolTx <$> get
 
 instance Serialize OrphanTx where
     put (OrphanTxKey h) = do
@@ -353,9 +351,7 @@ instance Serialize OrphanTx where
         guard . (== 0x08) =<< getWord8
         record <|> return OrphanKey
       where
-        record = do
-            h <- get
-            return (OrphanTxKey h)
+        record = OrphanTxKey <$> get
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
@@ -419,8 +415,7 @@ instance Serialize MultiTxKey where
       where
         base = do
             guard . (== 0x02) =<< getWord8
-            k <- get
-            return (BaseTxKey k)
+            BaseTxKey <$> get
 
 instance Serialize MultiTxValue where
     put (MultiTx v)       = put v
@@ -531,6 +526,7 @@ netByte net | net == btc        = 0x00
             | net == bch        = 0x04
             | net == bchTest    = 0x05
             | net == bchRegTest = 0x06
+            | otherwise         = 0xff
 
 byteNet :: Word8 -> Maybe Network
 byteNet 0x00 = Just btc
@@ -539,6 +535,7 @@ byteNet 0x02 = Just btcRegTest
 byteNet 0x04 = Just bch
 byteNet 0x05 = Just bchTest
 byteNet 0x06 = Just bchRegTest
+byteNet _ = Nothing
 
 getByteNet :: Get Network
 getByteNet =
@@ -750,8 +747,7 @@ instance Serialize BlockKey where
         put hash
     get = do
         guard . (== 0x01) =<< getWord8
-        hash <- get
-        return (BlockKey hash)
+        BlockKey <$> get
 
 instance Serialize TxKey where
     put (TxKey hash) = do
