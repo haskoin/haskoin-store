@@ -10,13 +10,13 @@ nix:
     - zlib
 extra-deps:
   - git: https://github.com/haskoin/haskoin-core.git
-    commit: f573ed574d1a40bbc0dcf0c9f1f9c408dd1ce531
+    commit: 0b0acbbda7517d256942fb23eec914a670d79218
   - git: https://github.com/xenog/nqe.git
     commit: 43661fd297bd2e8d1ab61e7a9cf8030130b7e82e
   - git: https://github.com/xenog/rocksdb-query.git
     commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
   - git: https://github.com/haskoin/haskoin-node.git
-    commit: b3ef659782ecd4aa1510594c215f784fb731e84a
+    commit: 521c6e9330c3007915f770d4ca4dd928346f09ab
   - rocksdb-haskell-1.0.1
   - murmur3-1.0.3
   - secp256k1-1.1.2

@@ -49,7 +49,7 @@ import           Data.Text                   (Text)
 import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query      as R
-import           Network.Haskoin.Core
+import           Haskoin
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store.Types
 import           UnliftIO
@@ -994,12 +994,14 @@ processBlockMessage (BlockChainNew _) = syncBlocks
 
 processBlockMessage (BlockPeerConnect _) = syncBlocks
 
-processBlockMessage (BlockReceived _ b) =
+processBlockMessage (BlockReceived p b) =
     runExceptT (importBlock b) >>= \case
         Left e -> do
+            pstr <- peerString p
             let hash = headerHash (blockHeader b)
             $(logErrorS) "BlockStore" $
-                "Could not import block hash:" <> cs (blockHashToHex hash) <>
+                "Could not import from peer" <> pstr <> " block hash:" <>
+                cs (blockHashToHex hash) <>
                 " error: " <>
                 fromString e
         Right () -> syncBlocks
@@ -1038,16 +1040,19 @@ processBlockMessage (BlockPeerDisconnect p) = do
     when is_my_peer syncBlocks
 
 processBlockMessage (BlockNotReceived p h) = do
-    $(logErrorS) "BlockStore" $ "Peer unable to serve block hash: " <> cs (show h)
+    pstr <- peerString p
+    $(logErrorS) "BlockStore" $
+        "Peer " <> pstr <> " unable to serve block hash: " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
 processBlockMessage (TxAvailable p ts) =
     isAtHeight >>= \h ->
         when h $ do
+            pstr <- peerString p
             $(logDebugS) "BlockStore" $
-                "Received " <> cs (show (length ts)) <>
-                " available transactions from a peer"
+                "Received  " <> cs (show (length ts)) <>
+                " tx inventory from peer " <> pstr
             net <- asks myNetwork
             db <- asks myBlockDB
             has <-
@@ -1062,11 +1067,13 @@ processBlockMessage (TxAvailable p ts) =
             unless (null new) $ do
                 $(logDebugS) "BlockStore" $
                     "Requesting " <> cs (show (length new)) <>
-                    " new transactions from peer"
+                    " new txs from peer " <> pstr
                 peerGetTxs net p new
 
 processBlockMessage (PongReceived p n) = do
-    $(logDebugS) "BlockStore" $ "Pong received with nonce" <> cs (show n)
+    pstr <- peerString p
+    $(logDebugS) "BlockStore" $
+        "Pong received with nonce " <> cs (show n) <> " from peer " <> pstr
     asks myListener >>= atomically . ($ PeerPong p n)
 
 getAddrTxs ::
@@ -1166,8 +1173,11 @@ syncMempoolOnce =
         m <- asks myManager
         peers <- managerGetPeers m
         guard (not (null peers))
-        $(logInfoS) "BlockStore" "Syncing mempool..."
-        MMempool `sendMessage` onlinePeerMailbox (head peers)
+        let p = head peers
+        $(logInfoS) "BlockStore" $
+            "Syncing mempool with peer " <>
+            fromString (show (onlinePeerAddress p))
+        MMempool `sendMessage` onlinePeerMailbox p
         atomically $ writeTVar n True
 
 isAtHeight :: MonadBlock m => m Bool
@@ -1184,3 +1194,10 @@ zero = "0000000000000000000000000000000000000000000000000000000000000000"
 showOutPoint :: (IsString a, ConvertibleStrings Text a) => OutPoint -> a
 showOutPoint OutPoint {..} =
     cs $ txHashToHex outPointHash <> ":" <> cs (show outPointIndex)
+
+peerString :: (MonadBlock m, IsString a) => Peer -> m a
+peerString p = do
+    mgr <- asks myManager
+    managerGetPeer mgr p >>= \case
+        Nothing -> return "[unknown]"
+        Just o -> return $ fromString $ show $ onlinePeerAddress o

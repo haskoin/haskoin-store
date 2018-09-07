@@ -18,7 +18,7 @@ import           Data.Maybe
 import           Data.String.Conversions
 import qualified Data.Text               as T
 import           Database.RocksDB        hiding (get)
-import           Network.Haskoin.Core
+import           Haskoin
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store
 import           Network.HTTP.Types

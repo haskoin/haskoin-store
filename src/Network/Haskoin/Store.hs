@@ -41,6 +41,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
 import           Data.Serialize
+import           Data.String
 import           Data.String.Conversions
 import           Database.RocksDB
 import           Network.Haskoin.Block
@@ -156,46 +157,50 @@ storeDispatch (PeerEvent (p, GotTx tx)) = do
     b <- asks myBlockStore
     TxReceived p tx `send` b
 
-storeDispatch (PeerEvent (_, Rejected Reject {..})) =
+storeDispatch (PeerEvent (p, Rejected Reject {..})) =
     void . runMaybeT $ do
         l <- asks myListener
         guard (rejectMessage == MCTx)
-        tx_hash <- decode_tx_hash rejectData
+        pstr <- peerString p
+        tx_hash <- decode_tx_hash pstr rejectData
         case rejectCode of
             RejectInvalid -> do
                 $(logErrorS) "Store" $
-                    "Peer rejected invalid tx hash: " <>
+                    "Peer " <> pstr <> " rejected invalid tx hash: " <>
                     cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash InvalidTx))
             RejectDuplicate -> do
                 $(logErrorS) "Store" $
-                    "Peer rejected double-spend tx hash: " <>
+                    "Peer " <> pstr <> " rejected double-spend tx hash: " <>
                     cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash DoubleSpend))
             RejectNonStandard -> do
                 $(logErrorS) "Store" $
-                    "Peer rejected non-standard tx hash: " <>
+                    "Peer " <> pstr <> " rejected non-standard tx hash: " <>
                     cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash NonStandard))
             RejectDust -> do
                 $(logErrorS) "Store" $
-                    "Peer rejected dust tx hash: " <> cs (txHashToHex tx_hash)
+                    "Peer " <> pstr <> " rejected dust tx hash: " <>
+                    cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash Dust))
             RejectInsufficientFee -> do
                 $(logErrorS) "Store" $
-                    "Peer rejected low fee tx hash: " <>
+                    "Peer " <> pstr <> " rejected low fee tx hash: " <>
                     cs (txHashToHex tx_hash)
                 atomically (l (TxException tx_hash LowFee))
             _ -> do
                 $(logErrorS) "Store" $
-                    "Peer rejected tx hash: " <> cs (show rejectCode)
+                    "Peer " <> pstr <> " rejected tx hash: " <>
+                    cs (show rejectCode)
                 atomically (l (TxException tx_hash PeerRejectOther))
   where
-    decode_tx_hash bytes =
+    decode_tx_hash pstr bytes =
         case decode bytes of
             Left e -> do
                 $(logErrorS) "Store" $
-                    "Colud not decode from peer tx rejection hash: " <> cs e
+                    "Could not decode rejection data from peer " <> pstr <> ": " <>
+                    cs e
                 MaybeT (return Nothing)
             Right h -> return h
 
@@ -259,3 +264,10 @@ publishTx net pub mgr ch db bl tx =
         bb <- getBestBlockHash db Nothing
         cb <- chainGetBest ch
         return (headerHash (nodeHeader cb) == bb)
+
+peerString :: (MonadStore m, IsString a) => Peer -> m a
+peerString p = do
+    mgr <- asks myManager
+    managerGetPeer mgr p >>= \case
+        Nothing -> return "[unknown]"
+        Just o -> return $ fromString $ show $ onlinePeerAddress o
