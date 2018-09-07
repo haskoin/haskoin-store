@@ -943,7 +943,7 @@ syncBlocks =
             Nothing ->
                 asks myManager >>= managerGetPeers >>= \case
                     [] -> empty
-                    p:_ -> return p
+                    p:_ -> return (onlinePeerMailbox p)
     reset_peer best_height = update_peer best_height Nothing
     update_peer height mp = do
         base_height_box <- asks myBaseHeight
@@ -1167,7 +1167,7 @@ syncMempoolOnce =
         peers <- managerGetPeers m
         guard (not (null peers))
         $(logInfoS) "BlockStore" "Syncing mempool..."
-        MMempool `sendMessage` head peers
+        MMempool `sendMessage` onlinePeerMailbox (head peers)
         atomically $ writeTVar n True
 
 isAtHeight :: MonadBlock m => m Bool

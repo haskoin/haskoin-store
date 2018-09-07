@@ -227,7 +227,7 @@ publishTx net pub mgr ch db bl tx =
         p <-
             managerGetPeers mgr >>= \case
                 [] -> throwError NoPeers
-                p:_ -> return p
+                p:_ -> return (onlinePeerMailbox p)
         ExceptT . withBoundedPubSub 1000 pub $ \sub ->
             runExceptT (send_it sub p)
     send_it sub p = do
