@@ -1,0 +1,664 @@
+openapi: 3.0.0
+servers:
+  - url: 'https://btc.haskoin.com/api/'
+  - url: 'https://bch.haskoin.com/api/'
+  - url: 'https://btctest.haskoin.com/api/'
+  - url: 'https://bchtest.haskoin.com/api/'
+info:
+  version: "0.1.0"
+  title: Blockchain API
+  contact:
+    name: Haskoin
+    url: 'http://haskoin.com'
+    email: xenog@protonmail.com
+  license:
+    name: Unlicense
+    url: 'http://unlicense.org/'
+tags:
+  - name: address
+  - name: transaction
+  - name: block
+paths:
+  '/address/{address}/outputs':
+    get:
+      tags:
+        - address
+      summary: get outputs for an address
+      operationId: getAddressOutputs
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+             $ref: '#/components/schemas/Address'
+        - name: height
+          description: at or below this block
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AddressOutput'
+        '404':
+          description: invalid address
+  '/address/outputs':
+    get:
+      tags:
+        - address
+      summary: get outputs for multiple addresses
+      operationId: getMultipleAddressOutputs
+      parameters:
+        - name: addresses
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Address'
+        - name: height
+          description: at or below this block
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AddressOutput'
+        '404':
+          description: invalid address
+  '/address/{address}/balance':
+    get:
+      tags:
+        - address
+      operationId: getBalance
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            format: base58
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '404':
+          description: invalid address
+  '/address/balances':
+    get:
+      tags:
+        - address
+      summary: get balances for multiple addresses
+      operationId: getMultipleAddressBalances
+      parameters:
+        - name: addresses
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              format: base58
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Balance'
+        '404':
+          description: invalid address
+  '/address/{address}/unspent':
+    get:
+      tags:
+        - address
+      summary: get only unspent outputs for an address
+      operationId: getAddressUnspent
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Address'
+        - name: height
+          description: at or below this block
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AddressOutput'
+        '404':
+          description: invalid address
+  '/address/unspent':
+    get:
+      tags:
+        - address
+      summary: get only unspent outputs for multiple addresses
+      operationId: getMultipleAddressUnspent
+      parameters:
+        - name: addresses
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              format: base58
+        - name: height
+          description: at or below this block
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AddressOutput'
+        '404':
+          description: invalid address
+  '/block/best':
+    get:
+      tags:
+        - block
+      operationId: GetBlockHead
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Block'
+  '/blocks':
+    get:
+      tags:
+        - block
+      operationId: getBlocks
+      parameters:
+        - name: blocks
+          in: path
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              format: hex
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Block'
+        '404':
+          description: block not found
+  '/block/{block}':
+    get:
+      tags:
+        - block
+      operationId: getBlock
+      parameters:
+        - name: block
+          in: path
+          required: true
+          schema:
+            type: string
+            format: hex
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Block'
+        '404':
+          description: block not found
+  '/block/height/{height}':
+    get:
+      tags:
+        - block
+      operationId: getBlockHeight
+      parameters:
+        - name: height
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Block'
+        '404':
+          description: block not found
+  '/block/heights':
+    get:
+      tags:
+        - block
+      operationId: getBlockAtHeight
+      parameters:
+        - name: heights
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: integer
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Block'
+        '404':
+          description: block not found
+  '/transaction/{txid}':
+    get:
+      tags:
+        - transaction
+      operationId: getTransaction
+      parameters:
+        - name: txid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: hex
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '404':
+          description: transaction not found
+  '/transactions':
+    get:
+      tags:
+        - transaction
+      operationId: getTransactions
+      parameters:
+        - name: txids
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              format: hex
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+        '404':
+          description: transaction not found
+    post:
+      tags:
+        - transaction
+      operationId: postTransaction
+      requestBody:
+        description: transaction to publish
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - transaction
+              properties:
+                transaction:
+                  $ref: '#/components/schemas/HexTx'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          description: invalid transaction
+  '/mempool':
+    get:
+      tags:
+        - transaction
+      operationId: getMempool
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TxId'
+  '/events':
+    get:
+      tags:
+        - block
+        - transaction
+      operationId: getEventStream
+      responses:
+        '200':
+          description: stream
+          content:
+            application/x-json-stream:
+              schema:
+                $ref: '#/components/schemas/Event'
+components:
+  schemas:
+    Event:
+      type: object
+      required:
+        - type
+        - id
+      properties:
+        type:
+          type: string
+          enum:
+            - tx
+            - block
+        id:
+          type: string
+          format: hex
+          description: block or transaction id
+          example: 'ee680b8fd36701c6f91b523547e8158f49e178c2a17b86f94c8ffbf828dbd2d1'
+    AddressOutput:
+      type: object
+      required:
+        - address
+        - txid
+        - index
+        - block
+        - output
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        txid:
+          $ref: '#/components/schemas/TxId'
+        index:
+          $ref: '#/components/schemas/OutputIndex'
+        block:
+          $ref: '#/components/schemas/BlockRef'
+        output:
+          $ref: '#/components/schemas/Output'
+    Transaction:
+      type: object
+      required:
+        - txid
+        - size
+        - version
+        - locktime
+        - fee
+        - inputs
+        - outputs
+        - hex
+        - block
+      properties:
+        txid:
+          $ref: '#/components/schemas/TxId'
+        size:
+          type: integer
+          description: Size of serialized transaction in bytes
+          example: 225
+        version:
+          type: integer
+          format: int32
+          example: 2
+        locktime:
+          type: integer
+          format: int32
+        fee:
+          $ref: '#/components/schemas/Value'
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Input'
+        outputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Output'
+        hex:
+          $ref: '#/components/schemas/HexTx'
+        block:
+          $ref: '#/components/schemas/BlockRef'
+    HexTx:
+      type: string
+      format: hex
+      example: '01000000019ad107ae28dda494b83d3298ddca3d83264cc0959272f500eff...'
+      description: hex-encoded transaction
+    Input:
+      type: object
+      required:
+        - txid
+        - output
+        - value
+        - coinbase
+        - sequence
+        - address
+        - pkscript
+        - sigscript
+      properties:
+        coinbase:
+          type: boolean
+        txid:
+          $ref: '#/components/schemas/TxId'
+        output:
+          $ref: '#/components/schemas/OutputIndex'
+        sigscript:
+          $ref: '#/components/schemas/SigScript'
+        value:
+          $ref: '#/components/schemas/Value'
+        sequence:
+          type: integer
+          format: int32
+          example: 4294967295
+        address:
+          $ref: '#/components/schemas/Address'
+        pkscript:
+          $ref: '#/components/schemas/PubKeyScript'
+    Value:
+      description: amount in satoshi
+      type: integer
+      format: int64
+      example: 67614830
+    OutputIndex:
+      description: previous output index
+      type: integer
+    InputIndex:
+      description: input index
+      type: integer
+    SigScript:
+      type: string
+      format: hex
+      example: '510101082f454233322e302f'
+    PubKeyScript:
+      type: string
+      format: hex
+      example: '76a9149a278c60e709d2379b1a6b959d5687b68c5a13d588ac'
+    TxId:
+      type: string
+      format: hex
+      example: '03f374616e55f4ef00f5729295c04c26833dcadd98323db894a4dd28ae07d19a'
+    Address:
+      type: string
+      format: base58
+      example: '1F46SQm7yTotQNBgqCzHFTC6hWqbWS94Bq'
+    Output:
+      type: object
+      required:
+        - address
+        - pkscript
+        - value
+        - spent
+        - spender
+      properties:
+        address:
+          type: string
+          format: base58
+          example: '1F46SQm7yTotQNBgqCzHFTC6hWqbWS94Bq'
+        pkscript:
+          type: string
+          format: hex
+          example: '76a9149a278c60e709d2379b1a6b959d5687b68c5a13d588ac'
+        value:
+          type: integer
+          format: int64
+          example: 67614830
+        spent:
+          type: boolean
+        spender:
+          $ref: '#/components/schemas/Spender'
+    Spender:
+      nullable: true
+      type: object
+      required:
+        - txid
+        - input
+        - block
+      properties:
+        txid:
+          $ref: '#/components/schemas/TxId'
+        input:
+          $ref: '#/components/schemas/InputIndex'
+        block:
+          $ref: '#/components/schemas/BlockRef'
+    Balance:
+      type: object
+      required:
+        - address
+        - confirmed
+        - unconfirmed
+        - outputs
+        - utxo
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        confirmed:
+          $ref: '#/components/schemas/Value'
+        unconfirmed:
+          $ref: '#/components/schemas/Value'
+        outputs:
+          description: number of outputs including spent and unspent
+          type: integer
+          format: int64
+          example: 2
+        utxo:
+          description: number of unspent outputs
+          type: integer
+          format: int64
+    BlockHash:
+      type: string
+      format: hex
+      example: '0000000000000000003f2042fd72dc2e8fecfb3a03f40ff1cf9cf3b583142499'
+    BlockHeight:
+      type: integer
+      example: 499074
+    BlockRef:
+      nullable: true
+      type: object
+      required:
+        - hash
+        - height
+        - position
+      properties:
+        hash:
+          $ref: '#/components/schemas/BlockHash'
+        height:
+          $ref: '#/components/schemas/BlockHeight'
+        position:
+          type: integer
+          description: position of transaction in block
+    Block:
+      type: object
+      required:
+        - hash
+        - height
+        - previous
+        - timestamp
+        - version
+        - bits
+        - nonce
+        - size
+        - tx
+      properties:
+        hash:
+          $ref: '#/components/schemas/BlockHash'
+        size:
+          type: integer
+          example: 1037064
+        height:
+          $ref: '#/components/schemas/BlockHeight'
+        previous:
+          $ref: '#/components/schemas/BlockHash'
+        timestamp:
+          type: integer
+          format: int32
+          example: 1513171902
+        version:
+          type: integer
+          format: int32
+          example: 536870912
+        bits:
+          type: integer
+          format: int32
+          example: 402698477
+        nonce:
+          type: integer
+          format: int32
+          example: 2785782461
+        tx:
+          type: array
+          items:
+            $ref: '#/components/schemas/TxId'
