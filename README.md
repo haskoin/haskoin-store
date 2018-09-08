@@ -17,4 +17,4 @@ Full blockchain index & store featuring:
 
 ## API Documentation
 
-* [Swagger API Documentation](https://app.swaggerhub.com/apis/haskoin/blockchain-api/1.0.0-oas3).
+* [Swagger API Documentation](https://app.swaggerhub.com/apis/haskoin/haskoin-store/docs/0.1.0).
