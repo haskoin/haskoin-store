@@ -1039,7 +1039,7 @@ processBlockMessage (TxAvailable p ts) =
         when h $ do
             pstr <- peerString p
             $(logDebugS) "Block" $
-                "Received  " <> cs (show (length ts)) <>
+                "Received " <> cs (show (length ts)) <>
                 " tx inventory from peer " <> pstr
             net <- asks myNetwork
             db <- asks myBlockDB
