@@ -275,11 +275,11 @@ runWeb conf pub mgr ch bl db = do
             txids <- param "txids"
             testLength conf (length txids)
             lift (getTxs net txids db Nothing) >>= json
-        get "/address/:address/transactions" $ do
+        get "/address/:address/outputs" $ do
             address <- parse_address
             height <- parse_height
             lift (addrTxsMax db (configMaxReqs conf) height address) >>= json
-        get "/address/transactions" $ do
+        get "/address/outputs" $ do
             addresses <- parse_addresses
             height <- parse_height
             lift (addrsTxsMax db (configMaxReqs conf) height addresses) >>= json
@@ -378,7 +378,7 @@ addrTxsMax ::
     -> Int
     -> Maybe BlockHeight
     -> Address
-    -> m [AddressTx]
+    -> m [AddrOutput]
 addrTxsMax db c h = addrsTxsMax db c h . (: [])
 
 addrsTxsMax ::
@@ -387,12 +387,14 @@ addrsTxsMax ::
     -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [AddressTx]
+    -> m [AddrOutput]
 addrsTxsMax db c h as =
     runResourceT $
-    runConduit $ getAddrsTxs as h db Nothing .| capRecords f c .| sinkList
+    runConduit $ getAddrsOutputs as h db Nothing .| capRecords f c .| sinkList
   where
-    f = (==) `on` fmap blockRefHash . addressTxBlock
+    f = (==) `on` g
+    g AddrOutput {..} =
+        (addrOutputAddress addrOutputKey, blockRefHash <$> outBlock addrOutput)
 
 addrUnspentMax ::
        MonadUnliftIO m
@@ -400,7 +402,7 @@ addrUnspentMax ::
     -> Int
     -> Maybe BlockHeight
     -> Address
-    -> m [Unspent]
+    -> m [AddrOutput]
 addrUnspentMax db c h = addrsUnspentMax db c h . (: [])
 
 addrsUnspentMax ::
@@ -409,12 +411,14 @@ addrsUnspentMax ::
     -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [Unspent]
+    -> m [AddrOutput]
 addrsUnspentMax db c h as =
     runResourceT $
     runConduit $ getUnspents as h db Nothing .| capRecords f c .| sinkList
   where
-    f = (==) `on` fmap blockRefHash . unspentBlock
+    f = (==) `on` g
+    g AddrOutput {..} =
+        (addrOutputAddress addrOutputKey, blockRefHash <$> outBlock addrOutput)
 
 capRecords :: Monad m => (a -> a -> Bool) -> Int -> ConduitT a a m ()
 capRecords f c = void $ mapAccumWhileC go (Nothing, c)

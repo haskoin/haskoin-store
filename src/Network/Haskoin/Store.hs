@@ -8,14 +8,15 @@
 {-# LANGUAGE TemplateHaskell       #-}
 module Network.Haskoin.Store
     ( BlockStore
+    , Output(..)
     , BlockRef(..)
     , StoreConfig(..)
     , StoreEvent(..)
     , BlockValue(..)
     , DetailedTx(..)
     , NewTx(..)
-    , AddressTx(..)
-    , Unspent(..)
+    , AddrOutputKey(..)
+    , AddrOutput(..)
     , AddressBalance(..)
     , TxException(..)
     , store
@@ -26,8 +27,8 @@ module Network.Haskoin.Store
     , getBlocks
     , getTx
     , getTxs
-    , getAddrTxs
-    , getAddrsTxs
+    , getAddrOutputs
+    , getAddrsOutputs
     , getUnspent
     , getUnspents
     , getBalance

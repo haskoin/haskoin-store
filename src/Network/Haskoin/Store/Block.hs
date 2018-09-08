@@ -17,8 +17,8 @@ module Network.Haskoin.Store.Block
       , getBlock
       , getBlocks
       , getUnspent
-      , getAddrTxs
-      , getAddrsTxs
+      , getAddrOutputs
+      , getAddrsOutputs
       , getBalance
       , getBalances
       , getTx
@@ -647,6 +647,7 @@ addressOutOps net out_point output@Output {..} del =
                     { addrOutputSpent = isJust outSpender
                     , addrOutputAddress = address
                     , addrOutputHeight = blockRefHeight <$> outBlock
+                    , addrOutputPos = blockRefPos <$> outBlock
                     , addrOutPoint = out_point
                     }
                 key_mempool = key {addrOutputHeight = Nothing}
@@ -1063,70 +1064,36 @@ processBlockMessage (PongReceived p n) = do
         "Pong received with nonce " <> cs (show n) <> " from peer " <> pstr
     asks myListener >>= atomically . ($ PeerPong p n)
 
-getAddrTxs ::
+getAddrOutputs ::
        (MonadResource m, MonadUnliftIO m)
     => Address
     -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> ConduitT () AddressTx m ()
-getAddrTxs a h db s =
+    -> ConduitT () AddrOutput m ()
+getAddrOutputs a h db s =
     case s of
         Nothing -> R.withSnapshotBracket db $ f . Just
         Just _  -> f s
   where
     f s' = mergeSourcesBy (flip compare) [p s', u s']
-    uns AddrOutputKey {..} Output {..} =
-        AddressTxOut
-            { addressTxPkScript = outScript
-            , addressTxId = outPointHash addrOutPoint
-            , addressTxAmount = fromIntegral outputValue
-            , addressTxBlock = outBlock
-            , addressTxVout = outPointIndex addrOutPoint
-            , addressTxNetwork = getAddrNet a
-            }
-    uns _ _ = error "Invalid address output"
-    spn =
-        awaitForever $ \(AddrOutputKey {..}, Output {..}) -> do
-            let Spender {..} =
-                    fromMaybe
-                        (error "Could not get spender for spent output")
-                        outSpender
-            yield
-                AddressTxIn
-                    { addressTxPkScript = outScript
-                    , addressTxId = spenderHash
-                    , addressTxAmount = -fromIntegral outputValue
-                    , addressTxBlock = spenderBlock
-                    , addressTxVin = spenderIndex
-                    , addressTxNetwork = getAddrNet a
-                    }
-            yield
-                AddressTxOut
-                    { addressTxPkScript = outScript
-                    , addressTxId = outPointHash addrOutPoint
-                    , addressTxAmount = fromIntegral outputValue
-                    , addressTxBlock = outBlock
-                    , addressTxVout = outPointIndex addrOutPoint
-                    , addressTxNetwork = getAddrNet a
-                    }
-    u s' = getAddrUnspent a h db s' .| mapC (uncurry uns)
-    p s' = getAddrSpent a h db s' .| spn
+    u s' = getAddrUnspent a h db s' .| mapC (uncurry AddrOutput)
+    p s' = getAddrSpent a h db s' .| mapC (uncurry AddrOutput)
 
 
-getAddrsTxs ::
+getAddrsOutputs ::
        (MonadResource m, MonadUnliftIO m)
     => [Address]
     -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> ConduitT () AddressTx m ()
-getAddrsTxs as h db s =
+    -> ConduitT () AddrOutput m ()
+getAddrsOutputs as h db s =
     if isJust s
         then f s
         else R.withSnapshotBracket db $ \s' -> f (Just s')
   where
-    f s' = forM_ as $ \a -> getAddrTxs a h db s'
+    f s' = forM_ as $ \a -> getAddrOutputs a h db s'
 
 getUnspents ::
        (MonadResource m, MonadUnliftIO m)
@@ -1134,7 +1101,7 @@ getUnspents ::
     -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> ConduitT () Unspent m ()
+    -> ConduitT () AddrOutput m ()
 getUnspents as h db s =
     case s of
         Nothing -> R.withSnapshotBracket db $ f . Just
@@ -1148,20 +1115,9 @@ getUnspent ::
     -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> ConduitT () Unspent m ()
+    -> ConduitT () AddrOutput m ()
 getUnspent addr h db s =
-    getAddrUnspent addr h db s .| mapC (uncurry to_unspent)
-  where
-    to_unspent AddrOutputKey {..} Output {..} =
-        Unspent
-        { unspentPkScript = outScript
-        , unspentTxId = outPointHash addrOutPoint
-        , unspentIndex = outPointIndex addrOutPoint
-        , unspentValue = outputValue
-        , unspentBlock = outBlock
-        , unspentNetwork = getAddrNet addr
-        }
-    to_unspent _ _ = error "Error decoding AddrOutputKey data structure"
+    getAddrUnspent addr h db s .| mapC (uncurry AddrOutput)
 
 syncMempoolOnce :: MonadBlock m => m ()
 syncMempoolOnce =
@@ -1205,7 +1161,7 @@ peerString p = do
         Just o -> return $ fromString $ show $ onlinePeerAddress o
 
 -- | Merge multiple sorted sources into one sorted producer using specified
--- sorting key. Adapted from: <https://github.com/cblp/conduit-merge>
+-- sorting function. Adapted from: <https://github.com/cblp/conduit-merge>
 mergeSourcesBy ::
        (Foldable f, Monad m)
     => (a -> a -> Ordering)

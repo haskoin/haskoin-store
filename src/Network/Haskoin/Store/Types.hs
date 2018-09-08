@@ -105,6 +105,7 @@ data AddrOutputKey
     = AddrOutputKey { addrOutputSpent   :: !Bool
                     , addrOutputAddress :: !Address
                     , addrOutputHeight  :: !(Maybe BlockHeight)
+                    , addrOutputPos     :: !(Maybe Word32)
                     , addrOutPoint      :: !OutPoint }
     | MultiAddrOutputKey { addrOutputSpent   :: !Bool
                          , addrOutputAddress :: !Address }
@@ -112,6 +113,15 @@ data AddrOutputKey
                          , addrOutputAddress :: !Address
                          , addrOutputHeight  :: !(Maybe BlockHeight) }
     deriving (Show, Eq)
+
+instance Ord AddrOutputKey where
+    compare = compare `on` f
+      where
+        f AddrOutputKey {..} =
+            ( fromMaybe maxBound addrOutputHeight
+            , fromMaybe maxBound addrOutputPos
+            , outPointIndex addrOutPoint)
+        f _ = undefined
 
 data BlockValue = BlockValue
     { blockValueHeight :: !BlockHeight
@@ -274,43 +284,13 @@ emptyBalance =
 
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
 
-data AddressTx
-    = AddressTxIn { addressTxPkScript :: !ByteString
-                  , addressTxId       :: !TxHash
-                  , addressTxAmount   :: !Int64
-                  , addressTxBlock    :: !(Maybe BlockRef)
-                  , addressTxVin      :: !Word32
-                  , addressTxNetwork  :: !Network }
-    | AddressTxOut { addressTxPkScript :: !ByteString
-                   , addressTxId       :: !TxHash
-                   , addressTxAmount   :: !Int64
-                   , addressTxBlock    :: !(Maybe BlockRef)
-                   , addressTxVout     :: !Word32
-                   , addressTxNetwork  :: !Network }
-    deriving (Eq, Show)
-
-instance Ord AddressTx where
-    compare = compare `on` f
-        -- Transactions in mempool should be greater than those in a block.
-        -- Outputs must be greater than inputs.
-      where
-        f AddressTxIn {..} = (isNothing addressTxBlock, addressTxBlock, False)
-        f AddressTxOut {..} = (isNothing addressTxBlock, addressTxBlock, True)
-
-data Unspent = Unspent
-    { unspentPkScript :: !ByteString
-    , unspentTxId     :: !TxHash
-    , unspentIndex    :: !Word32
-    , unspentValue    :: !Word64
-    , unspentBlock    :: !(Maybe BlockRef)
-    , unspentNetwork  :: !Network
+data AddrOutput = AddrOutput
+    { addrOutputKey :: !AddrOutputKey
+    , addrOutput    :: !Output
     } deriving (Eq, Show)
 
-instance Ord Unspent where
-    compare = compare `on` f
-        -- Transactions in mempool should be greater than those in a block
-      where
-        f Unspent {..} = (isNothing unspentBlock, unspentBlock, unspentIndex)
+instance Ord AddrOutput where
+    compare = compare `on` addrOutputKey
 
 newtype StoreAddress = StoreAddress Address
     deriving (Show, Eq)
@@ -386,6 +366,7 @@ instance Serialize AddrOutputKey where
     put AddrOutputKey {..} = do
         addrKeyStart addrOutputSpent addrOutputAddress
         put (maybe 0 (maxBound -) addrOutputHeight)
+        put (maybe 0 (maxBound -) addrOutputPos)
         put addrOutPoint
     put MultiAddrOutputKey {..} = addrKeyStart addrOutputSpent addrOutputAddress
     put MultiAddrHeightKey {..} = do
@@ -402,10 +383,11 @@ instance Serialize AddrOutputKey where
       where
         record addrOutputSpent addrOutputAddress = do
             h <- (maxBound -) <$> get
-            let addrOutputHeight =
-                    if h == 0
-                        then Nothing
-                        else Just h
+            let addrOutputHeight | h == 0 = Nothing
+                                 | otherwise = Just h
+            p <- (maxBound -) <$> get
+            let addrOutputPos | p == 0 = Nothing
+                              | otherwise = Just p
             addrOutPoint <- get
             return AddrOutputKey {..}
 
@@ -681,41 +663,28 @@ instance ToJSON BlockRef where
     toJSON = object . blockRefPairs
     toEncoding = pairs . mconcat . blockRefPairs
 
-addrTxPairs :: A.KeyValue kv => AddressTx -> [kv]
-addrTxPairs AddressTxIn {..} =
-    [ "address" .= scriptToAddressBS addressTxNetwork addressTxPkScript
-    , "pkscript" .= String (cs (encodeHex addressTxPkScript))
-    , "txid" .= addressTxId
-    , "input" .= addressTxVin
-    , "amount" .= addressTxAmount
-    , "block" .= addressTxBlock
+addrOutputPairs :: A.KeyValue kv => AddrOutput -> [kv]
+addrOutputPairs AddrOutput {..} =
+    [ "address" .= addrOutputAddress
+    , "txid" .= outPointHash addrOutPoint
+    , "index" .= outPointIndex addrOutPoint
+    , "block" .= outBlock
+    , "output" .= dout
     ]
-addrTxPairs AddressTxOut {..} =
-    [ "address" .= scriptToAddressBS addressTxNetwork addressTxPkScript
-    , "pkscript" .= String (cs (encodeHex addressTxPkScript))
-    , "txid" .= addressTxId
-    , "output" .= addressTxVout
-    , "amount" .= addressTxAmount
-    , "block" .= addressTxBlock
-    ]
+  where
+    Output {..} = addrOutput
+    AddrOutputKey {..} = addrOutputKey
+    dout =
+        DetailedOutput
+            { detOutValue = outputValue
+            , detOutScript = outScript
+            , detOutSpender = outSpender
+            , detOutNetwork = getAddrNet addrOutputAddress
+            }
 
-instance ToJSON AddressTx where
-    toJSON = object . addrTxPairs
-    toEncoding = pairs . mconcat . addrTxPairs
-
-unspentPairs :: A.KeyValue kv => Unspent -> [kv]
-unspentPairs Unspent {..} =
-    [ "address" .= scriptToAddressBS unspentNetwork unspentPkScript
-    , "pkscript" .= String (cs (encodeHex unspentPkScript))
-    , "txid" .= unspentTxId
-    , "output" .= unspentIndex
-    , "value" .= unspentValue
-    , "block" .= unspentBlock
-    ]
-
-instance ToJSON Unspent where
-    toJSON = object . unspentPairs
-    toEncoding = pairs . mconcat . unspentPairs
+instance ToJSON AddrOutput where
+    toJSON = object . addrOutputPairs
+    toEncoding = pairs . mconcat . addrOutputPairs
 
 addressBalancePairs :: A.KeyValue kv => AddressBalance -> [kv]
 addressBalancePairs AddressBalance {..} =
