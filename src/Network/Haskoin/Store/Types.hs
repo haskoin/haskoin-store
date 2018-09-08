@@ -108,6 +108,9 @@ data AddrOutputKey
                     , addrOutPoint      :: !OutPoint }
     | MultiAddrOutputKey { addrOutputSpent   :: !Bool
                          , addrOutputAddress :: !Address }
+    | MultiAddrHeightKey { addrOutputSpent   :: !Bool
+                         , addrOutputAddress :: !Address
+                         , addrOutputHeight  :: !(Maybe BlockHeight) }
     deriving (Show, Eq)
 
 data BlockValue = BlockValue
@@ -374,19 +377,20 @@ instance Serialize Balance where
         balanceSpentCount <- get
         return Balance {..}
 
+addrKeyStart :: Bool -> Address -> Put
+addrKeyStart b a = do
+    putWord8 $ if b then 0x03 else 0x05
+    put (StoreAddress a)
+
 instance Serialize AddrOutputKey where
     put AddrOutputKey {..} = do
-        if addrOutputSpent
-            then putWord8 0x03
-            else putWord8 0x05
-        put (StoreAddress addrOutputAddress)
-        put (maxBound - fromMaybe 0 addrOutputHeight)
+        addrKeyStart addrOutputSpent addrOutputAddress
+        put (maybe 0 (maxBound -) addrOutputHeight)
         put addrOutPoint
-    put MultiAddrOutputKey {..} = do
-        if addrOutputSpent
-            then putWord8 0x03
-            else putWord8 0x05
-        put (StoreAddress addrOutputAddress)
+    put MultiAddrOutputKey {..} = addrKeyStart addrOutputSpent addrOutputAddress
+    put MultiAddrHeightKey {..} = do
+        addrKeyStart addrOutputSpent addrOutputAddress
+        put (maybe 0 (maxBound -) addrOutputHeight)
     get = do
         addrOutputSpent <-
             getWord8 >>= \case
@@ -394,13 +398,12 @@ instance Serialize AddrOutputKey where
                 0x05 -> return False
                 _ -> mzero
         StoreAddress addrOutputAddress <- get
-        record addrOutputSpent addrOutputAddress <|>
-            return MultiAddrOutputKey {..}
+        record addrOutputSpent addrOutputAddress
       where
         record addrOutputSpent addrOutputAddress = do
             h <- (maxBound -) <$> get
             let addrOutputHeight =
-                    if h == maxBound
+                    if h == 0
                         then Nothing
                         else Just h
             addrOutPoint <- get
@@ -534,7 +537,7 @@ byteNet 0x02 = Just btcRegTest
 byteNet 0x04 = Just bch
 byteNet 0x05 = Just bchTest
 byteNet 0x06 = Just bchRegTest
-byteNet _ = Nothing
+byteNet _    = Nothing
 
 getByteNet :: Get Network
 getByteNet =

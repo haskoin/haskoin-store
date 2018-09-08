@@ -8,6 +8,7 @@
 {-# LANGUAGE TemplateHaskell       #-}
 module Network.Haskoin.Store
     ( BlockStore
+    , BlockRef(..)
     , StoreConfig(..)
     , StoreEvent(..)
     , BlockValue(..)

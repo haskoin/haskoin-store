@@ -1,34 +1,38 @@
+{-# LANGUAGE ApplicativeDo     #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+import           Conduit
 import           Control.Arrow
 import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Trans
-import           Data.Aeson              (ToJSON (..), Value (..), encode,
-                                          object, (.=))
+import           Data.Aeson               (ToJSON (..), Value (..), encode,
+                                           object, (.=))
 import           Data.Bits
-import           Data.ByteString.Builder (lazyByteString)
+import           Data.ByteString.Builder  (lazyByteString)
+import           Data.Function
 import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
-import qualified Data.Text               as T
-import           Database.RocksDB        hiding (get)
+import qualified Data.Text                as T
+import           Data.Version
+import           Database.RocksDB         hiding (get)
 import           Haskoin
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store
 import           Network.HTTP.Types
 import           Options.Applicative
+import           Paths_haskoin_store      as P
 import           System.Directory
-import           System.Exit             (die)
+import           System.Exit
 import           System.FilePath
 import           System.IO.Unsafe
-import           Text.Read               (readMaybe)
+import           Text.Read                (readMaybe)
 import           UnliftIO
 import           Web.Scotty.Trans
 
@@ -39,6 +43,7 @@ data OptConfig = OptConfig
     , optConfigDiscover :: !(Maybe Bool)
     , optConfigPeers    :: !(Maybe [(Host, Maybe Port)])
     , optConfigMaxReqs  :: !(Maybe Int)
+    , optConfigVersion  :: !Bool
     }
 
 data Config = Config
@@ -122,42 +127,34 @@ netNames :: String
 netNames = intercalate "|" $ map getNetworkName allNets
 
 config :: Parser OptConfig
-config =
-    OptConfig <$>
-    optional
-        (option
-             str
-             (metavar "DIR" <> long "dir" <> short 'd' <>
-              help
-                  ("Directory to store blockchain data (default: " <>
-                   myDirectory <>
-                   ")"))) <*>
-    optional
-        (option
-             auto
-             (metavar "PORT" <> long "port" <> short 'p' <>
-              help ("Port number (default: " <> show defPort <> ")"))) <*>
-    optional
-        (option
-             (eitherReader networkReader)
-             (metavar "NETWORK" <> long "network" <> short 'n' <>
-              help
-                  ("Network to use: " <> netNames <> "(default: " <>
-                   getNetworkName defNetwork <>
-                   ")"))) <*>
-    optional (switch (long "discover" <> help "Enable peer discovery")) <*>
-    optional
-        (option
-             (eitherReader peerReader)
-             (metavar "PEERS" <> long "peers" <>
-              help
-                  ("Comma-separated list of peers to connect to " <>
-                   "(i.e. localhost,peer.example.com:8333)"))) <*>
-    optional
-        (option
-             auto
-             (metavar "MAXREQ" <> long "maxreq" <>
-              help "Maximum requested element count"))
+config = do
+    optConfigDir <-
+        optional . option str $
+        metavar "DIR" <> long "dir" <> short 'd' <>
+        help ("Data directory (default: " <> myDirectory <> ")")
+    optConfigPort <-
+        optional . option auto $
+        metavar "PORT" <> long "port" <> short 'p' <>
+        help ("Port to listen (default: " <> show defPort <> ")")
+    optConfigNetwork <-
+        optional . option (eitherReader networkReader) $
+        metavar "NETWORK" <> long "network" <> short 'n' <>
+        help ("Network: " <> netNames <> " (default: " <> net <> ")")
+    optConfigDiscover <-
+        optional . switch $ long "discover" <> help "Enable peer discovery"
+    optConfigPeers <-
+        optional . option (eitherReader peerReader) $
+        metavar "PEERS" <> long "peers" <>
+        help "Network peers (i.e. localhost,peer.example.com:8333)"
+    optConfigMaxReqs <-
+        optional . option auto $
+        metavar "MAXREQ" <> long "maxreq" <>
+        help ("Maximum request elements (default:" <> show defMaxReqs <> ")")
+    optConfigVersion <-
+        switch $ long "version" <> short 'v' <> help "Show version"
+    return OptConfig {..}
+  where
+    net = getNetworkName defNetwork
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -206,6 +203,9 @@ main :: IO ()
 main =
     runStderrLoggingT $ do
         opt <- liftIO (execParser opts)
+        when (optConfigVersion opt) . liftIO $ do
+            putStrLn $ showVersion P.version
+            exitSuccess
         let conf = optToConfig opt
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
             die "Specify --discover or --peers [PEER,...]"
@@ -232,10 +232,9 @@ main =
             [runWeb conf pub mgr ch b db, runStore conf pub mgr ch b db]
   where
     opts =
-        info
-            (helper <*> config)
-            (fullDesc <> progDesc "Blockchain store and API" <>
-             Options.Applicative.header "haskoin-store: a blockchain indexer")
+        info (helper <*> config) $
+        fullDesc <> progDesc "Blockchain store and API" <>
+        Options.Applicative.header ("haskoin-store version " <> showVersion P.version)
 
 testLength :: Monad m => Config -> Int -> ActionT Except m ()
 testLength conf l = when (l <= 0 || l > configMaxReqs conf) (raise OutOfBounds)
@@ -278,24 +277,27 @@ runWeb conf pub mgr ch bl db = do
             lift (getTxs net txids db Nothing) >>= json
         get "/address/:address/transactions" $ do
             address <- parse_address
-            lift (getAddrTxs address db Nothing) >>= json
+            height <- parse_height
+            lift (addrTxsMax db (configMaxReqs conf) height address) >>= json
         get "/address/transactions" $ do
             addresses <- parse_addresses
-            testLength conf (length addresses)
-            lift (getAddrsTxs addresses db Nothing) >>= json
+            height <- parse_height
+            lift (addrsTxsMax db (configMaxReqs conf) height addresses) >>= json
         get "/address/:address/unspent" $ do
             address <- parse_address
-            lift (getUnspent address db Nothing) >>= json
+            height <- parse_height
+            lift (addrUnspentMax db (configMaxReqs conf) height address) >>=
+                json
         get "/address/unspent" $ do
             addresses <- parse_addresses
-            testLength conf (length addresses)
-            lift (getUnspents addresses db Nothing) >>= json
+            height <- parse_height
+            lift (addrsUnspentMax db (configMaxReqs conf) height addresses) >>=
+                json
         get "/address/:address/balance" $ do
             address <- parse_address
             getBalance address db Nothing >>= json
         get "/address/balances" $ do
             addresses <- parse_addresses
-            testLength conf (length addresses)
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
@@ -332,8 +334,9 @@ runWeb conf pub mgr ch bl db = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
         if length as == length addresses
-            then return as
+            then testLength conf (length as) >> return as
             else next
+    parse_height = (Just <$> param "height") `rescue` const (return Nothing)
     net = configNetwork conf
     runner f l = do
         u <- askUnliftIO
@@ -368,3 +371,60 @@ runStore conf pub mgr ch b db = do
                 , storeConfNetwork = net
                 }
     store cfg
+
+addrTxsMax ::
+       MonadUnliftIO m
+    => DB
+    -> Int
+    -> Maybe BlockHeight
+    -> Address
+    -> m [AddressTx]
+addrTxsMax db c h = addrsTxsMax db c h . (: [])
+
+addrsTxsMax ::
+       MonadUnliftIO m
+    => DB
+    -> Int
+    -> Maybe BlockHeight
+    -> [Address]
+    -> m [AddressTx]
+addrsTxsMax db c h as =
+    runResourceT $
+    runConduit $ getAddrsTxs as h db Nothing .| capRecords f c .| sinkList
+  where
+    f = (==) `on` fmap blockRefHash . addressTxBlock
+
+addrUnspentMax ::
+       MonadUnliftIO m
+    => DB
+    -> Int
+    -> Maybe BlockHeight
+    -> Address
+    -> m [Unspent]
+addrUnspentMax db c h = addrsUnspentMax db c h . (: [])
+
+addrsUnspentMax ::
+       MonadUnliftIO m
+    => DB
+    -> Int
+    -> Maybe BlockHeight
+    -> [Address]
+    -> m [Unspent]
+addrsUnspentMax db c h as =
+    runResourceT $
+    runConduit $ getUnspents as h db Nothing .| capRecords f c .| sinkList
+  where
+    f = (==) `on` fmap blockRefHash . unspentBlock
+
+capRecords :: Monad m => (a -> a -> Bool) -> Int -> ConduitT a a m ()
+capRecords f c = void $ mapAccumWhileC go (Nothing, c)
+  where
+    go x (acc, n)
+        | n > 0 = Right ((Just x, n - 1), x)
+        | otherwise =
+            case acc of
+                Nothing -> Left (Just x, n - 1)
+                Just y ->
+                    if f x y
+                        then Right ((Just x, n - 1), x)
+                        else Left (Just x, n - 1)

@@ -2,10 +2,10 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 12962d5ad08ec603f003dcc79e96e1b3fd51c7d182e6dab45982c3ced71ae881
+-- hash: bc50dc7d56e34cc4893fedb2b1d9a81589ac404717742103029bf5db493e0df0
 
 name:           haskoin-store
-version:        1.0.0
+version:        0.1.0
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category:       Bitcoin, Finance, Network
@@ -52,6 +52,7 @@ library
     , scotty
     , string-conversions
     , text
+    , time
     , transformers
     , unliftio
   exposed-modules:
@@ -89,6 +90,7 @@ executable haskoin-store
     , scotty
     , string-conversions
     , text
+    , time
     , unliftio
   other-modules:
       Paths_haskoin_store
@@ -122,6 +124,7 @@ test-suite haskoin-store-test
     , scotty
     , string-conversions
     , text
+    , time
     , unliftio
   other-modules:
       Paths_haskoin_store

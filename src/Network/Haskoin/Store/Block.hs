@@ -36,6 +36,8 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString             as B
+import           Data.Foldable
+import           Data.Function
 import           Data.List
 import           Data.Map                    (Map)
 import qualified Data.Map.Strict             as M
@@ -46,6 +48,7 @@ import qualified Data.Set                    as S
 import           Data.String
 import           Data.String.Conversions
 import           Data.Text                   (Text)
+import           Data.Time.Clock.POSIX
 import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query      as R
@@ -121,7 +124,7 @@ runMonadImport f =
         gets blockAction >>= \case
             Just (ImportBlock Block {..}) ->
                 atomically (l (BestBlock (headerHash blockHeader)))
-            Just RevertBlock -> $(logWarnS) "BlockStore" "Reverted best block"
+            Just RevertBlock -> $(logWarnS) "Block" "Reverted best block"
             _ -> return ()
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
@@ -215,49 +218,33 @@ getBlock ::
        MonadIO m => BlockHash -> DB -> Maybe Snapshot -> m (Maybe BlockValue)
 getBlock bh db snapshot = retrieve db snapshot (BlockKey bh)
 
-getAddrsSpent ::
-       MonadUnliftIO m
-    => [Address]
-    -> DB
-    -> Maybe Snapshot
-    -> m [(AddrOutputKey, Output)]
-getAddrsSpent as db s =
-    case s of
-        Nothing -> R.withSnapshot db $ f . Just
-        Just _  -> f s
-  where
-    f s' = concat <$> mapM (\a -> getAddrSpent a db s') (nub as)
-
 getAddrSpent ::
-       MonadUnliftIO m
+       (MonadResource m, MonadUnliftIO m)
     => Address
+    -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> m [(AddrOutputKey, Output)]
-getAddrSpent addr db snapshot =
-    matchingAsList db snapshot (MultiAddrOutputKey True addr)
-
-getAddrsUnspent ::
-       MonadUnliftIO m
-    => [Address]
-    -> DB
-    -> Maybe Snapshot
-    -> m [(AddrOutputKey, Output)]
-getAddrsUnspent as db s =
-    case s of
-        Nothing -> R.withSnapshot db $ f . Just
-        Just _  -> f s
-  where
-    f s' = concat <$> mapM (\a -> getAddrUnspent a db s') (nub as)
+    -> ConduitT () (AddrOutputKey, Output) m ()
+getAddrSpent addr h db snapshot =
+    matchingSkip
+        db
+        snapshot
+        (MultiAddrOutputKey True addr)
+        (MultiAddrHeightKey True addr h)
 
 getAddrUnspent ::
-       MonadUnliftIO m
+       (MonadUnliftIO m, MonadResource m)
     => Address
+    -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> m [(AddrOutputKey, Output)]
-getAddrUnspent addr db snapshot =
-    matchingAsList db snapshot (MultiAddrOutputKey False addr)
+    -> ConduitT () (AddrOutputKey, Output) m ()
+getAddrUnspent addr h db snapshot =
+    matchingSkip
+        db
+        snapshot
+        (MultiAddrOutputKey False addr)
+        (MultiAddrHeightKey False addr h)
 
 getBalances ::
     MonadIO m => [Address] -> DB -> Maybe Snapshot -> m [AddressBalance]
@@ -568,7 +555,7 @@ addNewBlock :: MonadBlock m => Block -> m ()
 addNewBlock block@Block {..} =
     runMonadImport $ do
         new_height <- get_new_height
-        $(logInfoS) "BlockStore" $
+        $(logInfoS) "Block" $
             "Importing block height: " <> cs (show new_height)
         import_txs new_height
         addBlock block
@@ -838,7 +825,7 @@ importTransaction tx maybe_block_ref =
                         import_orphan
                         return False
                     _ -> do
-                        $(logErrorS) "BlockStore" $
+                        $(logErrorS) "Block" $
                             "Could not import tx hash: " <>
                             cs (txHashToHex (txHash tx)) <>
                             " reason: " <>
@@ -999,7 +986,7 @@ processBlockMessage (BlockReceived p b) =
         Left e -> do
             pstr <- peerString p
             let hash = headerHash (blockHeader b)
-            $(logErrorS) "BlockStore" $
+            $(logErrorS) "Block" $
                 "Could not import from peer" <> pstr <> " block hash:" <>
                 cs (blockHashToHex hash) <>
                 " error: " <>
@@ -1041,7 +1028,7 @@ processBlockMessage (BlockPeerDisconnect p) = do
 
 processBlockMessage (BlockNotReceived p h) = do
     pstr <- peerString p
-    $(logErrorS) "BlockStore" $
+    $(logErrorS) "Block" $
         "Peer " <> pstr <> " unable to serve block hash: " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
@@ -1050,7 +1037,7 @@ processBlockMessage (TxAvailable p ts) =
     isAtHeight >>= \h ->
         when h $ do
             pstr <- peerString p
-            $(logDebugS) "BlockStore" $
+            $(logDebugS) "Block" $
                 "Received  " <> cs (show (length ts)) <>
                 " tx inventory from peer " <> pstr
             net <- asks myNetwork
@@ -1065,92 +1052,105 @@ processBlockMessage (TxAvailable p ts) =
                 liftIO (matchingAsList db Nothing OrphanKey)
             let new = (ts \\ has) \\ ors
             unless (null new) $ do
-                $(logDebugS) "BlockStore" $
+                $(logDebugS) "Block" $
                     "Requesting " <> cs (show (length new)) <>
                     " new txs from peer " <> pstr
                 peerGetTxs net p new
 
 processBlockMessage (PongReceived p n) = do
     pstr <- peerString p
-    $(logDebugS) "BlockStore" $
+    $(logDebugS) "Block" $
         "Pong received with nonce " <> cs (show n) <> " from peer " <> pstr
     asks myListener >>= atomically . ($ PeerPong p n)
 
 getAddrTxs ::
-       MonadUnliftIO m
+       (MonadResource m, MonadUnliftIO m)
     => Address
+    -> Maybe BlockHeight
     -> DB
     -> Maybe Snapshot
-    -> m [AddressTx]
-getAddrTxs addr = getAddrsTxs [addr]
-
-getAddrsTxs ::
-       MonadUnliftIO m
-    => [Address]
-    -> DB
-    -> Maybe Snapshot
-    -> m [AddressTx]
-getAddrsTxs [] _ _ = return []
-getAddrsTxs addrs db s = do
-    unless (all ((== net) . getAddrNet) addrs) $
-        throwString "Not all addresses in same network"
+    -> ConduitT () AddressTx m ()
+getAddrTxs a h db s =
     case s of
-        Nothing -> R.withSnapshot db $ g . Just
-        Just _  -> g s
+        Nothing -> R.withSnapshotBracket db $ f . Just
+        Just _  -> f s
   where
-    net = getAddrNet (head addrs)
-    g s' = do
-        us <- getAddrsUnspent addrs db s'
-        ss <- getAddrsSpent addrs db s'
-        let utx =
-                [ AddressTxOut
-                    { addressTxPkScript = outScript
-                    , addressTxId = outPointHash addrOutPoint
-                    , addressTxAmount = fromIntegral outputValue
-                    , addressTxBlock = outBlock
-                    , addressTxVout = outPointIndex addrOutPoint
-                    , addressTxNetwork = net
-                    }
-                | (AddrOutputKey {..}, Output {..}) <- us
-                ]
-            stx =
-                [ AddressTxOut
-                    { addressTxPkScript = outScript
-                    , addressTxId = outPointHash addrOutPoint
-                    , addressTxAmount = fromIntegral outputValue
-                    , addressTxBlock = outBlock
-                    , addressTxVout = outPointIndex addrOutPoint
-                    , addressTxNetwork = net
-                    }
-                | (AddrOutputKey {..}, Output {..}) <- ss
-                ]
-            itx =
-                [ AddressTxIn
+    f s' = mergeSourcesBy (flip compare) [p s', u s']
+    uns AddrOutputKey {..} Output {..} =
+        AddressTxOut
+            { addressTxPkScript = outScript
+            , addressTxId = outPointHash addrOutPoint
+            , addressTxAmount = fromIntegral outputValue
+            , addressTxBlock = outBlock
+            , addressTxVout = outPointIndex addrOutPoint
+            , addressTxNetwork = getAddrNet a
+            }
+    uns _ _ = error "Invalid address output"
+    spn =
+        awaitForever $ \(AddrOutputKey {..}, Output {..}) -> do
+            let Spender {..} =
+                    fromMaybe
+                        (error "Could not get spender for spent output")
+                        outSpender
+            yield
+                AddressTxIn
                     { addressTxPkScript = outScript
                     , addressTxId = spenderHash
                     , addressTxAmount = -fromIntegral outputValue
                     , addressTxBlock = spenderBlock
                     , addressTxVin = spenderIndex
-                    , addressTxNetwork = net
+                    , addressTxNetwork = getAddrNet a
                     }
-                | (AddrOutputKey {..}, Output {..}) <- ss
-                , let Spender {..} = fromMaybe e outSpender
-                ]
-        return $ sort (itx ++ stx ++ utx)
-    e = error "Could not get spender for spent output"
+            yield
+                AddressTxOut
+                    { addressTxPkScript = outScript
+                    , addressTxId = outPointHash addrOutPoint
+                    , addressTxAmount = fromIntegral outputValue
+                    , addressTxBlock = outBlock
+                    , addressTxVout = outPointIndex addrOutPoint
+                    , addressTxNetwork = getAddrNet a
+                    }
+    u s' = getAddrUnspent a h db s' .| mapC (uncurry uns)
+    p s' = getAddrSpent a h db s' .| spn
 
-getUnspents :: MonadUnliftIO m => [Address] -> DB -> Maybe Snapshot -> m [Unspent]
-getUnspents addrs db s =
+
+getAddrsTxs ::
+       (MonadResource m, MonadUnliftIO m)
+    => [Address]
+    -> Maybe BlockHeight
+    -> DB
+    -> Maybe Snapshot
+    -> ConduitT () AddressTx m ()
+getAddrsTxs as h db s =
+    if isJust s
+        then f s
+        else R.withSnapshotBracket db $ \s' -> f (Just s')
+  where
+    f s' = forM_ as $ \a -> getAddrTxs a h db s'
+
+getUnspents ::
+       (MonadResource m, MonadUnliftIO m)
+    => [Address]
+    -> Maybe BlockHeight
+    -> DB
+    -> Maybe Snapshot
+    -> ConduitT () Unspent m ()
+getUnspents as h db s =
     case s of
-        Nothing -> R.withSnapshot db $ f . Just
+        Nothing -> R.withSnapshotBracket db $ f . Just
         Just _  -> f s
   where
-    f s' = fmap (sort . concat) $ forM addrs $ \addr -> getUnspent addr db s'
+    f s' = forM_ as $ \a -> getUnspent a h db s'
 
-getUnspent :: MonadUnliftIO m => Address -> DB -> Maybe Snapshot -> m [Unspent]
-getUnspent addr db s = do
-    xs <- getAddrUnspent addr db s
-    return $ map (uncurry to_unspent) xs
+getUnspent ::
+       (MonadResource m, MonadUnliftIO m)
+    => Address
+    -> Maybe BlockHeight
+    -> DB
+    -> Maybe Snapshot
+    -> ConduitT () Unspent m ()
+getUnspent addr h db s =
+    getAddrUnspent addr h db s .| mapC (uncurry to_unspent)
   where
     to_unspent AddrOutputKey {..} Output {..} =
         Unspent
@@ -1174,7 +1174,7 @@ syncMempoolOnce =
         peers <- managerGetPeers m
         guard (not (null peers))
         let p = head peers
-        $(logInfoS) "BlockStore" $
+        $(logInfoS) "Block" $
             "Syncing mempool with peer " <>
             fromString (show (onlinePeerAddress p))
         MMempool `sendMessage` onlinePeerMailbox p
@@ -1186,7 +1186,9 @@ isAtHeight = do
     bb <- getBestBlockHash db Nothing
     ch <- asks myChain
     cb <- chainGetBest ch
-    return (headerHash (nodeHeader cb) == bb)
+    time <- liftIO getPOSIXTime
+    let recent = floor time - blockTimestamp (nodeHeader cb) < 60 * 60 * 4
+    return (recent && headerHash (nodeHeader cb) == bb)
 
 zero :: TxHash
 zero = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -1201,3 +1203,26 @@ peerString p = do
     managerGetPeer mgr p >>= \case
         Nothing -> return "[unknown]"
         Just o -> return $ fromString $ show $ onlinePeerAddress o
+
+-- | Merge multiple sorted sources into one sorted producer using specified
+-- sorting key. Adapted from: <https://github.com/cblp/conduit-merge>
+mergeSourcesBy ::
+       (Foldable f, Monad m)
+    => (a -> a -> Ordering)
+    -> f (ConduitT () a m ())
+    -> ConduitT i a m ()
+mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
+  where
+    mergeSealed sources = do
+        prefetchedSources <- lift $ traverse ($$++ await) sources
+        go [(a, s) | (s, Just a) <- prefetchedSources]
+    go [] = pure ()
+    go sources = do
+        let (a, src1):sources1 = sortBy (f `on` fst) sources
+        yield a
+        (src2, mb) <- lift $ src1 $$++ await
+        let sources2 =
+                case mb of
+                    Nothing -> sources1
+                    Just b  -> (b, src2) : sources1
+        go sources2
