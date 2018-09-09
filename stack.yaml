@@ -1,22 +1,14 @@
-resolver: lts-12.7
+resolver: lts-12.9
 nix:
   packages:
-    - autoconf
-    - automake
-    - cacert
-    - libtool
     - rocksdb
     - secp256k1
     - zlib
 extra-deps:
-  - git: https://github.com/haskoin/haskoin-core.git
-    commit: ad6b237df2fb795780b3847a9c7fba311fab4414
-  - git: https://github.com/xenog/nqe.git
-    commit: 43661fd297bd2e8d1ab61e7a9cf8030130b7e82e
-  - git: https://github.com/xenog/rocksdb-query.git
-    commit: e34aca0fe90264dd9aa62d0e081e6e7f4e3a8559
-  - git: https://github.com/haskoin/haskoin-node.git
-    commit: 9755bc5094cb5f47e553d9076085ca08e4dad8fb
+  - haskoin-core-0.5.0
+  - nqe-0.4.0
+  - rocksdb-query-0.1.0
+  - haskoin-node-0.5.0
   - rocksdb-haskell-1.0.1
   - murmur3-1.0.3
   - secp256k1-1.1.2
