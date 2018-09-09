@@ -66,7 +66,6 @@ data BlockRead = BlockRead
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
     , myNetwork    :: !Network
-    , myMempool    :: !(TVar Bool)
     }
 
 type MonadBlock m
@@ -131,7 +130,6 @@ blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
     base_height_box <- newTVarIO 0
     peer_box <- newTVarIO Nothing
-    mempool_box <- newTVarIO False
     runReaderT
         (init_db >> syncBlocks >> run)
         BlockRead
@@ -143,7 +141,6 @@ blockStore BlockConfig {..} = do
             , myBaseHeight = base_height_box
             , myPeer = peer_box
             , myNetwork = blockConfNet
-            , myMempool = mempool_box
             }
   where
     run =
@@ -900,7 +897,6 @@ syncBlocks =
         let best_height = blockValueHeight best_block
         when (best_height == chain_height) $ do
             reset_peer best_height
-            syncMempoolOnce
             empty
         base_height <- readTVarIO base_height_box
         p <- get_peer
@@ -980,7 +976,7 @@ processBlockMessage :: (MonadUnliftIO m, MonadBlock m) => BlockMessage -> m ()
 
 processBlockMessage (BlockChainNew _) = syncBlocks
 
-processBlockMessage (BlockPeerConnect _) = syncBlocks
+processBlockMessage (BlockPeerConnect p) = syncBlocks >> syncMempool p
 
 processBlockMessage (BlockReceived p b) =
     runExceptT (importBlock b) >>= \case
@@ -992,7 +988,7 @@ processBlockMessage (BlockReceived p b) =
                 cs (blockHashToHex hash) <>
                 " error: " <>
                 fromString e
-        Right () -> syncBlocks
+        Right () -> syncBlocks >> syncMempool p
 
 processBlockMessage (TxReceived _ tx) =
     isAtHeight >>= \x ->
@@ -1119,22 +1115,12 @@ getUnspent ::
 getUnspent addr h db s =
     getAddrUnspent addr h db s .| mapC (uncurry AddrOutput)
 
-syncMempoolOnce :: MonadBlock m => m ()
-syncMempoolOnce =
+syncMempool :: MonadBlock m => Peer -> m ()
+syncMempool p =
     void . runMaybeT $ do
-        n <- asks myMempool
-        x <- readTVarIO n
-        guard (not x)
         guard =<< isAtHeight
-        m <- asks myManager
-        peers <- managerGetPeers m
-        guard (not (null peers))
-        let p = head peers
-        $(logInfoS) "Block" $
-            "Syncing mempool with peer " <>
-            fromString (show (onlinePeerAddress p))
-        MMempool `sendMessage` onlinePeerMailbox p
-        atomically $ writeTVar n True
+        $(logInfoS) "Block" "Syncing mempool..."
+        MMempool `sendMessage` p
 
 isAtHeight :: MonadBlock m => m Bool
 isAtHeight = do
