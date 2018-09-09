@@ -11,28 +11,28 @@ import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
-import           Data.Aeson               (ToJSON (..), Value (..), encode,
-                                           object, (.=))
+import           Data.Aeson              (ToJSON (..), Value (..), encode,
+                                          object, (.=))
 import           Data.Bits
-import           Data.ByteString.Builder  (lazyByteString)
+import           Data.ByteString.Builder (lazyByteString)
 import           Data.Function
 import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
-import qualified Data.Text                as T
+import qualified Data.Text               as T
 import           Data.Version
-import           Database.RocksDB         hiding (get)
+import           Database.RocksDB        hiding (get)
 import           Haskoin
 import           Network.Haskoin.Node
 import           Network.Haskoin.Store
 import           Network.HTTP.Types
 import           Options.Applicative
-import           Paths_haskoin_store      as P
+import           Paths_haskoin_store     as P
 import           System.Directory
 import           System.Exit
 import           System.FilePath
 import           System.IO.Unsafe
-import           Text.Read                (readMaybe)
+import           Text.Read               (readMaybe)
 import           UnliftIO
 import           Web.Scotty.Trans
 
@@ -55,8 +55,14 @@ data Config = Config
     , configMaxReqs  :: !Int
     }
 
+maxUriArgs :: Int
+maxUriArgs = 500
+
+maxPubSubQueue :: Int
+maxPubSubQueue = 10000
+
 defMaxReqs :: Int
-defMaxReqs = 500
+defMaxReqs = 10000
 
 defPort :: Int
 defPort = 3000
@@ -149,7 +155,7 @@ config = do
     optConfigMaxReqs <-
         optional . option auto $
         metavar "MAXREQ" <> long "maxreq" <>
-        help ("Maximum request elements (default:" <> show defMaxReqs <> ")")
+        help ("Maximum returned entries (default:" <> show defMaxReqs <> ")")
     optConfigVersion <-
         switch $ long "version" <> short 'v' <> help "Show version"
     return OptConfig {..}
@@ -208,7 +214,7 @@ main =
             exitSuccess
         let conf = optToConfig opt
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
-            die "Specify --discover or --peers [PEER,...]"
+            die "Specify: --discover | --peers PEER,..."
         let net = configNetwork conf
         b <- Inbox <$> newTQueueIO
         s <- Inbox <$> newTQueueIO
@@ -236,8 +242,8 @@ main =
         fullDesc <> progDesc "Blockchain store and API" <>
         Options.Applicative.header ("haskoin-store version " <> showVersion P.version)
 
-testLength :: Monad m => Config -> Int -> ActionT Except m ()
-testLength conf l = when (l <= 0 || l > configMaxReqs conf) (raise OutOfBounds)
+testLength :: Monad m => Int -> ActionT Except m ()
+testLength l = when (l <= 0 || l > maxUriArgs) (raise OutOfBounds)
 
 runWeb ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -261,11 +267,11 @@ runWeb conf pub mgr ch bl db = do
             getBlockAtHeight height db Nothing >>= maybeJSON
         get "/block/heights" $ do
             heights <- param "heights"
-            testLength conf (length heights)
+            testLength (length heights)
             getBlocksAtHeights heights db Nothing >>= json
         get "/blocks" $ do
             blocks <- param "blocks"
-            testLength conf (length blocks)
+            testLength (length blocks)
             getBlocks blocks db Nothing >>= json
         get "/mempool" $ lift (getMempool db Nothing) >>= json
         get "/transaction/:txid" $ do
@@ -273,26 +279,28 @@ runWeb conf pub mgr ch bl db = do
             lift (getTx net txid db Nothing) >>= maybeJSON
         get "/transactions" $ do
             txids <- param "txids"
-            testLength conf (length txids)
+            testLength (length txids)
             lift (getTxs net txids db Nothing) >>= json
         get "/address/:address/outputs" $ do
             address <- parse_address
             height <- parse_height
-            lift (addrTxsMax db (configMaxReqs conf) height address) >>= json
+            x <- parse_max
+            lift (addrTxsMax db x height address) >>= json
         get "/address/outputs" $ do
             addresses <- parse_addresses
             height <- parse_height
-            lift (addrsTxsMax db (configMaxReqs conf) height addresses) >>= json
+            x <- parse_max
+            lift (addrsTxsMax db x height addresses) >>= json
         get "/address/:address/unspent" $ do
             address <- parse_address
             height <- parse_height
-            lift (addrUnspentMax db (configMaxReqs conf) height address) >>=
-                json
+            x <- parse_max
+            lift (addrUnspentMax db x height address) >>= json
         get "/address/unspent" $ do
             addresses <- parse_addresses
             height <- parse_height
-            lift (addrsUnspentMax db (configMaxReqs conf) height addresses) >>=
-                json
+            x <- parse_max
+            lift (addrsUnspentMax db x height addresses) >>= json
         get "/address/:address/balance" $ do
             address <- parse_address
             getBalance address db Nothing >>= json
@@ -313,7 +321,7 @@ runWeb conf pub mgr ch bl db = do
         get "/events" $ do
             setHeader "Content-Type" "application/x-json-stream"
             stream $ \io flush ->
-                withBoundedPubSub 100 pub $ \sub ->
+                withBoundedPubSub maxPubSubQueue pub $ \sub ->
                     forever $
                     flush >> receive sub >>= \case
                         BestBlock block_hash -> do
@@ -334,8 +342,12 @@ runWeb conf pub mgr ch bl db = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
         if length as == length addresses
-            then testLength conf (length as) >> return as
+            then testLength (length as) >> return as
             else next
+    parse_max = do
+        x <- param "max" `rescue` const (return (configMaxReqs conf))
+        when (x < 1 || x > configMaxReqs conf) (raise OutOfBounds)
+        return x
     parse_height = (Just <$> param "height") `rescue` const (return Nothing)
     net = configNetwork conf
     runner f l = do
