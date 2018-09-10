@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.1.1
+version: 0.1.2
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
@@ -14,27 +14,12 @@ extra-source-files:
   - README.md
   - CHANGELOG.md
 dependencies:
-  - aeson
   - base >=4.7 && <5
-  - bytestring
-  - cereal
-  - conduit
-  - directory
-  - filepath
   - haskoin-core
   - haskoin-node
-  - hspec
-  - http-types
   - monad-logger
-  - mtl
   - nqe
-  - optparse-applicative
-  - random
   - rocksdb-haskell
-  - scotty
-  - string-conversions
-  - text
-  - time
   - unliftio
 library:
   source-dirs: src
@@ -42,10 +27,17 @@ library:
     - Network.Haskoin.Store
   dependencies:
     - aeson
+    - bytestring
+    - cereal
+    - conduit
     - containers
+    - mtl
     - network
+    - random
     - rocksdb-query
     - string-conversions
+    - text
+    - time
     - transformers
 executables:
   haskoin-store:
@@ -57,6 +49,16 @@ executables:
       - -with-rtsopts=-N
     dependencies:
       - haskoin-store
+      - aeson
+      - bytestring
+      - conduit
+      - directory
+      - filepath
+      - http-types
+      - optparse-applicative
+      - scotty
+      - string-conversions
+      - text
 tests:
   haskoin-store-test:
     main: Spec.hs
@@ -66,4 +68,5 @@ tests:
       - -rtsopts
       - -with-rtsopts=-N
     dependencies:
+      - hspec
       - haskoin-store
