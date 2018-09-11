@@ -113,8 +113,14 @@ runMonadImport f =
   where
     update_database = do
         ops <-
-            concat <$> sequence
-                [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
+            concat <$>
+            sequence
+                [ getBlockOps
+                , getBalanceOps
+                , getDeleteTxOps
+                , getInsertTxOps
+                , purgeOrphanOps
+                ]
         db <- asks myBlockDB
         writeBatch db ops
         l <- asks myListener
@@ -149,9 +155,9 @@ blockStore BlockConfig {..} = do
             processBlockMessage msg
     init_db =
         runResourceT $ do
-            -- runConduit $
-            --     matching blockConfDB Nothing OrphanKey .|
-            --     mapM_C (\(k, Tx {}) -> remove blockConfDB k)
+            runConduit $
+                matching blockConfDB Nothing OrphanKey .|
+                mapM_C (\(k, Tx {}) -> remove blockConfDB k)
             retrieve blockConfDB Nothing BestBlockKey >>= \case
                 Nothing -> addNewBlock (genesisBlock blockConfNet)
                 Just (_ :: BlockHash) ->
@@ -690,7 +696,6 @@ purgeOrphanOps =
         liftIO . runResourceT . runConduit $
             matching db Nothing OrphanKey .| mapC (\(k, Tx {}) -> deleteOp k) .|
             sinkList
-
 
 getSimpleTx :: MonadBlock m => TxHash -> m Tx
 getSimpleTx tx_hash =
