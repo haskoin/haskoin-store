@@ -41,14 +41,14 @@ main = do
                     bestHeight `shouldBe` 8
         it "get a block and its transactions" $
             withTestStore net "get-block-txs" $ \TestStore {..} -> do
-                bs <-
-                    replicateM 382 $
-                    receiveMatch testStoreEvents $ \case
-                        BestBlock b -> Just b
-                        _ -> Nothing
+                let get_the_block h =
+                        receive testStoreEvents >>= \case
+                            BestBlock b | h == 0 -> return b
+                                        | otherwise -> get_the_block ((h :: Int) - 1)
+                            _ -> get_the_block h
+                bh <- get_the_block 381
                 withAsync (dummyEventHandler testStoreEvents) $ \_ -> do
-                    let blockHash = last bs
-                    m <- getBlock blockHash testStoreDB Nothing
+                    m <- getBlock bh testStoreDB Nothing
                     let BlockValue {..} =
                             fromMaybe (error "Could not get block") m
                     blockValueHeight `shouldBe` 381

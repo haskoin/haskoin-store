@@ -112,10 +112,8 @@ runMonadImport f =
             }
   where
     update_database = do
-        oops <- purgeOrphanOps
         ops <-
-            (<> oops) . concat <$>
-            sequence
+            concat <$> sequence
                 [getBlockOps, getBalanceOps, getDeleteTxOps, getInsertTxOps]
         db <- asks myBlockDB
         writeBatch db ops
@@ -125,6 +123,8 @@ runMonadImport f =
                 atomically (l (BestBlock (headerHash blockHeader)))
             Just RevertBlock -> $(logWarnS) "Block" "Reverted best block"
             _ -> return ()
+        gets newTxs >>= \ths ->
+            forM_ (M.keys ths) $ \tx -> atomically (l (MempoolNew tx))
 
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
@@ -149,9 +149,9 @@ blockStore BlockConfig {..} = do
             processBlockMessage msg
     init_db =
         runResourceT $ do
-            runConduit $
-                matching blockConfDB Nothing OrphanKey .|
-                mapM_C (\(k, Tx {}) -> remove blockConfDB k)
+            -- runConduit $
+            --     matching blockConfDB Nothing OrphanKey .|
+            --     mapM_C (\(k, Tx {}) -> remove blockConfDB k)
             retrieve blockConfDB Nothing BestBlockKey >>= \case
                 Nothing -> addNewBlock (genesisBlock blockConfNet)
                 Just (_ :: BlockHash) ->
@@ -988,21 +988,13 @@ processBlockMessage (BlockReceived p b) =
                 cs (blockHashToHex hash) <>
                 " error: " <>
                 fromString e
-        Right () -> syncBlocks >> syncMempool p
+        Right () -> importOrphans >> syncBlocks >> syncMempool p
 
 processBlockMessage (TxReceived _ tx) =
     isAtHeight >>= \x ->
         when x $ do
             _ <- runMonadImport $ importTransaction tx Nothing
-            import_orphans
-  where
-    import_orphans = do
-        db <- asks myBlockDB
-        ret <-
-            runResourceT . runConduit $
-            matching db Nothing OrphanKey .| mapMC (import_tx . snd) .| anyC id
-        when ret import_orphans
-    import_tx tx' = runMonadImport $ importTransaction tx' Nothing
+            importOrphans
 
 processBlockMessage (TxPublished tx) =
     void . runMonadImport $ importTransaction tx Nothing
@@ -1036,22 +1028,27 @@ processBlockMessage (TxAvailable p ts) =
             pstr <- peerString p
             $(logDebugS) "Block" $
                 "Received " <> cs (show (length ts)) <>
-                " tx inventory from peer " <> pstr
+                " tx inventory from peer " <>
+                pstr
             net <- asks myNetwork
             db <- asks myBlockDB
             has <-
                 fmap catMaybes . forM ts $ \t ->
-                    retrieve db Nothing (MempoolTx t) >>= \case
-                        Nothing -> return Nothing
-                        Just () -> return (Just t)
-            ors <-
-                map (\(OrphanTxKey k, Tx {}) -> k) <$>
-                liftIO (matchingAsList db Nothing OrphanKey)
-            let new = (ts \\ has) \\ ors
+                    let mem =
+                            retrieve db Nothing (MempoolTx t) >>= \case
+                                Nothing -> return Nothing
+                                Just () -> return (Just t)
+                        orp =
+                            retrieve db Nothing (OrphanTxKey t) >>= \case
+                                Nothing -> return Nothing
+                                Just Tx {} -> return (Just t)
+                     in runMaybeT $ MaybeT mem <|> MaybeT orp
+            let new = ts \\ has
             unless (null new) $ do
                 $(logDebugS) "Block" $
                     "Requesting " <> cs (show (length new)) <>
-                    " new txs from peer " <> pstr
+                    " new txs from peer " <>
+                    pstr
                 peerGetTxs net p new
 
 processBlockMessage (PongReceived p n) = do
@@ -1059,6 +1056,16 @@ processBlockMessage (PongReceived p n) = do
     $(logDebugS) "Block" $
         "Pong received with nonce " <> cs (show n) <> " from peer " <> pstr
     asks myListener >>= atomically . ($ PeerPong p n)
+
+importOrphans :: (MonadUnliftIO m, MonadBlock m) => m ()
+importOrphans = do
+    db <- asks myBlockDB
+    ret <-
+        runResourceT . runConduit $
+        matching db Nothing OrphanKey .| mapMC (import_tx . snd) .| anyC id
+    when ret importOrphans
+  where
+    import_tx tx' = runMonadImport $ importTransaction tx' Nothing
 
 getAddrOutputs ::
        (MonadResource m, MonadUnliftIO m)
