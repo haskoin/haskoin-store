@@ -7,7 +7,6 @@
 module Network.Haskoin.Store.Types where
 
 import           Control.Applicative
-import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad.Reader
 import           Data.Aeson              as A
@@ -22,24 +21,39 @@ import           Data.Word
 import           Database.RocksDB        (DB)
 import           Database.RocksDB.Query  as R
 import           Haskoin
-import           Network.Haskoin.Node
-import           UnliftIO
+import           Haskoin.Node
+import           NQE
 
+-- | Reasons why a transaction may not get imported.
 data TxException
     = DoubleSpend
+      -- ^ outputs already spent by another transaction
     | OverSpend
+      -- ^ outputs larger than inputs
     | OrphanTx
+      -- ^ inputs unknown
     | NonStandard
+      -- ^ non-standard transaction rejected by peer
     | LowFee
+      -- ^ pony up
     | Dust
+      -- ^ an output is too small
     | NoPeers
+      -- ^ no peers to send the transaction to
     | InvalidTx
+      -- ^ transaction is invalid in some other way
     | CouldNotImport
+      -- ^ could not import for an unknown reason
     | PeerIsGone
+      -- ^ the peer that got the transaction disconnected
     | AlreadyImported
+      -- ^ the transaction is already in the database
     | PublishTimeout
+      -- ^ some timeout was reached while publishing
     | PeerRejectOther
+      -- ^ peer rejected transaction for unknown reason
     | NotAtHeight
+      -- ^ this node is not yet synchronized
     deriving (Eq)
 
 instance Show TxException where
@@ -60,58 +74,88 @@ instance Show TxException where
 
 instance Exception TxException
 
+-- | Wrapper for an transaction that can be deserialized from a JSON object.
 newtype NewTx = NewTx
     { newTx :: Tx
     } deriving (Show, Eq, Ord)
 
+-- | Configuration for a block store.
 data BlockConfig = BlockConfig
     { blockConfMailbox  :: !BlockStore
+      -- ^ block sotre mailbox
     , blockConfManager  :: !Manager
+      -- ^ peer manager from running node
     , blockConfChain    :: !Chain
+      -- ^ chain from a running node
     , blockConfListener :: !(Listen StoreEvent)
+      -- ^ listener for store events
     , blockConfDB       :: !DB
+      -- ^ RocksDB database handle
     , blockConfNet      :: !Network
+      -- ^ network constants
     }
 
+-- | Event that the store can generate.
 data StoreEvent
     = BestBlock !BlockHash
+      -- ^ new best block
     | MempoolNew !TxHash
+      -- ^ new mempool transaction
     | TxException !TxHash
                   !TxException
+      -- ^ published tx could not be imported
     | PeerConnected !Peer
+      -- ^ new peer connected
     | PeerDisconnected !Peer
+      -- ^ peer has disconnected
     | PeerPong !Peer
                !Word64
+      -- ^ peer responded 'Ping'
 
+-- | Messages that a 'BlockStore' can accept.
 data BlockMessage
     = BlockChainNew !BlockNode
+      -- ^ new block header in chain
     | BlockPeerConnect !Peer
+      -- ^ new peer connected
     | BlockPeerDisconnect !Peer
+      -- ^ peer disconnected
     | BlockReceived !Peer
                     !Block
+      -- ^ new block received from a peer
     | BlockNotReceived !Peer
                        !BlockHash
+      -- ^ peer could not deliver a block
     | TxReceived !Peer
                  !Tx
+      -- ^ transaction received from a peer
     | TxAvailable !Peer
                   ![TxHash]
+      -- ^ peer has transactions available
     | TxPublished !Tx
+      -- ^ transaction has been published successfully
     | PongReceived !Peer
                    !Word64
+      -- ^ peer responded to a 'Ping'
 
+-- | Mailbox for block store.
 type BlockStore = Inbox BlockMessage
 
+-- | Database key for an address output.
 data AddrOutputKey
     = AddrOutputKey { addrOutputSpent   :: !Bool
                     , addrOutputAddress :: !Address
                     , addrOutputHeight  :: !(Maybe BlockHeight)
                     , addrOutputPos     :: !(Maybe Word32)
                     , addrOutPoint      :: !OutPoint }
+      -- ^ full key
     | MultiAddrOutputKey { addrOutputSpent   :: !Bool
                          , addrOutputAddress :: !Address }
+      -- ^ short key for all spent or unspent outputs.
     | MultiAddrHeightKey { addrOutputSpent   :: !Bool
                          , addrOutputAddress :: !Address
                          , addrOutputHeight  :: !(Maybe BlockHeight) }
+      -- ^ short key for all outputs at a given height.
     deriving (Show, Eq)
 
 instance Ord AddrOutputKey where
@@ -123,18 +167,28 @@ instance Ord AddrOutputKey where
             , outPointIndex addrOutPoint)
         f _ = undefined
 
+-- | Database value for a block entry.
 data BlockValue = BlockValue
     { blockValueHeight :: !BlockHeight
+      -- ^ height of the block in the chain
     , blockValueWork   :: !BlockWork
+      -- ^ accumulated work in that block
     , blockValueHeader :: !BlockHeader
+      -- ^ block header
     , blockValueSize   :: !Word32
+      -- ^ size of the block including witnesses
     , blockValueTxs    :: ![TxHash]
+      -- ^ block transactions
     } deriving (Show, Eq, Ord)
 
+-- | Reference to a block where a transaction is stored.
 data BlockRef = BlockRef
     { blockRefHash   :: !BlockHash
+      -- ^ block header hash
     , blockRefHeight :: !BlockHeight
+      -- ^ block height in the chain
     , blockRefPos    :: !Word32
+      -- ^ position of transaction within the block
     } deriving (Show, Eq)
 
 instance Ord BlockRef where
@@ -142,70 +196,118 @@ instance Ord BlockRef where
       where
         f BlockRef {..} = (blockRefHeight, blockRefPos)
 
+-- | Detailed transaction information.
 data DetailedTx = DetailedTx
     { detailedTxData    :: !Tx
+      -- ^ 'Tx' object
     , detailedTxFee     :: !Word64
+      -- ^ transaction fees paid to miners in satoshi
     , detailedTxInputs  :: ![DetailedInput]
+      -- ^ transaction inputs
     , detailedTxOutputs :: ![DetailedOutput]
+      -- ^ transaction outputs
     , detailedTxBlock   :: !(Maybe BlockRef)
+      -- ^ block information for this transaction
     } deriving (Show, Eq)
 
+-- | Input information.
 data DetailedInput
     = DetailedCoinbase { detInOutPoint  :: !OutPoint
+                         -- ^ output being spent (should be zeroes)
                        , detInSequence  :: !Word32
+                         -- ^ sequence
                        , detInSigScript :: !ByteString
-                       , detInNetwork   :: !Network }
+                         -- ^ input script data (not valid script)
+                       , detInNetwork   :: !Network
+                         -- ^ network constants
+                       }
+    -- ^ coinbase input details
     | DetailedInput { detInOutPoint  :: !OutPoint
+                      -- ^ output being spent
                     , detInSequence  :: !Word32
+                      -- ^ sequence
                     , detInSigScript :: !ByteString
+                      -- ^ signature (input) script
                     , detInPkScript  :: !ByteString
+                      -- ^ pubkey (output) script from previous tx
                     , detInValue     :: !Word64
+                      -- ^ amount in satoshi being spent spent
                     , detInBlock     :: !(Maybe BlockRef)
-                    , detInNetwork   :: !Network }
+                      -- ^ block where this input is found
+                    , detInNetwork   :: !Network
+                      -- ^ network constants
+                    }
+    -- ^ regular input details
     deriving (Show, Eq)
 
 isCoinbase :: DetailedInput -> Bool
 isCoinbase DetailedCoinbase {} = True
 isCoinbase _                   = False
 
+-- | Output information.
 data DetailedOutput = DetailedOutput
     { detOutValue   :: !Word64
+      -- ^ amount in satoshi
     , detOutScript  :: !ByteString
+      -- ^ pubkey (output) script
     , detOutSpender :: !(Maybe Spender)
+      -- ^ input spending this transaction
     , detOutNetwork :: !Network
+      -- ^ network constants
     } deriving (Show, Eq)
 
+-- | Address balance information.
 data AddressBalance = AddressBalance
     { addressBalAddress     :: !Address
+      -- ^ address balance
     , addressBalConfirmed   :: !Word64
+      -- ^ confirmed balance
     , addressBalUnconfirmed :: !Int64
+      -- ^ unconfirmed balance (can be negative)
     , addressOutputCount    :: !Word64
+      -- ^ number of outputs sending to this address
     , addressSpentCount     :: !Word64
+      -- ^ number of spent outputs
     } deriving (Show, Eq)
 
+-- | Transaction record in database.
 data TxRecord = TxRecord
     { txValueBlock    :: !(Maybe BlockRef)
+      -- ^ block information
     , txValue         :: !Tx
+      -- ^ transaction data
     , txValuePrevOuts :: [(OutPoint, PrevOut)]
+      -- ^ previous output information
     } deriving (Show, Eq, Ord)
 
+-- | Output key in database.
 newtype OutputKey = OutputKey
     { outPoint :: OutPoint
     } deriving (Show, Eq, Ord)
 
+-- | Previous output data.
 data PrevOut = PrevOut
     { prevOutValue  :: !Word64
+      -- ^ value of output in satoshi
     , prevOutBlock  :: !(Maybe BlockRef)
+      -- ^ block information for spent output
     , prevOutScript :: !ByteString
+      -- ^ pubkey (output) script
     } deriving (Show, Eq, Ord)
 
+-- | Output data.
 data Output = Output
     { outputValue :: !Word64
+      -- ^ value of output in satoshi
     , outBlock    :: !(Maybe BlockRef)
+      -- ^ block infromation for output
     , outScript   :: !ByteString
+      -- ^ pubkey (output) script
     , outSpender  :: !(Maybe Spender)
+      -- ^ input spending this output
     } deriving (Show, Eq, Ord)
 
+-- | Prepare previous output.
 outputToPrevOut :: Output -> PrevOut
 outputToPrevOut Output {..} =
     PrevOut
@@ -214,6 +316,7 @@ outputToPrevOut Output {..} =
     , prevOutScript = outScript
     }
 
+-- | Convert previous output to unspent output.
 prevOutToOutput :: PrevOut -> Output
 prevOutToOutput PrevOut {..} =
     Output
@@ -223,56 +326,83 @@ prevOutToOutput PrevOut {..} =
     , outSpender = Nothing
     }
 
+-- | Information about input spending output.
 data Spender = Spender
     { spenderHash  :: !TxHash
+      -- ^ input transaction hash
     , spenderIndex :: !Word32
+      -- ^ input position in transaction
     , spenderBlock :: !(Maybe BlockRef)
+      -- ^ block information
     } deriving (Show, Eq, Ord)
 
+-- | Aggregate key for transactions and outputs.
 data MultiTxKey
     = MultiTxKey !TxKey
+      -- ^ key for transaction
     | MultiTxKeyOutput !OutputKey
+      -- ^ key for output
     | BaseTxKey !TxHash
+      -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
+-- | Aggregate database key for transactions and outputs.
 data MultiTxValue
     = MultiTx !TxRecord
+      -- ^ transaction record
     | MultiTxOutput !Output
+      -- ^ records for all outputs
     deriving (Show, Eq, Ord)
 
+-- | Transaction database key.
 newtype TxKey =
     TxKey TxHash
     deriving (Show, Eq, Ord)
 
+-- | Mempool transaction database key.
 data MempoolTx
     = MempoolTx TxHash
+      -- ^ key for a mempool transaction
     | MempoolKey
+      -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
+-- | Orphan transaction database key.
 data OrphanTx
     = OrphanTxKey TxHash
+      -- ^ key for an orphan transaction
     | OrphanKey
+      -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
+-- | Block entry database key.
 newtype BlockKey =
     BlockKey BlockHash
     deriving (Show, Eq, Ord)
 
+-- | Block height database key.
 newtype HeightKey =
     HeightKey BlockHeight
     deriving (Show, Eq, Ord)
 
+-- | Address balance database key.
 newtype BalanceKey = BalanceKey
     { balanceAddress :: Address
     } deriving (Show, Eq)
 
+-- | Address balance database value.
 data Balance = Balance
     { balanceValue       :: !Word64
+      -- ^ balance in satoshi
     , balanceUnconfirmed :: !Int64
+      -- ^ unconfirmed balance in satoshi (can be negative)
     , balanceOutputCount :: !Word64
+      -- ^ total number of outputs
     , balanceSpentCount  :: !Word64
+      -- ^ number of spent outputs
     } deriving (Show, Eq, Ord)
 
+-- | Default balance for an address.
 emptyBalance :: Balance
 emptyBalance =
     Balance
@@ -282,8 +412,10 @@ emptyBalance =
     , balanceSpentCount = 0
     }
 
+-- | Key for best block in database.
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
 
+-- | Address output.
 data AddrOutput = AddrOutput
     { addrOutputKey :: !AddrOutputKey
     , addrOutput    :: !Output
@@ -292,6 +424,7 @@ data AddrOutput = AddrOutput
 instance Ord AddrOutput where
     compare = compare `on` addrOutputKey
 
+-- | Serialization format for addresses in database.
 newtype StoreAddress = StoreAddress Address
     deriving (Show, Eq)
 
@@ -357,6 +490,7 @@ instance Serialize Balance where
         balanceSpentCount <- get
         return Balance {..}
 
+-- | Beginning of address output database key.
 addrKeyStart :: Bool -> Address -> Put
 addrKeyStart b a = do
     putWord8 $ if b then 0x03 else 0x05
@@ -503,6 +637,7 @@ instance Serialize BlockValue where
         blockValueTxs <- get
         return BlockValue {..}
 
+-- | Byte identifying network for an address.
 netByte :: Network -> Word8
 netByte net | net == btc        = 0x00
             | net == btcTest    = 0x01
@@ -512,6 +647,7 @@ netByte net | net == btc        = 0x00
             | net == bchRegTest = 0x06
             | otherwise         = 0xff
 
+-- | Network from its corresponding byte.
 byteNet :: Word8 -> Maybe Network
 byteNet 0x00 = Just btc
 byteNet 0x01 = Just btcTest
@@ -521,6 +657,7 @@ byteNet 0x05 = Just bchTest
 byteNet 0x06 = Just bchRegTest
 byteNet _    = Nothing
 
+-- | Deserializer for network byte.
 getByteNet :: Get Network
 getByteNet =
     byteNet <$> getWord8 >>= \case
@@ -569,6 +706,7 @@ instance Serialize StoreAddress where
             h <- get
             return (WitnessScriptAddress h net)
 
+-- | JSON serialization for 'BlockValue'.
 blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
     [ "hash" .= headerHash blockValueHeader
@@ -590,6 +728,7 @@ instance ToJSON Spender where
     toJSON = object . spenderPairs
     toEncoding = pairs . mconcat . spenderPairs
 
+-- | JSON serialization for 'BlockRef'.
 blockRefPairs :: A.KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {..} =
     [ "hash" .= blockRefHash
@@ -597,10 +736,12 @@ blockRefPairs BlockRef {..} =
     , "position" .= blockRefPos
     ]
 
+-- | JSON serialization for 'Spender'.
 spenderPairs :: A.KeyValue kv => Spender -> [kv]
 spenderPairs Spender {..} =
     ["txid" .= spenderHash, "input" .= spenderIndex, "block" .= spenderBlock]
 
+-- | JSON serialization for a 'DetailedOutput'.
 detailedOutputPairs :: A.KeyValue kv => DetailedOutput -> [kv]
 detailedOutputPairs DetailedOutput {..} =
     [ "address" .= scriptToAddressBS detOutNetwork detOutScript
@@ -614,6 +755,7 @@ instance ToJSON DetailedOutput where
     toJSON = object . detailedOutputPairs
     toEncoding = pairs . mconcat . detailedOutputPairs
 
+-- | JSON serialization for 'DetailedInput'.
 detailedInputPairs :: A.KeyValue kv => DetailedInput -> [kv]
 detailedInputPairs DetailedInput {..} =
     [ "txid" .= outPointHash detInOutPoint
@@ -642,6 +784,7 @@ instance ToJSON DetailedInput where
     toJSON = object . detailedInputPairs
     toEncoding = pairs . mconcat . detailedInputPairs
 
+-- | JSON serialization for 'DetailedTx'.
 detailedTxPairs :: A.KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
     [ "txid" .= txHash detailedTxData
@@ -663,6 +806,7 @@ instance ToJSON BlockRef where
     toJSON = object . blockRefPairs
     toEncoding = pairs . mconcat . blockRefPairs
 
+-- | JSON serialization for 'AddrOutput'.
 addrOutputPairs :: A.KeyValue kv => AddrOutput -> [kv]
 addrOutputPairs AddrOutput {..} =
     [ "address" .= addrOutputAddress
@@ -686,6 +830,7 @@ instance ToJSON AddrOutput where
     toJSON = object . addrOutputPairs
     toEncoding = pairs . mconcat . addrOutputPairs
 
+-- | JSON serialization for 'AddressBalance'.
 addressBalancePairs :: A.KeyValue kv => AddressBalance -> [kv]
 addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
@@ -731,17 +876,28 @@ instance Serialize TxKey where
         guard . (== 0x00) =<< getWord8
         return (TxKey hash)
 
-type StoreSupervisor n = Inbox (SupervisorMessage n)
+-- | Configuration for a 'Store'.
+data StoreConfig = StoreConfig
+    { storeConfMaxPeers  :: !Int
+      -- ^ max peers to connect to
+    , storeConfInitPeers :: ![HostPort]
+      -- ^ static set of peers to connect to
+    , storeConfDiscover  :: !Bool
+      -- ^ discover new peers?
+    , storeConfDB        :: !DB
+      -- ^ RocksDB database handler
+    , storeConfNetwork   :: !Network
+      -- ^ network constants
+    }
 
-data StoreConfig n = StoreConfig
-    { storeConfBlocks     :: !BlockStore
-    , storeConfSupervisor :: !(StoreSupervisor n)
-    , storeConfManager    :: !Manager
-    , storeConfChain      :: !Chain
-    , storeConfPublisher  :: !(Publisher Inbox TBQueue StoreEvent)
-    , storeConfMaxPeers   :: !Int
-    , storeConfInitPeers  :: ![HostPort]
-    , storeConfDiscover   :: !Bool
-    , storeConfDB         :: !DB
-    , storeConfNetwork    :: !Network
+-- | Store mailboxes.
+data Store = Store
+    { storeManager   :: !Manager
+      -- ^ peer manager mailbox
+    , storeChain     :: !Chain
+      -- ^ chain header process mailbox
+    , storeBlock     :: !BlockStore
+      -- ^ block storage mailbox
+    , storePublisher :: !(Publisher StoreEvent)
+      -- ^ store event publisher mailbox
     }

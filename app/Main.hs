@@ -7,7 +7,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Conduit
 import           Control.Arrow
-import           Control.Concurrent.NQE
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
@@ -23,9 +22,10 @@ import qualified Data.Text               as T
 import           Data.Version
 import           Database.RocksDB        hiding (get)
 import           Haskoin
-import           Network.Haskoin.Node
-import           Network.Haskoin.Store
+import           Haskoin.Node
+import           Haskoin.Store
 import           Network.HTTP.Types
+import           NQE
 import           Options.Applicative
 import           Paths_haskoin_store     as P
 import           System.Directory
@@ -216,8 +216,6 @@ main =
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
             die "Specify: --discover | --peers PEER,..."
         let net = configNetwork conf
-        b <- Inbox <$> newTQueueIO
-        s <- Inbox <$> newTQueueIO
         let wdir = configDir conf </> getNetworkName net
         liftIO $ createDirectoryIfMissing True wdir
         db <-
@@ -229,18 +227,13 @@ main =
                     , maxOpenFiles = -1
                     , writeBufferSize = 2 `shift` 30
                     }
-        mgr <- Inbox <$> newTQueueIO
-        pub <- Inbox <$> newTQueueIO
-        ch <- Inbox <$> newTQueueIO
-        supervisor
-            KillAll
-            s
-            [runWeb conf pub mgr ch b db, runStore conf pub mgr ch b db]
+        runStore conf db $ \st -> runWeb conf st db
   where
     opts =
         info (helper <*> config) $
         fullDesc <> progDesc "Blockchain store and API" <>
-        Options.Applicative.header ("haskoin-store version " <> showVersion P.version)
+        Options.Applicative.header
+            ("haskoin-store version " <> showVersion P.version)
 
 testLength :: Monad m => Int -> ActionT Except m ()
 testLength l = when (l <= 0 || l > maxUriArgs) (raise OutOfBounds)
@@ -248,13 +241,10 @@ testLength l = when (l <= 0 || l > maxUriArgs) (raise OutOfBounds)
 runWeb ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => Config
-    -> Publisher Inbox TBQueue StoreEvent
-    -> Manager
-    -> Chain
-    -> BlockStore
+    -> Store
     -> DB
     -> m ()
-runWeb conf pub mgr ch bl db = do
+runWeb conf st db = do
     l <- askLoggerIO
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
@@ -309,7 +299,7 @@ runWeb conf pub mgr ch bl db = do
             getBalances addresses db Nothing >>= json
         post "/transactions" $ do
             NewTx tx <- jsonData
-            lift (publishTx net pub mgr ch db bl tx) >>= \case
+            lift (publishTx net st db tx) >>= \case
                 Left PublishTimeout -> do
                     status status500
                     json (UserError (show PublishTimeout))
@@ -321,7 +311,7 @@ runWeb conf pub mgr ch bl db = do
         get "/events" $ do
             setHeader "Content-Type" "application/x-json-stream"
             stream $ \io flush ->
-                withBoundedPubSub maxPubSubQueue pub $ \sub ->
+                withPubSub (storePublisher st) (newTBQueueIO maxPubSubQueue) $ \sub ->
                     forever $
                     flush >> receive sub >>= \case
                         BestBlock block_hash -> do
@@ -357,23 +347,14 @@ runWeb conf pub mgr ch bl db = do
 runStore ::
        (MonadLoggerIO m, MonadUnliftIO m)
     => Config
-    -> Publisher Inbox TBQueue StoreEvent
-    -> Manager
-    -> Chain
-    -> BlockStore
     -> DB
-    -> m ()
-runStore conf pub mgr ch b db = do
-    s <- Inbox <$> newTQueueIO
+    -> (Store -> m a)
+    -> m a
+runStore conf db f = do
     let net = configNetwork conf
         cfg =
             StoreConfig
-                { storeConfBlocks = b
-                , storeConfSupervisor = s
-                , storeConfChain = ch
-                , storeConfManager = mgr
-                , storeConfPublisher = pub
-                , storeConfMaxPeers = 20
+                { storeConfMaxPeers = 20
                 , storeConfInitPeers =
                       map
                           (second (fromMaybe (getDefaultPort net)))
@@ -382,7 +363,7 @@ runStore conf pub mgr ch b db = do
                 , storeConfDB = db
                 , storeConfNetwork = net
                 }
-    store cfg
+    withStore cfg f
 
 addrTxsMax ::
        MonadUnliftIO m

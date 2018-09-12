@@ -5,10 +5,10 @@ nix:
     - secp256k1
     - zlib
 extra-deps:
-  - haskoin-core-0.5.2
-  - haskoin-node-0.5.2
-  - nqe-0.4.1
-  - rocksdb-query-0.1.1
   - rocksdb-haskell-1.0.1
   - murmur3-1.0.3
   - secp256k1-haskell-0.1.2
+  - ../nqe
+  - ../rocksdb-query
+  - ../haskoin-core
+  - ../haskoin-node
