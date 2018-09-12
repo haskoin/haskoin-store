@@ -25,6 +25,7 @@ module Network.Haskoin.Store.Block
       , getTxs
       , getUnspents
       , getMempool
+      , getPeersInformation
       ) where
 
 import           Conduit
@@ -1180,3 +1181,19 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
                     Nothing -> sources1
                     Just b  -> (b, src2) : sources1
         go sources2
+
+getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
+getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
+  where
+    toInfo op = PeerInformation
+        { userAgent = onlinePeerUserAgent op
+        , address = cs $ show $ onlinePeerAddress op
+        , connected = onlinePeerConnected op
+        , version = onlinePeerVersion op
+        , services = onlinePeerServices op
+        , relay = onlinePeerRelay op
+        -- , bestBlock = onlinePeerBestBlock op
+        , nonce = onlinePeerNonce op
+        , remoteNonce = onlinePeerRemoteNonce op
+        , pings = onlinePeerPings op
+        }

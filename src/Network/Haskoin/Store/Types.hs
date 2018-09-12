@@ -24,6 +24,7 @@ import           Database.RocksDB.Query  as R
 import           Haskoin
 import           Network.Haskoin.Node
 import           UnliftIO
+import           Data.Time.Clock
 
 data TxException
     = DoubleSpend
@@ -162,6 +163,20 @@ data DetailedInput
                     , detInValue     :: !Word64
                     , detInBlock     :: !(Maybe BlockRef)
                     , detInNetwork   :: !Network }
+    deriving (Show, Eq)
+
+data PeerInformation 
+    = PeerInformation { userAgent   :: !ByteString
+                      , address     :: !ByteString
+                      , connected   :: !Bool
+                      , version     :: !Word32
+                      , services    :: !Word64
+                      , relay       :: !Bool
+                    --   , bestBlock :: !BlockNode
+                      , nonce       :: !Word64
+                      , remoteNonce :: !Word64
+                      , pings       :: ![NominalDiffTime]
+                      }
     deriving (Show, Eq)
 
 isCoinbase :: DetailedInput -> Bool
@@ -613,6 +628,25 @@ detailedOutputPairs DetailedOutput {..} =
 instance ToJSON DetailedOutput where
     toJSON = object . detailedOutputPairs
     toEncoding = pairs . mconcat . detailedOutputPairs
+
+peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
+peerInformationPairs PeerInformation {..} =
+    [ "userAgent"   .= String (cs userAgent)
+    , "address"     .= String (cs address)
+    , "connected"   .= connected
+    , "version"     .= version
+    , "services"    .= services
+    , "relay"       .= relay
+    -- , "bestBlock" .= nodeSkip bestBlock
+    , "nonce"       .= nonce
+    , "remoteNonce" .= remoteNonce
+    , "pings"       .= pings
+    ]
+
+instance ToJSON PeerInformation where
+    toJSON = object . peerInformationPairs
+    toEncoding = pairs . mconcat . peerInformationPairs
+
 
 detailedInputPairs :: A.KeyValue kv => DetailedInput -> [kv]
 detailedInputPairs DetailedInput {..} =

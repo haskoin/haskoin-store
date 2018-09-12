@@ -34,6 +34,7 @@ module Network.Haskoin.Store
     , getBalance
     , getBalances
     , getMempool
+    , getPeersInformation
     , publishTx
     ) where
 

@@ -331,6 +331,7 @@ runWeb conf pub mgr ch bl db = do
                             let bs = encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
+        get "/peers" $ getPeersInformation mgr >>= json
         notFound $ raise ThingNotFound
   where
     parse_address = do
