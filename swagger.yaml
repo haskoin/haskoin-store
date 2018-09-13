@@ -53,7 +53,9 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Transaction'
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Transaction'
         '404':
           description: invalid address
   '/address/transactions':
@@ -93,7 +95,9 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Transaction'
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Transaction'
         '404':
           description: invalid address
   '/address/{address}/balance':
@@ -178,7 +182,9 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressOutput'
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AddressOutput'
         '404':
           description: invalid address
   '/address/unspent':
