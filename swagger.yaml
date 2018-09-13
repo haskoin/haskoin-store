@@ -53,9 +53,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/Transaction'
+                  $ref: '#/components/schemas/Transaction'
         '404':
           description: invalid address
   '/address/transactions':
