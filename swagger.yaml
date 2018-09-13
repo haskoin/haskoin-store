@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: "0.1.0"
+  version: "0.2.0"
   title: Blockchain API
   contact:
     name: Haskoin
@@ -19,12 +19,12 @@ tags:
   - name: transaction
   - name: block
 paths:
-  '/address/{address}/outputs':
+  '/address/{address}/transactions':
     get:
       tags:
         - address
-      summary: get outputs for an address
-      operationId: getAddressOutputs
+      summary: get transactions for an address
+      operationId: getAddressTransactions
       parameters:
         - name: address
           in: path
@@ -53,15 +53,15 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressOutput'
+                  $ref: '#/components/schemas/Transaction'
         '404':
           description: invalid address
-  '/address/outputs':
+  '/address/transactions':
     get:
       tags:
         - address
       summary: get outputs for multiple addresses
-      operationId: getMultipleAddressOutputs
+      operationId: getMultipleAddressTransactions
       parameters:
         - name: addresses
           in: query
@@ -93,7 +93,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressOutput'
+                  $ref: '#/components/schemas/Transaction'
         '404':
           description: invalid address
   '/address/{address}/balance':

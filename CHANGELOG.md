@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.2.0
 ### Added
 - Documentation everywhere.
+- Ability to retrieve address transactions.
 
 ### Changed
 - New versions of NQE and Haskoin Node upstream.
 - Improve and simplify API.
+- Multi-element endpoints return arrays of arrays.
+- Database snapshots for all queries are now mandatory.
+
+### Removed
+- Retrieving unspent and spent outputs for an address.
+- Redundant API endpoints for multiple elements.
 
 ## 0.1.3
 ### Changed

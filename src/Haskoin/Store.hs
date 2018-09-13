@@ -19,24 +19,18 @@ module Haskoin.Store
     , DetailedInput(..)
     , DetailedOutput(..)
     , NewTx(..)
-    , AddrOutputKey(..)
     , AddrOutput(..)
     , AddressBalance(..)
     , TxException(..)
     , withStore
     , getBestBlock
     , getBlockAtHeight
-    , getBlocksAtHeights
     , getBlock
     , getBlocks
     , getTx
-    , getTxs
-    , getAddrOutputs
-    , getAddrsOutputs
+    , getAddrTxs
     , getUnspent
-    , getUnspents
     , getBalance
-    , getBalances
     , getMempool
     , publishTx
     ) where
@@ -231,23 +225,24 @@ publishTx ::
     -> DB
     -> Tx
     -> m (Either TxException DetailedTx)
-publishTx net Store{..} db tx =
-    getTx net (txHash tx) db Nothing >>= \case
-        Just d -> return (Right d)
-        Nothing ->
-            timeout 10000000 (runExceptT go) >>= \case
-                Nothing -> return (Left PublishTimeout)
-                Just e -> return e
+publishTx net Store {..} db tx =
+    withSnapshot db $ \s ->
+        getTx net (txHash tx) db s >>= \case
+            Just d -> return (Right d)
+            Nothing ->
+                timeout 10000000 (runExceptT (go s)) >>= \case
+                    Nothing -> return (Left PublishTimeout)
+                    Just e -> return e
   where
-    go = do
+    go s = do
         p <-
             managerGetPeers storeManager >>= \case
                 [] -> throwError NoPeers
                 p:_ -> return (onlinePeerMailbox p)
         ExceptT . withPubSub storePublisher (newTBQueueIO 1000) $ \sub ->
-            runExceptT (send_it sub p)
-    send_it sub p = do
-        h <- is_at_height
+            runExceptT (send_it s sub p)
+    send_it s sub p = do
+        h <- is_at_height s
         unless h $ throwError NotAtHeight
         r <- liftIO randomIO
         MTx tx `sendMessage` p
@@ -255,13 +250,13 @@ publishTx net Store{..} db tx =
         recv_loop sub p r
         maybeToExceptT
             CouldNotImport
-            (MaybeT (getTx net (txHash tx) db Nothing))
+            (MaybeT (withSnapshot db $ getTx net (txHash tx) db))
     recv_loop sub p r =
         receive sub >>= \case
             PeerPong p' n
                 | p == p' && n == r -> do
-                      TxPublished tx `send` storeBlock
-                      recv_loop sub p r
+                    TxPublished tx `send` storeBlock
+                    recv_loop sub p r
             MempoolNew h
                 | h == txHash tx -> return ()
             PeerDisconnected p'
@@ -271,8 +266,8 @@ publishTx net Store{..} db tx =
             TxException h x
                 | h == txHash tx -> throwError x
             _ -> recv_loop sub p r
-    is_at_height = do
-        bb <- getBestBlockHash db Nothing
+    is_at_height s = do
+        bb <- getBestBlockHash db s
         cb <- chainGetBest storeChain
         return (headerHash (nodeHeader cb) == bb)
 

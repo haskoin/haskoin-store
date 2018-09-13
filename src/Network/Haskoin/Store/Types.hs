@@ -11,7 +11,7 @@ import           Control.Exception
 import           Control.Monad.Reader
 import           Data.Aeson              as A
 import           Data.ByteString         (ByteString)
-import qualified Data.ByteString         as BS
+import qualified Data.ByteString         as B
 import           Data.Function
 import           Data.Int
 import           Data.Maybe
@@ -82,7 +82,7 @@ newtype NewTx = NewTx
 -- | Configuration for a block store.
 data BlockConfig = BlockConfig
     { blockConfMailbox  :: !BlockStore
-      -- ^ block sotre mailbox
+      -- ^ block store mailbox
     , blockConfManager  :: !Manager
       -- ^ peer manager from running node
     , blockConfChain    :: !Chain
@@ -141,27 +141,37 @@ data BlockMessage
 -- | Mailbox for block store.
 type BlockStore = Inbox BlockMessage
 
--- | Database key for an address output.
-data AddrOutputKey
-    = AddrOutputKey { addrOutputSpent   :: !Bool
-                    , addrOutputAddress :: !Address
-                    , addrOutputHeight  :: !(Maybe BlockHeight)
-                    , addrOutputPos     :: !(Maybe Word32)
-                    , addrOutPoint      :: !OutPoint }
-      -- ^ full key
-    | MultiAddrOutputKey { addrOutputSpent   :: !Bool
-                         , addrOutputAddress :: !Address }
-      -- ^ short key for all spent or unspent outputs.
-    | MultiAddrHeightKey { addrOutputSpent   :: !Bool
-                         , addrOutputAddress :: !Address
-                         , addrOutputHeight  :: !(Maybe BlockHeight) }
-      -- ^ short key for all outputs at a given height.
+-- | Database key for an address transaction.
+data AddrTxKey
+    = AddrTxKey { addrTxKey    :: !Address
+                , addrTxHeight :: !(Maybe BlockHeight)
+                , addrTxPos    :: !(Maybe Word32)
+                , addrTxHash   :: !TxHash }
+      -- ^ key for a transaction affecting an address
+    | ShortAddrTxKey { addrTxKey :: !Address }
+    | ShortAddrTxKeyHeight { addrTxKey    :: !Address
+                           , addrTxHeight :: !(Maybe BlockHeight)}
+      -- ^ short key that matches all entries
     deriving (Show, Eq)
 
-instance Ord AddrOutputKey where
+-- | Database key for an address output.
+data AddrOutKey
+    = AddrOutKey { addrOutputAddress :: !Address
+                 , addrOutputHeight  :: !(Maybe BlockHeight)
+                 , addrOutputPos     :: !(Maybe Word32)
+                 , addrOutPoint      :: !OutPoint }
+      -- ^ full key
+    | ShortAddrOutKey { addrOutputAddress :: !Address }
+      -- ^ short key for all spent or unspent outputs
+    | ShortAddrOutKeyHeight { addrOutputAddress :: !Address
+                            , addrOutputHeight  :: !(Maybe BlockHeight) }
+      -- ^ short key for all outputs at a given height
+    deriving (Show, Eq)
+
+instance Ord AddrOutKey where
     compare = compare `on` f
       where
-        f AddrOutputKey {..} =
+        f AddrOutKey {..} =
             ( fromMaybe maxBound addrOutputHeight
             , fromMaybe maxBound addrOutputPos
             , outPointIndex addrOutPoint)
@@ -264,10 +274,8 @@ data AddressBalance = AddressBalance
       -- ^ confirmed balance
     , addressBalUnconfirmed :: !Int64
       -- ^ unconfirmed balance (can be negative)
-    , addressOutputCount    :: !Word64
-      -- ^ number of outputs sending to this address
-    , addressSpentCount     :: !Word64
-      -- ^ number of spent outputs
+    , addressUtxoCount      :: !Word64
+      -- ^ number of unspent outputs
     } deriving (Show, Eq)
 
 -- | Transaction record in database.
@@ -340,9 +348,9 @@ data Spender = Spender
 data MultiTxKey
     = MultiTxKey !TxKey
       -- ^ key for transaction
-    | MultiTxKeyOutput !OutputKey
+    | MultiTxOutKey !OutputKey
       -- ^ key for output
-    | BaseTxKey !TxHash
+    | ShortMultiTxKey !TxHash
       -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
@@ -360,18 +368,18 @@ newtype TxKey =
     deriving (Show, Eq, Ord)
 
 -- | Mempool transaction database key.
-data MempoolTx
-    = MempoolTx TxHash
+data MempoolKey
+    = MempoolKey TxHash
       -- ^ key for a mempool transaction
-    | MempoolKey
+    | ShortMempoolKey
       -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
 -- | Orphan transaction database key.
-data OrphanTx
-    = OrphanTxKey TxHash
+data OrphanKey
+    = OrphanKey TxHash
       -- ^ key for an orphan transaction
-    | OrphanKey
+    | ShortOrphanKey
       -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
@@ -396,10 +404,8 @@ data Balance = Balance
       -- ^ balance in satoshi
     , balanceUnconfirmed :: !Int64
       -- ^ unconfirmed balance in satoshi (can be negative)
-    , balanceOutputCount :: !Word64
-      -- ^ total number of outputs
-    , balanceSpentCount  :: !Word64
-      -- ^ number of spent outputs
+    , balanceUtxoCount   :: !Word64
+      -- ^ number of unspent outputs
     } deriving (Show, Eq, Ord)
 
 -- | Default balance for an address.
@@ -408,8 +414,7 @@ emptyBalance =
     Balance
     { balanceValue = 0
     , balanceUnconfirmed = 0
-    , balanceOutputCount = 0
-    , balanceSpentCount = 0
+    , balanceUtxoCount = 0
     }
 
 -- | Key for best block in database.
@@ -417,7 +422,7 @@ data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
 
 -- | Address output.
 data AddrOutput = AddrOutput
-    { addrOutputKey :: !AddrOutputKey
+    { addrOutputKey :: !AddrOutKey
     , addrOutput    :: !Output
     } deriving (Eq, Show)
 
@@ -428,45 +433,66 @@ instance Ord AddrOutput where
 newtype StoreAddress = StoreAddress Address
     deriving (Show, Eq)
 
+instance Key BestBlockKey
+         -- 0x00
 instance Key BlockKey
-instance Key HeightKey
-instance Key OutputKey
+         -- 0x01 · BlockHash
 instance Key TxKey
-instance Key MempoolTx
-instance Key OrphanTx
-instance Key AddrOutputKey
+         -- 0x02 · TxHash · 0x00
+instance Key OutputKey
+         -- 0x02 · TxHash · 0x01 · OutputIndex
+instance Key MultiTxKey
+         -- 0x02 · TxHash
+         -- 0x02 · TxHash · 0x00
+         -- 0x02 · TxHash · 0x01 · OutputIndex
+instance Key HeightKey
+         -- 0x03 · InvBlockHeight
+instance Key BalanceKey
+         -- 0x04 · Storeaddress
+instance Key AddrTxKey
+         -- 0x05 · StoreAddress · InvBlockHeight · InvBlockPos · TxHash
+         -- 0x05 · StoreAddress · InvBlockHeight
+         -- 0x05 · StoreAddress
+instance Key AddrOutKey
+         -- 0x06 · StoreAddress · InvBlockHeight · InvBlockPos
+         -- 0x06 · StoreAddress · InvBlockHeight
+         -- 0x06 · StoreAddress
+instance Key MempoolKey
+         -- 0x07 · TxHash
+         -- 0x07
+instance Key OrphanKey
+         -- 0x08 · TxHash
+         -- 0x08
+
+instance R.KeyValue BestBlockKey BlockHash
 instance R.KeyValue BlockKey BlockValue
 instance R.KeyValue TxKey TxRecord
-instance R.KeyValue HeightKey BlockHash
-instance R.KeyValue BestBlockKey BlockHash
-instance R.KeyValue OutputKey Output
+instance R.KeyValue AddrOutKey Output
 instance R.KeyValue MultiTxKey MultiTxValue
-instance R.KeyValue AddrOutputKey Output
+instance R.KeyValue HeightKey BlockHash
 instance R.KeyValue BalanceKey Balance
-instance R.KeyValue MempoolTx ()
-instance R.KeyValue OrphanTx Tx
+instance R.KeyValue AddrTxKey ()
+instance R.KeyValue OutputKey Output
+instance R.KeyValue MempoolKey ()
+instance R.KeyValue OrphanKey Tx
 
-instance Serialize MempoolTx where
-    put (MempoolTx h) = do
+instance Serialize MempoolKey where
+    put (MempoolKey h) = do
         putWord8 0x07
         put h
-    put MempoolKey = putWord8 0x07
+    put ShortMempoolKey = putWord8 0x07
     get = do
         guard . (== 0x07) =<< getWord8
-        record <|> return MempoolKey
-      where
-        record = MempoolTx <$> get
+        MempoolKey <$> get
 
-instance Serialize OrphanTx where
-    put (OrphanTxKey h) = do
+instance Serialize OrphanKey where
+    put (OrphanKey h) = do
         putWord8 0x08
         put h
-    put OrphanKey = putWord8 0x08
+    put ShortOrphanKey = putWord8 0x08
     get = do
         guard . (== 0x08) =<< getWord8
-        record <|> return OrphanKey
-      where
-        record = OrphanTxKey <$> get
+        OrphanKey <$> get
 
 instance Serialize BalanceKey where
     put BalanceKey {..} = do
@@ -481,41 +507,65 @@ instance Serialize Balance where
     put Balance {..} = do
         put balanceValue
         put balanceUnconfirmed
-        put balanceOutputCount
-        put balanceSpentCount
+        put balanceUtxoCount
     get = do
         balanceValue <- get
         balanceUnconfirmed <- get
-        balanceOutputCount <- get
-        balanceSpentCount <- get
+        balanceUtxoCount <- get
         return Balance {..}
 
--- | Beginning of address output database key.
-addrKeyStart :: Bool -> Address -> Put
-addrKeyStart b a = do
-    putWord8 $ if b then 0x03 else 0x05
-    put (StoreAddress a)
+instance Serialize AddrTxKey where
+    put AddrTxKey {..} = do
+        putWord8 0x05
+        put $ StoreAddress addrTxKey
+        put (maybe 0 (maxBound -) addrTxHeight)
+        put (maybe 0 (maxBound -) addrTxPos)
+        put addrTxHash
+    put ShortAddrTxKey {..} = do
+        putWord8 0x05
+        put $ StoreAddress addrTxKey
+    put ShortAddrTxKeyHeight {..} = do
+        putWord8 0x05
+        put $ StoreAddress addrTxKey
+        put (maybe 0 (maxBound -) addrTxHeight)
+    get = do
+        guard . (== 0x05) =<< getWord8
+        StoreAddress addrTxKey <- get
+        h <- (maxBound -) <$> get
+        let addrTxHeight
+                | h == 0 = Nothing
+                | otherwise = Just h
+        p <- (maxBound -) <$> get
+        let addrTxPos
+                | p == 0 = Nothing
+                | otherwise = Just p
+        addrTxHash <- get
+        return AddrTxKey {..}
 
-instance Serialize AddrOutputKey where
-    put AddrOutputKey {..} = do
-        addrKeyStart addrOutputSpent addrOutputAddress
+-- | Beginning of address output database key.
+addrKeyStart :: Address -> Put
+addrKeyStart a = put (StoreAddress a)
+
+instance Serialize AddrOutKey where
+    put AddrOutKey {..} = do
+        putWord8 0x06
+        put $ StoreAddress addrOutputAddress
         put (maybe 0 (maxBound -) addrOutputHeight)
         put (maybe 0 (maxBound -) addrOutputPos)
         put addrOutPoint
-    put MultiAddrOutputKey {..} = addrKeyStart addrOutputSpent addrOutputAddress
-    put MultiAddrHeightKey {..} = do
-        addrKeyStart addrOutputSpent addrOutputAddress
+    put ShortAddrOutKey {..} = do
+        putWord8 0x06
+        put $ StoreAddress addrOutputAddress
+    put ShortAddrOutKeyHeight {..} = do
+        putWord8 0x06
+        put $ StoreAddress addrOutputAddress
         put (maybe 0 (maxBound -) addrOutputHeight)
     get = do
-        addrOutputSpent <-
-            getWord8 >>= \case
-                0x03 -> return True
-                0x05 -> return False
-                _ -> mzero
+        guard . (== 0x06) =<< getWord8
         StoreAddress addrOutputAddress <- get
-        record addrOutputSpent addrOutputAddress
+        record addrOutputAddress
       where
-        record addrOutputSpent addrOutputAddress = do
+        record addrOutputAddress = do
             h <- (maxBound -) <$> get
             let addrOutputHeight | h == 0 = Nothing
                                  | otherwise = Just h
@@ -523,22 +573,18 @@ instance Serialize AddrOutputKey where
             let addrOutputPos | p == 0 = Nothing
                               | otherwise = Just p
             addrOutPoint <- get
-            return AddrOutputKey {..}
+            return AddrOutKey {..}
 
 instance Serialize MultiTxKey where
-    put (MultiTxKey k)       = put k
-    put (MultiTxKeyOutput k) = put k
-    put (BaseTxKey k)        = putWord8 0x02 >> put k
-    get = MultiTxKey <$> get <|> MultiTxKeyOutput <$> get <|> base
-      where
-        base = do
-            guard . (== 0x02) =<< getWord8
-            BaseTxKey <$> get
+    put (MultiTxKey k)      = put k
+    put (MultiTxOutKey k)   = put k
+    put (ShortMultiTxKey k) = putWord8 0x02 >> put k
+    get = MultiTxKey <$> get <|> MultiTxOutKey <$> get
 
 instance Serialize MultiTxValue where
     put (MultiTx v)       = put v
     put (MultiTxOutput v) = put v
-    get = (MultiTx <$> get) <|> (MultiTxOutput <$> get)
+    get = MultiTx <$> get <|> MultiTxOutput <$> get
 
 instance Serialize Spender where
     put Spender {..} = do
@@ -569,7 +615,7 @@ instance Serialize PrevOut where
     put PrevOut {..} = do
         put prevOutValue
         put prevOutBlock
-        put (BS.length prevOutScript)
+        put (B.length prevOutScript)
         putByteString prevOutScript
     get = do
         prevOutValue <- get
@@ -617,9 +663,9 @@ instance Serialize TxRecord where
         return TxRecord {..}
 
 instance Serialize BestBlockKey where
-    put BestBlockKey = put (BS.replicate 32 0x00)
+    put BestBlockKey = put (B.replicate 32 0x00)
     get = do
-        guard . (== BS.replicate 32 0x00) =<< getBytes 32
+        guard . (== B.replicate 32 0x00) =<< getBytes 32
         return BestBlockKey
 
 instance Serialize BlockValue where
@@ -788,7 +834,7 @@ instance ToJSON DetailedInput where
 detailedTxPairs :: A.KeyValue kv => DetailedTx -> [kv]
 detailedTxPairs DetailedTx {..} =
     [ "txid" .= txHash detailedTxData
-    , "size" .= BS.length (S.encode detailedTxData)
+    , "size" .= B.length (S.encode detailedTxData)
     , "version" .= txVersion detailedTxData
     , "locktime" .= txLockTime detailedTxData
     , "fee" .= detailedTxFee
@@ -817,7 +863,7 @@ addrOutputPairs AddrOutput {..} =
     ]
   where
     Output {..} = addrOutput
-    AddrOutputKey {..} = addrOutputKey
+    AddrOutKey {..} = addrOutputKey
     dout =
         DetailedOutput
             { detOutValue = outputValue
@@ -836,8 +882,7 @@ addressBalancePairs AddressBalance {..} =
     [ "address" .= addressBalAddress
     , "confirmed" .= addressBalConfirmed
     , "unconfirmed" .= addressBalUnconfirmed
-    , "outputs" .= addressOutputCount
-    , "utxo" .= (addressOutputCount - addressSpentCount)
+    , "utxo" .= addressUtxoCount
     ]
 
 instance FromJSON NewTx where

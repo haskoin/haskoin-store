@@ -14,7 +14,6 @@ import           Data.Aeson              (ToJSON (..), Value (..), encode,
                                           object, (.=))
 import           Data.Bits
 import           Data.ByteString.Builder (lazyByteString)
-import           Data.Function
 import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
@@ -248,55 +247,76 @@ runWeb conf st db = do
     l <- askLoggerIO
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
-        get "/block/best" $ getBestBlock db Nothing >>= json
+        get "/block/best" $ do
+            res <- withSnapshot db $ getBestBlock db
+            json res
         get "/block/:block" $ do
             block <- param "block"
-            getBlock block db Nothing >>= maybeJSON
+            res <- withSnapshot db $ getBlock block db
+            maybeJSON res
         get "/block/height/:height" $ do
             height <- param "height"
-            getBlockAtHeight height db Nothing >>= maybeJSON
+            res <- withSnapshot db $ getBlockAtHeight height db
+            maybeJSON res
         get "/block/heights" $ do
             heights <- param "heights"
-            testLength (length heights)
-            getBlocksAtHeights heights db Nothing >>= json
+            testLength (length (heights :: [BlockHeight]))
+            res <-
+                withSnapshot db $ \s ->
+                    mapM (\h -> getBlockAtHeight h db s) heights
+            json res
         get "/blocks" $ do
             blocks <- param "blocks"
             testLength (length blocks)
-            getBlocks blocks db Nothing >>= json
-        get "/mempool" $ lift (getMempool db Nothing) >>= json
+            res <- withSnapshot db $ getBlocks blocks db
+            json res
+        get "/mempool" $ do
+            res <- withSnapshot db $ getMempool db
+            json res
         get "/transaction/:txid" $ do
             txid <- param "txid"
-            lift (getTx net txid db Nothing) >>= maybeJSON
+            res <- withSnapshot db $ getTx net txid db
+            maybeJSON res
         get "/transactions" $ do
             txids <- param "txids"
-            testLength (length txids)
-            lift (getTxs net txids db Nothing) >>= json
-        get "/address/:address/outputs" $ do
+            testLength (length (txids :: [TxHash]))
+            res <- withSnapshot db $ \s -> mapM (\t -> getTx net t db s) txids
+            json res
+        get "/address/:address/transactions" $ do
             address <- parse_address
             height <- parse_height
             x <- parse_max
-            lift (addrTxsMax db x height address) >>= json
-        get "/address/outputs" $ do
+            res <- withSnapshot db $ \s -> addrTxsMax net db s x height address
+            json res
+        get "/address/transactions" $ do
             addresses <- parse_addresses
             height <- parse_height
             x <- parse_max
-            lift (addrsTxsMax db x height addresses) >>= json
+            res <-
+                withSnapshot db $ \s -> addrsTxsMax net db s x height addresses
+            json res
         get "/address/:address/unspent" $ do
             address <- parse_address
             height <- parse_height
             x <- parse_max
-            lift (addrUnspentMax db x height address) >>= json
+            res <- withSnapshot db $ \s -> addrUnspentMax db s x height address
+            json res
         get "/address/unspent" $ do
             addresses <- parse_addresses
             height <- parse_height
             x <- parse_max
-            lift (addrsUnspentMax db x height addresses) >>= json
+            res <-
+                withSnapshot db $ \s -> addrsUnspentMax db s x height addresses
+            json res
         get "/address/:address/balance" $ do
             address <- parse_address
-            getBalance address db Nothing >>= json
+            res <- withSnapshot db $ getBalance address db
+            json res
         get "/address/balances" $ do
             addresses <- parse_addresses
-            getBalances addresses db Nothing >>= json
+            res <-
+                withSnapshot db $ \s -> mapM (\a -> getBalance a db s) addresses
+            json res
         post "/transactions" $ do
             NewTx tx <- jsonData
             lift (publishTx net st db tx) >>= \case
@@ -327,7 +347,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a  -> return a
+            Just a -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
@@ -367,61 +387,60 @@ runStore conf db f = do
 
 addrTxsMax ::
        MonadUnliftIO m
-    => DB
+    => Network
+    -> DB
+    -> Snapshot
     -> Int
     -> Maybe BlockHeight
     -> Address
-    -> m [AddrOutput]
-addrTxsMax db c h = addrsTxsMax db c h . (: [])
+    -> m [DetailedTx]
+addrTxsMax net db s c h a = concat <$> addrsTxsMax net db s c h [a]
 
 addrsTxsMax ::
        MonadUnliftIO m
-    => DB
+    => Network
+    -> DB
+    -> Snapshot
     -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [AddrOutput]
-addrsTxsMax db c h as =
-    runResourceT $
-    runConduit $ getAddrsOutputs as h db Nothing .| capRecords f c .| sinkList
-  where
-    f = (==) `on` g
-    g AddrOutput {..} =
-        (addrOutputAddress addrOutputKey, blockRefHash <$> outBlock addrOutput)
+    -> m [[DetailedTx]]
+addrsTxsMax net db s c h addrs
+    | c <= 0 = return []
+    | otherwise =
+        case addrs of
+            [] -> return []
+            (a:as) -> do
+                ts <-
+                    runResourceT . runConduit $
+                    getAddrTxs net a h db s .| takeC c .| sinkList
+                mappend [ts] <$> addrsTxsMax net db s (c - length ts) h as
 
 addrUnspentMax ::
        MonadUnliftIO m
     => DB
+    -> Snapshot
     -> Int
     -> Maybe BlockHeight
     -> Address
     -> m [AddrOutput]
-addrUnspentMax db c h = addrsUnspentMax db c h . (: [])
+addrUnspentMax db s c h a = concat <$> addrsUnspentMax db s c h [a]
 
 addrsUnspentMax ::
        MonadUnliftIO m
     => DB
+    -> Snapshot
     -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [AddrOutput]
-addrsUnspentMax db c h as =
-    runResourceT $
-    runConduit $ getUnspents as h db Nothing .| capRecords f c .| sinkList
-  where
-    f = (==) `on` g
-    g AddrOutput {..} =
-        (addrOutputAddress addrOutputKey, blockRefHash <$> outBlock addrOutput)
-
-capRecords :: Monad m => (a -> a -> Bool) -> Int -> ConduitT a a m ()
-capRecords f c = void $ mapAccumWhileC go (Nothing, c)
-  where
-    go x (acc, n)
-        | n > 0 = Right ((Just x, n - 1), x)
-        | otherwise =
-            case acc of
-                Nothing -> Left (Just x, n - 1)
-                Just y ->
-                    if f x y
-                        then Right ((Just x, n - 1), x)
-                        else Left (Just x, n - 1)
+    -> m [[AddrOutput]]
+addrsUnspentMax db s c h addrs
+    | c <= 0 = return []
+    | otherwise =
+        case addrs of
+            [] -> return []
+            (a:as) -> do
+                os <-
+                    runResourceT . runConduit $
+                    getUnspent a h db s .| takeC c .| sinkList
+                mappend [os] <$> addrsUnspentMax db s (c - length os) h as
