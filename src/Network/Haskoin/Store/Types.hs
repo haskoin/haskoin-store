@@ -172,7 +172,8 @@ data PeerInformation
                       , version     :: !Word32
                       , services    :: !Word64
                       , relay       :: !Bool
-                    --   , bestBlock :: !BlockNode
+                      , blockHash   :: !BlockHash
+                      , blockHeight :: !BlockHeight
                       , nonce       :: !Word64
                       , remoteNonce :: !Word64
                       , pings       :: ![NominalDiffTime]
@@ -637,7 +638,8 @@ peerInformationPairs PeerInformation {..} =
     , "version"     .= version
     , "services"    .= services
     , "relay"       .= relay
-    -- , "bestBlock" .= nodeSkip bestBlock
+    , "blockHash"   .= blockHash
+    , "blockHeight" .= blockHeight
     , "nonce"       .= nonce
     , "remoteNonce" .= remoteNonce
     , "pings"       .= pings
