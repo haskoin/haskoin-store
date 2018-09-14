@@ -21,7 +21,6 @@ import           Data.Word
 import           Database.RocksDB        (DB)
 import           Database.RocksDB.Query  as R
 import           Haskoin
--- import           UnliftIO
 import           Data.Time.Clock
 import           Haskoin.Node
 import           NQE
@@ -259,11 +258,10 @@ data PeerInformation
                       , version     :: !Word32
                       , services    :: !Word64
                       , relay       :: !Bool
-                      , blockHash   :: !BlockHash
-                      , blockHeight :: !BlockHeight
-                      , nonce       :: !Word64
-                      , remoteNonce :: !Word64
-                      , pings       :: ![NominalDiffTime]
+                      , block       :: !BlockHash
+                      , height      :: !BlockHeight
+                      , nonceLocal  :: !Word64
+                      , nonceRemote :: !Word64
                       }
     deriving (Show, Eq)
 
@@ -821,17 +819,16 @@ instance ToJSON DetailedOutput where
 -- | JSON serialization for 'PeerInformation'.
 peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
 peerInformationPairs PeerInformation {..} =
-    [ "userAgent"   .= String (cs userAgent)
+    [ "useragent"   .= String (cs userAgent)
     , "address"     .= String (cs address)
     , "connected"   .= connected
     , "version"     .= version
     , "services"    .= services
     , "relay"       .= relay
-    , "blockHash"   .= blockHash
-    , "blockHeight" .= blockHeight
-    , "nonce"       .= nonce
-    , "remoteNonce" .= remoteNonce
-    , "pings"       .= pings
+    , "block"       .= block
+    , "height"      .= height
+    , "noncelocal"  .= nonceLocal
+    , "nonceremote" .= nonceRemote
     ]
 
 instance ToJSON PeerInformation where

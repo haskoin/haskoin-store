@@ -1185,9 +1185,8 @@ getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
         , version = onlinePeerVersion op
         , services = onlinePeerServices op
         , relay = onlinePeerRelay op
-        , blockHash = headerHash $ nodeHeader $ onlinePeerBestBlock op
-        , blockHeight = nodeHeight $ onlinePeerBestBlock op
-        , nonce = onlinePeerNonce op
-        , remoteNonce = onlinePeerRemoteNonce op
-        , pings = onlinePeerPings op
+        , block = headerHash $ nodeHeader $ onlinePeerBestBlock op
+        , height = nodeHeight $ onlinePeerBestBlock op
+        , nonceLocal = onlinePeerNonce op
+        , nonceRemote = onlinePeerRemoteNonce op
         }
