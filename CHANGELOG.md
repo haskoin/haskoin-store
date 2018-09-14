@@ -6,7 +6,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.2.2
 ### Added
-- Peer information endpoint
+- Peer information endpoint.
+
+### Changed
+- Update `haskoin-node`.
 
 ## 0.2.1
 ### Changed
