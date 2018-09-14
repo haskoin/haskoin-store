@@ -174,27 +174,27 @@ storeDispatch (PeerEvent (p, Rejected Reject {..})) =
             RejectInvalid -> do
                 $(logErrorS) "Store" $
                     "Peer " <> pstr <> " rejected invalid tx hash: " <>
-                    cs (txHashToHex tx_hash)
+                    txHashToHex tx_hash
                 atomically (l (TxException tx_hash InvalidTx))
             RejectDuplicate -> do
                 $(logErrorS) "Store" $
                     "Peer " <> pstr <> " rejected double-spend tx hash: " <>
-                    cs (txHashToHex tx_hash)
+                    txHashToHex tx_hash
                 atomically (l (TxException tx_hash DoubleSpend))
             RejectNonStandard -> do
                 $(logErrorS) "Store" $
                     "Peer " <> pstr <> " rejected non-standard tx hash: " <>
-                    cs (txHashToHex tx_hash)
+                    txHashToHex tx_hash
                 atomically (l (TxException tx_hash NonStandard))
             RejectDust -> do
                 $(logErrorS) "Store" $
                     "Peer " <> pstr <> " rejected dust tx hash: " <>
-                    cs (txHashToHex tx_hash)
+                    txHashToHex tx_hash
                 atomically (l (TxException tx_hash Dust))
             RejectInsufficientFee -> do
                 $(logErrorS) "Store" $
                     "Peer " <> pstr <> " rejected low fee tx hash: " <>
-                    cs (txHashToHex tx_hash)
+                    txHashToHex tx_hash
                 atomically (l (TxException tx_hash LowFee))
             _ -> do
                 $(logErrorS) "Store" $
