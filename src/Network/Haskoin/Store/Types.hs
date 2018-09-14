@@ -21,7 +21,7 @@ import           Data.Word
 import           Database.RocksDB        (DB)
 import           Database.RocksDB.Query  as R
 import           Haskoin
-import           Data.Time.Clock
+-- import           Data.Time.Clock
 import           Haskoin.Node
 import           NQE
 
