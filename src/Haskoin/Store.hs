@@ -22,6 +22,7 @@ module Haskoin.Store
     , AddrOutput(..)
     , AddressBalance(..)
     , TxException(..)
+    , PeerInformation(..)
     , withStore
     , getBestBlock
     , getBlockAtHeight
