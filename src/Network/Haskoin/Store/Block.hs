@@ -134,13 +134,13 @@ runMonadImport f =
         db <- asks myBlockDB
         writeBatch db ops
         l <- asks myListener
-        gets blockAction >>= \case
+        ba <- gets blockAction
+        case ba of
             Just (ImportBlock Block {..}) ->
                 atomically (l (BestBlock (headerHash blockHeader)))
             Just RevertBlock -> $(logWarnS) "Block" "Reverted best block"
-            _ -> return ()
-        gets newTxs >>= \ths ->
-            forM_ (M.keys ths) $ \tx -> atomically (l (MempoolNew tx))
+            Nothing -> gets newTxs >>= \ths ->
+                forM_ (M.keys ths) $ \tx -> atomically (l (MempoolNew tx))
 
 -- | Run block store process.
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
