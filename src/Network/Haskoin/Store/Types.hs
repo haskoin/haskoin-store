@@ -250,6 +250,20 @@ data DetailedInput
     -- ^ regular input details
     deriving (Show, Eq)
 
+data PeerInformation 
+    = PeerInformation { userAgent   :: !ByteString
+                      , address     :: !ByteString
+                      , connected   :: !Bool
+                      , version     :: !Word32
+                      , services    :: !Word64
+                      , relay       :: !Bool
+                      , block       :: !BlockHash
+                      , height      :: !BlockHeight
+                      , nonceLocal  :: !Word64
+                      , nonceRemote :: !Word64
+                      }
+    deriving (Show, Eq)
+
 isCoinbase :: DetailedInput -> Bool
 isCoinbase DetailedCoinbase {} = True
 isCoinbase _                   = False
@@ -800,6 +814,26 @@ detailedOutputPairs DetailedOutput {..} =
 instance ToJSON DetailedOutput where
     toJSON = object . detailedOutputPairs
     toEncoding = pairs . mconcat . detailedOutputPairs
+
+-- | JSON serialization for 'PeerInformation'.
+peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
+peerInformationPairs PeerInformation {..} =
+    [ "useragent"   .= String (cs userAgent)
+    , "address"     .= String (cs address)
+    , "connected"   .= connected
+    , "version"     .= version
+    , "services"    .= services
+    , "relay"       .= relay
+    , "block"       .= block
+    , "height"      .= height
+    , "noncelocal"  .= nonceLocal
+    , "nonceremote" .= nonceRemote
+    ]
+
+instance ToJSON PeerInformation where
+    toJSON = object . peerInformationPairs
+    toEncoding = pairs . mconcat . peerInformationPairs
+
 
 -- | JSON serialization for 'DetailedInput'.
 detailedInputPairs :: A.KeyValue kv => DetailedInput -> [kv]

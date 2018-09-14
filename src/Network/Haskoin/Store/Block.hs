@@ -20,6 +20,7 @@ module Network.Haskoin.Store.Block
       , getBalance
       , getTx
       , getMempool
+      , getPeersInformation
       ) where
 
 import           Conduit
@@ -1173,3 +1174,19 @@ peerString p = do
     managerGetPeer mgr p >>= \case
         Nothing -> return "[unknown]"
         Just o -> return $ fromString $ show $ onlinePeerAddress o
+
+getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
+getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
+  where
+    toInfo op = PeerInformation
+        { userAgent = onlinePeerUserAgent op
+        , address = cs $ show $ onlinePeerAddress op
+        , connected = onlinePeerConnected op
+        , version = onlinePeerVersion op
+        , services = onlinePeerServices op
+        , relay = onlinePeerRelay op
+        , block = headerHash $ nodeHeader $ onlinePeerBestBlock op
+        , height = nodeHeight $ onlinePeerBestBlock op
+        , nonceLocal = onlinePeerNonce op
+        , nonceRemote = onlinePeerRemoteNonce op
+        }

@@ -32,6 +32,7 @@ module Haskoin.Store
     , getUnspent
     , getBalance
     , getMempool
+    , getPeersInformation
     , publishTx
     ) where
 

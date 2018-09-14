@@ -341,6 +341,7 @@ runWeb conf st db = do
                             let bs = encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
+        get "/peers" $ getPeersInformation (storeManager st) >>= json
         notFound $ raise ThingNotFound
   where
     parse_address = do
