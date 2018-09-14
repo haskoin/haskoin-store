@@ -6,7 +6,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Maybe
 import           Database.RocksDB     (DB)
-import qualified Database.RocksDB     as RocksDB
+import           Database.RocksDB     as R
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
@@ -45,7 +45,7 @@ main = do
                                         | otherwise -> get_the_block ((h :: Int) - 1)
                             _ -> get_the_block h
                 bh <- get_the_block 381
-                m <- getBlock bh testStoreDB Nothing
+                m <- withSnapshot testStoreDB $ getBlock bh testStoreDB
                 let BlockValue {..} =
                         fromMaybe (error "Could not get block") m
                 blockValueHeight `shouldBe` 381
@@ -56,10 +56,10 @@ main = do
                         "7e621eeb02874ab039a8566fd36f4591e65eca65313875221842c53de6907d6c"
                 head blockValueTxs `shouldBe` h1
                 last blockValueTxs `shouldBe` h2
-                t1 <- getTx net h1 testStoreDB Nothing
+                t1 <- withSnapshot testStoreDB $ getTx net h1 testStoreDB
                 t1 `shouldSatisfy` isJust
                 txHash (detailedTxData (fromJust t1)) `shouldBe` h1
-                t2 <- getTx net h2 testStoreDB Nothing
+                t2 <- withSnapshot testStoreDB $ getTx net h2 testStoreDB
                 t2 `shouldSatisfy` isJust
                 txHash (detailedTxData (fromJust t2)) `shouldBe` h2
 
@@ -69,11 +69,11 @@ withTestStore net t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
         runNoLoggingT $ do
             db <-
-                RocksDB.open
+                open
                     w
-                    RocksDB.defaultOptions
-                        { RocksDB.createIfMissing = True
-                        , RocksDB.compression = RocksDB.SnappyCompression
+                    defaultOptions
+                        { createIfMissing = True
+                        , compression = SnappyCompression
                         }
             let cfg =
                     StoreConfig
