@@ -12,7 +12,10 @@ import           Control.Monad.Reader
 import           Data.Aeson              as A
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
+import           Data.ByteString.Short   (ShortByteString)
+import qualified Data.ByteString.Short   as B.Short
 import           Data.Function
+import           Data.Hashable
 import           Data.Int
 import           Data.Maybe
 import           Data.Serialize          as S
@@ -150,7 +153,7 @@ data AddrTxKey
       -- ^ key for a transaction affecting an address
     | ShortAddrTxKey { addrTxKey :: !Address }
     | ShortAddrTxKeyHeight { addrTxKey    :: !Address
-                           , addrTxHeight :: !(Maybe BlockHeight)}
+                           , addrTxHeight :: !(Maybe BlockHeight) }
       -- ^ short key that matches all entries
     deriving (Show, Eq)
 
@@ -250,7 +253,7 @@ data DetailedInput
     -- ^ regular input details
     deriving (Show, Eq)
 
-data PeerInformation 
+data PeerInformation
     = PeerInformation { userAgent   :: !ByteString
                       , address     :: !ByteString
                       , connected   :: !Bool
@@ -307,13 +310,22 @@ newtype OutputKey = OutputKey
     { outPoint :: OutPoint
     } deriving (Show, Eq, Ord)
 
+instance Hashable OutputKey where
+    hashWithSalt s (OutputKey (OutPoint h i)) = hashWithSalt s (h, i)
+
+-- | All unspent outputs.
+data UnspentKey
+    = UnspentKey { unspentKey :: !OutPoint }
+    | ShortUnspentKey
+    deriving (Show, Eq, Ord)
+
 -- | Previous output data.
 data PrevOut = PrevOut
     { prevOutValue  :: !Word64
       -- ^ value of output in satoshi
     , prevOutBlock  :: !(Maybe BlockRef)
       -- ^ block information for spent output
-    , prevOutScript :: !ByteString
+    , prevOutScript :: !ShortByteString
       -- ^ pubkey (output) script
     } deriving (Show, Eq, Ord)
 
@@ -322,8 +334,8 @@ data Output = Output
     { outputValue :: !Word64
       -- ^ value of output in satoshi
     , outBlock    :: !(Maybe BlockRef)
-      -- ^ block infromation for output
-    , outScript   :: !ByteString
+      -- ^ block information for output
+    , outScript   :: !ShortByteString
       -- ^ pubkey (output) script
     , outSpender  :: !(Maybe Spender)
       -- ^ input spending this output
@@ -412,6 +424,9 @@ newtype BalanceKey = BalanceKey
     { balanceAddress :: Address
     } deriving (Show, Eq)
 
+instance Hashable BalanceKey where
+    hashWithSalt s b = hashWithSalt s (S.encode b)
+
 -- | Address balance database value.
 data Balance = Balance
     { balanceValue       :: !Word64
@@ -477,18 +492,22 @@ instance Key MempoolKey
 instance Key OrphanKey
          -- 0x08 · TxHash
          -- 0x08
+instance Key UnspentKey
+         -- 0x09 · OutPoint
+         -- 0x09
 
-instance R.KeyValue BestBlockKey BlockHash
-instance R.KeyValue BlockKey BlockValue
-instance R.KeyValue TxKey TxRecord
-instance R.KeyValue AddrOutKey Output
-instance R.KeyValue MultiTxKey MultiTxValue
-instance R.KeyValue HeightKey BlockHash
-instance R.KeyValue BalanceKey Balance
-instance R.KeyValue AddrTxKey ()
-instance R.KeyValue OutputKey Output
-instance R.KeyValue MempoolKey ()
-instance R.KeyValue OrphanKey Tx
+instance R.KeyValue   BestBlockKey    BlockHash
+instance R.KeyValue   BlockKey        BlockValue
+instance R.KeyValue   TxKey           TxRecord
+instance R.KeyValue   AddrOutKey      Output
+instance R.KeyValue   MultiTxKey      MultiTxValue
+instance R.KeyValue   HeightKey       BlockHash
+instance R.KeyValue   BalanceKey      Balance
+instance R.KeyValue   AddrTxKey       ()
+instance R.KeyValue   OutputKey       Output
+instance R.KeyValue   UnspentKey      Output
+instance R.KeyValue   MempoolKey      ()
+instance R.KeyValue   OrphanKey       Tx
 
 instance Serialize MempoolKey where
     put (MempoolKey h) = do
@@ -625,16 +644,25 @@ instance Serialize OutputKey where
         let outPoint = OutPoint {..}
         return OutputKey {..}
 
+instance Serialize UnspentKey where
+    put UnspentKey {..} = do
+        putWord8 0x09
+        put unspentKey
+    put ShortUnspentKey = putWord8 0x09
+    get = do
+        guard . (== 0x09) =<< getWord8
+        UnspentKey <$> get
+
 instance Serialize PrevOut where
     put PrevOut {..} = do
         put prevOutValue
         put prevOutBlock
-        put (B.length prevOutScript)
-        putByteString prevOutScript
+        put (B.Short.length prevOutScript)
+        putShortByteString prevOutScript
     get = do
         prevOutValue <- get
         prevOutBlock <- get
-        prevOutScript <- getByteString =<< get
+        prevOutScript <- getShortByteString =<< get
         return PrevOut {..}
 
 instance Serialize Output where
@@ -642,13 +670,13 @@ instance Serialize Output where
         putWord8 0x01
         put outputValue
         put outBlock
-        put outScript
+        put (B.Short.fromShort outScript)
         put outSpender
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
-        outScript <- get
+        outScript <- B.Short.toShort <$> get
         outSpender <- get
         return Output {..}
 
@@ -901,7 +929,7 @@ addrOutputPairs AddrOutput {..} =
     dout =
         DetailedOutput
             { detOutValue = outputValue
-            , detOutScript = outScript
+            , detOutScript = B.Short.fromShort outScript
             , detOutSpender = outSpender
             , detOutNetwork = getAddrNet addrOutputAddress
             }
@@ -937,23 +965,23 @@ instance Serialize HeightKey where
         return (HeightKey (maxBound - iheight))
 
 instance Serialize BlockKey where
-    put (BlockKey hash) = do
+    put (BlockKey h) = do
         putWord8 0x01
-        put hash
+        put h
     get = do
         guard . (== 0x01) =<< getWord8
         BlockKey <$> get
 
 instance Serialize TxKey where
-    put (TxKey hash) = do
+    put (TxKey h) = do
         putWord8 0x02
-        put hash
+        put h
         putWord8 0x00
     get = do
         guard . (== 0x02) =<< getWord8
-        hash <- get
+        h <- get
         guard . (== 0x00) =<< getWord8
-        return (TxKey hash)
+        return (TxKey h)
 
 -- | Configuration for a 'Store'.
 data StoreConfig = StoreConfig

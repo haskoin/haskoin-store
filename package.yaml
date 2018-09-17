@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.2.3
+version: 0.3.0
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
@@ -31,6 +31,7 @@ library:
     - cereal
     - conduit
     - containers
+    - hashable
     - mtl
     - network
     - random
@@ -39,6 +40,7 @@ library:
     - text
     - time
     - transformers
+    - unordered-containers
 executables:
   haskoin-store:
     main: Main.hs
