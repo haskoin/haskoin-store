@@ -20,6 +20,7 @@ module Network.Haskoin.Store.Block
       , getBalance
       , getTx
       , getMempool
+      , getPeersInformation
       ) where
 
 import           Conduit
@@ -133,13 +134,13 @@ runMonadImport f =
         db <- asks myBlockDB
         writeBatch db ops
         l <- asks myListener
-        gets blockAction >>= \case
+        ba <- gets blockAction
+        case ba of
             Just (ImportBlock Block {..}) ->
                 atomically (l (BestBlock (headerHash blockHeader)))
             Just RevertBlock -> $(logWarnS) "Block" "Reverted best block"
-            _ -> return ()
-        gets newTxs >>= \ths ->
-            forM_ (M.keys ths) $ \tx -> atomically (l (MempoolNew tx))
+            Nothing -> gets newTxs >>= \ths ->
+                forM_ (M.keys ths) $ \tx -> atomically (l (MempoolNew tx))
 
 -- | Run block store process.
 blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
@@ -1173,3 +1174,19 @@ peerString p = do
     managerGetPeer mgr p >>= \case
         Nothing -> return "[unknown]"
         Just o -> return $ fromString $ show $ onlinePeerAddress o
+
+getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
+getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
+  where
+    toInfo op = PeerInformation
+        { userAgent = onlinePeerUserAgent op
+        , address = cs $ show $ onlinePeerAddress op
+        , connected = onlinePeerConnected op
+        , version = onlinePeerVersion op
+        , services = onlinePeerServices op
+        , relay = onlinePeerRelay op
+        , block = headerHash $ nodeHeader $ onlinePeerBestBlock op
+        , height = nodeHeight $ onlinePeerBestBlock op
+        , nonceLocal = onlinePeerNonce op
+        , nonceRemote = onlinePeerRemoteNonce op
+        }

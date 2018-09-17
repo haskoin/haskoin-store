@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: "0.2.0"
+  version: "0.2.2"
   title: Blockchain API
   contact:
     name: Haskoin
@@ -18,6 +18,7 @@ tags:
   - name: address
   - name: transaction
   - name: block
+  - name: network
 paths:
   '/address/{address}/transactions':
     get:
@@ -428,6 +429,20 @@ paths:
             application/x-json-stream:
               schema:
                 $ref: '#/components/schemas/Event'
+  '/peers':
+    get:
+      tags:
+        - network
+      operationId: getPeers
+      responses:
+        '200':
+          description: success
+          content:
+            application/x-json-stream:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Peer'
 components:
   schemas:
     Event:
@@ -694,3 +709,53 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TxId'
+    Peer:
+      type: object
+      required:
+        - address
+        - block
+        - connected
+        - height
+        - noncelocal
+        - nonceremote
+        - relay
+        - services
+        - useragent
+        - version
+      properties:
+        address:
+          type: string
+          example: "127.0.0.1:8333"
+        block:
+          type: string
+          format: hex
+          example: "000000000000000000fcaea66a66cd8c069021c9804020215de878b910d5938d"
+        connected:
+          type: boolean
+          example: true
+        height:
+          type: integer
+          format: int32
+          example: 409587
+        noncelocal:
+          type: integer
+          format: int64
+          example: 11234048426620999728
+        nonceremote:
+          type: integer
+          format: int64
+          example: 16093339499353916104
+        relay:
+          type: boolean
+          example: true
+        services:
+          type: integer
+          format: int64
+          example: 37
+        useragent:
+          type: string
+          example: "/Bitcoin ABC:0.17.2(EB32.0)/"
+        version:
+          type: integer
+          format: int32
+          example: 70015

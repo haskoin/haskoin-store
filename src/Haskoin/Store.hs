@@ -22,6 +22,7 @@ module Haskoin.Store
     , AddrOutput(..)
     , AddressBalance(..)
     , TxException(..)
+    , PeerInformation(..)
     , withStore
     , getBestBlock
     , getBlockAtHeight
@@ -32,6 +33,7 @@ module Haskoin.Store
     , getUnspent
     , getBalance
     , getMempool
+    , getPeersInformation
     , publishTx
     ) where
 
