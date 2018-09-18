@@ -57,6 +57,7 @@ import           UnliftIO
 -- | Block store process state.
 data BlockRead = BlockRead
     { myBlockDB    :: !DB
+    , myUnspentDB  :: !(Maybe DB)
     , mySelf       :: !BlockStore
     , myChain      :: !Chain
     , myManager    :: !Manager
@@ -64,8 +65,6 @@ data BlockRead = BlockRead
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
     , myNetwork    :: !Network
-    , myUTXO       :: !(TVar (HashMap OutputKey Output))
-    , myBalances   :: !(TVar (HashMap BalanceKey Balance))
     }
 
 -- | Block store context.
@@ -125,34 +124,31 @@ runMonadImport f =
             , blockAction = Nothing
             }
   where
-    update_memory = do
-        del_txs <- S.toList <$> gets deleteTxs
-        del_outs_1 <-
-            fmap concat . forM del_txs $ \th ->
-                getTxRecord th >>= \(Just TxRecord {..}) ->
-                    return $
-                    zipWith
-                        (const . OutputKey . OutPoint th)
-                        [0 ..]
-                        (txOut txValue)
-        outs <- H.toList <$> gets outputMap
-        let new_outs =
-                [(op, out) | (op, out) <- outs, isNothing (outSpender out)]
-            del_outs_2 = [op | (op, out) <- outs, isJust (outSpender out)]
-        bals <- H.toList <$> gets addressMap
-        let del_bals = [a | (a, bal) <- bals, balanceUtxoCount bal == 0]
-        let new_bals = [(a, bal) | (a, bal) <- bals, balanceUtxoCount bal > 0]
-        utxo_box <- asks myUTXO
-        balance_box <- asks myBalances
-        atomically $ do
-            om <- readTVar utxo_box
-            let om' = foldl (flip H.delete) om (del_outs_1 <> del_outs_2)
-                om'' = foldl' (\m (k, v) -> H.insert k v m) om' new_outs
-            bm <- readTVar balance_box
-            let bm' = foldl (flip H.delete) bm del_bals
-                bm'' = foldl' (\m (k, v) -> H.insert k v m) bm' new_bals
-            writeTVar utxo_box om''
-            writeTVar balance_box bm''
+    update_memory = asks myUnspentDB >>= \case
+        Nothing -> return ()
+        Just udb -> do
+            del_txs <- S.toList <$> gets deleteTxs
+            del_outs_1 <-
+                fmap concat . forM del_txs $ \th ->
+                    getTxRecord th >>= \(Just TxRecord {..}) ->
+                        return $
+                        zipWith
+                            (const . OutputKey . OutPoint th)
+                            [0 ..]
+                            (txOut txValue)
+            outs <- H.toList <$> gets outputMap
+            let new_outs =
+                    [(op, out) | (op, out) <- outs, isNothing (outSpender out)]
+                del_outs_2 = [op | (op, out) <- outs, isJust (outSpender out)]
+            bals <- H.toList <$> gets addressMap
+            let del_bals = [a | (a, bal) <- bals, balanceUtxoCount bal == 0]
+            let new_bals = [(a, bal) | (a, bal) <- bals, balanceUtxoCount bal > 0]
+            let dops1 = map R.deleteOp del_outs_1
+                dops2 = map R.deleteOp del_outs_2
+                dops3 = map R.deleteOp del_bals
+                iops1 = map (uncurry R.insertOp) new_outs
+                iops2 = map (uncurry R.insertOp) new_bals
+            writeBatch udb $ dops1 <> dops2 <> dops3 <> iops1 <> iops2
     update_database = do
         net <- asks myNetwork
         ops <-
@@ -181,10 +177,8 @@ blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
 blockStore BlockConfig {..} = do
     base_height_box <- newTVarIO 0
     peer_box <- newTVarIO Nothing
-    utxo_box <- newTVarIO H.empty
-    balance_box <- newTVarIO H.empty
     runReaderT
-        (init_db >> loadUTXO blockConfNet >> syncBlocks >> run)
+        (init_db >> loadUTXO >> syncBlocks >> run)
         BlockRead
             { mySelf = blockConfMailbox
             , myBlockDB = blockConfDB
@@ -194,8 +188,7 @@ blockStore BlockConfig {..} = do
             , myBaseHeight = base_height_box
             , myPeer = peer_box
             , myNetwork = blockConfNet
-            , myUTXO = utxo_box
-            , myBalances = balance_box
+            , myUnspentDB = blockConfUnspentDB
             }
   where
     run =
@@ -373,23 +366,29 @@ getTx net th db s = do
 
 -- | Get transaction output for importing transaction.
 getOutput :: (MonadBlock m, MonadImport m) => OutPoint -> m (Maybe Output)
-getOutput out_point =
-    runMaybeT $ MaybeT map_lookup <|> MaybeT mem_lookup <|> MaybeT db_lookup
+getOutput out_point = runMaybeT $ map_lookup <|> mem_lookup <|> db_lookup
   where
-    mem_lookup = H.lookup (OutputKey out_point) <$> (readTVarIO =<< asks myUTXO)
-    map_lookup = H.lookup (OutputKey out_point) <$> gets outputMap
-    db_key = OutputKey out_point
-    db_lookup = asks myBlockDB >>= \db -> retrieve db Nothing db_key
+    map_lookup = MaybeT $ H.lookup (OutputKey out_point) <$> gets outputMap
+    mem_lookup = do
+        udb <- MaybeT (asks myUnspentDB)
+        MaybeT $ retrieve udb Nothing (OutputKey out_point)
+    db_lookup = do
+        db <- asks myBlockDB
+        MaybeT $ retrieve db Nothing (OutputKey out_point)
 
 -- | Get address balance for importing transaction.
 getAddress :: (MonadBlock m, MonadImport m) => Address -> m Balance
 getAddress address =
     fmap (fromMaybe emptyBalance) . runMaybeT $
-    MaybeT map_lookup <|> MaybeT mem_lookup
+    MaybeT map_lookup <|> MaybeT mem_db_lookup
   where
-    mem_lookup =
-        H.lookup (BalanceKey address) <$> (readTVarIO =<< asks myBalances)
     map_lookup = H.lookup (BalanceKey address) <$> gets addressMap
+    mem_db_lookup =
+        asks myUnspentDB >>= \case
+            Just udb -> retrieve udb Nothing (BalanceKey address)
+            Nothing -> do
+                db <- asks myBlockDB
+                retrieve db Nothing (BalanceKey address)
 
 -- | Get transactions to delete.
 getDeleteTxs :: MonadImport m => m (Set TxHash)
@@ -863,8 +862,9 @@ getInsertTxOps = do
 -- | Aggregate all balance update ops.
 getBalanceOps :: MonadImport m => m [BatchOp]
 getBalanceOps = do
-    address_map <- gets addressMap
-    return $ map (uncurry insertOp) (H.toList address_map)
+    bs <- H.toList <$> gets addressMap
+    let (ds, as) = partition ((== 0) . balanceUtxoCount . snd) bs
+    return $ map (uncurry insertOp) as <> map (deleteOp . fst) ds
 
 -- | Revert best block.
 revertBestBlock :: MonadBlock m => m ()
@@ -1243,41 +1243,56 @@ getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
         , nonceRemote = onlinePeerRemoteNonce op
         }
 
--- | Load all UTXO in memory.
-loadUTXO :: (MonadUnliftIO m, MonadBlock m) => Network -> m ()
-loadUTXO net = do
-    utxo_box <- asks myUTXO
-    balance_box <- asks myBalances
-    db <- asks myBlockDB
-    (um, bm) <-
-        runResourceT . runConduit $
-        matching db Nothing ShortUnspentKey .| foldlC f (H.empty, H.empty)
-    atomically $ do
-        writeTVar utxo_box um
-        writeTVar balance_box bm
+-- | Load all UTXO in unspent database.
+loadUTXO :: (MonadUnliftIO m, MonadBlock m) => m ()
+loadUTXO =
+    asks myUnspentDB >>= \case
+        Nothing -> return ()
+        Just udb -> do
+            $(logInfoS) "BlockStore" "Loading UTXO in memory..."
+            db <- asks myBlockDB
+            delete_all udb
+            runResourceT . runConduit $
+                matching db Nothing ShortUnspentKey .| mapM_C (uncurry (f udb))
   where
-    f (um, bm) (UnspentKey {..}, o@Output {..}) =
-        let um' = H.insert (OutputKey unspentKey) o um
-            bm' =
-                case scriptToAddressBS net (B.Short.fromShort outScript) of
-                    Nothing -> bm
-                    Just a ->
-                        let b =
-                                if isJust outBlock
-                                    then Balance
-                                             { balanceValue = outputValue
-                                             , balanceUnconfirmed = 0
-                                             , balanceUtxoCount = 1
-                                             }
-                                    else Balance
-                                             { balanceValue = 0
-                                             , balanceUnconfirmed =
-                                                   fromIntegral outputValue
-                                             , balanceUtxoCount = 1
-                                             }
-                         in H.insertWith g (BalanceKey a) b bm
-         in (um', bm')
-    f _ _ = undefined
+    delete_all udb = do
+        bops <-
+            runResourceT . runConduit $
+            matching udb Nothing ShortBalanceKey .| mapC (uncurry del_bal) .|
+            sinkList
+        oops <-
+            runResourceT . runConduit $
+            matching udb Nothing ShortOutputKey .| mapC (uncurry del_out) .|
+            sinkList
+        R.writeBatch udb $ bops <> oops
+    del_bal k Balance {} = R.deleteOp k
+    del_out k Output {} = R.deleteOp k
+    f udb UnspentKey {..} o@Output {..} = do
+        net <- asks myNetwork
+        R.insert udb (OutputKey unspentKey) o
+        case scriptToAddressBS net (B.Short.fromShort outScript) of
+            Nothing -> return ()
+            Just a -> do
+                let b =
+                        if isJust outBlock
+                            then Balance
+                                     { balanceValue = outputValue
+                                     , balanceUnconfirmed = 0
+                                     , balanceUtxoCount = 1
+                                     }
+                            else Balance
+                                     { balanceValue = 0
+                                     , balanceUnconfirmed =
+                                           fromIntegral outputValue
+                                     , balanceUtxoCount = 1
+                                     }
+                bm <- R.retrieve udb Nothing (BalanceKey a)
+                let b' =
+                        case bm of
+                            Nothing -> b
+                            Just x -> g x b
+                R.insert udb (BalanceKey a) b'
+    f _ _ _ = undefined
     g a b =
         Balance
             { balanceValue = balanceValue a + balanceValue b

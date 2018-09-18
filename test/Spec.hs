@@ -82,6 +82,7 @@ withTestStore net t f =
                         , storeConfDiscover = True
                         , storeConfDB = db
                         , storeConfNetwork = net
+                        , storeConfUnspentDB = Nothing
                         }
             withStore cfg $ \Store {..} ->
                 withPubSub storePublisher newTQueueIO $ \sub ->

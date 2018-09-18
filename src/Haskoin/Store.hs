@@ -104,6 +104,7 @@ withStore StoreConfig {..} f = do
                     , blockConfManager = mg
                     , blockConfListener = (`sendSTM` ls)
                     , blockConfDB = storeConfDB
+                    , blockConfUnspentDB = storeConfUnspentDB
                     , blockConfNet = storeConfNetwork
                     }
         withAsync (runReaderT run store_read) $ \st ->

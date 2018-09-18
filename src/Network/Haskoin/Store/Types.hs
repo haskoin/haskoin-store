@@ -94,6 +94,8 @@ data BlockConfig = BlockConfig
       -- ^ listener for store events
     , blockConfDB       :: !DB
       -- ^ RocksDB database handle
+    , blockConfUnspentDB :: !(Maybe DB)
+      -- ^ database for unspent outputs & balances
     , blockConfNet      :: !Network
       -- ^ network constants
     }
@@ -306,12 +308,14 @@ data TxRecord = TxRecord
     } deriving (Show, Eq, Ord)
 
 -- | Output key in database.
-newtype OutputKey = OutputKey
-    { outPoint :: OutPoint
-    } deriving (Show, Eq, Ord)
+data OutputKey
+    = OutputKey { outPoint :: !OutPoint }
+    | ShortOutputKey
+    deriving (Show, Eq, Ord)
 
 instance Hashable OutputKey where
     hashWithSalt s (OutputKey (OutPoint h i)) = hashWithSalt s (h, i)
+    hashWithSalt s ShortOutputKey = hashWithSalt s ()
 
 -- | All unspent outputs.
 data UnspentKey
@@ -420,9 +424,10 @@ newtype HeightKey =
     deriving (Show, Eq, Ord)
 
 -- | Address balance database key.
-newtype BalanceKey = BalanceKey
-    { balanceAddress :: Address
-    } deriving (Show, Eq)
+data BalanceKey
+    = BalanceKey { balanceAddress :: !Address }
+    | ShortBalanceKey
+    deriving (Show, Eq)
 
 instance Hashable BalanceKey where
     hashWithSalt s b = hashWithSalt s (S.encode b)
@@ -470,6 +475,7 @@ instance Key TxKey
          -- 0x02 · TxHash · 0x00
 instance Key OutputKey
          -- 0x02 · TxHash · 0x01 · OutputIndex
+         -- 0x02
 instance Key MultiTxKey
          -- 0x02 · TxHash
          -- 0x02 · TxHash · 0x00
@@ -478,6 +484,7 @@ instance Key HeightKey
          -- 0x03 · InvBlockHeight
 instance Key BalanceKey
          -- 0x04 · Storeaddress
+         -- 0x04
 instance Key AddrTxKey
          -- 0x05 · StoreAddress · InvBlockHeight · InvBlockPos · TxHash
          -- 0x05 · StoreAddress · InvBlockHeight
@@ -531,6 +538,7 @@ instance Serialize BalanceKey where
     put BalanceKey {..} = do
         putWord8 0x04
         put (StoreAddress balanceAddress)
+    put ShortBalanceKey = putWord8 0x04
     get = do
         guard . (== 0x04) =<< getWord8
         StoreAddress balanceAddress <- get
@@ -636,6 +644,7 @@ instance Serialize OutputKey where
         put (outPointHash outPoint)
         putWord8 0x01
         put (outPointIndex outPoint)
+    put ShortOutputKey = putWord8 0x02
     get = do
         guard . (== 0x02) =<< getWord8
         outPointHash <- get
@@ -993,6 +1002,8 @@ data StoreConfig = StoreConfig
       -- ^ discover new peers?
     , storeConfDB        :: !DB
       -- ^ RocksDB database handler
+    , storeConfUnspentDB :: !(Maybe DB)
+      -- ^ RocksDB memory database handler for unspent outputs
     , storeConfNetwork   :: !Network
       -- ^ network constants
     }

@@ -37,6 +37,7 @@ import           Web.Scotty.Trans
 
 data OptConfig = OptConfig
     { optConfigDir      :: !(Maybe FilePath)
+    , optConfigMemDB    :: !(Maybe FilePath)
     , optConfigPort     :: !(Maybe Int)
     , optConfigNetwork  :: !(Maybe Network)
     , optConfigDiscover :: !(Maybe Bool)
@@ -47,6 +48,7 @@ data OptConfig = OptConfig
 
 data Config = Config
     { configDir      :: !FilePath
+    , configMemDB    :: !(Maybe FilePath)
     , configPort     :: !Int
     , configNetwork  :: !Network
     , configDiscover :: !Bool
@@ -79,6 +81,7 @@ optToConfig :: OptConfig -> Config
 optToConfig OptConfig {..} =
     Config
     { configDir = fromMaybe myDirectory optConfigDir
+    , configMemDB = optConfigMemDB
     , configPort = fromMaybe defPort optConfigPort
     , configNetwork = fromMaybe defNetwork optConfigNetwork
     , configDiscover = fromMaybe defDiscovery optConfigDiscover
@@ -137,6 +140,10 @@ config = do
         optional . option str $
         metavar "DIR" <> long "dir" <> short 'd' <>
         help ("Data directory (default: " <> myDirectory <> ")")
+    optConfigMemDB <-
+        optional . option str $
+        metavar "UTXO" <> long "utxo" <> short 'u' <>
+        help "Memory directory for UTXO"
     optConfigPort <-
         optional . option auto $
         metavar "PORT" <> long "port" <> short 'p' <>
@@ -226,8 +233,31 @@ main =
                     , maxOpenFiles = -1
                     , writeBufferSize = 2 `shift` 30
                     }
-        runStore conf db $ \st -> runWeb conf st db
+        mudb <-
+            case configMemDB conf of
+                Nothing -> return Nothing
+                Just d ->
+                    Just <$>
+                    open
+                        d
+                        defaultOptions
+                            { createIfMissing = True
+                            , compression = SnappyCompression
+                            }
+        withStore (store_conf conf db mudb) $ \st -> runWeb conf st db
   where
+    store_conf conf db mudb =
+        StoreConfig
+            { storeConfMaxPeers = 20
+            , storeConfInitPeers =
+                  map
+                      (second (fromMaybe (getDefaultPort (configNetwork conf))))
+                      (configPeers conf)
+            , storeConfDiscover = configDiscover conf
+            , storeConfDB = db
+            , storeConfUnspentDB = mudb
+            , storeConfNetwork = configNetwork conf
+            }
     opts =
         info (helper <*> config) $
         fullDesc <> progDesc "Blockchain store and API" <>
@@ -364,27 +394,6 @@ runWeb conf st db = do
     runner f l = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
-
-runStore ::
-       (MonadLoggerIO m, MonadUnliftIO m)
-    => Config
-    -> DB
-    -> (Store -> m a)
-    -> m a
-runStore conf db f = do
-    let net = configNetwork conf
-        cfg =
-            StoreConfig
-                { storeConfMaxPeers = 20
-                , storeConfInitPeers =
-                      map
-                          (second (fromMaybe (getDefaultPort net)))
-                          (configPeers conf)
-                , storeConfDiscover = configDiscover conf
-                , storeConfDB = db
-                , storeConfNetwork = net
-                }
-    withStore cfg f
 
 addrTxsMax ::
        MonadUnliftIO m
