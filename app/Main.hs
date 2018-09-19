@@ -14,6 +14,7 @@ import           Data.Aeson              (ToJSON (..), Value (..), encode,
                                           object, (.=))
 import           Data.Bits
 import           Data.ByteString.Builder (lazyByteString)
+import           Data.Default
 import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
@@ -147,20 +148,21 @@ config = do
     optConfigPort <-
         optional . option auto $
         metavar "PORT" <> long "port" <> short 'p' <>
-        help ("Port to listen (default: " <> show defPort <> ")")
+        help ("Listening port (default: " <> show defPort <> ")")
     optConfigNetwork <-
         optional . option (eitherReader networkReader) $
-        metavar "NETWORK" <> long "network" <> short 'n' <>
+        metavar "NETWORK" <> long "net" <> short 'n' <>
         help ("Network: " <> netNames <> " (default: " <> net <> ")")
     optConfigDiscover <-
-        optional . switch $ long "discover" <> help "Enable peer discovery"
+        optional . switch $
+        long "auto" <> short 'a' <> help "Enable automatic peer discovery"
     optConfigPeers <-
         optional . option (eitherReader peerReader) $
-        metavar "PEERS" <> long "peers" <>
-        help "Network peers (i.e. localhost,peer.example.com:8333)"
+        metavar "PEERS" <> long "peers" <> short 'e' <>
+        help "Network peers (i.e. \"localhost,peer.example.com:8333\")"
     optConfigMaxReqs <-
         optional . option auto $
-        metavar "MAXREQ" <> long "maxreq" <>
+        metavar "MAX" <> long "max" <> short 'x' <>
         help ("Maximum returned entries (default:" <> show defMaxReqs <> ")")
     optConfigVersion <-
         switch $ long "version" <> short 'v' <> help "Show version"
@@ -220,7 +222,7 @@ main =
             exitSuccess
         let conf = optToConfig opt
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
-            die "Specify: --discover | --peers PEER,..."
+            die "Specify: -a | -e PEER,..."
         let net = configNetwork conf
         let wdir = configDir conf </> getNetworkName net
         liftIO $ createDirectoryIfMissing True wdir
@@ -243,6 +245,8 @@ main =
                         defaultOptions
                             { createIfMissing = True
                             , compression = SnappyCompression
+                            , maxOpenFiles = -1
+                            , writeBufferSize = 2 `shift` 30
                             }
         withStore (store_conf conf db mudb) $ \st -> runWeb conf st db
   where
@@ -278,74 +282,104 @@ runWeb conf st db = do
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
         get "/block/best" $ do
-            res <- withSnapshot db $ getBestBlock db
+            res <-
+                withSnapshot db $ \s ->
+                    getBestBlock db def {useSnapshot = Just s}
             json res
         get "/block/:block" $ do
             block <- param "block"
-            res <- withSnapshot db $ getBlock block db
+            res <-
+                withSnapshot db $ \s ->
+                    getBlock block db def {useSnapshot = Just s}
             maybeJSON res
         get "/block/height/:height" $ do
             height <- param "height"
-            res <- withSnapshot db $ getBlockAtHeight height db
+            res <-
+                withSnapshot db $ \s ->
+                    getBlockAtHeight height db def {useSnapshot = Just s}
             maybeJSON res
         get "/block/heights" $ do
             heights <- param "heights"
             testLength (length (heights :: [BlockHeight]))
             res <-
                 withSnapshot db $ \s ->
-                    mapM (\h -> getBlockAtHeight h db s) heights
+                    let opts = def {useSnapshot = Just s}
+                     in mapM (\h -> getBlockAtHeight h db opts) heights
             json res
         get "/blocks" $ do
             blocks <- param "blocks"
             testLength (length blocks)
-            res <- withSnapshot db $ getBlocks blocks db
+            res <-
+                withSnapshot db $ \s ->
+                    getBlocks blocks db def {useSnapshot = Just s}
             json res
         get "/mempool" $ do
-            res <- withSnapshot db $ getMempool db
+            res <-
+                withSnapshot db $ \s -> getMempool db def {useSnapshot = Just s}
             json res
         get "/transaction/:txid" $ do
             txid <- param "txid"
-            res <- withSnapshot db $ getTx net txid db
+            res <-
+                withSnapshot db $ \s ->
+                    getTx net txid db def {useSnapshot = Just s}
             maybeJSON res
         get "/transactions" $ do
             txids <- param "txids"
             testLength (length (txids :: [TxHash]))
-            res <- withSnapshot db $ \s -> mapM (\t -> getTx net t db s) txids
+            res <-
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in mapM (\t -> getTx net t db opts) txids
             json res
         get "/address/:address/transactions" $ do
             address <- parse_address
             height <- parse_height
             x <- parse_max
-            res <- withSnapshot db $ \s -> addrTxsMax net db s x height address
+            res <-
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in addrTxsMax net db opts x height address
             json res
         get "/address/transactions" $ do
             addresses <- parse_addresses
             height <- parse_height
             x <- parse_max
             res <-
-                withSnapshot db $ \s -> addrsTxsMax net db s x height addresses
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in addrsTxsMax net db opts x height addresses
             json res
         get "/address/:address/unspent" $ do
             address <- parse_address
             height <- parse_height
             x <- parse_max
-            res <- withSnapshot db $ \s -> addrUnspentMax db s x height address
+            res <-
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in addrUnspentMax db opts x height address
             json res
         get "/address/unspent" $ do
             addresses <- parse_addresses
             height <- parse_height
             x <- parse_max
             res <-
-                withSnapshot db $ \s -> addrsUnspentMax db s x height addresses
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in addrsUnspentMax db opts x height addresses
             json res
         get "/address/:address/balance" $ do
             address <- parse_address
-            res <- withSnapshot db $ getBalance address db
+            res <-
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in getBalance address db opts
             json res
         get "/address/balances" $ do
             addresses <- parse_addresses
             res <-
-                withSnapshot db $ \s -> mapM (\a -> getBalance a db s) addresses
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in mapM (\a -> getBalance a db opts) addresses
             json res
         post "/transactions" $ do
             NewTx tx <- jsonData
@@ -399,23 +433,23 @@ addrTxsMax ::
        MonadUnliftIO m
     => Network
     -> DB
-    -> Snapshot
+    -> ReadOptions
     -> Int
     -> Maybe BlockHeight
     -> Address
     -> m [DetailedTx]
-addrTxsMax net db s c h a = concat <$> addrsTxsMax net db s c h [a]
+addrTxsMax net db opts c h a = concat <$> addrsTxsMax net db opts c h [a]
 
 addrsTxsMax ::
        MonadUnliftIO m
     => Network
     -> DB
-    -> Snapshot
+    -> ReadOptions
     -> Int
     -> Maybe BlockHeight
     -> [Address]
     -> m [[DetailedTx]]
-addrsTxsMax net db s c h addrs
+addrsTxsMax net db opts c h addrs
     | c <= 0 = return []
     | otherwise =
         case addrs of
@@ -423,28 +457,28 @@ addrsTxsMax net db s c h addrs
             (a:as) -> do
                 ts <-
                     runResourceT . runConduit $
-                    getAddrTxs net a h db s .| takeC c .| sinkList
-                mappend [ts] <$> addrsTxsMax net db s (c - length ts) h as
+                    getAddrTxs net a h db opts .| takeC c .| sinkList
+                mappend [ts] <$> addrsTxsMax net db opts (c - length ts) h as
 
 addrUnspentMax ::
        MonadUnliftIO m
     => DB
-    -> Snapshot
+    -> ReadOptions
     -> Int
     -> Maybe BlockHeight
     -> Address
     -> m [AddrOutput]
-addrUnspentMax db s c h a = concat <$> addrsUnspentMax db s c h [a]
+addrUnspentMax db opts c h a = concat <$> addrsUnspentMax db opts c h [a]
 
 addrsUnspentMax ::
        MonadUnliftIO m
     => DB
-    -> Snapshot
+    -> ReadOptions
     -> Int
     -> Maybe BlockHeight
     -> [Address]
     -> m [[AddrOutput]]
-addrsUnspentMax db s c h addrs
+addrsUnspentMax db opts c h addrs
     | c <= 0 = return []
     | otherwise =
         case addrs of
@@ -452,5 +486,5 @@ addrsUnspentMax db s c h addrs
             (a:as) -> do
                 os <-
                     runResourceT . runConduit $
-                    getUnspent a h db s .| takeC c .| sinkList
-                mappend [os] <$> addrsUnspentMax db s (c - length os) h as
+                    getUnspent a h db opts .| takeC c .| sinkList
+                mappend [os] <$> addrsUnspentMax db opts (c - length os) h as

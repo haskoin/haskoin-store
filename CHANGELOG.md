@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## 0.3.0
+### Added
+- Allow to use a different RocksDB for UTXO and balances (for syncing only for now).
+- Update to latest `rocksdb-query`.
+- Update to latest `haskoin-node`.
+
+### Removed
+- Remove some data from peers.
 
 ## 0.2.3
 ### Removed

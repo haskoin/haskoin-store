@@ -41,6 +41,7 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
+import           Data.Default
 import           Data.Serialize
 import           Data.String
 import           Data.String.Conversions
@@ -229,13 +230,12 @@ publishTx ::
     -> Tx
     -> m (Either TxException DetailedTx)
 publishTx net Store {..} db tx =
-    withSnapshot db $ \s ->
-        getTx net (txHash tx) db s >>= \case
-            Just d -> return (Right d)
-            Nothing ->
-                timeout 10000000 (runExceptT (go s)) >>= \case
-                    Nothing -> return (Left PublishTimeout)
-                    Just e -> return e
+    getTx net (txHash tx) db def >>= \case
+        Just d -> return (Right d)
+        Nothing ->
+            timeout 10000000 (runExceptT (go def)) >>= \case
+                Nothing -> return (Left PublishTimeout)
+                Just e -> return e
   where
     go s = do
         p <-
@@ -253,7 +253,7 @@ publishTx net Store {..} db tx =
         recv_loop sub p r
         maybeToExceptT
             CouldNotImport
-            (MaybeT (withSnapshot db $ getTx net (txHash tx) db))
+            (MaybeT (getTx net (txHash tx) db def))
     recv_loop sub p r =
         receive sub >>= \case
             PeerPong p' n

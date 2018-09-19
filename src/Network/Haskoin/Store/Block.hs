@@ -31,7 +31,7 @@ import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString             as B
-import qualified Data.ByteString.Short       as B.Short
+import           Data.Default
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as H
 import           Data.List
@@ -45,7 +45,6 @@ import           Data.String
 import           Data.String.Conversions
 import           Data.Text                   (Text)
 import           Data.Time.Clock.POSIX
-import           Database.RocksDB            (BatchOp, DB, Snapshot)
 import           Database.RocksDB            as R
 import           Database.RocksDB.Query      as R
 import           Haskoin
@@ -198,28 +197,28 @@ blockStore BlockConfig {..} = do
     init_db =
         runResourceT $ do
             runConduit $
-                matching blockConfDB Nothing ShortOrphanKey .|
+                matching blockConfDB def ShortOrphanKey .|
                 mapM_C (\(k, Tx {}) -> remove blockConfDB k)
-            retrieve blockConfDB Nothing BestBlockKey >>= \case
+            retrieve blockConfDB def BestBlockKey >>= \case
                 Nothing -> addNewBlock (genesisBlock blockConfNet)
                 Just (_ :: BlockHash) -> do
                     BlockValue {..} <-
-                        withSnapshot blockConfDB $ getBestBlock blockConfDB
+                        getBestBlock blockConfDB def
                     base_height_box <- asks myBaseHeight
                     atomically $ writeTVar base_height_box blockValueHeight
 
 -- | Get best block hash.
-getBestBlockHash :: MonadIO m => DB -> Snapshot -> m BlockHash
-getBestBlockHash db s =
-    retrieve db (Just s) BestBlockKey >>= \case
+getBestBlockHash :: MonadIO m => DB -> ReadOptions -> m BlockHash
+getBestBlockHash db opts =
+    retrieve db opts BestBlockKey >>= \case
         Nothing -> throwString "Best block hash not available"
         Just bh -> return bh
 
 -- | Get best block.
-getBestBlock :: MonadIO m => DB -> Snapshot -> m BlockValue
-getBestBlock db s =
-    getBestBlockHash db s >>= \bh ->
-        getBlock bh db s >>= \case
+getBestBlock :: MonadIO m => DB -> ReadOptions -> m BlockValue
+getBestBlock db opts =
+    getBestBlockHash db opts >>= \bh ->
+        getBlock bh db opts >>= \case
             Nothing ->
                 throwString $
                 "Best block not available at hash: " <> cs (blockHashToHex bh)
@@ -227,21 +226,21 @@ getBestBlock db s =
 
 -- | Get one block at specified height.
 getBlockAtHeight ::
-       MonadIO m => BlockHeight -> DB -> Snapshot -> m (Maybe BlockValue)
-getBlockAtHeight height db s =
-    retrieve db (Just s) (HeightKey height) >>= \case
+       MonadIO m => BlockHeight -> DB -> ReadOptions -> m (Maybe BlockValue)
+getBlockAtHeight height db opts =
+    retrieve db opts (HeightKey height) >>= \case
         Nothing -> return Nothing
-        Just h -> retrieve db (Just s) (BlockKey h)
+        Just h -> retrieve db opts (BlockKey h)
 
 -- | Get blocks for specific hashes.
-getBlocks :: MonadIO m => [BlockHash] -> DB -> Snapshot -> m [BlockValue]
-getBlocks bids db s =
-    fmap catMaybes . forM (nub bids) $ \bid -> getBlock bid db s
+getBlocks :: MonadIO m => [BlockHash] -> DB -> ReadOptions -> m [BlockValue]
+getBlocks bids db opts =
+    fmap catMaybes . forM (nub bids) $ \bid -> getBlock bid db opts
 
 -- | Get a block.
 getBlock ::
-       MonadIO m => BlockHash -> DB -> Snapshot -> m (Maybe BlockValue)
-getBlock bh db s = retrieve db (Just s) (BlockKey bh)
+       MonadIO m => BlockHash -> DB -> ReadOptions -> m (Maybe BlockValue)
+getBlock bh db opts = retrieve db opts (BlockKey bh)
 
 -- | Get unspent outputs for an address.
 getAddrUnspent ::
@@ -249,20 +248,20 @@ getAddrUnspent ::
     => Address
     -> Maybe BlockHeight
     -> DB
-    -> Snapshot
+    -> ReadOptions
     -> ConduitT () (AddrOutKey, Output) m ()
-getAddrUnspent addr h db s =
+getAddrUnspent addr h db opts =
     matchingSkip
         db
-        (Just s)
+        opts
         (ShortAddrOutKey addr)
         (ShortAddrOutKeyHeight addr h)
 
 -- | Get balance for an address.
 getBalance ::
-       MonadIO m => Address -> DB -> Snapshot -> m AddressBalance
-getBalance addr db s =
-    retrieve db (Just s) (BalanceKey addr) >>= \case
+       MonadIO m => Address -> DB -> ReadOptions -> m AddressBalance
+getBalance addr db opts =
+    retrieve db opts (BalanceKey addr) >>= \case
         Just Balance {..} ->
             return
                 AddressBalance
@@ -281,8 +280,8 @@ getBalance addr db s =
                 }
 
 -- | Get list of transactions in mempool.
-getMempool :: MonadUnliftIO m => DB -> Snapshot -> m [TxHash]
-getMempool db s = get_hashes <$> matchingAsList db (Just s) ShortMempoolKey
+getMempool :: MonadUnliftIO m => DB -> ReadOptions -> m [TxHash]
+getMempool db opts = get_hashes <$> matchingAsList db opts ShortMempoolKey
   where
     get_hashes mempool_txs = [tx_hash | (MempoolKey tx_hash, ()) <- mempool_txs]
 
@@ -292,10 +291,10 @@ getTx ::
     => Network
     -> TxHash
     -> DB
-    -> Snapshot
+    -> ReadOptions
     -> m (Maybe DetailedTx)
-getTx net th db s = do
-    xs <- matchingAsList db (Just s) (ShortMultiTxKey th)
+getTx net th db opts = do
+    xs <- matchingAsList db opts (ShortMultiTxKey th)
     case find_tx xs of
         Just TxRecord {..} ->
             let os = map (uncurry output) (filter_outputs xs)
@@ -333,7 +332,7 @@ getTx net th db s = do
                          { detInOutPoint = prevOutput
                          , detInSequence = txInSequence
                          , detInSigScript = scriptInput
-                         , detInPkScript = B.Short.fromShort prevOutScript
+                         , detInPkScript = prevOutScript
                          , detInValue = prevOutValue
                          , detInBlock = prevOutBlock
                          , detInNetwork = net
@@ -341,7 +340,7 @@ getTx net th db s = do
     output OutPoint {..} Output {..} =
         DetailedOutput
             { detOutValue = outputValue
-            , detOutScript = B.Short.fromShort outScript
+            , detOutScript = outScript
             , detOutSpender = outSpender
             , detOutNetwork = net
             }
@@ -371,10 +370,10 @@ getOutput out_point = runMaybeT $ map_lookup <|> mem_lookup <|> db_lookup
     map_lookup = MaybeT $ H.lookup (OutputKey out_point) <$> gets outputMap
     mem_lookup = do
         udb <- MaybeT (asks myUnspentDB)
-        MaybeT $ retrieve udb Nothing (OutputKey out_point)
+        MaybeT $ retrieve udb def (OutputKey out_point)
     db_lookup = do
         db <- asks myBlockDB
-        MaybeT $ retrieve db Nothing (OutputKey out_point)
+        MaybeT $ retrieve db def (OutputKey out_point)
 
 -- | Get address balance for importing transaction.
 getAddress :: (MonadBlock m, MonadImport m) => Address -> m Balance
@@ -385,10 +384,10 @@ getAddress address =
     map_lookup = H.lookup (BalanceKey address) <$> gets addressMap
     mem_db_lookup =
         asks myUnspentDB >>= \case
-            Just udb -> retrieve udb Nothing (BalanceKey address)
+            Just udb -> retrieve udb def (BalanceKey address)
             Nothing -> do
                 db <- asks myBlockDB
-                retrieve db Nothing (BalanceKey address)
+                retrieve db def (BalanceKey address)
 
 -- | Get transactions to delete.
 getDeleteTxs :: MonadImport m => m (Set TxHash)
@@ -449,7 +448,7 @@ spendOutput out_point spender@Spender {..} =
         updateOutput out_point output {outSpender = Just spender}
         address <-
             MaybeT
-                (return (scriptToAddressBS net (B.Short.fromShort outScript)))
+                (return (scriptToAddressBS net outScript))
         balance@Balance {..} <- getAddress address
         updateAddress address $
             if isJust spenderBlock
@@ -480,7 +479,7 @@ unspendOutput out_point =
         updateOutput out_point output {outSpender = Nothing}
         address <-
             MaybeT
-                (return (scriptToAddressBS net (B.Short.fromShort outScript)))
+                (return (scriptToAddressBS net outScript))
         balance@Balance {..} <- getAddress address
         updateAddress address $
             if isJust spenderBlock
@@ -506,7 +505,7 @@ removeOutput out_point@OutPoint {..} = do
             Just o -> return o
     when (isJust outSpender) . throwString $
         "Cannot delete because spent outpoint: " <> show out_point
-    case scriptToAddressBS net (B.Short.fromShort outScript) of
+    case scriptToAddressBS net outScript of
         Nothing -> return ()
         Just address -> do
             balance@Balance {..} <- getAddress address
@@ -527,7 +526,7 @@ addOutput :: (MonadBlock m, MonadImport m) => OutPoint -> Output -> m ()
 addOutput out_point@OutPoint {..} output@Output {..} = do
     net <- asks myNetwork
     updateOutput out_point output
-    case scriptToAddressBS net (B.Short.fromShort outScript) of
+    case scriptToAddressBS net outScript of
         Nothing -> return ()
         Just address -> do
             balance@Balance {..} <- getAddress address
@@ -546,7 +545,7 @@ addOutput out_point@OutPoint {..} output@Output {..} = do
 -- | Get transaction.
 getTxRecord :: MonadBlock m => TxHash -> m (Maybe TxRecord)
 getTxRecord tx_hash =
-    asks myBlockDB >>= \db -> retrieve db Nothing (TxKey tx_hash)
+    asks myBlockDB >>= \db -> retrieve db def (TxKey tx_hash)
 
 -- | Delete a transaction.
 deleteTransaction ::
@@ -605,7 +604,7 @@ addNewBlock block@Block {..} =
             then return 0
             else do
                 best <-
-                    asks myBlockDB >>= \db -> withSnapshot db $ getBestBlock db
+                    asks myBlockDB >>= \db -> getBestBlock db def
                 when (prev_block /= headerHash (blockValueHeader best)) .
                     throwString $
                     "Block does not build on best at hash: " <> show new_hash
@@ -644,7 +643,7 @@ getBlockOps =
             ]
     get_block_remove_ops = do
         db <- asks myBlockDB
-        BlockValue {..} <- withSnapshot db $ getBestBlock db
+        BlockValue {..} <- getBestBlock db def
         let block_hash = headerHash blockValueHeader
             block_key = BlockKey block_hash
             height_key = HeightKey blockValueHeight
@@ -679,7 +678,7 @@ outputOps out_point@OutPoint {..}
 -- | Get address output ops when importing or removing transactions.
 addressOutOps :: Network -> OutPoint -> Output -> Bool -> [BatchOp]
 addressOutOps net out_point output@Output {..} del =
-    case scriptToAddressBS net (B.Short.fromShort outScript) of
+    case scriptToAddressBS net outScript of
         Nothing -> []
         Just a
             | del -> out_ops a
@@ -749,7 +748,7 @@ purgeOrphanOps =
         db <- asks myBlockDB
         guard . isJust =<< gets blockAction
         liftIO . runResourceT . runConduit $
-            matching db Nothing ShortOrphanKey .|
+            matching db def ShortOrphanKey .|
             mapC (\(k, Tx {}) -> deleteOp k) .|
             sinkList
 
@@ -774,7 +773,7 @@ deleteAddrTxOps :: Network -> TxRecord -> [BatchOp]
 deleteAddrTxOps net TxRecord {..} =
     let ias =
             mapMaybe
-                (scriptToAddressBS net . B.Short.fromShort . prevOutScript . snd)
+                (scriptToAddressBS net . prevOutScript . snd)
                 txValuePrevOuts
         oas = mapMaybe (scriptToAddressBS net . scriptOutput) (txOut txValue)
      in map del_addr_tx (ias <> oas)
@@ -871,7 +870,7 @@ revertBestBlock :: MonadBlock m => m ()
 revertBestBlock = do
     net <- asks myNetwork
     db <- asks myBlockDB
-    BlockValue {..} <- withSnapshot db $ getBestBlock db
+    BlockValue {..} <- getBestBlock db def
     when (blockValueHeader == getGenesisHeader net) . throwString $
         "Attempted to revert genesis block"
     import_txs <- map txValue <$> mapM getSimpleTx (tail blockValueTxs)
@@ -972,7 +971,7 @@ importTransaction tx maybe_block_ref =
                 Output
                     { outputValue = outValue
                     , outBlock = maybe_block_ref
-                    , outScript = B.Short.toShort scriptOutput
+                    , outScript = scriptOutput
                     , outSpender = Nothing
                     }
 
@@ -986,7 +985,7 @@ syncBlocks =
         let chain_height = nodeHeight chain_best
         base_height_box <- asks myBaseHeight
         db <- asks myBlockDB
-        best_block <- withSnapshot db $ getBestBlock db
+        best_block <- getBestBlock db def
         let best_height = blockValueHeight best_block
         when (best_height == chain_height) $ do
             reset_peer best_height
@@ -1031,7 +1030,7 @@ syncBlocks =
     revert_if_needed chain_best = do
         db <- asks myBlockDB
         ch <- asks myChain
-        best <- withSnapshot db $ getBestBlock db
+        best <- getBestBlock db def
         let best_hash = headerHash (blockValueHeader best)
             chain_hash = headerHash (nodeHeader chain_best)
         when (best_hash /= chain_hash) $
@@ -1048,7 +1047,7 @@ syncBlocks =
         best_hash <-
             asks myBlockDB >>= \db ->
                 headerHash . blockValueHeader <$>
-                withSnapshot db (getBestBlock db)
+                getBestBlock db def
         when (best_hash /= split) $ do
             revertBestBlock
             revert_until split
@@ -1062,7 +1061,7 @@ importBlock block@Block {..} = do
         throwString $
         "Not in chain: block hash" <>
         cs (blockHashToHex (headerHash blockHeader))
-    best <- asks myBlockDB >>= \db -> withSnapshot db $ getBestBlock db
+    best <- asks myBlockDB >>= \db -> getBestBlock db def
     let best_hash = headerHash (blockValueHeader best)
         prev_hash = prevBlock blockHeader
     when (prev_hash /= best_hash) (throwError "does not build on best")
@@ -1100,7 +1099,7 @@ processBlockMessage (BlockPeerDisconnect p) = do
     peer_box <- asks myPeer
     base_height_box <- asks myBaseHeight
     db <- asks myBlockDB
-    best <- withSnapshot db $ getBestBlock db
+    best <- getBestBlock db def
     is_my_peer <-
         atomically $
         readTVar peer_box >>= \x ->
@@ -1132,11 +1131,11 @@ processBlockMessage (TxAvailable p ts) =
             has <-
                 fmap catMaybes . forM ts $ \t ->
                     let mem =
-                            retrieve db Nothing (MempoolKey t) >>= \case
+                            retrieve db def (MempoolKey t) >>= \case
                                 Nothing -> return Nothing
                                 Just () -> return (Just t)
                         orp =
-                            retrieve db Nothing (OrphanKey t) >>= \case
+                            retrieve db def (OrphanKey t) >>= \case
                                 Nothing -> return Nothing
                                 Just Tx {} -> return (Just t)
                      in runMaybeT $ MaybeT mem <|> MaybeT orp
@@ -1160,7 +1159,7 @@ importOrphans = do
     db <- asks myBlockDB
     ret <-
         runResourceT . runConduit $
-        matching db Nothing ShortOrphanKey .| mapMC (import_tx . snd) .| anyC id
+        matching db def ShortOrphanKey .| mapMC (import_tx . snd) .| anyC id
     when ret importOrphans
   where
     import_tx tx' = runMonadImport $ importTransaction tx' Nothing
@@ -1171,13 +1170,13 @@ getAddrTxs ::
     -> Address
     -> Maybe BlockHeight
     -> DB
-    -> Snapshot
+    -> ReadOptions
     -> ConduitT () DetailedTx m ()
-getAddrTxs net a h db s =
-    matchingSkip db (Just s) (ShortAddrTxKey a) (ShortAddrTxKeyHeight a h) .|
+getAddrTxs net a h db opts =
+    matchingSkip db opts (ShortAddrTxKey a) (ShortAddrTxKeyHeight a h) .|
     concatMapMC f
   where
-    f (AddrTxKey {..}, ()) = getTx net addrTxHash db s
+    f (AddrTxKey {..}, ()) = getTx net addrTxHash db opts
     f _                    = throwString "Nonsense! This ship in unsinkable!"
 
 -- | Get unspent outputs for an address.
@@ -1186,10 +1185,10 @@ getUnspent ::
     => Address
     -> Maybe BlockHeight
     -> DB
-    -> Snapshot
+    -> ReadOptions
     -> ConduitT () AddrOutput m ()
-getUnspent a h db s =
-    getAddrUnspent a h db s .| mapC (uncurry AddrOutput)
+getUnspent a h db opts =
+    getAddrUnspent a h db opts .| mapC (uncurry AddrOutput)
 
 -- | Synchronize mempool against a peer.
 syncMempool :: MonadBlock m => Peer -> m ()
@@ -1203,7 +1202,7 @@ syncMempool p =
 isAtHeight :: MonadBlock m => m Bool
 isAtHeight = do
     db <- asks myBlockDB
-    bb <- withSnapshot db $ getBestBlockHash db
+    bb <- getBestBlockHash db def
     ch <- asks myChain
     cb <- chainGetBest ch
     time <- liftIO getPOSIXTime
@@ -1232,15 +1231,10 @@ getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
   where
     toInfo op = PeerInformation
         { userAgent = onlinePeerUserAgent op
-        , address = cs $ show $ onlinePeerAddress op
-        , connected = onlinePeerConnected op
+        , address = onlinePeerAddress op
         , version = onlinePeerVersion op
         , services = onlinePeerServices op
         , relay = onlinePeerRelay op
-        , block = headerHash $ nodeHeader $ onlinePeerBestBlock op
-        , height = nodeHeight $ onlinePeerBestBlock op
-        , nonceLocal = onlinePeerNonce op
-        , nonceRemote = onlinePeerRemoteNonce op
         }
 
 -- | Load all UTXO in unspent database.
@@ -1253,16 +1247,16 @@ loadUTXO =
             db <- asks myBlockDB
             delete_all udb
             runResourceT . runConduit $
-                matching db Nothing ShortUnspentKey .| mapM_C (uncurry (f udb))
+                matching db def ShortUnspentKey .| mapM_C (uncurry (f udb))
   where
     delete_all udb = do
         bops <-
             runResourceT . runConduit $
-            matching udb Nothing ShortBalanceKey .| mapC (uncurry del_bal) .|
+            matching udb def ShortBalanceKey .| mapC (uncurry del_bal) .|
             sinkList
         oops <-
             runResourceT . runConduit $
-            matching udb Nothing ShortOutputKey .| mapC (uncurry del_out) .|
+            matching udb def ShortOutputKey .| mapC (uncurry del_out) .|
             sinkList
         R.writeBatch udb $ bops <> oops
     del_bal k Balance {} = R.deleteOp k
@@ -1270,7 +1264,7 @@ loadUTXO =
     f udb UnspentKey {..} o@Output {..} = do
         net <- asks myNetwork
         R.insert udb (OutputKey unspentKey) o
-        case scriptToAddressBS net (B.Short.fromShort outScript) of
+        case scriptToAddressBS net outScript of
             Nothing -> return ()
             Just a -> do
                 let b =
@@ -1286,11 +1280,11 @@ loadUTXO =
                                            fromIntegral outputValue
                                      , balanceUtxoCount = 1
                                      }
-                bm <- R.retrieve udb Nothing (BalanceKey a)
+                bm <- R.retrieve udb def (BalanceKey a)
                 let b' =
                         case bm of
                             Nothing -> b
-                            Just x -> g x b
+                            Just x  -> g x b
                 R.insert udb (BalanceKey a) b'
     f _ _ _ = undefined
     g a b =

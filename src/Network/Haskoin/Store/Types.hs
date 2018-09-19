@@ -12,8 +12,6 @@ import           Control.Monad.Reader
 import           Data.Aeson              as A
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
-import           Data.ByteString.Short   (ShortByteString)
-import qualified Data.ByteString.Short   as B.Short
 import           Data.Function
 import           Data.Hashable
 import           Data.Int
@@ -25,6 +23,7 @@ import           Database.RocksDB        (DB)
 import           Database.RocksDB.Query  as R
 import           Haskoin
 import           Haskoin.Node
+import           Network.Socket
 import           NQE
 
 -- | Reasons why a transaction may not get imported.
@@ -84,19 +83,19 @@ newtype NewTx = NewTx
 
 -- | Configuration for a block store.
 data BlockConfig = BlockConfig
-    { blockConfMailbox  :: !BlockStore
+    { blockConfMailbox   :: !BlockStore
       -- ^ block store mailbox
-    , blockConfManager  :: !Manager
+    , blockConfManager   :: !Manager
       -- ^ peer manager from running node
-    , blockConfChain    :: !Chain
+    , blockConfChain     :: !Chain
       -- ^ chain from a running node
-    , blockConfListener :: !(Listen StoreEvent)
+    , blockConfListener  :: !(Listen StoreEvent)
       -- ^ listener for store events
-    , blockConfDB       :: !DB
+    , blockConfDB        :: !DB
       -- ^ RocksDB database handle
     , blockConfUnspentDB :: !(Maybe DB)
       -- ^ database for unspent outputs & balances
-    , blockConfNet      :: !Network
+    , blockConfNet       :: !Network
       -- ^ network constants
     }
 
@@ -256,16 +255,11 @@ data DetailedInput
     deriving (Show, Eq)
 
 data PeerInformation
-    = PeerInformation { userAgent   :: !ByteString
-                      , address     :: !ByteString
-                      , connected   :: !Bool
-                      , version     :: !Word32
-                      , services    :: !Word64
-                      , relay       :: !Bool
-                      , block       :: !BlockHash
-                      , height      :: !BlockHeight
-                      , nonceLocal  :: !Word64
-                      , nonceRemote :: !Word64
+    = PeerInformation { userAgent :: !ByteString
+                      , address   :: !SockAddr
+                      , version   :: !Word32
+                      , services  :: !Word64
+                      , relay     :: !Bool
                       }
     deriving (Show, Eq)
 
@@ -315,7 +309,7 @@ data OutputKey
 
 instance Hashable OutputKey where
     hashWithSalt s (OutputKey (OutPoint h i)) = hashWithSalt s (h, i)
-    hashWithSalt s ShortOutputKey = hashWithSalt s ()
+    hashWithSalt s ShortOutputKey             = hashWithSalt s ()
 
 -- | All unspent outputs.
 data UnspentKey
@@ -329,7 +323,7 @@ data PrevOut = PrevOut
       -- ^ value of output in satoshi
     , prevOutBlock  :: !(Maybe BlockRef)
       -- ^ block information for spent output
-    , prevOutScript :: !ShortByteString
+    , prevOutScript :: !ByteString
       -- ^ pubkey (output) script
     } deriving (Show, Eq, Ord)
 
@@ -339,7 +333,7 @@ data Output = Output
       -- ^ value of output in satoshi
     , outBlock    :: !(Maybe BlockRef)
       -- ^ block information for output
-    , outScript   :: !ShortByteString
+    , outScript   :: !ByteString
       -- ^ pubkey (output) script
     , outSpender  :: !(Maybe Spender)
       -- ^ input spending this output
@@ -666,12 +660,12 @@ instance Serialize PrevOut where
     put PrevOut {..} = do
         put prevOutValue
         put prevOutBlock
-        put (B.Short.length prevOutScript)
-        putShortByteString prevOutScript
+        put (B.length prevOutScript)
+        putByteString prevOutScript
     get = do
         prevOutValue <- get
         prevOutBlock <- get
-        prevOutScript <- getShortByteString =<< get
+        prevOutScript <- getByteString =<< get
         return PrevOut {..}
 
 instance Serialize Output where
@@ -679,13 +673,13 @@ instance Serialize Output where
         putWord8 0x01
         put outputValue
         put outBlock
-        put (B.Short.fromShort outScript)
+        put outScript
         put outSpender
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
-        outScript <- B.Short.toShort <$> get
+        outScript <- get
         outSpender <- get
         return Output {..}
 
@@ -856,15 +850,10 @@ instance ToJSON DetailedOutput where
 peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
 peerInformationPairs PeerInformation {..} =
     [ "useragent"   .= String (cs userAgent)
-    , "address"     .= String (cs address)
-    , "connected"   .= connected
+    , "address"     .= String (cs (show address))
     , "version"     .= version
     , "services"    .= services
     , "relay"       .= relay
-    , "block"       .= block
-    , "height"      .= height
-    , "noncelocal"  .= nonceLocal
-    , "nonceremote" .= nonceRemote
     ]
 
 instance ToJSON PeerInformation where
@@ -938,7 +927,7 @@ addrOutputPairs AddrOutput {..} =
     dout =
         DetailedOutput
             { detOutValue = outputValue
-            , detOutScript = B.Short.fromShort outScript
+            , detOutScript = outScript
             , detOutSpender = outSpender
             , detOutNetwork = getAddrNet addrOutputAddress
             }
