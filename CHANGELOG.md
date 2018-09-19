@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Allow to use a different RocksDB for UTXO and balances (for syncing only for now).
 - Update to latest `rocksdb-query`.
 - Update to latest `haskoin-node`.
+- Update to latest `haskoin-core`.
 
 ### Removed
 - Remove some data from peers.

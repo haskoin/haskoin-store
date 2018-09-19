@@ -756,46 +756,44 @@ getByteNet =
         Just net -> return net
 
 instance Serialize StoreAddress where
-    put (StoreAddress addr) =
-        case addr of
-            PubKeyAddress h net -> do
-                putWord8 0x01
-                putWord8 (netByte net)
-                put h
-            ScriptAddress h net -> do
-                putWord8 0x02
-                putWord8 (netByte net)
-                put h
-            WitnessPubKeyAddress h net -> do
-                putWord8 0x03
-                putWord8 (netByte net)
-                put h
-            WitnessScriptAddress h net -> do
-                putWord8 0x04
-                putWord8 (netByte net)
-                put h
+    put (StoreAddress addr)
+        | isPubKeyAddress addr = do
+            putWord8 0x01
+            putWord8 (netByte (getAddrNet addr))
+            put (getAddrHash160 addr)
+        | isScriptAddress addr = do
+            putWord8 0x02
+            putWord8 (netByte (getAddrNet addr))
+            put (getAddrHash160 addr)
+        | isWitnessPubKeyAddress addr = do
+            putWord8 0x03
+            putWord8 (netByte (getAddrNet addr))
+            put (getAddrHash160 addr)
+        | isWitnessScriptAddress addr = do
+            putWord8 0x04
+            putWord8 (netByte (getAddrNet addr))
+            put (getAddrHash256 addr)
+        | otherwise = undefined
     get = fmap StoreAddress $ pk <|> sa <|> wa <|> ws
       where
         pk = do
             guard . (== 0x01) =<< getWord8
             net <- getByteNet
-            h <- get
-            return (PubKeyAddress h net)
+            p2pkhAddr net <$> get
         sa = do
             guard . (== 0x02) =<< getWord8
             net <- getByteNet
-            h <- get
-            return (ScriptAddress h net)
+            p2shAddr net <$> get
         wa = do
             guard . (== 0x03) =<< getWord8
             net <- getByteNet
             h <- get
-            return (WitnessPubKeyAddress h net)
+            maybe mzero return (p2wpkhAddr net h)
         ws = do
             guard . (== 0x04) =<< getWord8
             net <- getByteNet
             h <- get
-            return (WitnessScriptAddress h net)
+            maybe mzero return (p2wshAddr net h)
 
 -- | JSON serialization for 'BlockValue'.
 blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
