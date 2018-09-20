@@ -704,7 +704,8 @@ addressOutOps net out_point output@Output {..} del =
                     , addrTxPos = blockRefPos <$> outBlock
                     , addrTxHash = outPointHash out_point
                     }
-         in insertOp tx_key ()
+            tx_value = blockRefHash <$> outBlock
+         in insertOp tx_key tx_value
     spender_ops a =
         case outSpender of
             Nothing -> []
@@ -716,7 +717,8 @@ addressOutOps net out_point output@Output {..} del =
                             , addrTxPos = blockRefPos <$> spenderBlock
                             , addrTxHash = spenderHash
                             }
-                 in [insertOp spender_key ()]
+                    spender_value = blockRefHash <$> spenderBlock
+                 in [insertOp spender_key spender_value]
 
 
 -- | Get ops for outputs to delete.
@@ -1166,18 +1168,30 @@ importOrphans = do
 
 getAddrTxs ::
        (MonadResource m, MonadUnliftIO m)
-    => Network
-    -> Address
+    => Address
     -> Maybe BlockHeight
     -> DB
     -> ReadOptions
-    -> ConduitT () DetailedTx m ()
-getAddrTxs net a h db opts =
-    matchingSkip db opts (ShortAddrTxKey a) (ShortAddrTxKeyHeight a h) .|
-    concatMapMC f
+    -> ConduitT () AddrTx m ()
+getAddrTxs a h db opts =
+    matchingSkip db opts (ShortAddrTxKey a) (ShortAddrTxKeyHeight a h) .| mapC f
   where
-    f (AddrTxKey {..}, ()) = getTx net addrTxHash db opts
-    f _                    = throwString "Nonsense! This ship in unsinkable!"
+    f (AddrTxKey {..}, maybe_block_hash) =
+        AddrTx
+            { getAddrTxAddr = addrTxKey
+            , getAddrTxHash = addrTxHash
+            , getAddrTxBlock =
+                  do block_hash <- maybe_block_hash
+                     block_height <- addrTxHeight
+                     block_pos <- addrTxPos
+                     return
+                         BlockRef
+                             { blockRefHash = block_hash
+                             , blockRefHeight = block_height
+                             , blockRefPos = block_pos
+                             }
+            }
+    f _ = error "Nonsense! This ship in unsinkable!"
 
 -- | Get unspent outputs for an address.
 getUnspent ::

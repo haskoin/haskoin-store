@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
@@ -158,6 +159,19 @@ data AddrTxKey
       -- ^ short key that matches all entries
     deriving (Show, Eq)
 
+data AddrTx = AddrTx
+    { getAddrTxAddr  :: !Address
+    , getAddrTxHash  :: !TxHash
+    , getAddrTxBlock :: !(Maybe BlockRef)
+    } deriving (Eq, Show, Read)
+
+instance Ord AddrTx where
+    compare = compare `on` f
+      where
+        f a = case getAddrTxBlock a of
+            Nothing -> (True, Nothing) -- Mempool transactions are "highest"
+            Just b  -> (False, Just b)
+
 -- | Database key for an address output.
 data AddrOutKey
     = AddrOutKey { addrOutputAddress :: !Address
@@ -203,7 +217,7 @@ data BlockRef = BlockRef
       -- ^ block height in the chain
     , blockRefPos    :: !Word32
       -- ^ position of transaction within the block
-    } deriving (Show, Eq)
+    } deriving (Show, Read, Eq)
 
 instance Ord BlockRef where
     compare = compare `on` f
@@ -480,7 +494,7 @@ instance Key BalanceKey
          -- 0x04 · Storeaddress
          -- 0x04
 instance Key AddrTxKey
-         -- 0x05 · StoreAddress · InvBlockHeight · InvBlockPos · TxHash
+         -- 0x05 · StoreAddress · InvBlockHeight · InvBlockPos
          -- 0x05 · StoreAddress · InvBlockHeight
          -- 0x05 · StoreAddress
 instance Key AddrOutKey
@@ -504,7 +518,7 @@ instance R.KeyValue   AddrOutKey      Output
 instance R.KeyValue   MultiTxKey      MultiTxValue
 instance R.KeyValue   HeightKey       BlockHash
 instance R.KeyValue   BalanceKey      Balance
-instance R.KeyValue   AddrTxKey       ()
+instance R.KeyValue   AddrTxKey       (Maybe BlockHash)
 instance R.KeyValue   OutputKey       Output
 instance R.KeyValue   UnspentKey      Output
 instance R.KeyValue   MempoolKey      ()
@@ -839,6 +853,17 @@ detailedOutputPairs DetailedOutput {..} =
     , "spent" .= isJust detOutSpender
     , "spender" .= detOutSpender
     ]
+
+addrTxPairs :: A.KeyValue kv => AddrTx -> [kv]
+addrTxPairs AddrTx {..} =
+    [ "address" .= getAddrTxAddr
+    , "txid" .= getAddrTxHash
+    , "block" .= getAddrTxBlock
+    ]
+
+instance ToJSON AddrTx where
+    toJSON = object . addrTxPairs
+    toEncoding = pairs . mconcat . addrTxPairs
 
 instance ToJSON DetailedOutput where
     toJSON = object . detailedOutputPairs

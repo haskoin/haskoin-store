@@ -20,6 +20,7 @@ module Haskoin.Store
     , DetailedOutput(..)
     , NewTx(..)
     , AddrOutput(..)
+    , AddrTx(..)
     , AddressBalance(..)
     , TxException(..)
     , PeerInformation(..)
@@ -129,6 +130,8 @@ withStore StoreConfig {..} f = do
             , nodeEvents = (`sendSTM` sm)
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeNet = storeConfNetwork
+            , nodeConnectInterval = 500000
+            , nodeStale = 30
             }
 
 -- | Dispatcher of node events.

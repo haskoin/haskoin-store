@@ -15,6 +15,8 @@ import           Data.Aeson              (ToJSON (..), Value (..), encode,
 import           Data.Bits
 import           Data.ByteString.Builder (lazyByteString)
 import           Data.Default
+import           Data.Foldable
+import           Data.Function
 import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
@@ -338,7 +340,7 @@ runWeb conf st db = do
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in addrTxsMax net db opts x height address
+                     in addrTxsMax db opts x height address
             json res
         get "/address/transactions" $ do
             addresses <- parse_addresses
@@ -347,7 +349,7 @@ runWeb conf st db = do
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in addrsTxsMax net db opts x height addresses
+                     in addrsTxsMax db opts x height addresses
             json res
         get "/address/:address/unspent" $ do
             address <- parse_address
@@ -412,7 +414,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a -> return a
+            Just a  -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
@@ -431,34 +433,27 @@ runWeb conf st db = do
 
 addrTxsMax ::
        MonadUnliftIO m
-    => Network
-    -> DB
+    => DB
     -> ReadOptions
     -> Int
     -> Maybe BlockHeight
     -> Address
-    -> m [DetailedTx]
-addrTxsMax net db opts c h a = concat <$> addrsTxsMax net db opts c h [a]
+    -> m [AddrTx]
+addrTxsMax db opts c h a = addrsTxsMax db opts c h [a]
 
 addrsTxsMax ::
        MonadUnliftIO m
-    => Network
-    -> DB
+    => DB
     -> ReadOptions
     -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [[DetailedTx]]
-addrsTxsMax net db opts c h addrs
-    | c <= 0 = return []
-    | otherwise =
-        case addrs of
-            [] -> return []
-            (a:as) -> do
-                ts <-
-                    runResourceT . runConduit $
-                    getAddrTxs net a h db opts .| takeC c .| sinkList
-                mappend [ts] <$> addrsTxsMax net db opts (c - length ts) h as
+    -> m [AddrTx]
+addrsTxsMax db opts c h addrs =
+    runResourceT . runConduit $
+    mergeSourcesBy (flip compare) conds .| takeC c .| sinkList
+  where
+    conds = map (\a -> getAddrTxs a h db opts) addrs
 
 addrUnspentMax ::
        MonadUnliftIO m
@@ -468,7 +463,7 @@ addrUnspentMax ::
     -> Maybe BlockHeight
     -> Address
     -> m [AddrOutput]
-addrUnspentMax db opts c h a = concat <$> addrsUnspentMax db opts c h [a]
+addrUnspentMax db opts c h a = addrsUnspentMax db opts c h [a]
 
 addrsUnspentMax ::
        MonadUnliftIO m
@@ -477,14 +472,32 @@ addrsUnspentMax ::
     -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [[AddrOutput]]
-addrsUnspentMax db opts c h addrs
-    | c <= 0 = return []
-    | otherwise =
-        case addrs of
-            [] -> return []
-            (a:as) -> do
-                os <-
-                    runResourceT . runConduit $
-                    getUnspent a h db opts .| takeC c .| sinkList
-                mappend [os] <$> addrsUnspentMax db opts (c - length os) h as
+    -> m [AddrOutput]
+addrsUnspentMax db opts c h addrs =
+    runResourceT . runConduit $
+    mergeSourcesBy (flip compare) conds .| takeC c .| sinkList
+  where
+    conds = map (\a -> getUnspent a h db opts) addrs
+
+-- Snatched from:
+-- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs
+mergeSourcesBy ::
+       (Foldable f, Monad m)
+    => (a -> a -> Ordering)
+    -> f (ConduitT () a m ())
+    -> ConduitT i a m ()
+mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
+  where
+    mergeSealed sources = do
+        prefetchedSources <- lift $ traverse ($$++ await) sources
+        go [(a, s) | (s, Just a) <- prefetchedSources]
+    go [] = pure ()
+    go sources = do
+        let (a, src1):sources1 = sortBy (f `on` fst) sources
+        yield a
+        (src2, mb) <- lift $ src1 $$++ await
+        let sources2 =
+                case mb of
+                    Nothing -> sources1
+                    Just b  -> (b, src2) : sources1
+        go sources2
