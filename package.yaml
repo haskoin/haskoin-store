@@ -53,6 +53,7 @@ executables:
     dependencies:
       - haskoin-store
       - aeson
+      - binary
       - bytestring
       - conduit
       - directory

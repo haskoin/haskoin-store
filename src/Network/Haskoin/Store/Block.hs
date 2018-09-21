@@ -732,8 +732,6 @@ deleteOutOps out_point@OutPoint {..} = do
                 throwString $
                 "Could not get output to delete: " <> show out_point
             Just o -> return o
-    when (isJust outSpender) $
-        throwString $ "Tried to delete spent output: " <> show out_point
     let new_output =
             output
                 { outBlock = (\r -> r {blockRefMainChain = False}) <$> outBlock
@@ -1106,7 +1104,7 @@ processBlockMessage (BlockReceived p b) =
             pstr <- peerString p
             let hash = headerHash (blockHeader b)
             $(logErrorS) "Block" $
-                "Could not import from peer" <> pstr <> " block hash:" <>
+                "Could not import from peer " <> pstr <> " block hash:" <>
                 cs (blockHashToHex hash) <>
                 " error: " <>
                 fromString e

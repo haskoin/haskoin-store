@@ -10,8 +10,8 @@ import           Control.Arrow
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
-import           Data.Aeson              (ToJSON (..), Value (..), encode,
-                                          object, (.=))
+import           Data.Aeson              as A
+import           Data.Binary.Builder
 import           Data.Bits
 import           Data.ByteString.Builder (lazyByteString)
 import           Data.Default
@@ -22,7 +22,7 @@ import           Data.Maybe
 import           Data.String.Conversions
 import qualified Data.Text               as T
 import           Data.Version
-import           Database.RocksDB        hiding (get)
+import           Database.RocksDB        as R
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
@@ -36,7 +36,7 @@ import           System.FilePath
 import           System.IO.Unsafe
 import           Text.Read               (readMaybe)
 import           UnliftIO
-import           Web.Scotty.Trans
+import           Web.Scotty.Trans        as S
 
 data OptConfig = OptConfig
     { optConfigDir      :: !(Maybe FilePath)
@@ -200,16 +200,16 @@ peerReader = mapM hp . ls
     ls = map T.unpack . T.split (== ',') . T.pack
 
 defHandler :: Monad m => Except -> ActionT Except m ()
-defHandler ServerError   = json ServerError
-defHandler OutOfBounds   = status status413 >> json OutOfBounds
-defHandler ThingNotFound = status status404 >> json ThingNotFound
-defHandler BadRequest    = status status400 >> json BadRequest
-defHandler (UserError s) = status status400 >> json (UserError s)
-defHandler e             = status status400 >> json e
+defHandler ServerError   = S.json ServerError
+defHandler OutOfBounds   = status status413 >> S.json OutOfBounds
+defHandler ThingNotFound = status status404 >> S.json ThingNotFound
+defHandler BadRequest    = status status400 >> S.json BadRequest
+defHandler (UserError s) = status status400 >> S.json (UserError s)
+defHandler e             = status status400 >> S.json e
 
 maybeJSON :: (Monad m, ToJSON a) => Maybe a -> ActionT Except m ()
 maybeJSON Nothing  = raise ThingNotFound
-maybeJSON (Just x) = json x
+maybeJSON (Just x) = S.json x
 
 myDirectory :: FilePath
 myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
@@ -231,7 +231,7 @@ main =
         db <-
             open
                 (wdir </> "blocks")
-                defaultOptions
+                R.defaultOptions
                     { createIfMissing = True
                     , compression = SnappyCompression
                     , maxOpenFiles = -1
@@ -244,7 +244,7 @@ main =
                     Just <$>
                     open
                         d
-                        defaultOptions
+                        R.defaultOptions
                             { createIfMissing = True
                             , compression = SnappyCompression
                             , maxOpenFiles = -1
@@ -283,123 +283,135 @@ runWeb conf st db = do
     l <- askLoggerIO
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
-        get "/block/best" $ do
+        S.get "/block/best" $ do
             res <-
                 withSnapshot db $ \s ->
                     getBestBlock db def {useSnapshot = Just s}
-            json res
-        get "/block/:block" $ do
+            S.json res
+        S.get "/block/:block" $ do
             block <- param "block"
             res <-
                 withSnapshot db $ \s ->
                     getBlock block db def {useSnapshot = Just s}
             maybeJSON res
-        get "/block/height/:height" $ do
+        S.get "/block/height/:height" $ do
             height <- param "height"
             res <-
                 withSnapshot db $ \s ->
                     getBlocksAtHeight height db def {useSnapshot = Just s}
-            json res
-        get "/block/heights" $ do
+            S.json res
+        S.get "/block/heights" $ do
             heights <- param "heights"
             testLength (length (heights :: [BlockHeight]))
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
                      in mapM (\h -> getBlocksAtHeight h db opts) heights
-            json res
-        get "/blocks" $ do
+            S.json res
+        S.get "/blocks" $ do
             blocks <- param "blocks"
             testLength (length blocks)
             res <-
                 withSnapshot db $ \s ->
                     getBlocks blocks db def {useSnapshot = Just s}
-            json res
-        get "/mempool" $ do
+            S.json res
+        S.get "/mempool" $ do
             res <-
                 withSnapshot db $ \s -> getMempool db def {useSnapshot = Just s}
-            json res
-        get "/transaction/:txid" $ do
+            S.json res
+        S.get "/transaction/:txid" $ do
             txid <- param "txid"
             res <-
                 withSnapshot db $ \s ->
                     getTx net txid db def {useSnapshot = Just s}
             maybeJSON res
-        get "/transactions" $ do
+        S.get "/transactions" $ do
             txids <- param "txids"
             testLength (length (txids :: [TxHash]))
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
                      in mapM (\t -> getTx net t db opts) txids
-            json res
-        get "/address/:address/transactions" $ do
+            S.json res
+        S.get "/address/:address/transactions" $ do
             address <- parse_address
             height <- parse_height
             x <- parse_max
-            res <-
+            setHeader "Content-Type" "application/json"
+            stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in addrTxsMax db opts x height address
-            json res
-        get "/address/transactions" $ do
+                     in runResourceT . runConduit $
+                        addrTxs db opts height address .| takeC x .|
+                        jsonListConduit .|
+                        streamConduit io flush'
+        S.get "/address/transactions" $ do
             addresses <- parse_addresses
             height <- parse_height
             x <- parse_max
-            res <-
+            setHeader "Content-Type" "application/json"
+            stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in addrsTxsMax db opts x height addresses
-            json res
-        get "/address/:address/unspent" $ do
+                     in runResourceT . runConduit $
+                        addrsTxs db opts height addresses .| takeC x .|
+                        jsonListConduit .|
+                        streamConduit io flush'
+        S.get "/address/:address/unspent" $ do
             address <- parse_address
             height <- parse_height
             x <- parse_max
-            res <-
+            setHeader "Content-Type" "application/json"
+            stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in addrUnspentMax db opts x height address
-            json res
-        get "/address/unspent" $ do
+                     in runResourceT . runConduit $
+                        addrUnspent db opts height address .| takeC x .|
+                        jsonListConduit .|
+                        streamConduit io flush'
+        S.get "/address/unspent" $ do
             addresses <- parse_addresses
             height <- parse_height
             x <- parse_max
-            res <-
+            setHeader "Content-Type" "application/json"
+            stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in addrsUnspentMax db opts x height addresses
-            json res
-        get "/address/:address/balance" $ do
+                     in runResourceT . runConduit $
+                        addrsUnspent db opts height addresses .| takeC x .|
+                        jsonListConduit .|
+                        streamConduit io flush'
+        S.get "/address/:address/balance" $ do
             address <- parse_address
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
                      in getBalance address db opts
-            json res
-        get "/address/balances" $ do
+            S.json res
+        S.get "/address/balances" $ do
             addresses <- parse_addresses
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
                      in mapM (\a -> getBalance a db opts) addresses
-            json res
+            S.json res
         post "/transactions" $ do
             NewTx tx <- jsonData
             lift (publishTx net st db tx) >>= \case
                 Left PublishTimeout -> do
                     status status500
-                    json (UserError (show PublishTimeout))
+                    S.json (UserError (show PublishTimeout))
                 Left e -> do
                     status status400
-                    json (UserError (show e))
-                Right j -> json j
-        get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
-        get "/events" $ do
+                    S.json (UserError (show e))
+                Right j -> S.json j
+        S.get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
+        S.get "/events" $ do
             setHeader "Content-Type" "application/x-json-stream"
-            stream $ \io flush ->
+            stream $ \io flush' ->
                 withPubSub (storePublisher st) (newTBQueueIO maxPubSubQueue) $ \sub ->
                     forever $
-                    flush >> receive sub >>= \case
+                    flush' >> receive sub >>= \case
                         BestBlock block_hash -> do
                             let bs = encode (JsonEventBlock block_hash) <> "\n"
                             io (lazyByteString bs)
@@ -407,14 +419,14 @@ runWeb conf st db = do
                             let bs = encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
-        get "/peers" $ getPeersInformation (storeManager st) >>= json
+        S.get "/peers" $ getPeersInformation (storeManager st) >>= S.json
         notFound $ raise ThingNotFound
   where
     parse_address = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a  -> return a
+            Just a -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
@@ -431,51 +443,45 @@ runWeb conf st db = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
 
-addrTxsMax ::
-       MonadUnliftIO m
+addrTxs ::
+       (MonadResource m, MonadUnliftIO m)
     => DB
     -> ReadOptions
-    -> Int
     -> Maybe BlockHeight
     -> Address
-    -> m [AddrTx]
-addrTxsMax db opts c h a = addrsTxsMax db opts c h [a]
+    -> ConduitT i AddrTx m ()
+addrTxs db opts h a = addrsTxs db opts h [a]
 
-addrsTxsMax ::
-       MonadUnliftIO m
+addrsTxs ::
+       (MonadResource m, MonadUnliftIO m)
     => DB
     -> ReadOptions
-    -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [AddrTx]
-addrsTxsMax db opts c h addrs =
-    runResourceT . runConduit $
-    mergeSourcesBy (flip compare) conds .| takeC c .| sinkList
+    -> ConduitT i AddrTx m ()
+addrsTxs db opts h addrs =
+    mergeSourcesBy (flip compare) conds
   where
     conds = map (\a -> getAddrTxs a h db opts) addrs
 
-addrUnspentMax ::
-       MonadUnliftIO m
+addrUnspent ::
+       (MonadResource m, MonadUnliftIO m)
     => DB
     -> ReadOptions
-    -> Int
     -> Maybe BlockHeight
     -> Address
-    -> m [AddrOutput]
-addrUnspentMax db opts c h a = addrsUnspentMax db opts c h [a]
+    -> ConduitT i AddrOutput m ()
+addrUnspent db opts h a = addrsUnspent db opts h [a]
 
-addrsUnspentMax ::
-       MonadUnliftIO m
+addrsUnspent ::
+       (MonadResource m, MonadUnliftIO m)
     => DB
     -> ReadOptions
-    -> Int
     -> Maybe BlockHeight
     -> [Address]
-    -> m [AddrOutput]
-addrsUnspentMax db opts c h addrs =
-    runResourceT . runConduit $
-    mergeSourcesBy (flip compare) conds .| takeC c .| sinkList
+    -> ConduitT i AddrOutput m ()
+addrsUnspent db opts h addrs =
+    mergeSourcesBy (flip compare) conds
   where
     conds = map (\a -> getUnspent a h db opts) addrs
 
@@ -501,3 +507,11 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
                     Nothing -> sources1
                     Just b  -> (b, src2) : sources1
         go sources2
+
+jsonListConduit :: (Monad m, ToJSON a) => ConduitT a Builder m ()
+jsonListConduit =
+    yield "[" >> mapC (fromEncoding . toEncoding) .| intersperseC "," >>
+    yield "]"
+
+streamConduit :: MonadIO m => (i -> IO ()) -> IO () -> ConduitT i o m ()
+streamConduit io flush' = mapM_C (liftIO . io) >> liftIO flush'

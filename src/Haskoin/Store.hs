@@ -131,7 +131,7 @@ withStore StoreConfig {..} f = do
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeNet = storeConfNetwork
             , nodeConnectInterval = 10 * 1000 * 1000  -- ten seconds
-            , nodeStale = 30
+            , nodeStale = 30 * 1000 * 1000  -- thirty seconds
             }
 
 -- | Dispatcher of node events.
