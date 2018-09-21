@@ -597,11 +597,11 @@ instance Serialize AddrTxKey where
         StoreAddress addrTxKey <- get
         h <- (maxBound -) <$> get
         let addrTxHeight
-                | h == 0 = Nothing
+                | h == maxBound = Nothing
                 | otherwise = Just h
         p <- (maxBound -) <$> get
         let addrTxPos
-                | p == 0 = Nothing
+                | p == maxBound = Nothing
                 | otherwise = Just p
         addrTxHash <- get
         return AddrTxKey {..}
@@ -631,10 +631,10 @@ instance Serialize AddrOutKey where
       where
         record addrOutputAddress = do
             h <- (maxBound -) <$> get
-            let addrOutputHeight | h == 0 = Nothing
+            let addrOutputHeight | h == maxBound = Nothing
                                  | otherwise = Just h
             p <- (maxBound -) <$> get
-            let addrOutputPos | p == 0 = Nothing
+            let addrOutputPos | p == maxBound = Nothing
                               | otherwise = Just p
             addrOutPoint <- get
             return AddrOutKey {..}

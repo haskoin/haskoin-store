@@ -344,7 +344,7 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrTxs db opts height address .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io flush'
+                        streamConduit io >> liftIO flush'
         S.get "/address/transactions" $ do
             addresses <- parse_addresses
             height <- parse_height
@@ -356,7 +356,7 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrsTxs db opts height addresses .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io flush'
+                        streamConduit io >> liftIO flush'
         S.get "/address/:address/unspent" $ do
             address <- parse_address
             height <- parse_height
@@ -368,7 +368,7 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrUnspent db opts height address .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io flush'
+                        streamConduit io >> liftIO flush'
         S.get "/address/unspent" $ do
             addresses <- parse_addresses
             height <- parse_height
@@ -380,7 +380,7 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrsUnspent db opts height addresses .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io flush'
+                        streamConduit io >> liftIO flush'
         S.get "/address/:address/balance" $ do
             address <- parse_address
             res <-
@@ -513,5 +513,5 @@ jsonListConduit =
     yield "[" >> mapC (fromEncoding . toEncoding) .| intersperseC "," >>
     yield "]"
 
-streamConduit :: MonadIO m => (i -> IO ()) -> IO () -> ConduitT i o m ()
-streamConduit io flush' = mapM_C (liftIO . io) >> liftIO flush'
+streamConduit :: MonadIO m => (i -> IO ()) -> ConduitT i o m ()
+streamConduit io = mapM_C (liftIO . io)
