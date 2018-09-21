@@ -160,17 +160,20 @@ data AddrTxKey
     deriving (Show, Eq)
 
 data AddrTx = AddrTx
-    { getAddrTxAddr  :: !Address
-    , getAddrTxHash  :: !TxHash
-    , getAddrTxBlock :: !(Maybe BlockRef)
+    { getAddrTxAddr   :: !Address
+    , getAddrTxHash   :: !TxHash
+    , getAddrTxHeight :: !(Maybe BlockHeight)
+    , getAddrTxPos    :: !(Maybe Word32)
     } deriving (Eq, Show, Read)
 
 instance Ord AddrTx where
     compare = compare `on` f
       where
-        f a = case getAddrTxBlock a of
-            Nothing -> (True, Nothing) -- Mempool transactions are "highest"
-            Just b  -> (False, Just b)
+        f AddrTx {..} =
+            ( fromMaybe maxBound getAddrTxHeight
+            , fromMaybe maxBound getAddrTxPos
+            , getAddrTxHash
+            , getAddrTxAddr)
 
 -- | Database key for an address output.
 data AddrOutKey
@@ -197,25 +200,29 @@ instance Ord AddrOutKey where
 
 -- | Database value for a block entry.
 data BlockValue = BlockValue
-    { blockValueHeight :: !BlockHeight
+    { blockValueHeight    :: !BlockHeight
       -- ^ height of the block in the chain
-    , blockValueWork   :: !BlockWork
+    , blockValueMainChain :: !Bool
+      -- ^ is this block in the main chain?
+    , blockValueWork      :: !BlockWork
       -- ^ accumulated work in that block
-    , blockValueHeader :: !BlockHeader
+    , blockValueHeader    :: !BlockHeader
       -- ^ block header
-    , blockValueSize   :: !Word32
+    , blockValueSize      :: !Word32
       -- ^ size of the block including witnesses
-    , blockValueTxs    :: ![TxHash]
+    , blockValueTxs       :: ![TxHash]
       -- ^ block transactions
     } deriving (Show, Eq, Ord)
 
 -- | Reference to a block where a transaction is stored.
 data BlockRef = BlockRef
-    { blockRefHash   :: !BlockHash
+    { blockRefHash      :: !BlockHash
       -- ^ block header hash
-    , blockRefHeight :: !BlockHeight
+    , blockRefHeight    :: !BlockHeight
       -- ^ block height in the chain
-    , blockRefPos    :: !Word32
+    , blockRefMainChain :: !Bool
+      -- ^ is this block in the main chain?
+    , blockRefPos       :: !Word32
       -- ^ position of transaction within the block
     } deriving (Show, Read, Eq)
 
@@ -236,6 +243,8 @@ data DetailedTx = DetailedTx
       -- ^ transaction outputs
     , detailedTxBlock   :: !(Maybe BlockRef)
       -- ^ block information for this transaction
+    , detailedTxDeleted :: !Bool
+      -- ^ this transaction has been deleted and is no longer valid
     } deriving (Show, Eq)
 
 -- | Input information.
@@ -291,6 +300,8 @@ data DetailedOutput = DetailedOutput
       -- ^ input spending this transaction
     , detOutNetwork :: !Network
       -- ^ network constants
+    , detOutDeleted :: !Bool
+      -- ^ this output has been deleted and is no longer valid
     } deriving (Show, Eq)
 
 -- | Address balance information.
@@ -313,6 +324,7 @@ data TxRecord = TxRecord
       -- ^ transaction data
     , txValuePrevOuts :: [(OutPoint, PrevOut)]
       -- ^ previous output information
+    , txValueDeleted  :: !Bool
     } deriving (Show, Eq, Ord)
 
 -- | Output key in database.
@@ -351,6 +363,8 @@ data Output = Output
       -- ^ pubkey (output) script
     , outSpender  :: !(Maybe Spender)
       -- ^ input spending this output
+    , outDeleted  :: !Bool
+      -- ^ output has been deleted
     } deriving (Show, Eq, Ord)
 
 -- | Prepare previous output.
@@ -370,6 +384,7 @@ prevOutToOutput PrevOut {..} =
     , outBlock = prevOutBlock
     , outScript = prevOutScript
     , outSpender = Nothing
+    , outDeleted = False
     }
 
 -- | Information about input spending output.
@@ -516,9 +531,9 @@ instance R.KeyValue   BlockKey        BlockValue
 instance R.KeyValue   TxKey           TxRecord
 instance R.KeyValue   AddrOutKey      Output
 instance R.KeyValue   MultiTxKey      MultiTxValue
-instance R.KeyValue   HeightKey       BlockHash
+instance R.KeyValue   HeightKey       [BlockHash]
 instance R.KeyValue   BalanceKey      Balance
-instance R.KeyValue   AddrTxKey       (Maybe BlockHash)
+instance R.KeyValue   AddrTxKey       ()
 instance R.KeyValue   OutputKey       Output
 instance R.KeyValue   UnspentKey      Output
 instance R.KeyValue   MempoolKey      ()
@@ -689,12 +704,14 @@ instance Serialize Output where
         put outBlock
         put outScript
         put outSpender
+        put outDeleted
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
         outScript <- get
         outSpender <- get
+        outDeleted <- get
         return Output {..}
 
 instance Serialize BlockRef where
@@ -702,10 +719,12 @@ instance Serialize BlockRef where
         put blockRefHash
         put blockRefHeight
         put blockRefPos
+        put blockRefMainChain
     get = do
         blockRefHash <- get
         blockRefHeight <- get
         blockRefPos <- get
+        blockRefMainChain <- get
         return BlockRef {..}
 
 instance Serialize TxRecord where
@@ -714,11 +733,13 @@ instance Serialize TxRecord where
         put txValueBlock
         put txValue
         put txValuePrevOuts
+        put txValueDeleted
     get = do
         guard . (== 0x00) =<< getWord8
         txValueBlock <- get
         txValue <- get
         txValuePrevOuts <- get
+        txValueDeleted <- get
         return TxRecord {..}
 
 instance Serialize BestBlockKey where
@@ -730,12 +751,14 @@ instance Serialize BestBlockKey where
 instance Serialize BlockValue where
     put BlockValue {..} = do
         put blockValueHeight
+        put blockValueMainChain
         put blockValueWork
         put blockValueHeader
         put blockValueSize
         put blockValueTxs
     get = do
         blockValueHeight <- get
+        blockValueMainChain <- get
         blockValueWork <- get
         blockValueHeader <- get
         blockValueSize <- get
@@ -814,6 +837,7 @@ blockValuePairs :: A.KeyValue kv => BlockValue -> [kv]
 blockValuePairs BlockValue {..} =
     [ "hash" .= headerHash blockValueHeader
     , "height" .= blockValueHeight
+    , "mainchain" .= blockValueMainChain
     , "previous" .= prevBlock blockValueHeader
     , "time" .= blockTimestamp blockValueHeader
     , "version" .= blockVersion blockValueHeader
@@ -837,6 +861,7 @@ blockRefPairs BlockRef {..} =
     [ "hash" .= blockRefHash
     , "height" .= blockRefHeight
     , "position" .= blockRefPos
+    , "mainchain" .= blockRefMainChain
     ]
 
 -- | JSON serialization for 'Spender'.
@@ -852,13 +877,15 @@ detailedOutputPairs DetailedOutput {..} =
     , "value" .= detOutValue
     , "spent" .= isJust detOutSpender
     , "spender" .= detOutSpender
+    , "deleted" .= detOutDeleted
     ]
 
 addrTxPairs :: A.KeyValue kv => AddrTx -> [kv]
 addrTxPairs AddrTx {..} =
     [ "address" .= getAddrTxAddr
     , "txid" .= getAddrTxHash
-    , "block" .= getAddrTxBlock
+    , "height" .= getAddrTxHeight
+    , "position" .= getAddrTxPos
     ]
 
 instance ToJSON AddrTx where
@@ -925,6 +952,7 @@ detailedTxPairs DetailedTx {..} =
     , "outputs" .= detailedTxOutputs
     , "hex" .= String (encodeHex (S.encode detailedTxData))
     , "block" .= detailedTxBlock
+    , "deleted" .= detailedTxDeleted
     ]
 
 instance ToJSON DetailedTx where
@@ -953,6 +981,7 @@ addrOutputPairs AddrOutput {..} =
             , detOutScript = outScript
             , detOutSpender = outSpender
             , detOutNetwork = getAddrNet addrOutputAddress
+            , detOutDeleted = outDeleted
             }
 
 instance ToJSON AddrOutput where

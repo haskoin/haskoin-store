@@ -26,7 +26,7 @@ module Haskoin.Store
     , PeerInformation(..)
     , withStore
     , getBestBlock
-    , getBlockAtHeight
+    , getBlocksAtHeight
     , getBlock
     , getBlocks
     , getTx
@@ -130,7 +130,7 @@ withStore StoreConfig {..} f = do
             , nodeEvents = (`sendSTM` sm)
             , netAddress = NetworkAddress 0 (SockAddrInet 0 0)
             , nodeNet = storeConfNetwork
-            , nodeConnectInterval = 500000
+            , nodeConnectInterval = 10 * 1000 * 1000  -- ten seconds
             , nodeStale = 30
             }
 

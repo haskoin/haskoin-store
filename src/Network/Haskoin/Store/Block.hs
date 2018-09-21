@@ -12,7 +12,7 @@ module Network.Haskoin.Store.Block
       ( blockStore
       , getBestBlock
       , getBestBlockHash
-      , getBlockAtHeight
+      , getBlocksAtHeight
       , getBlock
       , getBlocks
       , getAddrTxs
@@ -32,6 +32,7 @@ import           Control.Monad.State.Strict
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString             as B
 import           Data.Default
+import           Data.Function
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as H
 import           Data.List
@@ -225,12 +226,10 @@ getBestBlock db opts =
             Just b -> return b
 
 -- | Get one block at specified height.
-getBlockAtHeight ::
-       MonadIO m => BlockHeight -> DB -> ReadOptions -> m (Maybe BlockValue)
-getBlockAtHeight height db opts =
-    retrieve db opts (HeightKey height) >>= \case
-        Nothing -> return Nothing
-        Just h -> retrieve db opts (BlockKey h)
+getBlocksAtHeight ::
+       MonadIO m => BlockHeight -> DB -> ReadOptions -> m [BlockHash]
+getBlocksAtHeight height db opts =
+    fromMaybe [] <$> retrieve db opts (HeightKey height)
 
 -- | Get blocks for specific hashes.
 getBlocks :: MonadIO m => [BlockHash] -> DB -> ReadOptions -> m [BlockValue]
@@ -307,6 +306,7 @@ getTx net th db opts = do
                         , detailedTxBlock = txValueBlock
                         , detailedTxInputs = is
                         , detailedTxOutputs = os
+                        , detailedTxDeleted = txValueDeleted
                         }
         Nothing -> return Nothing
   where
@@ -343,6 +343,7 @@ getTx net th db opts = do
             , detOutScript = outScript
             , detOutSpender = outSpender
             , detOutNetwork = net
+            , detOutDeleted = outDeleted
             }
     find_tx xs =
         listToMaybe
@@ -593,7 +594,7 @@ addNewBlock block@Block {..} =
   where
     import_txs new_height =
         mapM_
-            (uncurry (import_tx (BlockRef new_hash new_height)))
+            (uncurry (import_tx (BlockRef new_hash new_height True)))
             (zip [0 ..] blockTxns)
     import_tx block_ref i tx = importTransaction tx (Just (block_ref i))
     new_hash = headerHash blockHeader
@@ -635,22 +636,24 @@ getBlockOps =
                     , blockValueHeader = nodeHeader bn
                     , blockValueSize = fromIntegral (B.length (encode block))
                     , blockValueTxs = map txHash blockTxns
+                    , blockValueMainChain = True
                     }
+        db <- asks myBlockDB
+        height_hashes <- getBlocksAtHeight (nodeHeight bn) db def
         return
             [ insertOp (BlockKey block_hash) block_value
-            , insertOp (HeightKey (nodeHeight bn)) block_hash
+            , insertOp (HeightKey (nodeHeight bn)) (block_hash : height_hashes)
             , insertOp BestBlockKey block_hash
             ]
     get_block_remove_ops = do
         db <- asks myBlockDB
-        BlockValue {..} <- getBestBlock db def
+        val@BlockValue {..} <- getBestBlock db def
         let block_hash = headerHash blockValueHeader
             block_key = BlockKey block_hash
-            height_key = HeightKey blockValueHeight
             prev_block = prevBlock blockValueHeader
+            block_val = val {blockValueMainChain = False}
         return
-            [ deleteOp block_key
-            , deleteOp height_key
+            [ insertOp block_key block_val
             , insertOp BestBlockKey prev_block
             ]
 
@@ -704,8 +707,7 @@ addressOutOps net out_point output@Output {..} del =
                     , addrTxPos = blockRefPos <$> outBlock
                     , addrTxHash = outPointHash out_point
                     }
-            tx_value = blockRefHash <$> outBlock
-         in insertOp tx_key tx_value
+         in insertOp tx_key ()
     spender_ops a =
         case outSpender of
             Nothing -> []
@@ -717,8 +719,7 @@ addressOutOps net out_point output@Output {..} del =
                             , addrTxPos = blockRefPos <$> spenderBlock
                             , addrTxHash = spenderHash
                             }
-                    spender_value = blockRefHash <$> spenderBlock
-                 in [insertOp spender_key spender_value]
+                 in [insertOp spender_key ()]
 
 
 -- | Get ops for outputs to delete.
@@ -729,19 +730,36 @@ deleteOutOps out_point@OutPoint {..} = do
         getOutput out_point >>= \case
             Nothing ->
                 throwString $
-                "Could not get output to delete at outpoint: " <> show out_point
+                "Could not get output to delete: " <> show out_point
             Just o -> return o
-    let output_op = deleteOp (OutputKey out_point)
+    when (isJust outSpender) $
+        throwString $ "Tried to delete spent output: " <> show out_point
+    let new_output =
+            output
+                { outBlock = (\r -> r {blockRefMainChain = False}) <$> outBlock
+                , outDeleted = True
+                }
+    let output_op = insertOp (OutputKey out_point) new_output
         addr_ops = addressOutOps net out_point output True
     return $ output_op : addr_ops
 
 -- | Get ops for transactions to delete.
-deleteTxOps :: TxHash -> [BatchOp]
-deleteTxOps tx_hash =
-    [ deleteOp (TxKey tx_hash)
-    , deleteOp (MempoolKey tx_hash)
-    , deleteOp (OrphanKey tx_hash)
-    ]
+deleteTxOps :: MonadBlock m => TxHash -> m [BatchOp]
+deleteTxOps tx_hash = do
+    db <- asks myBlockDB
+    maybe_tx_record <- retrieve db def (TxKey tx_hash)
+    let tx_update = fmap f maybe_tx_record
+    return $
+        maybeToList tx_update <>
+        [deleteOp (MempoolKey tx_hash), deleteOp (OrphanKey tx_hash)]
+  where
+    f tr@TxRecord {..} =
+        insertOp (TxKey tx_hash) $
+        tr
+            { txValueBlock =
+                  (\r -> r {blockRefMainChain = False}) <$> txValueBlock
+            , txValueDeleted = True
+            }
 
 -- | Purge all orphan transactions.
 purgeOrphanOps :: (MonadBlock m, MonadImport m) => m [BatchOp]
@@ -797,8 +815,8 @@ getDeleteTxOps net = do
     let txs = map txValue trs
     let prev_outs = concatMap getPrevOutPoints txs
         tx_outs = concatMap getTxOutPoints txs
-        tx_ops = concatMap deleteTxOps del_txs
         addr_tx_ops = concatMap (deleteAddrTxOps net) trs
+    tx_ops <- concat <$> mapM deleteTxOps del_txs
     prev_out_ops <- concat <$> mapM outputOps prev_outs
     tx_out_ops <- concat <$> mapM deleteOutOps tx_outs
     return $ prev_out_ops <> tx_out_ops <> tx_ops <> addr_tx_ops
@@ -815,6 +833,7 @@ insertTxOps ImportTx {..} = do
                 { txValueBlock = importTxBlock
                 , txValue = importTx
                 , txValuePrevOuts = prev_outputs
+                , txValueDeleted = False
                 }
     case importTxBlock of
         Nothing ->
@@ -891,7 +910,9 @@ revertBestBlock = do
 
 -- | Validate a transaction without script evaluation.
 validateTx :: Monad m => OutputMap -> Tx -> ExceptT TxException m ()
-validateTx outputs tx = do
+validateTx outputs' tx = do
+    when (length (nubBy ((==) `on` prevOutput) (txIn tx)) /= length (txIn tx)) $
+        throwError DoubleSpend
     prev_outs <-
         forM (txIn tx) $ \TxIn {..} ->
             case H.lookup (OutputKey prevOutput) outputs of
@@ -901,6 +922,8 @@ validateTx outputs tx = do
     let sum_inputs = sum (map outputValue prev_outs)
         sum_outputs = sum (map outValue (txOut tx))
     when (sum_outputs > sum_inputs) (throwError OverSpend)
+  where
+    outputs = H.filter (not . outDeleted) outputs'
 
 -- | Import a transaction.
 importTransaction ::
@@ -940,7 +963,7 @@ importTransaction tx maybe_block_ref =
         | isJust maybe_block_ref = return () -- only validate unconfirmed
         | otherwise = do
             getTxRecord (txHash tx) >>= \maybe_tx ->
-                when (isJust maybe_tx) (throwError AlreadyImported)
+                when (maybe False txValueDeleted maybe_tx) (throwError AlreadyImported)
             prev_outs <-
                 fmap (H.fromList . catMaybes) . forM (txIn tx) $ \TxIn {..} ->
                     getOutput prevOutput >>= \case
@@ -975,6 +998,7 @@ importTransaction tx maybe_block_ref =
                     , outBlock = maybe_block_ref
                     , outScript = scriptOutput
                     , outSpender = Nothing
+                    , outDeleted = False
                     }
 
 -- | Attempt to synchronize blocks.
@@ -1176,20 +1200,12 @@ getAddrTxs ::
 getAddrTxs a h db opts =
     matchingSkip db opts (ShortAddrTxKey a) (ShortAddrTxKeyHeight a h) .| mapC f
   where
-    f (AddrTxKey {..}, maybe_block_hash) =
+    f (AddrTxKey {..}, ()) =
         AddrTx
             { getAddrTxAddr = addrTxKey
             , getAddrTxHash = addrTxHash
-            , getAddrTxBlock =
-                  do block_hash <- maybe_block_hash
-                     block_height <- addrTxHeight
-                     block_pos <- addrTxPos
-                     return
-                         BlockRef
-                             { blockRefHash = block_hash
-                             , blockRefHeight = block_height
-                             , blockRefPos = block_pos
-                             }
+            , getAddrTxHeight = addrTxHeight
+            , getAddrTxPos = addrTxPos
             }
     f _ = error "Nonsense! This ship in unsinkable!"
 

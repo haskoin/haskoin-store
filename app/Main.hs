@@ -298,15 +298,15 @@ runWeb conf st db = do
             height <- param "height"
             res <-
                 withSnapshot db $ \s ->
-                    getBlockAtHeight height db def {useSnapshot = Just s}
-            maybeJSON res
+                    getBlocksAtHeight height db def {useSnapshot = Just s}
+            json res
         get "/block/heights" $ do
             heights <- param "heights"
             testLength (length (heights :: [BlockHeight]))
             res <-
                 withSnapshot db $ \s ->
                     let opts = def {useSnapshot = Just s}
-                     in mapM (\h -> getBlockAtHeight h db opts) heights
+                     in mapM (\h -> getBlocksAtHeight h db opts) heights
             json res
         get "/blocks" $ do
             blocks <- param "blocks"

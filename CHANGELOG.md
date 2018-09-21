@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Allow to use a different RocksDB for UTXO and balances (for syncing only for now).
 - Update dependencies.
+- Keep orphan blocks and deleted transactions in database.
+- Add a `mainchain` field for block data and a `deleted` field for transactions and outputs.
 
 ### Removed
 - Remove some data from peers.
