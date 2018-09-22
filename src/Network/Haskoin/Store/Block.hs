@@ -1070,7 +1070,7 @@ importTransaction tx maybe_block_ref =
             return True
   where
     import_orphan = do
-        $(logInfoS) "BlockStore " $
+        $(logInfoS) "Block " $
             "Got orphan tx hash: " <> cs (txHashToHex (txHash tx))
         db <- asks myBlockDB
         R.insert db (OrphanKey (txHash tx)) tx
@@ -1223,10 +1223,13 @@ processBlockMessage (BlockReceived p b) =
             pstr <- peerString p
             let hash = headerHash (blockHeader b)
             $(logErrorS) "Block" $
-                "Could not import from peer " <> pstr <> " block hash:" <>
-                cs (blockHashToHex hash) <>
-                " error: " <>
+                "Error importing block " <> cs (blockHashToHex hash) <>
+                " from peer " <>
+                pstr <>
+                ": " <>
                 fromString e
+            mgr <- asks myManager
+            managerKill (PeerMisbehaving (fromString e)) p mgr
         Right () -> importOrphans >> syncBlocks >> syncMempool p
 
 processBlockMessage (TxReceived _ tx) =
