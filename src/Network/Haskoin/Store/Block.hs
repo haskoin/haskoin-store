@@ -1260,7 +1260,7 @@ processBlockMessage (BlockPeerDisconnect p) = do
 processBlockMessage (BlockNotReceived p h) = do
     pstr <- peerString p
     $(logErrorS) "Block" $
-        "Peer " <> pstr <> " unable to serve block hash: " <> cs (show h)
+        "Peer " <> pstr <> " unable to serve block " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
@@ -1296,7 +1296,7 @@ processBlockMessage (TxAvailable p ts) =
 processBlockMessage (PongReceived p n) = do
     pstr <- peerString p
     $(logDebugS) "Block" $
-        "Pong received with nonce " <> cs (show n) <> " from peer " <> pstr
+        "Pong nonce " <> cs (show n) <> " from peer " <> pstr
     asks myListener >>= atomically . ($ PeerPong p n)
 
 -- | Import orphan transactions that can be imported.
