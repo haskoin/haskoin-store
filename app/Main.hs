@@ -230,7 +230,7 @@ main =
         liftIO $ createDirectoryIfMissing True wdir
         db <-
             open
-                (wdir </> "blocks")
+                (wdir </> "db")
                 R.defaultOptions
                     { createIfMissing = True
                     , compression = SnappyCompression
@@ -243,7 +243,7 @@ main =
                 Just d ->
                     Just <$>
                     open
-                        d
+                        (d </> getNetworkName net)
                         R.defaultOptions
                             { createIfMissing = True
                             , compression = SnappyCompression
