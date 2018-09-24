@@ -240,16 +240,18 @@ main =
         mudb <-
             case configMemDB conf of
                 Nothing -> return Nothing
-                Just d ->
+                Just d -> do
+                    let u = d </> getNetworkName net
+                    liftIO $ removePathForcibly u
                     Just <$>
-                    open
-                        (d </> getNetworkName net)
-                        R.defaultOptions
-                            { createIfMissing = True
-                            , compression = SnappyCompression
-                            , maxOpenFiles = -1
-                            , writeBufferSize = 2 `shift` 30
-                            }
+                        open
+                            u
+                            R.defaultOptions
+                                { createIfMissing = True
+                                , compression = SnappyCompression
+                                , maxOpenFiles = -1
+                                , writeBufferSize = 2 `shift` 30
+                                }
         withStore (store_conf conf db mudb) $ \st -> runWeb conf st db
   where
     store_conf conf db mudb =
@@ -426,7 +428,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a -> return a
+            Just a  -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses

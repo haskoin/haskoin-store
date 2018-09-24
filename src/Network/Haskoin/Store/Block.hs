@@ -137,7 +137,7 @@ runMonadImport ::
        MonadBlock m => StateT ImportState m a -> m a
 runMonadImport f =
     evalStateT
-        (f >>= \a -> update_memory >> update_database >> return a)
+        (f >>= \a -> update_database >> update_memory >> return a)
         ImportState
             { importBestBlock = H.empty
             , importBlockValue = H.empty
@@ -1206,18 +1206,11 @@ loadUTXO =
             runResourceT . runConduit $
                 matching db def ShortUnspentKey .| mapM_C (uncurry (f udb))
   where
-    delete_all udb = do
-        bops <-
-            runResourceT . runConduit $
-            matching udb def ShortBalanceKey .| mapC (uncurry del_bal) .|
-            sinkList
-        oops <-
-            runResourceT . runConduit $
-            matching udb def ShortOutputKey .| mapC (uncurry del_out) .|
-            sinkList
-        R.writeBatch udb $ bops <> oops
-    del_bal k Balance {} = R.deleteOp k
-    del_out k Output {} = R.deleteOp k
+    delete_all udb = runResourceT . withIterator udb def $ recurse_delete udb
+    recurse_delete udb it =
+        iterKey it >>= \case
+            Nothing -> return ()
+            Just k -> R.delete udb def k >> iterNext it >> recurse_delete udb it
     f udb UnspentKey {..} o@Output {..} = do
         net <- asks myNetwork
         R.insert udb (OutputKey unspentKey) o
@@ -1241,7 +1234,7 @@ loadUTXO =
                 let b' =
                         case bm of
                             Nothing -> b
-                            Just x  -> g x b
+                            Just x -> g x b
                 R.insert udb (BalanceKey a) b'
     f _ _ _ = undefined
     g a b =
