@@ -276,34 +276,42 @@ importGetHeight bh = fmap (fromMaybe []) . runMaybeT $ map_lookup <|> db_lookup
 importInsertTx ::
        (MonadBlock m, MonadImport m) => Maybe BlockRef -> Tx -> m ()
 importInsertTx mb tx = do
-    prev_outs <- catMaybes <$> mapM (importGetOutput . prevOutput) (txIn tx)
-    when (not is_coinbase && length prev_outs /= length (txIn tx)) . throwString $
+    prevs <-
+        fmap catMaybes $
+        forM (zip ops [0 ..]) $ \(op, i) ->
+            importGetOutput op >>= \case
+                Just out -> return $ Just (i, op, out)
+                Nothing -> return Nothing
+    when (not is_coinbase && length prevs /= length (txIn tx)) . throwString $
         "Could not get all previous outputs for tx " <> cs (txHashToHex tx_hash)
-    go prev_outs
+    go prevs
     modify $ \s ->
         s {importOrphan = H.insert (OrphanKey tx_hash) Nothing (importOrphan s)}
   where
+    ops = map prevOutput (txIn tx)
     is_coinbase = all ((== nullOutPoint) . prevOutput) (txIn tx)
     tx_hash = txHash tx
-    all_unspent outs = is_coinbase || all (isNothing . outSpender) outs
-    spent_by_me = all ((== Just tx_hash) . fmap spenderHash . outSpender)
-    spenders = nub . map spenderHash . mapMaybe outSpender
-    go prev_outs
-        | all_unspent prev_outs = importNewTx mb prev_outs tx
-        | spent_by_me prev_outs = importUpdateTx mb (txHash tx)
+    all_unspent outs =
+        is_coinbase || all (\(_, _, o) -> isNothing (outSpender o)) outs
+    spent_by_me =
+        all (\(_, _, o) -> (== Just tx_hash) (fmap spenderHash (outSpender o)))
+    spenders = nub . map spenderHash . mapMaybe (\(_, _, o) -> outSpender o)
+    go prevs
+        | all_unspent prevs = importNewTx mb prevs tx
+        | spent_by_me prevs = importUpdateTx mb (txHash tx)
         | otherwise = do
-            mapM_ importDeleteTx (spenders prev_outs)
-            importNewTx mb prev_outs tx
+            mapM_ importDeleteTx (spenders prevs)
+            importNewTx mb prevs tx
 
 -- | Only for importing a new transaction. Also works for a deleted transaction.
 importNewTx ::
        (MonadBlock m, MonadImport m)
     => Maybe BlockRef
-    -> [Output]
+    -> [(Word32, OutPoint, Output)]
     -> Tx
     -> m ()
-importNewTx mb prev_outs tx = do
-    mapM_ spend_output (zip3 [0 ..] prev_outpoints prev_outs)
+importNewTx mb prevs tx = do
+    mapM_ spend_output prevs
     mapM_ insert_output (zip [0 ..] (txOut tx))
     when (isNothing mb) $
         modify $ \s ->
@@ -321,12 +329,11 @@ importNewTx mb prev_outs tx = do
                               (\o ->
                                    ( outputValue o
                                    , B.Short.fromShort (outScript o)))
-                              prev_outs
+                              (map (\(_, _, o) -> o) prevs)
                     , txValueDeleted = False
                     }
          in s {importTxRecord = H.insert (TxKey tx_hash) txr (importTxRecord s)}
   where
-    prev_outpoints = map prevOutput (txIn tx)
     tx_hash = txHash tx
     spend_output (i, op, out) = do
         importSpendOutput mb op out tx_hash i
@@ -659,19 +666,19 @@ importUpdateTx mb tx_hash = do
         etx = txValue etr
         eb = txValueBlock etr
     prevs <-
-        forM ops $ \op ->
+        fmap catMaybes $
+        forM (zip ops [0 ..]) $ \(op, i) ->
             importGetOutput op >>= \case
-                Nothing ->
-                    throwString $
-                    "Could not get previous output: " <> showOutPoint op
-                Just x -> return x
-    mapM_ (update_input eb) $ zip3 [0 ..] ops prevs
+                Just out -> return $ Just (i, op, out)
+                Nothing -> return Nothing
+    mapM_ (update_input eb) prevs
     outs <-
         forM (take (length (txOut etx)) [0 ..]) $ \i -> do
-        let op = OutPoint tx_hash i
-        importGetOutput op >>= \case
-            Nothing -> throwString $ "Could not get output: " <> showOutPoint op
-            Just x -> return x
+            let op = OutPoint tx_hash i
+            importGetOutput op >>= \case
+                Nothing ->
+                    throwString $ "Could not get output: " <> showOutPoint op
+                Just x -> return x
     mapM_ (update_output eb) $ zip [0 ..] outs
     when (isNothing eb && isJust mb) $
         modify $ \s ->
@@ -695,7 +702,7 @@ importUpdateTx mb tx_hash = do
         importSpendAddress mb op out tx_hash
     update_output eb (i, out) = do
         let op = OutPoint tx_hash i
-            out' = out { outBlock = mb }
+            out' = out {outBlock = mb}
         importUnspentOutput op out'
         importUndoUnspentAddress eb op out'
         importUnspentAddress mb op out'
@@ -721,13 +728,12 @@ importDeleteTx tx_hash =
         mapM_ importDeleteTx . nub $
             mapMaybe (fmap spenderHash . outSpender) outs
         prevs <-
+            fmap catMaybes $
             forM ops $ \op ->
                 importGetOutput op >>= \case
-                    Nothing ->
-                        throwString $
-                        "Could not get previous output: " <> showOutPoint op
-                    Just x -> return x
-        mapM_ (delete_input eb) $ zip ops prevs
+                    Just out -> return $ Just (op, out)
+                    Nothing -> return Nothing
+        mapM_ (delete_input eb) prevs
         mapM_ (delete_output eb) $ zip [0 ..] outs
         modify $ \s ->
             s
