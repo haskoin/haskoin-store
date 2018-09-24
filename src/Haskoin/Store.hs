@@ -284,3 +284,15 @@ peerString p = do
     managerGetPeer mgr p >>= \case
         Nothing -> return "[unknown]"
         Just o -> return $ fromString $ show $ onlinePeerAddress o
+
+-- | Obtain information about connected peers from peer manager process.
+getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
+getPeersInformation mgr = fmap toInfo <$> managerGetPeers mgr
+  where
+    toInfo op = PeerInformation
+        { userAgent = onlinePeerUserAgent op
+        , address = onlinePeerAddress op
+        , version = onlinePeerVersion op
+        , services = onlinePeerServices op
+        , relay = onlinePeerRelay op
+        }

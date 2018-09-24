@@ -12,9 +12,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Add a `mainchain` field for block data and a `deleted` field for transactions and outputs.
 - Stream records for performance.
 
+### Changed
+- Refactor transaction importing code.
+
 ### Removed
 - Remove some data from peers.
 - Remove full transactions and limits from address transaction output.
+- Remove block data from previous output.
 
 ## 0.2.3
 ### Removed

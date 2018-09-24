@@ -13,6 +13,8 @@ import           Control.Monad.Reader
 import           Data.Aeson              as A
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
+import           Data.ByteString.Short   (ShortByteString)
+import qualified Data.ByteString.Short   as B.Short
 import           Data.Function
 import           Data.Hashable
 import           Data.Int
@@ -159,6 +161,22 @@ data AddrTxKey
       -- ^ short key that matches all entries
     deriving (Show, Eq)
 
+instance Hashable AddrTxKey where
+    hashWithSalt i AddrTxKey {..} =
+        i `hashWithSalt` addrTxKey `hashWithSalt` addrTxHeight `hashWithSalt`
+        addrTxPos `hashWithSalt`
+        addrTxHash
+    hashWithSalt i ShortAddrTxKey {..} = i `hashWithSalt` addrTxKey
+    hashWithSalt i ShortAddrTxKeyHeight {..} =
+        i `hashWithSalt` addrTxKey `hashWithSalt` addrTxHeight
+    hash AddrTxKey {..} =
+        hash addrTxKey `hashWithSalt` addrTxHeight `hashWithSalt` addrTxPos `hashWithSalt`
+        addrTxHash
+    hash ShortAddrTxKey {..} =
+        hash addrTxKey
+    hash ShortAddrTxKeyHeight {..} =
+        hash addrTxKey `hashWithSalt` addrTxHeight
+
 data AddrTx = AddrTx
     { getAddrTxAddr   :: !Address
     , getAddrTxHash   :: !TxHash
@@ -188,6 +206,16 @@ data AddrOutKey
                             , addrOutputHeight  :: !(Maybe BlockHeight) }
       -- ^ short key for all outputs at a given height
     deriving (Show, Eq)
+
+instance Hashable AddrOutKey where
+    hashWithSalt s AddrOutKey {..} =
+        s `hashWithSalt` addrOutputAddress `hashWithSalt` addrOutputHeight `hashWithSalt`
+        addrOutputPos `hashWithSalt`
+        outPointHash addrOutPoint `hashWithSalt`
+        outPointIndex addrOutPoint
+    hashWithSalt s ShortAddrOutKey {..} = s `hashWithSalt` addrOutputAddress
+    hashWithSalt s ShortAddrOutKeyHeight {..} =
+        s `hashWithSalt` addrOutputAddress `hashWithSalt` addrOutputHeight
 
 instance Ord AddrOutKey where
     compare = compare `on` f
@@ -269,8 +297,6 @@ data DetailedInput
                       -- ^ pubkey (output) script from previous tx
                     , detInValue     :: !Word64
                       -- ^ amount in satoshi being spent spent
-                    , detInBlock     :: !(Maybe BlockRef)
-                      -- ^ block where this input is found
                     , detInNetwork   :: !Network
                       -- ^ network constants
                     }
@@ -294,7 +320,7 @@ isCoinbase _                   = False
 data DetailedOutput = DetailedOutput
     { detOutValue   :: !Word64
       -- ^ amount in satoshi
-    , detOutScript  :: !ByteString
+    , detOutScript  :: !ShortByteString
       -- ^ pubkey (output) script
     , detOutSpender :: !(Maybe Spender)
       -- ^ input spending this transaction
@@ -322,9 +348,10 @@ data TxRecord = TxRecord
       -- ^ block information
     , txValue         :: !Tx
       -- ^ transaction data
-    , txValuePrevOuts :: [(OutPoint, PrevOut)]
-      -- ^ previous output information
+    , txValuePrevOuts :: [(Word64, ByteString)]
+      -- ^ previous output values and scripts
     , txValueDeleted  :: !Bool
+      -- ^ transaction has been deleted and is no longer valid
     } deriving (Show, Eq, Ord)
 
 -- | Output key in database.
@@ -343,15 +370,9 @@ data UnspentKey
     | ShortUnspentKey
     deriving (Show, Eq, Ord)
 
--- | Previous output data.
-data PrevOut = PrevOut
-    { prevOutValue  :: !Word64
-      -- ^ value of output in satoshi
-    , prevOutBlock  :: !(Maybe BlockRef)
-      -- ^ block information for spent output
-    , prevOutScript :: !ByteString
-      -- ^ pubkey (output) script
-    } deriving (Show, Eq, Ord)
+instance Hashable UnspentKey where
+    hashWithSalt s (UnspentKey (OutPoint h i)) = s `hashWithSalt` (h, i)
+    hashWithSalt s ShortUnspentKey = s `hashWithSalt` ()
 
 -- | Output data.
 data Output = Output
@@ -359,33 +380,13 @@ data Output = Output
       -- ^ value of output in satoshi
     , outBlock    :: !(Maybe BlockRef)
       -- ^ block information for output
-    , outScript   :: !ByteString
+    , outScript   :: !ShortByteString
       -- ^ pubkey (output) script
     , outSpender  :: !(Maybe Spender)
       -- ^ input spending this output
     , outDeleted  :: !Bool
       -- ^ output has been deleted
     } deriving (Show, Eq, Ord)
-
--- | Prepare previous output.
-outputToPrevOut :: Output -> PrevOut
-outputToPrevOut Output {..} =
-    PrevOut
-    { prevOutValue = outputValue
-    , prevOutBlock = outBlock
-    , prevOutScript = outScript
-    }
-
--- | Convert previous output to unspent output.
-prevOutToOutput :: PrevOut -> Output
-prevOutToOutput PrevOut {..} =
-    Output
-    { outputValue = prevOutValue
-    , outBlock = prevOutBlock
-    , outScript = prevOutScript
-    , outSpender = Nothing
-    , outDeleted = False
-    }
 
 -- | Information about input spending output.
 data Spender = Spender
@@ -420,6 +421,10 @@ newtype TxKey =
     TxKey TxHash
     deriving (Show, Eq, Ord)
 
+instance Hashable TxKey where
+    hashWithSalt i (TxKey h) = hashWithSalt i h
+    hash (TxKey h) = hash h
+
 -- | Mempool transaction database key.
 data MempoolKey
     = MempoolKey TxHash
@@ -427,6 +432,10 @@ data MempoolKey
     | ShortMempoolKey
       -- ^ short key that matches all
     deriving (Show, Eq, Ord)
+
+instance Hashable MempoolKey where
+    hashWithSalt s (MempoolKey h) = hashWithSalt s h
+    hashWithSalt s ShortMempoolKey = hashWithSalt s ()
 
 -- | Orphan transaction database key.
 data OrphanKey
@@ -436,15 +445,25 @@ data OrphanKey
       -- ^ short key that matches all
     deriving (Show, Eq, Ord)
 
+instance Hashable OrphanKey where
+    hashWithSalt s (OrphanKey h) = hashWithSalt s h
+    hashWithSalt s ShortOrphanKey = hashWithSalt s ()
+
 -- | Block entry database key.
 newtype BlockKey =
     BlockKey BlockHash
     deriving (Show, Eq, Ord)
 
+instance Hashable BlockKey where
+    hashWithSalt s (BlockKey h) = s `hashWithSalt` h
+
 -- | Block height database key.
 newtype HeightKey =
     HeightKey BlockHeight
     deriving (Show, Eq, Ord)
+
+instance Hashable HeightKey where
+    hashWithSalt s (HeightKey h) = s `hashWithSalt` h
 
 -- | Address balance database key.
 data BalanceKey
@@ -476,6 +495,9 @@ emptyBalance =
 
 -- | Key for best block in database.
 data BestBlockKey = BestBlockKey deriving (Show, Eq, Ord)
+
+instance Hashable BestBlockKey where
+    hashWithSalt s BestBlockKey = hashWithSalt s ()
 
 -- | Address output.
 data AddrOutput = AddrOutput
@@ -685,31 +707,20 @@ instance Serialize UnspentKey where
         guard . (== 0x09) =<< getWord8
         UnspentKey <$> get
 
-instance Serialize PrevOut where
-    put PrevOut {..} = do
-        put prevOutValue
-        put prevOutBlock
-        put (B.length prevOutScript)
-        putByteString prevOutScript
-    get = do
-        prevOutValue <- get
-        prevOutBlock <- get
-        prevOutScript <- getByteString =<< get
-        return PrevOut {..}
-
 instance Serialize Output where
     put Output {..} = do
         putWord8 0x01
         put outputValue
         put outBlock
-        put outScript
+        put (B.Short.length outScript)
+        putShortByteString outScript
         put outSpender
         put outDeleted
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
         outBlock <- get
-        outScript <- get
+        outScript <- getShortByteString =<< get
         outSpender <- get
         outDeleted <- get
         return Output {..}
@@ -872,8 +883,9 @@ spenderPairs Spender {..} =
 -- | JSON serialization for a 'DetailedOutput'.
 detailedOutputPairs :: A.KeyValue kv => DetailedOutput -> [kv]
 detailedOutputPairs DetailedOutput {..} =
-    [ "address" .= scriptToAddressBS detOutNetwork detOutScript
-    , "pkscript" .= String (encodeHex detOutScript)
+    [ "address" .=
+      scriptToAddressBS detOutNetwork (B.Short.fromShort detOutScript)
+    , "pkscript" .= String (encodeHex (B.Short.fromShort detOutScript))
     , "value" .= detOutValue
     , "spent" .= isJust detOutSpender
     , "spender" .= detOutSpender
@@ -922,7 +934,6 @@ detailedInputPairs DetailedInput {..} =
     , "pkscript" .= String (encodeHex detInPkScript)
     , "address" .= scriptToAddressBS detInNetwork detInPkScript
     , "value" .= detInValue
-    , "block" .= detInBlock
     ]
 detailedInputPairs DetailedCoinbase {..} =
     [ "txid" .= outPointHash detInOutPoint
@@ -933,7 +944,6 @@ detailedInputPairs DetailedCoinbase {..} =
     , "pkscript" .= Null
     , "address" .= Null
     , "value" .= Null
-    , "block" .= Null
     ]
 
 instance ToJSON DetailedInput where

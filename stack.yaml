@@ -10,8 +10,8 @@ extra-deps:
   - secp256k1-haskell-0.1.2
   - nqe-0.5.0
   - github: haskoin/haskoin-core
-    commit: 5cea2fe6b44d0b3fd99a1e78ec37d36361b61d79
+    commit: db26684a6471958aee2775dc1861d822b0833123
   - github: xenog/rocksdb-query
     commit: ffba9ee46d9aba19b96eb16c685d99df1c66ce04
   - github: haskoin/haskoin-node
-    commit: 383733360bb93d3be9ab3567ba1ec5ea6b9e5aa9
+    commit: 32bbe000fe016402f225433dacb46bc385586baa
