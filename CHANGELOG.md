@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Removed
 - Remove some data from peers.
-- Remove full transactions and limits from address transaction output.
+- Remove full transaction data from address transaction output data.
+- Remove limits from address transaction output data.
 - Remove block data from previous output.
 
 ## 0.2.3

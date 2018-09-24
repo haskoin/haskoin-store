@@ -14,4 +14,4 @@ extra-deps:
   - github: xenog/rocksdb-query
     commit: ffba9ee46d9aba19b96eb16c685d99df1c66ce04
   - github: haskoin/haskoin-node
-    commit: 60cb4a592f2f245d049467420f3caa74fc898071
+    commit: 300f2df5473773255809d7e7904d0a7327a9ff2b
