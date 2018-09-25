@@ -55,6 +55,7 @@ executables:
       - aeson
       - binary
       - bytestring
+      - cereal
       - conduit
       - directory
       - filepath

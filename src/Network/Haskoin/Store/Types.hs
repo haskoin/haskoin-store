@@ -394,8 +394,6 @@ data Spender = Spender
       -- ^ input transaction hash
     , spenderIndex :: !Word32
       -- ^ input position in transaction
-    , spenderBlock :: !(Maybe BlockRef)
-      -- ^ block information
     } deriving (Show, Eq, Ord)
 
 -- | Aggregate key for transactions and outputs.
@@ -676,11 +674,9 @@ instance Serialize Spender where
     put Spender {..} = do
         put spenderHash
         put spenderIndex
-        put spenderBlock
     get = do
         spenderHash <- get
         spenderIndex <- get
-        spenderBlock <- get
         return Spender {..}
 
 instance Serialize OutputKey where
@@ -878,7 +874,7 @@ blockRefPairs BlockRef {..} =
 -- | JSON serialization for 'Spender'.
 spenderPairs :: A.KeyValue kv => Spender -> [kv]
 spenderPairs Spender {..} =
-    ["txid" .= spenderHash, "input" .= spenderIndex, "block" .= spenderBlock]
+    ["txid" .= spenderHash, "input" .= spenderIndex]
 
 -- | JSON serialization for a 'DetailedOutput'.
 detailedOutputPairs :: A.KeyValue kv => DetailedOutput -> [kv]
@@ -960,7 +956,6 @@ detailedTxPairs DetailedTx {..} =
     , "fee" .= detailedTxFee
     , "inputs" .= detailedTxInputs
     , "outputs" .= detailedTxOutputs
-    , "hex" .= String (encodeHex (S.encode detailedTxData))
     , "block" .= detailedTxBlock
     , "deleted" .= detailedTxDeleted
     ]

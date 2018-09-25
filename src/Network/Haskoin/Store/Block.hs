@@ -336,7 +336,7 @@ importNewTx mb prevs tx = do
   where
     tx_hash = txHash tx
     spend_output (i, op, out) = do
-        importSpendOutput mb op out tx_hash i
+        importSpendOutput op out tx_hash i
         importSpendAddress mb op out tx_hash
     insert_output (i, tx_out) = do
         let op = OutPoint tx_hash i
@@ -627,15 +627,14 @@ importUndoSpendAddress mb op out tx_hash = do
 --
 importSpendOutput ::
        (MonadImport m)
-    => Maybe BlockRef
-    -> OutPoint
+    => OutPoint
     -> Output
     -> TxHash
     -> Word32
     -> m ()
-importSpendOutput mb op out tx_hash i = do
+importSpendOutput op out tx_hash i = do
     let spender =
-            Spender {spenderHash = tx_hash, spenderIndex = i, spenderBlock = mb}
+            Spender {spenderHash = tx_hash, spenderIndex = i}
         out' = out {outSpender = Just spender}
     modify $ \s ->
         s
@@ -697,7 +696,7 @@ importUpdateTx mb tx_hash = do
         s {importTxRecord = H.insert (TxKey tx_hash) ntr (importTxRecord s)}
   where
     update_input eb (i, op, out) = do
-        importSpendOutput mb op out tx_hash i
+        importSpendOutput op out tx_hash i
         importUndoSpendAddress eb op out tx_hash
         importSpendAddress mb op out tx_hash
     update_output eb (i, out) = do

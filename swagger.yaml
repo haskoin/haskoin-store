@@ -357,14 +357,9 @@ paths:
       requestBody:
         description: transaction to publish
         content:
-          application/json:
+          text/plain:
             schema:
-              type: object
-              required:
-                - transaction
-              properties:
-                transaction:
-                  $ref: '#/components/schemas/HexTx'
+              $ref: '#/components/schemas/HexTx'
       responses:
         '200':
           description: success
@@ -372,6 +367,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transaction'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/HexTx'
         '400':
           description: invalid transaction
   '/mempool':
@@ -478,7 +476,6 @@ components:
         - fee
         - inputs
         - outputs
-        - hex
         - block
         - deleted
       properties:
@@ -505,8 +502,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Output'
-        hex:
-          $ref: '#/components/schemas/HexTx'
         block:
           $ref: '#/components/schemas/BlockRef'
         deleted:
@@ -609,14 +604,11 @@ components:
       required:
         - txid
         - input
-        - block
       properties:
         txid:
           $ref: '#/components/schemas/TxId'
         input:
           $ref: '#/components/schemas/InputIndex'
-        block:
-          $ref: '#/components/schemas/BlockRef'
     Balance:
       type: object
       required:

@@ -19,6 +19,7 @@ import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
+import           Data.Serialize          as Serialize
 import           Data.String.Conversions
 import qualified Data.Text               as T
 import           Data.Version
@@ -327,6 +328,15 @@ runWeb conf st db = do
                 withSnapshot db $ \s ->
                     getTx net txid db def {useSnapshot = Just s}
             maybeJSON res
+        S.get "/transaction/:txid/hex" $ do
+            txid <- param "txid"
+            res <-
+                withSnapshot db $ \s ->
+                    getTx net txid db def {useSnapshot = Just s}
+            case res of
+                Nothing -> raise ThingNotFound
+                Just x ->
+                    text . cs . encodeHex $ Serialize.encode (detailedTxData x)
         S.get "/transactions" $ do
             txids <- param "txids"
             testLength (length (txids :: [TxHash]))
@@ -335,6 +345,15 @@ runWeb conf st db = do
                     let opts = def {useSnapshot = Just s}
                      in mapM (\t -> getTx net t db opts) txids
             S.json res
+        S.get "/transactions/hex" $ do
+            txids <- param "txids"
+            testLength (length (txids :: [TxHash]))
+            res <-
+                withSnapshot db $ \s ->
+                    let opts = def {useSnapshot = Just s}
+                     in mapM (\t -> getTx net t db opts) txids
+            S.json $
+                map (fmap (encodeHex . Serialize.encode . detailedTxData)) res
         S.get "/address/:address/transactions" $ do
             address <- parse_address
             height <- parse_height
@@ -346,7 +365,8 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrTxs db opts height address .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io >> liftIO flush'
+                        streamConduit io >>
+                        liftIO flush'
         S.get "/address/transactions" $ do
             addresses <- parse_addresses
             height <- parse_height
@@ -358,7 +378,8 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrsTxs db opts height addresses .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io >> liftIO flush'
+                        streamConduit io >>
+                        liftIO flush'
         S.get "/address/:address/unspent" $ do
             address <- parse_address
             height <- parse_height
@@ -370,7 +391,8 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrUnspent db opts height address .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io >> liftIO flush'
+                        streamConduit io >>
+                        liftIO flush'
         S.get "/address/unspent" $ do
             addresses <- parse_addresses
             height <- parse_height
@@ -382,7 +404,8 @@ runWeb conf st db = do
                      in runResourceT . runConduit $
                         addrsUnspent db opts height addresses .| takeC x .|
                         jsonListConduit .|
-                        streamConduit io >> liftIO flush'
+                        streamConduit io >>
+                        liftIO flush'
         S.get "/address/:address/balance" $ do
             address <- parse_address
             res <-
@@ -398,7 +421,21 @@ runWeb conf st db = do
                      in mapM (\a -> getBalance a db opts) addresses
             S.json res
         post "/transactions" $ do
-            NewTx tx <- jsonData
+            hex_tx <- body
+            bin_tx <-
+                case decodeHex (cs hex_tx) of
+                    Nothing -> do
+                        status status400
+                        S.json (UserError (show InvalidTx))
+                        finish
+                    Just x -> return x
+            tx <-
+                case Serialize.decode bin_tx of
+                    Left e -> do
+                        status status400
+                        S.json (UserError e)
+                        finish
+                    Right x -> return x
             lift (publishTx net st db tx) >>= \case
                 Left PublishTimeout -> do
                     status status500
@@ -415,10 +452,11 @@ runWeb conf st db = do
                     forever $
                     flush' >> receive sub >>= \case
                         BestBlock block_hash -> do
-                            let bs = encode (JsonEventBlock block_hash) <> "\n"
+                            let bs =
+                                    A.encode (JsonEventBlock block_hash) <> "\n"
                             io (lazyByteString bs)
                         MempoolNew tx_hash -> do
-                            let bs = encode (JsonEventTx tx_hash) <> "\n"
+                            let bs = A.encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
         S.get "/peers" $ getPeersInformation (storeManager st) >>= S.json
@@ -428,7 +466,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a  -> return a
+            Just a -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
