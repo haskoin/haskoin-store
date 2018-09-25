@@ -158,7 +158,7 @@ runMonadImport f =
             mudb <- asks myUnspentDB
             udb <-
                 case mudb of
-                    Nothing -> fail "No in-memory database"
+                    Nothing -> mzero
                     Just x -> return x
             ImportState {..} <- State.get
             writeBatch udb $
@@ -712,7 +712,7 @@ importDeleteTx tx_hash =
     void . runMaybeT $ do
         etr <-
             importGetTxRecord tx_hash >>= \case
-                Nothing -> fail "Transaction already deleted"
+                Nothing -> mzero
                 Just x -> return x
         let ops = map prevOutput . txIn $ txValue etr
             etx = txValue etr
