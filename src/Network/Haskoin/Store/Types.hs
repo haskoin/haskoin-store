@@ -326,8 +326,6 @@ data DetailedOutput = DetailedOutput
       -- ^ input spending this transaction
     , detOutNetwork :: !Network
       -- ^ network constants
-    , detOutDeleted :: !Bool
-      -- ^ this output has been deleted and is no longer valid
     } deriving (Show, Eq)
 
 -- | Address balance information.
@@ -885,7 +883,6 @@ detailedOutputPairs DetailedOutput {..} =
     , "value" .= detOutValue
     , "spent" .= isJust detOutSpender
     , "spender" .= detOutSpender
-    , "deleted" .= detOutDeleted
     ]
 
 addrTxPairs :: A.KeyValue kv => AddrTx -> [kv]
@@ -986,7 +983,6 @@ addrOutputPairs AddrOutput {..} =
             , detOutScript = outScript
             , detOutSpender = outSpender
             , detOutNetwork = getAddrNet addrOutputAddress
-            , detOutDeleted = outDeleted
             }
 
 instance ToJSON AddrOutput where

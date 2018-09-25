@@ -324,7 +324,54 @@ paths:
                 $ref: '#/components/schemas/Transaction'
         '404':
           description: transaction not found
+  '/transaction/{txid}/hex':
+    get:
+      tags:
+        - transaction
+      operationId: getTransaction
+      parameters:
+        - name: txid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: hex
+      responses:
+        '200':
+          description: success
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/HexTx'
+        '404':
+          description: transaction not found
   '/transactions':
+    get:
+      tags:
+        - transaction
+      operationId: getTransactions
+      parameters:
+        - name: txids
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              format: hex
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+        '404':
+          description: transaction not found
+  '/transactions/hex':
     get:
       tags:
         - transaction
@@ -367,9 +414,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transaction'
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/HexTx'
         '400':
           description: invalid transaction
   '/mempool':
@@ -577,7 +621,6 @@ components:
         - value
         - spent
         - spender
-        - deleted
       properties:
         address:
           type: string
@@ -595,9 +638,6 @@ components:
           type: boolean
         spender:
           $ref: '#/components/schemas/Spender'
-        deleted:
-          type: boolean
-          description: this output has been deleted and is no longer valid
     Spender:
       nullable: true
       type: object

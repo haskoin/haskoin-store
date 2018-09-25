@@ -1379,7 +1379,6 @@ getTx net th db opts = do
             , detOutScript = outScript
             , detOutSpender = outSpender
             , detOutNetwork = net
-            , detOutDeleted = outDeleted
             }
     find_tx xs =
         listToMaybe
