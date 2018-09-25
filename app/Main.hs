@@ -10,34 +10,36 @@ import           Control.Arrow
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Logger
-import           Data.Aeson              as A
+import           Data.Aeson                 as A
 import           Data.Binary.Builder
 import           Data.Bits
-import           Data.ByteString.Builder (lazyByteString)
+import           Data.ByteString.Builder    (lazyByteString)
+import qualified Data.ByteString.Lazy.Char8 as C
+import           Data.Char
 import           Data.Default
 import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize          as Serialize
+import           Data.Serialize             as Serialize
 import           Data.String.Conversions
-import qualified Data.Text               as T
+import qualified Data.Text                  as T
 import           Data.Version
-import           Database.RocksDB        as R
+import           Database.RocksDB           as R
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
 import           Network.HTTP.Types
 import           NQE
 import           Options.Applicative
-import           Paths_haskoin_store     as P
+import           Paths_haskoin_store        as P
 import           System.Directory
 import           System.Exit
 import           System.FilePath
 import           System.IO.Unsafe
-import           Text.Read               (readMaybe)
+import           Text.Read                  (readMaybe)
 import           UnliftIO
-import           Web.Scotty.Trans        as S
+import           Web.Scotty.Trans           as S
 
 data OptConfig = OptConfig
     { optConfigDir      :: !(Maybe FilePath)
@@ -420,20 +422,20 @@ runWeb conf st db = do
                     let opts = def {useSnapshot = Just s}
                      in mapM (\a -> getBalance a db opts) addresses
             S.json res
-        post "/transactions" $ do
-            hex_tx <- body
+        S.post "/transactions" $ do
+            hex_tx <- C.filter (not . isSpace) <$> body
             bin_tx <-
                 case decodeHex (cs hex_tx) of
                     Nothing -> do
                         status status400
-                        S.json (UserError (show InvalidTx))
+                        S.json (UserError "decode hex fail")
                         finish
                     Just x -> return x
             tx <-
                 case Serialize.decode bin_tx of
-                    Left e -> do
+                    Left _ -> do
                         status status400
-                        S.json (UserError e)
+                        S.json (UserError "decode tx within hex fail")
                         finish
                     Right x -> return x
             lift (publishTx net st db tx) >>= \case
@@ -466,7 +468,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a -> return a
+            Just a  -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
