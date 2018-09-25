@@ -24,6 +24,7 @@ module Network.Haskoin.Store.Block
 
 import           Conduit
 import           Control.Applicative
+import           Control.Arrow
 import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
@@ -159,10 +160,10 @@ runMonadImport f =
             udb <-
                 case mudb of
                     Nothing -> mzero
-                    Just x -> return x
+                    Just x  -> return x
             ImportState {..} <- State.get
             writeBatch udb $
-                hashMapMaybeOps importUnspent <> hashMapMaybeOps importBalance
+                unspentOps importUnspent <> hashMapMaybeOps importBalance
     update_database = do
         db <- asks myBlockDB
         ImportState {..} <- State.get
@@ -179,6 +180,12 @@ runMonadImport f =
             hashMapMaybeOps importMempool
         l <- asks myListener
         atomically $ mapM_ l importEvents
+
+unspentOps :: HashMap UnspentKey (Maybe Output) -> [BatchOp]
+unspentOps = hashMapMaybeOps . H.fromList . map (first f) . H.toList
+  where
+    f (UnspentKey k) = OutputKey k
+    f _ = undefined
 
 hashMapOps ::
        (Serialize k, Serialize v, KeyValue k v) => HashMap k v -> [BatchOp]
@@ -1233,7 +1240,7 @@ loadUTXO =
                 let b' =
                         case bm of
                             Nothing -> b
-                            Just x -> g x b
+                            Just x  -> g x b
                 R.insert udb (BalanceKey a) b'
     f _ _ _ = undefined
     g a b =
@@ -1386,7 +1393,7 @@ getTx net th db opts = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _ -> False
+                  _             -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -1394,7 +1401,7 @@ getTx net th db opts = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxOutKey {}, MultiTxOutput {}) -> True
-              _ -> False
+              _                                    -> False
         , let MultiTxOutKey (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
