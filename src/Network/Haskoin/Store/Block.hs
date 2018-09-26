@@ -24,7 +24,6 @@ module Network.Haskoin.Store.Block
 
 import           Conduit
 import           Control.Applicative
-import           Control.Arrow
 import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
@@ -163,7 +162,7 @@ runMonadImport f =
                     Just x  -> return x
             ImportState {..} <- State.get
             writeBatch udb $
-                unspentOps importUnspent <> hashMapMaybeOps importBalance
+                hashMapMaybeOps importUnspent <> hashMapMaybeOps importBalance
     update_database = do
         db <- asks myBlockDB
         ImportState {..} <- State.get
@@ -180,12 +179,6 @@ runMonadImport f =
             hashMapMaybeOps importMempool
         l <- asks myListener
         atomically $ mapM_ l importEvents
-
-unspentOps :: HashMap UnspentKey (Maybe Output) -> [BatchOp]
-unspentOps = hashMapMaybeOps . H.fromList . map (first f) . H.toList
-  where
-    f (UnspentKey k) = OutputKey k
-    f _ = undefined
 
 hashMapOps ::
        (Serialize k, Serialize v, KeyValue k v) => HashMap k v -> [BatchOp]
@@ -212,7 +205,7 @@ importGetOutput out_point = runMaybeT $ do
     map_lookup = MaybeT $ H.lookup (OutputKey out_point) <$> gets importOutput
     mem_lookup = do
         udb <- MaybeT (asks myUnspentDB)
-        MaybeT $ retrieve udb def (OutputKey out_point)
+        MaybeT $ retrieve udb def (UnspentKey out_point)
     db_lookup = do
         db <- asks myBlockDB
         MaybeT $ retrieve db def (OutputKey out_point)
@@ -1217,9 +1210,9 @@ loadUTXO =
         iterKey it >>= \case
             Nothing -> return ()
             Just k -> R.delete udb def k >> iterNext it >> recurse_delete udb it
-    f udb UnspentKey {..} o@Output {..} = do
+    f udb u@UnspentKey {..} o@Output {..} = do
         net <- asks myNetwork
-        R.insert udb (OutputKey unspentKey) o
+        R.insert udb u o
         case scriptToAddressBS net (B.Short.fromShort outScript) of
             Nothing -> return ()
             Just a -> do
