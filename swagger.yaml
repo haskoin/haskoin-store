@@ -371,6 +371,25 @@ paths:
                   $ref: '#/components/schemas/Transaction'
         '404':
           description: transaction not found
+    post:
+      tags:
+        - transaction
+      operationId: postTransaction
+      requestBody:
+        description: transaction to publish
+        content:
+          text/plain:
+            schema:
+              $ref: '#/components/schemas/HexTx'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          description: invalid transaction
   '/transactions/hex':
     get:
       tags:
@@ -397,25 +416,6 @@ paths:
                   $ref: '#/components/schemas/Transaction'
         '404':
           description: transaction not found
-    post:
-      tags:
-        - transaction
-      operationId: postTransaction
-      requestBody:
-        description: transaction to publish
-        content:
-          text/plain:
-            schema:
-              $ref: '#/components/schemas/HexTx'
-      responses:
-        '200':
-          description: success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transaction'
-        '400':
-          description: invalid transaction
   '/mempool':
     get:
       tags:
