@@ -567,6 +567,7 @@ components:
         - address
         - pkscript
         - sigscript
+        - witness
       properties:
         coinbase:
           type: boolean
@@ -586,6 +587,16 @@ components:
           $ref: '#/components/schemas/Address'
         pkscript:
           $ref: '#/components/schemas/PubKeyScript'
+        witness:
+          $ref: '#/components/schemas/Witness'
+    Witness:
+      nullable: true
+      description: witness for an input
+      type: array
+      items:
+        type: string
+        format: hex
+        description: witness stack element
     Value:
       description: amount in satoshi
       type: integer

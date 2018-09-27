@@ -1337,10 +1337,11 @@ getTx net th db opts = do
         Just TxRecord {..} ->
             let os = map (uncurry output) (filter_outputs xs)
                 is =
-                    zipWith
+                    zipWith3
                         input
                         (txValuePrevOuts <> repeat (0, B.empty))
                         (txIn txValue)
+                        (map Just (txWitness txValue) <> repeat Nothing)
              in return $
                 Just
                     DetailedTx
@@ -1357,13 +1358,14 @@ getTx net th db opts = do
         if any isCoinbase is
             then 0
             else sum (map detInValue is) - sum (map detOutValue os)
-    input (val, scr) TxIn {..} =
+    input (val, scr) TxIn {..} wit =
         if outPointHash prevOutput == zero
             then DetailedCoinbase
                      { detInOutPoint = prevOutput
                      , detInSequence = txInSequence
                      , detInSigScript = scriptInput
                      , detInNetwork = net
+                     , detInWitness = wit
                      }
             else DetailedInput
                      { detInOutPoint = prevOutput
@@ -1372,6 +1374,7 @@ getTx net th db opts = do
                      , detInPkScript = scr
                      , detInValue = val
                      , detInNetwork = net
+                     , detInWitness = wit
                      }
     output OutPoint {..} Output {..} =
         DetailedOutput
@@ -1386,7 +1389,7 @@ getTx net th db opts = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _             -> False
+                  _ -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -1394,7 +1397,7 @@ getTx net th db opts = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxOutKey {}, MultiTxOutput {}) -> True
-              _                                    -> False
+              _ -> False
         , let MultiTxOutKey (OutputKey p) = k
         , let MultiTxOutput o = v
         ]

@@ -285,6 +285,8 @@ data DetailedInput
                          -- ^ input script data (not valid script)
                        , detInNetwork   :: !Network
                          -- ^ network constants
+                       , detInWitness   :: !(Maybe WitnessStack)
+                         -- ^ witness data for this input (only segwit)
                        }
     -- ^ coinbase input details
     | DetailedInput { detInOutPoint  :: !OutPoint
@@ -299,6 +301,8 @@ data DetailedInput
                       -- ^ amount in satoshi being spent spent
                     , detInNetwork   :: !Network
                       -- ^ network constants
+                    , detInWitness   :: !(Maybe WitnessStack)
+                      -- ^ witness data for this input (only segwit)
                     }
     -- ^ regular input details
     deriving (Show, Eq)
@@ -370,7 +374,7 @@ data UnspentKey
 
 instance Hashable UnspentKey where
     hashWithSalt s (UnspentKey (OutPoint h i)) = s `hashWithSalt` (h, i)
-    hashWithSalt s ShortUnspentKey = s `hashWithSalt` ()
+    hashWithSalt s ShortUnspentKey             = s `hashWithSalt` ()
 
 -- | Output data.
 data Output = Output
@@ -430,7 +434,7 @@ data MempoolKey
     deriving (Show, Eq, Ord)
 
 instance Hashable MempoolKey where
-    hashWithSalt s (MempoolKey h) = hashWithSalt s h
+    hashWithSalt s (MempoolKey h)  = hashWithSalt s h
     hashWithSalt s ShortMempoolKey = hashWithSalt s ()
 
 -- | Orphan transaction database key.
@@ -442,7 +446,7 @@ data OrphanKey
     deriving (Show, Eq, Ord)
 
 instance Hashable OrphanKey where
-    hashWithSalt s (OrphanKey h) = hashWithSalt s h
+    hashWithSalt s (OrphanKey h)  = hashWithSalt s h
     hashWithSalt s ShortOrphanKey = hashWithSalt s ()
 
 -- | Block entry database key.
@@ -927,6 +931,7 @@ detailedInputPairs DetailedInput {..} =
     , "pkscript" .= String (encodeHex detInPkScript)
     , "address" .= scriptToAddressBS detInNetwork detInPkScript
     , "value" .= detInValue
+    , "witness" .= (map encodeHex <$> detInWitness)
     ]
 detailedInputPairs DetailedCoinbase {..} =
     [ "txid" .= outPointHash detInOutPoint
@@ -937,6 +942,7 @@ detailedInputPairs DetailedCoinbase {..} =
     , "pkscript" .= Null
     , "address" .= Null
     , "value" .= Null
+    , "witness" .= (map encodeHex <$> detInWitness)
     ]
 
 instance ToJSON DetailedInput where
