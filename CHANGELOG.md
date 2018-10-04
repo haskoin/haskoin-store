@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Keep orphan blocks and deleted transactions in database.
 - Add a `mainchain` field for block data and a `deleted` field for transactions and outputs.
 - Stream records for performance.
-- Add network name to UTXO database subdirectory.
 - Show witness data for transaction inputs.
 
 ### Changed
