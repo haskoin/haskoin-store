@@ -21,6 +21,7 @@ import           Data.Int
 import           Data.Maybe
 import           Data.Serialize          as S
 import           Data.String.Conversions
+import           Data.Time.Clock.System
 import           Data.Word
 import           Database.RocksDB        (DB)
 import           Database.RocksDB.Query  as R
@@ -86,9 +87,7 @@ newtype NewTx = NewTx
 
 -- | Configuration for a block store.
 data BlockConfig = BlockConfig
-    { blockConfMailbox   :: !BlockStore
-      -- ^ block store mailbox
-    , blockConfManager   :: !Manager
+    { blockConfManager   :: !Manager
       -- ^ peer manager from running node
     , blockConfChain     :: !Chain
       -- ^ chain from a running node
@@ -104,24 +103,24 @@ data BlockConfig = BlockConfig
 
 -- | Event that the store can generate.
 data StoreEvent
-    = BestBlock !BlockHash
+    = StoreBestBlock !BlockHash
       -- ^ new best block
-    | MempoolNew !TxHash
+    | StoreMempoolNew !TxHash
       -- ^ new mempool transaction
-    | TxException !TxHash
-                  !TxException
+    | StoreTxException !TxHash
+                       !TxException
       -- ^ published tx could not be imported
-    | PeerConnected !Peer
+    | StorePeerConnected !Peer
       -- ^ new peer connected
-    | PeerDisconnected !Peer
+    | StorePeerDisconnected !Peer
       -- ^ peer has disconnected
-    | PeerPong !Peer
-               !Word64
+    | StorePeerPong !Peer
+                    !Word64
       -- ^ peer responded 'Ping'
 
 -- | Messages that a 'BlockStore' can accept.
 data BlockMessage
-    = BlockChainNew !BlockNode
+    = BlockNewBest !BlockNode
       -- ^ new block header in chain
     | BlockPeerConnect !Peer
       -- ^ new peer connected
@@ -130,23 +129,24 @@ data BlockMessage
     | BlockReceived !Peer
                     !Block
       -- ^ new block received from a peer
-    | BlockNotReceived !Peer
-                       !BlockHash
-      -- ^ peer could not deliver a block
-    | TxReceived !Peer
-                 !Tx
+    | BlockNotFound !Peer
+                    ![BlockHash]
+      -- ^ block not found
+    | BlockTxReceived !Peer
+                      !Tx
+    | BlockTxNotFound !Peer
+                      ![TxHash]
       -- ^ transaction received from a peer
-    | TxAvailable !Peer
-                  ![TxHash]
+    | BlockTxAvailable !Peer
+                       ![TxHash]
       -- ^ peer has transactions available
-    | TxPublished !Tx
+    | BlockTxPublished !Tx
       -- ^ transaction has been published successfully
-    | PongReceived !Peer
-                   !Word64
-      -- ^ peer responded to a 'Ping'
+    | BlockPing
+      -- ^ internal housekeeping ping
 
 -- | Mailbox for block store.
-type BlockStore = Inbox BlockMessage
+type BlockStore = Mailbox BlockMessage
 
 -- | Database key for an address transaction.
 data AddrTxKey
@@ -308,11 +308,11 @@ data DetailedInput
     deriving (Show, Eq)
 
 data PeerInformation
-    = PeerInformation { userAgent :: !ByteString
-                      , address   :: !SockAddr
-                      , version   :: !Word32
-                      , services  :: !Word64
-                      , relay     :: !Bool
+    = PeerInformation { peerUserAgent :: !ByteString
+                      , peerAddress   :: !SockAddr
+                      , peerVersion   :: !Word32
+                      , peerServices  :: !Word64
+                      , peerRelay     :: !Bool
                       }
     deriving (Show, Eq)
 
@@ -437,6 +437,43 @@ instance Hashable MempoolKey where
     hashWithSalt s (MempoolKey h)  = hashWithSalt s h
     hashWithSalt s ShortMempoolKey = hashWithSalt s ()
 
+data MempoolTimeKey
+    = MempoolTimeKey !Nanotime
+    | ShortMempoolTimeKey
+    deriving (Show, Eq)
+
+instance Ord MempoolTimeKey where
+    compare = flip compare
+
+instance Serialize MempoolTimeKey where
+    put (MempoolTimeKey h) = do
+        putWord8 0x0b
+        put h
+    put ShortMempoolTimeKey = putWord8 0x0b
+    get = do
+        guard . (== 0x0b) =<< getWord8
+        MempoolTimeKey <$> get
+
+instance Hashable MempoolTimeKey where
+    hashWithSalt s (MempoolTimeKey h)  = hashWithSalt s h
+    hashWithSalt s ShortMempoolTimeKey = hashWithSalt s ()
+
+newtype Nanotime = Nanotime SystemTime
+    deriving (Eq, Show, Ord)
+
+instance Hashable Nanotime where
+    hashWithSalt s (Nanotime h) =
+        s `hashWithSalt` systemSeconds h `hashWithSalt` systemNanoseconds h
+
+instance Serialize Nanotime where
+    put (Nanotime h) = do
+        put $ maxBound - systemSeconds h
+        put $ maxBound - systemNanoseconds h
+    get = do
+        sec <- (maxBound -) <$> get
+        nano <- (maxBound -) <$> get
+        return $ Nanotime $ MkSystemTime sec nano
+
 -- | Orphan transaction database key.
 data OrphanKey
     = OrphanKey TxHash
@@ -512,6 +549,17 @@ instance Ord AddrOutput where
 newtype StoreAddress = StoreAddress Address
     deriving (Show, Eq)
 
+data BlockDataVersionKey =
+    BlockDataVersionKey
+    deriving (Eq, Show, Ord)
+
+instance Serialize BlockDataVersionKey where
+    get = do
+        guard . (== 0x0a) =<< getWord8
+        return BlockDataVersionKey
+    put BlockDataVersionKey = putWord8 0x0a
+
+
 instance Key BestBlockKey
          -- 0x00
 instance Key BlockKey
@@ -547,19 +595,25 @@ instance Key OrphanKey
 instance Key UnspentKey
          -- 0x09 · OutPoint
          -- 0x09
+instance Key BlockDataVersionKey
+         -- 0x0a
+instance Key MempoolTimeKey
+         -- 0x0b
 
-instance R.KeyValue   BestBlockKey    BlockHash
-instance R.KeyValue   BlockKey        BlockValue
-instance R.KeyValue   TxKey           TxRecord
-instance R.KeyValue   AddrOutKey      Output
-instance R.KeyValue   MultiTxKey      MultiTxValue
-instance R.KeyValue   HeightKey       [BlockHash]
-instance R.KeyValue   BalanceKey      Balance
-instance R.KeyValue   AddrTxKey       ()
-instance R.KeyValue   OutputKey       Output
-instance R.KeyValue   UnspentKey      Output
-instance R.KeyValue   MempoolKey      ()
-instance R.KeyValue   OrphanKey       Tx
+instance R.KeyValue   BestBlockKey        BlockHash
+instance R.KeyValue   BlockKey            BlockValue
+instance R.KeyValue   TxKey               TxRecord
+instance R.KeyValue   AddrOutKey          Output
+instance R.KeyValue   MultiTxKey          MultiTxValue
+instance R.KeyValue   HeightKey           [BlockHash]
+instance R.KeyValue   BalanceKey          Balance
+instance R.KeyValue   AddrTxKey           ()
+instance R.KeyValue   OutputKey           Output
+instance R.KeyValue   UnspentKey          Output
+instance R.KeyValue   MempoolKey          Nanotime
+instance R.KeyValue   MempoolTimeKey      [TxHash]
+instance R.KeyValue   OrphanKey           Tx
+instance R.KeyValue   BlockDataVersionKey Word32
 
 instance Serialize MempoolKey where
     put (MempoolKey h) = do
@@ -710,7 +764,7 @@ instance Serialize Output where
         putWord8 0x01
         put outputValue
         put outBlock
-        put (B.Short.length outScript)
+        put $ B.Short.length outScript
         putShortByteString outScript
         put outSpender
         put outDeleted
@@ -886,8 +940,8 @@ detailedOutputPairs DetailedOutput {..} =
     , "pkscript" .= String (encodeHex (B.Short.fromShort detOutScript))
     , "value" .= detOutValue
     , "spent" .= isJust detOutSpender
-    , "spender" .= detOutSpender
-    ]
+    ] ++
+    ["spender" .= detOutSpender | isJust detOutSpender]
 
 addrTxPairs :: A.KeyValue kv => AddrTx -> [kv]
 addrTxPairs AddrTx {..} =
@@ -908,11 +962,11 @@ instance ToJSON DetailedOutput where
 -- | JSON serialization for 'PeerInformation'.
 peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
 peerInformationPairs PeerInformation {..} =
-    [ "useragent"   .= String (cs userAgent)
-    , "address"     .= String (cs (show address))
-    , "version"     .= version
-    , "services"    .= services
-    , "relay"       .= relay
+    [ "useragent"   .= String (cs peerUserAgent)
+    , "address"     .= String (cs (show peerAddress))
+    , "version"     .= peerVersion
+    , "services"    .= peerServices
+    , "relay"       .= peerRelay
     ]
 
 instance ToJSON PeerInformation where

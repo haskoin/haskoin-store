@@ -30,7 +30,7 @@ main = do
             withTestStore net "eight-blocks" $ \TestStore {..} -> do
                 bs <-
                     replicateM 9 . receiveMatch testStoreEvents $ \case
-                        BestBlock b -> Just b
+                        StoreBestBlock b -> Just b
                         _ -> Nothing
                 let bestHash = last bs
                 bestNodeM <- chainGetBlock bestHash testStoreChain
@@ -42,13 +42,13 @@ main = do
             withTestStore net "get-block-txs" $ \TestStore {..} -> do
                 let get_the_block h =
                         receive testStoreEvents >>= \case
-                            BestBlock b | h == 0 -> return b
-                                        | otherwise -> get_the_block ((h :: Int) - 1)
+                            StoreBestBlock b
+                                | h == 0 -> return b
+                                | otherwise -> get_the_block ((h :: Int) - 1)
                             _ -> get_the_block h
                 bh <- get_the_block 381
                 m <- getBlock bh testStoreDB def
-                let BlockValue {..} =
-                        fromMaybe (error "Could not get block") m
+                let BlockValue {..} = fromMaybe (error "Could not get block") m
                 blockValueHeight `shouldBe` 381
                 length blockValueTxs `shouldBe` 2
                 let h1 =
@@ -86,7 +86,7 @@ withTestStore net t f =
                         , storeConfUnspentDB = Nothing
                         }
             withStore cfg $ \Store {..} ->
-                withPubSub storePublisher newTQueueIO $ \sub ->
+                withSubscription storePublisher $ \sub ->
                     lift $
                     f
                         TestStore

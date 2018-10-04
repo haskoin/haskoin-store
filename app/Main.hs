@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Conduit
 import           Control.Arrow
-import           Control.Exception
+import           Control.Exception ()
 import           Control.Monad
 import           Control.Monad.Logger
 import           Data.Aeson                 as A
@@ -449,15 +449,18 @@ runWeb conf st db = do
         S.get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
         S.get "/events" $ do
             setHeader "Content-Type" "application/x-json-stream"
-            stream $ \io flush' ->
-                withPubSub (storePublisher st) (newTBQueueIO maxPubSubQueue) $ \sub ->
+            stream $ \io flush' -> do
+                inbox <- newBoundedInbox maxPubSubQueue
+                bracket
+                    (subscribe (storePublisher st) (`sendSTM` inbox))
+                    (unsubscribe (storePublisher st)) $ \_ ->
                     forever $
-                    flush' >> receive sub >>= \case
-                        BestBlock block_hash -> do
+                    flush' >> receive inbox >>= \case
+                        StoreBestBlock block_hash -> do
                             let bs =
                                     A.encode (JsonEventBlock block_hash) <> "\n"
                             io (lazyByteString bs)
-                        MempoolNew tx_hash -> do
+                        StoreMempoolNew tx_hash -> do
                             let bs = A.encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
@@ -468,7 +471,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a  -> return a
+            Just a -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses

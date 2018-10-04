@@ -41,27 +41,36 @@ import           Data.Serialize              (Serialize, encode)
 import           Data.String
 import           Data.String.Conversions
 import           Data.Text                   (Text)
+import           Data.Time.Clock
 import           Data.Time.Clock.POSIX
+import           Data.Time.Clock.System
 import           Data.Word
-import           Database.RocksDB            as R
+import           Database.RocksDB            (BatchOp, DB, ReadOptions)
+import qualified Database.RocksDB            as R
 import           Database.RocksDB.Query      as R
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Types
 import           NQE
+import           System.Random
 import           UnliftIO
+import           UnliftIO.Concurrent
+
+dataVersion :: Word32
+dataVersion = 1
 
 -- | Block store process state.
 data BlockRead = BlockRead
-    { myBlockDB    :: !DB
-    , myUnspentDB  :: !(Maybe DB)
-    , mySelf       :: !BlockStore
-    , myChain      :: !Chain
-    , myManager    :: !Manager
-    , myListener   :: !(Listen StoreEvent)
-    , myBaseHeight :: !(TVar BlockHeight)
-    , myPeer       :: !(TVar (Maybe Peer))
-    , myNetwork    :: !Network
+    { myBlockDB      :: !DB
+    , myUnspentDB    :: !(Maybe DB)
+    , mySelf         :: !BlockStore
+    , myChain        :: !Chain
+    , myManager      :: !Manager
+    , myListener     :: !(Listen StoreEvent)
+    , myBaseHeight   :: !(TVar BlockHeight)
+    , myPeer         :: !(TVar (Maybe Peer))
+    , myLastReceived :: !(TVar (Maybe UTCTime))
+    , myNetwork      :: !Network
     }
 
 -- | Block store context.
@@ -78,32 +87,38 @@ data TxStatus
 
 -- | State for importing or removing blocks and transactions.
 data ImportState = ImportState
-    { importBestBlock  :: !(HashMap BestBlockKey BlockHash)
-    , importBlockValue :: !(HashMap BlockKey BlockValue)
-    , importTxRecord   :: !(HashMap TxKey TxRecord)
-    , importAddrOutput :: !(HashMap AddrOutKey (Maybe Output))
-    , importHeight     :: !(HashMap HeightKey [BlockHash])
-    , importBalance    :: !(HashMap BalanceKey (Maybe Balance))
-    , importAddrTx     :: !(HashMap AddrTxKey (Maybe ()))
-    , importOutput     :: !(HashMap OutputKey Output)
-    , importUnspent    :: !(HashMap UnspentKey (Maybe Output))
-    , importOrphan     :: !(HashMap OrphanKey (Maybe Tx))
-    , importMempool    :: !(HashMap MempoolKey (Maybe ()))
-    , importEvents     :: ![StoreEvent]
+    { importBestBlock   :: !(HashMap BestBlockKey BlockHash)
+    , importBlockValue  :: !(HashMap BlockKey BlockValue)
+    , importTxRecord    :: !(HashMap TxKey TxRecord)
+    , importAddrOutput  :: !(HashMap AddrOutKey (Maybe Output))
+    , importHeight      :: !(HashMap HeightKey [BlockHash])
+    , importBalance     :: !(HashMap BalanceKey (Maybe Balance))
+    , importAddrTx      :: !(HashMap AddrTxKey (Maybe ()))
+    , importOutput      :: !(HashMap OutputKey Output)
+    , importUnspent     :: !(HashMap UnspentKey (Maybe Output))
+    , importOrphan      :: !(HashMap OrphanKey (Maybe Tx))
+    , importMempool     :: !(HashMap MempoolKey (Maybe Nanotime))
+    , importMempoolTime :: !(HashMap MempoolTimeKey (Maybe [TxHash]))
+    , importEvents      :: ![StoreEvent]
     }
 
 -- | Context for importing or removing blocks and transactions.
 type MonadImport m = MonadState ImportState m
 
 -- | Run block store process.
-blockStore :: (MonadUnliftIO m, MonadLoggerIO m) => BlockConfig -> m ()
-blockStore BlockConfig {..} = do
+blockStore ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => BlockConfig
+    -> Inbox BlockMessage
+    -> m ()
+blockStore BlockConfig {..} inbox = do
     base_height_box <- newTVarIO 0
     peer_box <- newTVarIO Nothing
+    last_received_box <- newTVarIO Nothing
     runReaderT
         (init_db >> loadUTXO >> syncBlocks >> run)
         BlockRead
-            { mySelf = blockConfMailbox
+            { mySelf = b
             , myBlockDB = blockConfDB
             , myChain = blockConfChain
             , myManager = blockConfManager
@@ -112,24 +127,48 @@ blockStore BlockConfig {..} = do
             , myPeer = peer_box
             , myNetwork = blockConfNet
             , myUnspentDB = blockConfUnspentDB
+            , myLastReceived = last_received_box
             }
   where
+    b = inboxToMailbox inbox
     run =
-        forever $ do
-            msg <- receive blockConfMailbox
-            processBlockMessage msg
+        withConnectLoop b $ \a -> do
+            link a
+            forever $ receive inbox >>= processBlockMessage
     init_db =
         runResourceT $ do
+            ver :: Word32 <-
+                fromMaybe 0 <$> retrieve blockConfDB def BlockDataVersionKey
+            when (ver < dataVersion) $ purgeMempool blockConfDB
+            R.insert blockConfDB BlockDataVersionKey dataVersion
             runConduit $
                 matching blockConfDB def ShortOrphanKey .|
                 mapM_C (\(k, Tx {}) -> remove blockConfDB k)
             retrieve blockConfDB def BestBlockKey >>= \case
                 Nothing -> addNewBlock (genesisBlock blockConfNet)
                 Just (_ :: BlockHash) -> return ()
-            BlockValue {..} <-
-                getBestBlock blockConfDB def
+            BlockValue {..} <- getBestBlock blockConfDB def
             base_height_box <- asks myBaseHeight
             atomically $ writeTVar base_height_box blockValueHeight
+
+purgeMempool :: MonadUnliftIO m => DB -> m ()
+purgeMempool db = purge_base_mempool >> purge_mempool_timestamps
+  where
+    purge_base_mempool = purge_byte 0x07
+    purge_mempool_timestamps = purge_byte 0x0b
+    purge_byte byte =
+        runResourceT . R.withIterator db def $ \it -> do
+            R.iterSeek it $ B.singleton byte
+            recurse_delete it byte
+    recurse_delete it byte =
+        R.iterKey it >>= \case
+            Nothing -> return ()
+            Just k
+                | B.head k == byte -> do
+                    R.delete db def k
+                    R.iterNext it
+                    recurse_delete it byte
+                | otherwise -> return ()
 
 -- | Run within 'MonadImport' context. Execute updates to database and
 -- notification to subscribers when finished.
@@ -150,6 +189,7 @@ runMonadImport f =
             , importUnspent = H.empty
             , importOrphan = H.empty
             , importMempool = H.empty
+            , importMempoolTime = H.empty
             , importEvents = []
             }
   where
@@ -176,7 +216,8 @@ runMonadImport f =
             hashMapOps importOutput <>
             hashMapMaybeOps importUnspent <>
             hashMapMaybeOps importOrphan <>
-            hashMapMaybeOps importMempool
+            hashMapMaybeOps importMempool <>
+            hashMapMaybeOps importMempoolTime
         l <- asks myListener
         atomically $ mapM_ l importEvents
 
@@ -231,15 +272,43 @@ importGetBalance a =
 -- | Get transaction for importing.
 importGetTxRecord ::
        (MonadBlock m, MonadImport m) => TxHash -> m (Maybe TxRecord)
-importGetTxRecord tx_hash = runMaybeT $ do
-    tr <- map_lookup <|> db_lookup
-    guard (not (txValueDeleted tr))
-    return tr
+importGetTxRecord tx_hash =
+    runMaybeT $ do
+        tr <- map_lookup <|> db_lookup
+        guard (not (txValueDeleted tr))
+        return tr
   where
     map_lookup = MaybeT $ H.lookup (TxKey tx_hash) <$> gets importTxRecord
     db_lookup = do
         db <- asks myBlockDB
         MaybeT $ retrieve db def (TxKey tx_hash)
+
+importGetMempool ::
+       (MonadBlock m, MonadImport m) => TxHash -> m (Maybe Nanotime)
+importGetMempool tx_hash = runMaybeT map_lookup
+  where
+    map_lookup = do
+        m <- H.lookup (MempoolKey tx_hash) <$> gets importMempool
+        case m of
+            Just Nothing  -> MaybeT $ return Nothing
+            Just (Just b) -> return b
+            Nothing       -> db_lookup
+    db_lookup = do
+        db <- asks myBlockDB
+        MaybeT $ retrieve db def (MempoolKey tx_hash)
+
+importGetMempoolTime :: (MonadBlock m, MonadImport m) => Nanotime -> m [TxHash]
+importGetMempoolTime nano = fromMaybe [] <$> runMaybeT map_lookup
+  where
+    map_lookup = do
+        m <- H.lookup (MempoolTimeKey nano) <$> gets importMempoolTime
+        case m of
+            Just Nothing  -> MaybeT $ return Nothing
+            Just (Just b) -> return b
+            Nothing       -> db_lookup
+    db_lookup = do
+        db <- asks myBlockDB
+        MaybeT $ retrieve db def (MempoolTimeKey nano)
 
 -- | Get best block for importing.
 importGetBest :: (MonadBlock m, MonadImport m) => m BlockHash
@@ -303,7 +372,7 @@ importInsertTx mb tx = do
             mapM_ importDeleteTx (spenders prevs)
             importNewTx mb prevs tx
 
--- | Only for importing a new transaction. Also works for a deleted transaction.
+-- | Only for importing a new or deleted transaction.
 importNewTx ::
        (MonadBlock m, MonadImport m)
     => Maybe BlockRef
@@ -313,11 +382,18 @@ importNewTx ::
 importNewTx mb prevs tx = do
     mapM_ spend_output prevs
     mapM_ insert_output (zip [0 ..] (txOut tx))
-    when (isNothing mb) $
+    when (isNothing mb) $ do
+        now <- Nanotime <$> liftIO getSystemTime
         modify $ \s ->
             s
                 { importMempool =
-                      H.insert (MempoolKey tx_hash) (Just ()) (importMempool s)
+                      H.insert (MempoolKey tx_hash) (Just now) (importMempool s)
+                , importMempoolTime =
+                      H.insertWith
+                          (<>)
+                          (MempoolTimeKey now)
+                          (Just [tx_hash])
+                          (importMempoolTime s)
                 }
     modify $ \s ->
         let txr =
@@ -326,10 +402,10 @@ importNewTx mb prevs tx = do
                     , txValue = tx
                     , txValuePrevOuts =
                           map
-                              (\o ->
+                              (\(_, _, o) ->
                                    ( outputValue o
                                    , B.Short.fromShort (outScript o)))
-                              (map (\(_, _, o) -> o) prevs)
+                              prevs
                     , txValueDeleted = False
                     }
          in s {importTxRecord = H.insert (TxKey tx_hash) txr (importTxRecord s)}
@@ -566,7 +642,7 @@ importSpendAddress mb op out tx_hash = do
                     }
 
 importUndoSpendAddress ::
-    (MonadImport m, MonadBlock m)
+       (MonadImport m, MonadBlock m)
     => Maybe BlockRef
     -> OutPoint
     -> Output
@@ -626,7 +702,7 @@ importUndoSpendAddress mb op out tx_hash = do
 --     * Update output to spent by provided input
 --
 importSpendOutput ::
-       (MonadImport m)
+       MonadImport m
     => OutPoint
     -> Output
     -> TxHash
@@ -679,18 +755,8 @@ importUpdateTx mb tx_hash = do
                     throwString $ "Could not get output: " <> showOutPoint op
                 Just x -> return x
     mapM_ (update_output eb) $ zip [0 ..] outs
-    when (isNothing eb && isJust mb) $
-        modify $ \s ->
-            s
-                { importMempool =
-                      H.insert (MempoolKey tx_hash) Nothing (importMempool s)
-                }
-    when (isJust eb && isNothing mb) $
-        modify $ \s ->
-            s
-                { importMempool =
-                      H.insert (MempoolKey tx_hash) (Just ()) (importMempool s)
-                }
+    when (isNothing eb && isJust mb) $ importDeleteMemTx tx_hash
+    when (isJust eb && isNothing mb) $ importInsertMemTx tx_hash
     let ntr = etr {txValueBlock = mb}
     modify $ \s ->
         s {importTxRecord = H.insert (TxKey tx_hash) ntr (importTxRecord s)}
@@ -734,11 +800,7 @@ importDeleteTx tx_hash =
                     Nothing -> return Nothing
         mapM_ (delete_input eb) prevs
         mapM_ (delete_output eb) $ zip [0 ..] outs
-        modify $ \s ->
-            s
-                { importMempool =
-                      H.insert (MempoolKey tx_hash) Nothing (importMempool s)
-                }
+        importDeleteMemTx tx_hash
         let ntr = etr {txValueBlock = no_main <$> eb, txValueDeleted = True}
         modify $ \s ->
             s {importTxRecord = H.insert (TxKey tx_hash) ntr (importTxRecord s)}
@@ -753,9 +815,50 @@ importDeleteTx tx_hash =
         importUndoUnspentOutput op out'
         importUndoUnspentAddress eb op out'
 
+importInsertMemTx :: (MonadImport m, MonadBlock m) => TxHash -> m ()
+importInsertMemTx tx_hash =
+    void . runMaybeT $ do
+        guard . isNothing =<< importGetMempool tx_hash
+        now <- Nanotime <$> liftIO getSystemTime
+        mtxs <- (tx_hash :) <$> importGetMempoolTime now
+        modify $ \s ->
+            s
+                { importMempool =
+                      H.insert (MempoolKey tx_hash) (Just now) (importMempool s)
+                , importMempoolTime =
+                      H.insert
+                          (MempoolTimeKey now)
+                          (Just mtxs)
+                          (importMempoolTime s)
+                }
+
+importDeleteMemTx :: (MonadImport m, MonadBlock m) => TxHash -> m ()
+importDeleteMemTx tx_hash = do
+    mtime <-
+        importGetMempool tx_hash >>= \case
+            Nothing -> return Nothing
+            Just n ->
+                importGetMempoolTime n >>= \case
+                    [] -> return $ Just (MempoolTimeKey n, Nothing)
+                    xs ->
+                        case tx_hash `delete` xs of
+                            []  -> return $ Just (MempoolTimeKey n, Nothing)
+                            xs' -> return $ Just (MempoolTimeKey n, Just xs')
+    modify $ \s ->
+        s
+            { importMempool =
+                  H.insert (MempoolKey tx_hash) Nothing (importMempool s)
+            , importMempoolTime =
+                  case mtime of
+                      Nothing     -> importMempoolTime s
+                      Just (k, v) -> H.insert k v (importMempoolTime s)
+            }
+
 importNewBlock :: (MonadImport m, MonadBlock m) => Block -> m ()
 importNewBlock b@Block {..} = do
     net <- asks myNetwork
+    now <- liftIO getCurrentTime
+    asks myLastReceived >>= \v -> atomically $ writeTVar v (Just now)
     block_value <-
         if block_hash == headerHash (getGenesisHeader net)
         then return BlockValue
@@ -804,7 +907,7 @@ importNewBlock b@Block {..} = do
                   H.insert height_key height_value (importHeight s)
             , importBlockValue =
                   H.insert block_key block_value (importBlockValue s)
-            , importEvents = BestBlock block_hash : importEvents s
+            , importEvents = StoreBestBlock block_hash : importEvents s
             }
     mapM_
         (\(i, tx) -> importInsertTx (Just (block_ref i)) tx)
@@ -916,21 +1019,37 @@ importMempoolTx tx =
                             cs (txHashToHex (txHash tx)) <>
                             " reason: " <>
                             cs (show e)
+                        delete_orphan
                         return False
-            asks myListener >>= \l -> atomically (l (TxException (txHash tx) e))
+            asks myListener >>= \l ->
+                atomically (l (StoreTxException (txHash tx) e))
             return ret
         Right () -> do
             importInsertTx Nothing tx
             modify $ \s ->
-                s {importEvents = MempoolNew tx_hash : importEvents s}
+                s {importEvents = StoreMempoolNew tx_hash : importEvents s}
             return True
   where
     tx_hash = txHash tx
+    delete_orphan = do
+        $(logWarnS) "Block" $
+            "Deleting orphan tx hash: " <> cs (txHashToHex (txHash tx))
+        modify $ \s ->
+            s
+                { importOrphan =
+                      H.insert (OrphanKey (txHash tx)) Nothing (importOrphan s)
+                }
     import_orphan = do
         $(logInfoS) "Block " $
             "Got orphan tx hash: " <> cs (txHashToHex (txHash tx))
-        db <- asks myBlockDB
-        R.insert db (OrphanKey (txHash tx)) tx
+        modify $ \s ->
+            s
+                { importOrphan =
+                      H.insert
+                          (OrphanKey (txHash tx))
+                          (Just tx)
+                          (importOrphan s)
+                }
     validate_tx = do
         importGetTxRecord (txHash tx) >>= \x ->
             when (maybe False txValueDeleted x) (throwError AlreadyImported)
@@ -940,8 +1059,11 @@ importMempoolTx tx =
 syncBlocks :: MonadBlock m => m ()
 syncBlocks =
     void . runMaybeT $ do
+        ch <- asks myChain
         net <- asks myNetwork
-        chain_best <- asks myChain >>= chainGetBest
+        chain_best <- chainGetBest ch
+        -- TODO: Maybe it is a good idea
+        -- guard =<< chainIsSynced ch
         revert_if_needed chain_best
         let chain_height = nodeHeight chain_best
         base_height_box <- asks myBaseHeight
@@ -955,7 +1077,6 @@ syncBlocks =
         p <- get_peer
         when (base_height > best_height + 500) empty
         when (base_height >= chain_height) empty
-        ch <- asks myChain
         let sync_lowest = min chain_height (base_height + 1)
             sync_highest = min chain_height (base_height + 501)
         sync_top <-
@@ -1004,14 +1125,14 @@ syncBlocks =
                         headerHash . nodeHeader <$>
                         chainGetSplitBlock chain_best best_node ch
                     revert_until split_hash
-    revert_until split = do
+    revert_until split_hash = do
         best_hash <-
             asks myBlockDB >>= \db ->
                 headerHash . blockValueHeader <$>
                 getBestBlock db def
-        when (best_hash /= split) $ do
+        when (best_hash /= split_hash) $ do
             revertBestBlock
-            revert_until split
+            revert_until split_hash
 
 -- | Import a block.
 importBlock ::
@@ -1031,7 +1152,7 @@ importBlock block@Block {..} = do
 -- | Process incoming messages to the 'BlockStore' mailbox.
 processBlockMessage :: (MonadUnliftIO m, MonadBlock m) => BlockMessage -> m ()
 
-processBlockMessage (BlockChainNew _) = syncBlocks
+processBlockMessage (BlockNewBest _) = syncBlocks
 
 processBlockMessage (BlockPeerConnect p) = syncBlocks >> syncMempool p
 
@@ -1050,13 +1171,13 @@ processBlockMessage (BlockReceived p b) =
             managerKill (PeerMisbehaving (fromString e)) p mgr
         Right () -> importOrphans >> syncBlocks >> syncMempool p
 
-processBlockMessage (TxReceived _ tx) =
+processBlockMessage (BlockTxReceived _ tx) =
     isAtHeight >>= \x ->
         when x $ do
             _ <- runMonadImport $ importMempoolTx tx
             importOrphans
 
-processBlockMessage (TxPublished tx) =
+processBlockMessage (BlockTxPublished tx) =
     void . runMonadImport $ importMempoolTx tx
 
 processBlockMessage (BlockPeerDisconnect p) = do
@@ -1075,14 +1196,14 @@ processBlockMessage (BlockPeerDisconnect p) = do
                 else return False
     when is_my_peer syncBlocks
 
-processBlockMessage (BlockNotReceived p h) = do
+processBlockMessage (BlockNotFound p h) = do
     pstr <- peerString p
     $(logErrorS) "Block" $
         "Peer " <> pstr <> " unable to serve block " <> cs (show h)
     mgr <- asks myManager
     managerKill (PeerMisbehaving "Block not found") p mgr
 
-processBlockMessage (TxAvailable p ts) =
+processBlockMessage (BlockTxAvailable p ts) =
     isAtHeight >>= \h ->
         when h $ do
             pstr <- peerString p
@@ -1097,7 +1218,7 @@ processBlockMessage (TxAvailable p ts) =
                     let mem =
                             retrieve db def (MempoolKey t) >>= \case
                                 Nothing -> return Nothing
-                                Just () -> return (Just t)
+                                Just (_ :: Nanotime) -> return (Just t)
                         orp =
                             retrieve db def (OrphanKey t) >>= \case
                                 Nothing -> return Nothing
@@ -1111,11 +1232,18 @@ processBlockMessage (TxAvailable p ts) =
                     pstr
                 peerGetTxs net p new
 
-processBlockMessage (PongReceived p n) = do
-    pstr <- peerString p
-    $(logDebugS) "Block" $
-        "Pong nonce " <> cs (show n) <> " from peer " <> pstr
-    asks myListener >>= atomically . ($ PeerPong p n)
+processBlockMessage BlockPing = do
+    lst <- asks myLastReceived >>= readTVarIO
+    mgr <- asks myManager
+    now <- liftIO getCurrentTime
+    mp <- asks myPeer >>= readTVarIO
+    let diff = now `diffUTCTime` fromMaybe now lst
+    when (diff > 60) $
+        case mp of
+            Just p -> managerKill PeerTimeout p mgr
+            Nothing -> return ()
+
+processBlockMessage _ = return ()
 
 -- | Import orphan transactions that can be imported.
 importOrphans :: (MonadUnliftIO m, MonadBlock m) => m ()
@@ -1189,7 +1317,7 @@ showOutPoint OutPoint {..} =
 peerString :: (MonadBlock m, IsString a) => Peer -> m a
 peerString p = do
     mgr <- asks myManager
-    managerGetPeer mgr p >>= \case
+    managerGetPeer p mgr >>= \case
         Nothing -> return "[unknown]"
         Just o -> return $ fromString $ show $ onlinePeerAddress o
 
@@ -1205,11 +1333,12 @@ loadUTXO =
             runResourceT . runConduit $
                 matching db def ShortUnspentKey .| mapM_C (uncurry (f udb))
   where
-    delete_all udb = runResourceT . withIterator udb def $ recurse_delete udb
+    delete_all udb = runResourceT . R.withIterator udb def $ recurse_delete udb
     recurse_delete udb it =
-        iterKey it >>= \case
+        R.iterKey it >>= \case
             Nothing -> return ()
-            Just k -> R.delete udb def k >> iterNext it >> recurse_delete udb it
+            Just k ->
+                R.delete udb def k >> R.iterNext it >> recurse_delete udb it
     f udb u@UnspentKey {..} o@Output {..} = do
         net <- asks myNetwork
         R.insert udb u o
@@ -1319,9 +1448,8 @@ getBalance addr db opts =
 
 -- | Get list of transactions in mempool.
 getMempool :: MonadUnliftIO m => DB -> ReadOptions -> m [TxHash]
-getMempool db opts = get_hashes <$> matchingAsList db opts ShortMempoolKey
-  where
-    get_hashes mempool_txs = [tx_hash | (MempoolKey tx_hash, ()) <- mempool_txs]
+getMempool db opts =
+    concatMap snd <$> matchingAsList db opts ShortMempoolTimeKey
 
 -- | Get single transaction.
 getTx ::
@@ -1389,7 +1517,7 @@ getTx net th db opts = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _ -> False
+                  _             -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -1397,7 +1525,15 @@ getTx net th db opts = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxOutKey {}, MultiTxOutput {}) -> True
-              _ -> False
+              _                                    -> False
         , let MultiTxOutKey (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
+
+withConnectLoop :: MonadUnliftIO m => BlockStore -> (Async a -> m a) -> m a
+withConnectLoop b = withAsync go
+  where
+    go =
+        forever $ do
+            threadDelay =<< liftIO (randomRIO (5 * 1000 * 1000, 10 * 1000 * 1000))
+            BlockPing `send` b

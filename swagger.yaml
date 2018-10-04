@@ -413,7 +413,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Transaction'
+                  $ref: '#/components/schemas/HexTx'
         '404':
           description: transaction not found
   '/mempool':
@@ -631,7 +631,6 @@ components:
         - pkscript
         - value
         - spent
-        - spender
       properties:
         address:
           type: string
@@ -650,7 +649,6 @@ components:
         spender:
           $ref: '#/components/schemas/Spender'
     Spender:
-      nullable: true
       type: object
       required:
         - txid
