@@ -988,9 +988,13 @@ validateTx tx = do
     prev_outs <-
         forM (txIn tx) $ \TxIn {..} ->
             importGetOutput prevOutput >>= \case
-                Just o
-                    | isNothing (outSpender o) -> return o
-                    | otherwise -> throwError DoubleSpend
+                Just o ->
+                    case outSpender o of
+                        Nothing -> return o
+                        Just s
+                            | spenderHash s == txHash tx ->
+                                throwError AlreadyImported
+                            | otherwise -> throwError DoubleSpend
                 Nothing -> throwError OrphanTx
     let sum_inputs = sum (map outputValue prev_outs)
         sum_outputs = sum (map outValue (txOut tx))
@@ -1009,7 +1013,9 @@ importMempoolTx tx =
         Left e -> do
             ret <-
                 case e of
-                    AlreadyImported -> return True
+                    AlreadyImported -> do
+                        delete_orphan
+                        return True
                     OrphanTx -> do
                         import_orphan
                         return False
@@ -1031,17 +1037,13 @@ importMempoolTx tx =
             return True
   where
     tx_hash = txHash tx
-    delete_orphan = do
-        $(logWarnS) "Block" $
-            "Deleting orphan tx hash: " <> cs (txHashToHex (txHash tx))
+    delete_orphan =
         modify $ \s ->
             s
                 { importOrphan =
                       H.insert (OrphanKey (txHash tx)) Nothing (importOrphan s)
                 }
-    import_orphan = do
-        $(logInfoS) "Block " $
-            "Got orphan tx hash: " <> cs (txHashToHex (txHash tx))
+    import_orphan =
         modify $ \s ->
             s
                 { importOrphan =
