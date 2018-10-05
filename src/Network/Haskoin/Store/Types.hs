@@ -267,20 +267,22 @@ instance Ord BlockRef where
 
 -- | Detailed transaction information.
 data DetailedTx = DetailedTx
-    { detailedTxData    :: !Tx
+    { detailedTxData      :: !Tx
       -- ^ 'Tx' object
-    , detailedTxFee     :: !Word64
+    , detailedTxFee       :: !Word64
       -- ^ transaction fees paid to miners in satoshi
-    , detailedTxInputs  :: ![DetailedInput]
+    , detailedTxInputs    :: ![DetailedInput]
       -- ^ transaction inputs
-    , detailedTxOutputs :: ![DetailedOutput]
+    , detailedTxOutputs   :: ![DetailedOutput]
       -- ^ transaction outputs
-    , detailedTxBlock   :: !(Maybe BlockRef)
+    , detailedTxBlock     :: !(Maybe BlockRef)
       -- ^ block information for this transaction
-    , detailedTxDeleted :: !Bool
+    , detailedTxDeleted   :: !Bool
       -- ^ this transaction has been deleted and is no longer valid
-    , detailedTxRBF     :: !Bool
+    , detailedTxRBF       :: !Bool
       -- ^ this transaction can be replaced in the mempool
+    , detailedTxConflicts :: ![TxHash]
+      -- ^ mempool conflicts for this transaction (double-spend attempts)
     } deriving (Show, Eq)
 
 -- | Input information.
@@ -622,7 +624,7 @@ instance R.KeyValue   BalanceKey          Balance
 instance R.KeyValue   AddrTxKey           ()
 instance R.KeyValue   OutputKey           Output
 instance R.KeyValue   UnspentKey          Output
-instance R.KeyValue   MempoolKey          Nanotime
+instance R.KeyValue   MempoolKey          (Nanotime, [TxHash])
 instance R.KeyValue   MempoolTimeKey      [TxHash]
 instance R.KeyValue   OrphanKey           Tx
 instance R.KeyValue   BlockDataVersionKey Word32
@@ -1032,6 +1034,7 @@ detailedTxPairs DetailedTx {..} =
     , "block" .= detailedTxBlock
     , "deleted" .= detailedTxDeleted
     , "rbf" .= detailedTxRBF
+    , "conflicts" .= detailedTxConflicts
     ]
 
 instance ToJSON DetailedTx where

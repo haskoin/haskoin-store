@@ -523,6 +523,7 @@ components:
         - block
         - deleted
         - rbf
+        - conflicts
       properties:
         txid:
           $ref: '#/components/schemas/TxId'
@@ -555,6 +556,10 @@ components:
         rbf:
           type: boolean
           description: vulnerable to replace-by-fee (never true on bitcoin cash)
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/TxHash'
     HexTx:
       type: string
       format: hex

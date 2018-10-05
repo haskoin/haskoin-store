@@ -94,7 +94,7 @@ data ImportState = ImportState
     , importOutput      :: !(HashMap OutputKey Output)
     , importUnspent     :: !(HashMap UnspentKey (Maybe Output))
     , importOrphan      :: !(HashMap OrphanKey (Maybe Tx))
-    , importMempool     :: !(HashMap MempoolKey (Maybe Nanotime))
+    , importMempool     :: !(HashMap MempoolKey (Maybe (Nanotime, [TxHash])))
     , importMempoolTime :: !(HashMap MempoolTimeKey (Maybe [TxHash]))
     , importEvents      :: ![StoreEvent]
     }
@@ -265,7 +265,7 @@ importGetTxRecord tx_hash =
         MaybeT $ retrieve db def (TxKey tx_hash)
 
 importGetMempool ::
-       (MonadBlock m, MonadImport m) => TxHash -> m (Maybe Nanotime)
+       (MonadBlock m, MonadImport m) => TxHash -> m (Maybe (Nanotime, [TxHash]))
 importGetMempool tx_hash = runMaybeT map_lookup
   where
     map_lookup = do
@@ -367,10 +367,16 @@ importNewTx mb prevs tx = do
     mapM_ (insert_output rbf) (zip [0 ..] (txOut tx))
     when (isNothing mb) $ do
         now <- Nanotime <$> liftIO getSystemTime
+        conflicts <- importGetMempool tx_hash >>= \case
+            Nothing -> return []
+            Just (_, conflicts) -> return conflicts
         modify $ \s ->
             s
                 { importMempool =
-                      H.insert (MempoolKey tx_hash) (Just now) (importMempool s)
+                      H.insert
+                          (MempoolKey tx_hash)
+                          (Just (now, conflicts))
+                          (importMempool s)
                 , importMempoolTime =
                       H.insertWith
                           (<>)
@@ -396,8 +402,7 @@ importNewTx mb prevs tx = do
   where
     is_rbf net =
         (&& getReplaceByFee net) $
-            or
-            [outRBF o | (_, _, o) <- prevs, isNothing (outBlock o)] ||
+        or [outRBF o | (_, _, o) <- prevs, isNothing (outBlock o)] ||
         or [s < 0xffffffff - 1 | input <- txIn tx, let s = txInSequence input]
     tx_hash = txHash tx
     spend_output (i, op, out) = do
@@ -818,10 +823,17 @@ importInsertMemTx tx_hash =
         guard . isNothing =<< importGetMempool tx_hash
         now <- Nanotime <$> liftIO getSystemTime
         mtxs <- (tx_hash :) <$> importGetMempoolTime now
+        conflicts <-
+            importGetMempool tx_hash >>= \case
+                Nothing -> return []
+                Just (_, conflicts) -> return conflicts
         modify $ \s ->
             s
                 { importMempool =
-                      H.insert (MempoolKey tx_hash) (Just now) (importMempool s)
+                      H.insert
+                          (MempoolKey tx_hash)
+                          (Just (now, conflicts))
+                          (importMempool s)
                 , importMempoolTime =
                       H.insert
                           (MempoolTimeKey now)
@@ -834,7 +846,7 @@ importDeleteMemTx tx_hash = do
     mtime <-
         importGetMempool tx_hash >>= \case
             Nothing -> return Nothing
-            Just n ->
+            Just (n, _) ->
                 importGetMempoolTime n >>= \case
                     [] -> return $ Just (MempoolTimeKey n, Nothing)
                     xs ->
@@ -982,52 +994,93 @@ revertBestBlock = do
 validateTx :: (MonadBlock m, MonadImport m) => Tx -> ExceptT TxException m ()
 validateTx tx = do
     when double_input $ throwError DoubleInput
-    prev_outs <-
+    prevs <- get_prevs
+    when (all (maybe False ((== txHash tx) . spenderHash) . outSpender) prevs) $
+        throwError AlreadyImported
+    when (any (isJust . outSpender) prevs) $ throwError DoubleSpend
+    let sum_inputs = sum (map outputValue prevs)
+        sum_outputs = sum (map outValue (txOut tx))
+    when (sum_outputs > sum_inputs) (throwError OverSpend)
+  where
+    get_prevs =
         forM (txIn tx) $ \TxIn {..} ->
             if nullOutPoint == prevOutput
                 then throwError ImportCoinbase
                 else importGetOutput prevOutput >>= \case
-                         Just o ->
-                             case outSpender o of
-                                 Nothing -> return o
-                                 Just s
-                                     | spenderHash s == txHash tx ->
-                                         throwError AlreadyImported
-                                     | otherwise -> throwError DoubleSpend
+                         Just o -> return o
                          Nothing -> throwError OrphanTx
-    let sum_inputs = sum (map outputValue prev_outs)
-        sum_outputs = sum (map outValue (txOut tx))
-    when (sum_outputs > sum_inputs) (throwError OverSpend)
-  where
     double_input =
         (/=)
             (length (txIn tx))
             (length (nubBy ((==) `on` prevOutput) (txIn tx)))
 
--- | Try to replace transaction in mempool if replace-by-fee is used.
-tryToReplace :: (MonadBlock m, MonadImport m) => Tx -> m Bool
-tryToReplace tx = isJust <$> runMaybeT go
+importLinkDoubleSpend :: (MonadBlock m, MonadImport m) => TxHash -> TxHash -> m ()
+importLinkDoubleSpend mempool_tx copy_tx =
+    importGetMempool mempool_tx >>= \case
+        Nothing -> return ()
+        Just (time, conflicts) ->
+            modify $ \s ->
+                s
+                    { importMempool =
+                          H.insert
+                              (MempoolKey mempool_tx)
+                              (Just (time, nub (copy_tx : conflicts)))
+                              (importMempool s)
+                    }
+
+-- | Try to replace transaction in mempool if replace-by-fee is used. Else do a
+-- double-spend import, which is deleting all transaction chains spending from
+-- this transaction's conflicts, importing this transaction as a deleted
+-- transaction, and importing the chains again.
+importDoubleSpend :: (MonadBlock m, MonadImport m) => Tx -> m Bool
+importDoubleSpend tx = fromMaybe False <$> runMaybeT (do_rbf <|> do_double)
   where
-    go = do
+    do_double = do
+        prevs <- get_prevs tx
+        conflicts <- recurse_spenders prevs
+        mapM_ (importDeleteTx . txHash) (reverse conflicts)
+        _ <- importMempoolTx tx
+        importDeleteTx (txHash tx)
+        mapM_ importMempoolTx conflicts
+        forM_ conflicts $ \t -> importLinkDoubleSpend (txHash t) (txHash tx)
+        return False
+    do_rbf = do
         net <- asks myNetwork
         guard $ getReplaceByFee net
-        prevs <- get_prevs
-        get_conflict prevs >>= mapM_ importDeleteTx
-        importMempoolTx tx
+        prevs <- get_prevs tx
+        conflicts <- get_rbf_conflict prevs
+        mapM_ importDeleteTx conflicts
+        imported <- importMempoolTx tx
+        when imported . forM_ conflicts $ importLinkDoubleSpend (txHash tx)
+        return imported
     is_rbf x =
         or
             [ s < 0xffffffff - 1
             | input <- txIn (txValue x)
             , let s = txInSequence input
             ]
-    get_prevs = forM (txIn tx) $ MaybeT . importGetOutput . prevOutput
-    get_conflict prevs = do
+    get_prevs t = forM (txIn t) $ MaybeT . importGetOutput . prevOutput
+    unconfirmed x = isNothing (txValueBlock x)
+    recurse_spenders prevs = do
+        spenders <- get_spenders prevs
+        let outpoints =
+                [ OutPoint (txHash (txValue txr)) i
+                | txr <- spenders
+                , (i, _) <- zip [0 ..] (txOut (txValue txr))
+                ]
+        outputs <- forM outpoints $ MaybeT . importGetOutput
+        (map txValue spenders <>) <$> recurse_spenders outputs
+    get_spenders prevs = do
         spenders <-
-            fmap catMaybes . forM prevs $ \out ->
+            fmap (nub . catMaybes) . forM prevs $ \out ->
                 case outSpender out of
                     Just s ->
                         Just <$> MaybeT (importGetTxRecord (spenderHash s))
                     Nothing -> return Nothing
+        guard $ all unconfirmed spenders
+        return spenders
+    get_rbf_conflict prevs = do
+        spenders <- get_spenders prevs
         guard $ all is_rbf spenders
         return $ map (txHash . txValue) spenders
 
@@ -1047,7 +1100,7 @@ importMempoolTx tx =
                         return False
                     DoubleSpend -> do
                         delete_orphan
-                        tryToReplace tx
+                        importDoubleSpend tx
                     _ -> do
                         $(logErrorS) "Block" $
                             "Could not import tx hash: " <>
@@ -1257,7 +1310,8 @@ processBlockMessage (BlockTxAvailable p ts) =
                     let mem =
                             retrieve db def (MempoolKey t) >>= \case
                                 Nothing -> return Nothing
-                                Just (_ :: Nanotime) -> return (Just t)
+                                Just (_ :: Nanotime, _ :: [TxHash]) ->
+                                    return (Just t)
                         orp =
                             retrieve db def (OrphanKey t) >>= \case
                                 Nothing -> return Nothing
@@ -1499,7 +1553,7 @@ getTx ::
 getTx net th db opts = do
     xs <- matchingAsList db opts (ShortMultiTxKey th)
     case find_tx xs of
-        Just TxRecord {..} ->
+        Just TxRecord {..} -> do
             let os = map (uncurry output) (filter_outputs xs)
                 is =
                     zipWith3
@@ -1507,7 +1561,15 @@ getTx net th db opts = do
                         (txValuePrevOuts <> repeat (0, B.empty))
                         (txIn txValue)
                         (map Just (txWitness txValue) <> repeat Nothing)
-             in return $
+            conflicts <-
+                if isNothing txValueBlock && not txValueDeleted
+                    then retrieve db opts (MempoolKey th) >>= \case
+                             Just (_ :: Nanotime, conflicts) -> return conflicts
+                             Nothing ->
+                                 throwString
+                                     "Could not get expected mempool transaction"
+                    else return []
+            return $
                 Just
                     DetailedTx
                         { detailedTxData = txValue
@@ -1517,6 +1579,7 @@ getTx net th db opts = do
                         , detailedTxOutputs = os
                         , detailedTxDeleted = txValueDeleted
                         , detailedTxRBF = txValueRBF
+                        , detailedTxConflicts = conflicts
                         }
         Nothing -> return Nothing
   where
@@ -1555,7 +1618,7 @@ getTx net th db opts = do
             | (k, v) <- xs
             , case k of
                   MultiTxKey {} -> True
-                  _             -> False
+                  _ -> False
             , let MultiTx t = v
             ]
     filter_outputs xs =
@@ -1563,7 +1626,7 @@ getTx net th db opts = do
         | (k, v) <- xs
         , case (k, v) of
               (MultiTxOutKey {}, MultiTxOutput {}) -> True
-              _                                    -> False
+              _ -> False
         , let MultiTxOutKey (OutputKey p) = k
         , let MultiTxOutput o = v
         ]
