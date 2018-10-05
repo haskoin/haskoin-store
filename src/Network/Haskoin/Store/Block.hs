@@ -61,16 +61,17 @@ dataVersion = 1
 
 -- | Block store process state.
 data BlockRead = BlockRead
-    { myBlockDB      :: !DB
-    , myUnspentDB    :: !(Maybe DB)
-    , mySelf         :: !BlockStore
-    , myChain        :: !Chain
-    , myManager      :: !Manager
-    , myListener     :: !(Listen StoreEvent)
-    , myBaseHeight   :: !(TVar BlockHeight)
-    , myPeer         :: !(TVar (Maybe Peer))
-    , myLastReceived :: !(TVar (Maybe UTCTime))
-    , myNetwork      :: !Network
+    { myBlockDB    :: !DB
+    , myUnspentDB  :: !(Maybe DB)
+    , mySelf       :: !BlockStore
+    , myChain      :: !Chain
+    , myManager    :: !Manager
+    , myListener   :: !(Listen StoreEvent)
+    , myBaseHeight :: !(TVar BlockHeight)
+    , myPeer       :: !(TVar (Maybe Peer))
+    , myLastActive :: !(TVar UTCTime)
+      -- ^ last time I got a block or set active peer
+    , myNetwork    :: !Network
     }
 
 -- | Block store context.
@@ -114,7 +115,8 @@ blockStore ::
 blockStore BlockConfig {..} inbox = do
     base_height_box <- newTVarIO 0
     peer_box <- newTVarIO Nothing
-    last_received_box <- newTVarIO Nothing
+    now <- liftIO getCurrentTime
+    last_received_box <- newTVarIO now
     runReaderT
         (init_db >> loadUTXO >> syncBlocks >> run)
         BlockRead
@@ -127,7 +129,7 @@ blockStore BlockConfig {..} inbox = do
             , myPeer = peer_box
             , myNetwork = blockConfNet
             , myUnspentDB = blockConfUnspentDB
-            , myLastReceived = last_received_box
+            , myLastActive = last_received_box
             }
   where
     b = inboxToMailbox inbox
@@ -858,7 +860,7 @@ importNewBlock :: (MonadImport m, MonadBlock m) => Block -> m ()
 importNewBlock b@Block {..} = do
     net <- asks myNetwork
     now <- liftIO getCurrentTime
-    asks myLastReceived >>= \v -> atomically $ writeTVar v (Just now)
+    asks myLastActive >>= \v -> atomically $ writeTVar v now
     block_value <-
         if block_hash == headerHash (getGenesisHeader net)
         then return BlockValue
@@ -1106,11 +1108,14 @@ syncBlocks =
                     p:_ -> return (onlinePeerMailbox p)
     reset_peer best_height = update_peer best_height Nothing
     update_peer height mp = do
+        now <- liftIO getCurrentTime
         base_height_box <- asks myBaseHeight
         peer_box <- asks myPeer
+        last_box <- asks myLastActive
         atomically $ do
             writeTVar base_height_box height
             writeTVar peer_box mp
+            writeTVar last_box now
     revert_if_needed chain_best = do
         db <- asks myBlockDB
         ch <- asks myChain
@@ -1235,14 +1240,14 @@ processBlockMessage (BlockTxAvailable p ts) =
                 peerGetTxs net p new
 
 processBlockMessage BlockPing = do
-    lst <- asks myLastReceived >>= readTVarIO
+    lst <- asks myLastActive >>= readTVarIO
     mgr <- asks myManager
     now <- liftIO getCurrentTime
     mp <- asks myPeer >>= readTVarIO
-    let diff = now `diffUTCTime` fromMaybe now lst
+    let diff = now `diffUTCTime` lst
     when (diff > 60) $
         case mp of
-            Just p -> managerKill PeerTimeout p mgr
+            Just p  -> managerKill PeerTimeout p mgr
             Nothing -> return ()
 
 processBlockMessage _ = return ()
