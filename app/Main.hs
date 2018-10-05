@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Conduit
 import           Control.Arrow
-import           Control.Exception ()
+import           Control.Exception          ()
 import           Control.Monad
 import           Control.Monad.Logger
 import           Data.Aeson                 as A
@@ -23,7 +23,6 @@ import           Data.List
 import           Data.Maybe
 import           Data.Serialize             as Serialize
 import           Data.String.Conversions
-import qualified Data.Text                  as T
 import           Data.Version
 import           Database.RocksDB           as R
 import           Haskoin
@@ -41,17 +40,6 @@ import           Text.Read                  (readMaybe)
 import           UnliftIO
 import           Web.Scotty.Trans           as S
 
-data OptConfig = OptConfig
-    { optConfigDir      :: !(Maybe FilePath)
-    , optConfigMemDB    :: !(Maybe FilePath)
-    , optConfigPort     :: !(Maybe Int)
-    , optConfigNetwork  :: !(Maybe Network)
-    , optConfigDiscover :: !(Maybe Bool)
-    , optConfigPeers    :: !(Maybe [(Host, Maybe Port)])
-    , optConfigMaxReqs  :: !(Maybe Int)
-    , optConfigVersion  :: !Bool
-    }
-
 data Config = Config
     { configDir      :: !FilePath
     , configMemDB    :: !(Maybe FilePath)
@@ -60,6 +48,7 @@ data Config = Config
     , configDiscover :: !Bool
     , configPeers    :: ![(Host, Maybe Port)]
     , configMaxReqs  :: !Int
+    , configVersion  :: !Bool
     }
 
 maxUriArgs :: Int
@@ -76,24 +65,6 @@ defPort = 3000
 
 defNetwork :: Network
 defNetwork = btc
-
-defDiscovery :: Bool
-defDiscovery = False
-
-defPeers :: [(Host, Maybe Port)]
-defPeers = []
-
-optToConfig :: OptConfig -> Config
-optToConfig OptConfig {..} =
-    Config
-    { configDir = fromMaybe myDirectory optConfigDir
-    , configMemDB = optConfigMemDB
-    , configPort = fromMaybe defPort optConfigPort
-    , configNetwork = fromMaybe defNetwork optConfigNetwork
-    , configDiscover = fromMaybe defDiscovery optConfigDiscover
-    , configPeers = fromMaybe defPeers optConfigPeers
-    , configMaxReqs = fromMaybe defMaxReqs optConfigMaxReqs
-    }
 
 instance Parsable BlockHash where
     parseParam =
@@ -138,42 +109,46 @@ instance ToJSON JsonEvent where
         object ["type" .= String "block", "id" .= block_hash]
 
 netNames :: String
-netNames = intercalate "|" $ map getNetworkName allNets
+netNames = intercalate "|" (map getNetworkName allNets)
 
-config :: Parser OptConfig
+config :: Parser Config
 config = do
-    optConfigDir <-
+    configDir <-
+        option str $
+        metavar "DIR" <> long "dir" <> short 'd' <> help "Data directory" <>
+        showDefault <>
+        value myDirectory
+    configMemDB <-
         optional . option str $
-        metavar "DIR" <> long "dir" <> short 'd' <>
-        help ("Data directory (default: " <> myDirectory <> ")")
-    optConfigMemDB <-
-        optional . option str $
-        metavar "UTXO" <> long "utxo" <> short 'u' <>
-        help "Memory directory for UTXO"
-    optConfigPort <-
-        optional . option auto $
-        metavar "PORT" <> long "port" <> short 'p' <>
-        help ("Listening port (default: " <> show defPort <> ")")
-    optConfigNetwork <-
-        optional . option (eitherReader networkReader) $
-        metavar "NETWORK" <> long "net" <> short 'n' <>
-        help ("Network: " <> netNames <> " (default: " <> net <> ")")
-    optConfigDiscover <-
-        optional . switch $
-        long "auto" <> short 'a' <> help "Enable automatic peer discovery"
-    optConfigPeers <-
-        optional . option (eitherReader peerReader) $
-        metavar "PEERS" <> long "peers" <> short 'e' <>
-        help "Network peers (i.e. \"localhost,peer.example.com:8333\")"
-    optConfigMaxReqs <-
-        optional . option auto $
-        metavar "MAX" <> long "max" <> short 'x' <>
-        help ("Maximum returned entries (default:" <> show defMaxReqs <> ")")
-    optConfigVersion <-
+        metavar "DIR" <> long "utxo" <> short 'u' <>
+        help "Memory-mapped UTXO cache for faster sync"
+    configPort <-
+        option auto $
+        metavar "INT" <> long "listen" <> short 'l' <> help "Listening port" <>
+        showDefault <>
+        value defPort
+    configNetwork <-
+        option (eitherReader networkReader) $
+        metavar netNames <> long "net" <> short 'n' <>
+        help "Network to connect to" <>
+        showDefault <>
+        value defNetwork
+    configDiscover <-
+        switch $
+        long "auto" <> short 'a' <> help "Peer discovery"
+    configPeers <-
+        many . option (eitherReader peerReader) $
+        metavar "HOST" <> long "peer" <> short 'p' <>
+        help "Network peer (as many as required)"
+    configMaxReqs <-
+        option auto $
+        metavar "INT" <> long "max" <> short 'x' <>
+        help "Maximum entries to return per request" <>
+        showDefault <>
+        value defMaxReqs
+    configVersion <-
         switch $ long "version" <> short 'v' <> help "Show version"
-    return OptConfig {..}
-  where
-    net = getNetworkName defNetwork
+    return Config {..}
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -185,22 +160,19 @@ networkReader s
     | s == getNetworkName bchRegTest = Right bchRegTest
     | otherwise = Left "Network name invalid"
 
-peerReader :: String -> Either String [(Host, Maybe Port)]
-peerReader = mapM hp . ls
-  where
-    hp s = do
-        let (host, p) = span (/= ':') s
-        when (null host) (Left "Peer name or address not defined")
-        port <-
-            case p of
-                [] -> return Nothing
-                ':':p' ->
-                    case readMaybe p' of
-                        Nothing -> Left "Peer port number cannot be read"
-                        Just n  -> return (Just n)
-                _ -> Left "Peer information could not be parsed"
-        return (host, port)
-    ls = map T.unpack . T.split (== ',') . T.pack
+peerReader :: String -> Either String (Host, Maybe Port)
+peerReader s = do
+    let (host, p) = span (/= ':') s
+    when (null host) (Left "Peer name or address not defined")
+    port <-
+        case p of
+            [] -> return Nothing
+            ':':p' ->
+                case readMaybe p' of
+                    Nothing -> Left "Peer port number cannot be read"
+                    Just n  -> return (Just n)
+            _ -> Left "Peer information could not be parsed"
+    return (host, port)
 
 defHandler :: Monad m => Except -> ActionT Except m ()
 defHandler ServerError   = S.json ServerError
@@ -221,13 +193,12 @@ myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
 main :: IO ()
 main =
     runStderrLoggingT $ do
-        opt <- liftIO (execParser opts)
-        when (optConfigVersion opt) . liftIO $ do
+        conf <- liftIO (execParser opts)
+        when (configVersion conf) . liftIO $ do
             putStrLn $ showVersion P.version
             exitSuccess
-        let conf = optToConfig opt
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
-            die "Specify: -a | -e PEER,..."
+            die "ERROR: Specify peers to connect or enable peer discovery."
         let net = configNetwork conf
         let wdir = configDir conf </> getNetworkName net
         liftIO $ createDirectoryIfMissing True wdir
@@ -471,7 +442,7 @@ runWeb conf st db = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a -> return a
+            Just a  -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses

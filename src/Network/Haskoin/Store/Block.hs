@@ -70,7 +70,6 @@ data BlockRead = BlockRead
     , myBaseHeight :: !(TVar BlockHeight)
     , myPeer       :: !(TVar (Maybe Peer))
     , myLastActive :: !(TVar UTCTime)
-      -- ^ last time I got a block or set active peer
     , myNetwork    :: !Network
     }
 
