@@ -11,8 +11,8 @@ extra-deps:
   - github: xenog/nqe
     commit: 017251ac1f5fc67e74022375a2b6c79207ca385d
   - github: haskoin/haskoin-core
-    commit: 61e01c092fc1c1023da1212de6db61fc5e3a0494
+    commit: 17d6fbeeb62ffb5294989e5f03fee36ac670fe01
   - github: xenog/rocksdb-query
     commit: ffba9ee46d9aba19b96eb16c685d99df1c66ce04
   - github: haskoin/haskoin-node
-    commit: 6be1e1e40af997571ae88c325dbaf883aa2180da
+    commit: eb8e18393982fde876eacfe833e6f6dae47a6668

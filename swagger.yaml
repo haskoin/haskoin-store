@@ -522,6 +522,7 @@ components:
         - outputs
         - block
         - deleted
+        - rbf
       properties:
         txid:
           $ref: '#/components/schemas/TxId'
@@ -551,6 +552,9 @@ components:
         deleted:
           type: boolean
           description: this transaction has been deleted and is no longer valid
+        rbf:
+          type: boolean
+          description: vulnerable to replace-by-fee (never true on bitcoin cash)
     HexTx:
       type: string
       format: hex

@@ -30,10 +30,15 @@ import           Haskoin.Node
 import           Network.Socket
 import           NQE
 
+dataVersion :: Word32
+dataVersion = 2 -- RBF
+
 -- | Reasons why a transaction may not get imported.
 data TxException
     = DoubleSpend
       -- ^ outputs already spent by another transaction
+    | DoubleInput
+      -- ^ spends the same output twice
     | OverSpend
       -- ^ outputs larger than inputs
     | OrphanTx
@@ -60,11 +65,14 @@ data TxException
       -- ^ peer rejected transaction for unknown reason
     | NotAtHeight
       -- ^ this node is not yet synchronized
+    | ImportCoinbase
+      -- ^ attempted to import a coinbase transaction
     deriving (Eq)
 
 instance Show TxException where
     show InvalidTx       = "invalid"
     show DoubleSpend     = "double-spend"
+    show DoubleInput     = "multiple inputs spend same output"
     show OverSpend       = "not enough funds"
     show OrphanTx        = "orphan"
     show AlreadyImported = "already imported"
@@ -77,6 +85,7 @@ instance Show TxException where
     show PublishTimeout  = "publish timeout"
     show PeerRejectOther = "peer rejected for unknown reason"
     show NotAtHeight     = "not at height"
+    show ImportCoinbase  = "coinbase"
 
 instance Exception TxException
 
@@ -134,16 +143,13 @@ data BlockMessage
       -- ^ block not found
     | BlockTxReceived !Peer
                       !Tx
-    | BlockTxNotFound !Peer
-                      ![TxHash]
-      -- ^ transaction received from a peer
     | BlockTxAvailable !Peer
                        ![TxHash]
       -- ^ peer has transactions available
-    | BlockTxPublished !Tx
-      -- ^ transaction has been published successfully
     | BlockPing
       -- ^ internal housekeeping ping
+    | PurgeMempool
+      -- ^ purge mempool transactions
 
 -- | Mailbox for block store.
 type BlockStore = Mailbox BlockMessage
@@ -273,6 +279,8 @@ data DetailedTx = DetailedTx
       -- ^ block information for this transaction
     , detailedTxDeleted :: !Bool
       -- ^ this transaction has been deleted and is no longer valid
+    , detailedTxRBF     :: !Bool
+      -- ^ this transaction can be replaced in the mempool
     } deriving (Show, Eq)
 
 -- | Input information.
@@ -354,6 +362,8 @@ data TxRecord = TxRecord
       -- ^ previous output values and scripts
     , txValueDeleted  :: !Bool
       -- ^ transaction has been deleted and is no longer valid
+    , txValueRBF      :: !Bool
+      -- ^ transaction vulnerable to replace-by-fee
     } deriving (Show, Eq, Ord)
 
 -- | Output key in database.
@@ -388,6 +398,8 @@ data Output = Output
       -- ^ input spending this output
     , outDeleted  :: !Bool
       -- ^ output has been deleted
+    , outRBF      :: !Bool
+      -- ^ output comes from replace-by-fee transaction
     } deriving (Show, Eq, Ord)
 
 -- | Information about input spending output.
@@ -768,6 +780,7 @@ instance Serialize Output where
         putShortByteString outScript
         put outSpender
         put outDeleted
+        put outRBF
     get = do
         guard . (== 0x01) =<< getWord8
         outputValue <- get
@@ -775,6 +788,7 @@ instance Serialize Output where
         outScript <- getShortByteString =<< get
         outSpender <- get
         outDeleted <- get
+        outRBF <- get
         return Output {..}
 
 instance Serialize BlockRef where
@@ -797,12 +811,14 @@ instance Serialize TxRecord where
         put txValue
         put txValuePrevOuts
         put txValueDeleted
+        put txValueRBF
     get = do
         guard . (== 0x00) =<< getWord8
         txValueBlock <- get
         txValue <- get
         txValuePrevOuts <- get
         txValueDeleted <- get
+        txValueRBF <- get
         return TxRecord {..}
 
 instance Serialize BestBlockKey where
@@ -1015,6 +1031,7 @@ detailedTxPairs DetailedTx {..} =
     , "outputs" .= detailedTxOutputs
     , "block" .= detailedTxBlock
     , "deleted" .= detailedTxDeleted
+    , "rbf" .= detailedTxRBF
     ]
 
 instance ToJSON DetailedTx where

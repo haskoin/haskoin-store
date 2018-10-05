@@ -12,10 +12,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Add a `mainchain` field for block data and a `deleted` field for transactions and outputs.
 - Stream records for performance.
 - Show witness data for transaction inputs.
+- Support RBF in Bitcoin SegWit networks.
 
 ### Changed
 - Refactor transaction importing code.
 - Database now in `db` as opposed to `blocks` directory.
+- Big changes from `haskoin-node` package.
 
 ### Removed
 - Remove some data from peers.

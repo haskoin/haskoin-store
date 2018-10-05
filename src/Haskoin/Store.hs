@@ -54,7 +54,6 @@ import           Network.Haskoin.Store.Types
 import           Network.Haskoin.Transaction
 import           Network.Socket              (SockAddr (..))
 import           NQE
-import           System.Random
 import           UnliftIO
 
 withStore ::
@@ -137,13 +136,11 @@ storeDispatch b _ (PeerEvent (PeerMessage p (MTx tx))) =
     BlockTxReceived p tx `sendSTM` b
 
 storeDispatch b _ (PeerEvent (PeerMessage p (MNotFound (NotFound is)))) = do
-    let txs = [TxHash h | InvVector t h <- is, t == InvTx || t == InvWitnessTx]
-        blocks =
+    let blocks =
             [ BlockHash h
             | InvVector t h <- is
             , t == InvBlock || t == InvWitnessBlock
             ]
-    unless (null txs) $ BlockTxNotFound p txs `sendSTM` b
     unless (null blocks) $ BlockNotFound p blocks `sendSTM` b
 
 storeDispatch b _ (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
@@ -199,17 +196,11 @@ publishTx net Store {..} db tx =
     send_it sub p = do
         h <- is_at_height
         unless h $ throwError NotAtHeight
-        r <- liftIO randomIO
         MTx tx `sendMessage` p
-        MPing (Ping r) `sendMessage` p
-        recv_loop sub p r
+        recv_loop sub p
         maybeToExceptT CouldNotImport . MaybeT $ getTx net (txHash tx) db def
-    recv_loop sub p r =
+    recv_loop sub p =
         receive sub >>= \case
-            StorePeerPong p' n
-                | p == p' && n == r -> do
-                    BlockTxPublished tx `send` storeBlock
-                    recv_loop sub p r
             StoreMempoolNew h
                 | h == txHash tx -> return ()
             StorePeerDisconnected p'
@@ -218,7 +209,7 @@ publishTx net Store {..} db tx =
                 | h == txHash tx -> return ()
             StoreTxException h x
                 | h == txHash tx -> throwError x
-            _ -> recv_loop sub p r
+            _ -> recv_loop sub p
     is_at_height = do
         bb <- getBestBlockHash db def
         cb <- chainGetBest storeChain

@@ -56,9 +56,6 @@ import           System.Random
 import           UnliftIO
 import           UnliftIO.Concurrent
 
-dataVersion :: Word32
-dataVersion = 1
-
 -- | Block store process state.
 data BlockRead = BlockRead
     { myBlockDB    :: !DB
@@ -138,9 +135,11 @@ blockStore BlockConfig {..} inbox = do
             forever $ receive inbox >>= processBlockMessage
     init_db =
         runResourceT $ do
-            ver :: Word32 <-
-                fromMaybe 0 <$> retrieve blockConfDB def BlockDataVersionKey
-            when (ver < dataVersion) $ purgeMempool blockConfDB
+            maybe_ver :: Maybe Word32 <-
+                retrieve blockConfDB def BlockDataVersionKey
+            when (maybe False (< dataVersion) maybe_ver) $
+                throwString
+                    "Database version not compatible, must be deleted manually."
             R.insert blockConfDB BlockDataVersionKey dataVersion
             runConduit $
                 matching blockConfDB def ShortOrphanKey .|
@@ -151,25 +150,6 @@ blockStore BlockConfig {..} inbox = do
             BlockValue {..} <- getBestBlock blockConfDB def
             base_height_box <- asks myBaseHeight
             atomically $ writeTVar base_height_box blockValueHeight
-
-purgeMempool :: MonadUnliftIO m => DB -> m ()
-purgeMempool db = purge_base_mempool >> purge_mempool_timestamps
-  where
-    purge_base_mempool = purge_byte 0x07
-    purge_mempool_timestamps = purge_byte 0x0b
-    purge_byte byte =
-        runResourceT . R.withIterator db def $ \it -> do
-            R.iterSeek it $ B.singleton byte
-            recurse_delete it byte
-    recurse_delete it byte =
-        R.iterKey it >>= \case
-            Nothing -> return ()
-            Just k
-                | B.head k == byte -> do
-                    R.delete db def k
-                    R.iterNext it
-                    recurse_delete it byte
-                | otherwise -> return ()
 
 -- | Run within 'MonadImport' context. Execute updates to database and
 -- notification to subscribers when finished.
@@ -381,8 +361,10 @@ importNewTx ::
     -> Tx
     -> m ()
 importNewTx mb prevs tx = do
+    net <- asks myNetwork
     mapM_ spend_output prevs
-    mapM_ insert_output (zip [0 ..] (txOut tx))
+    let rbf = is_rbf net
+    mapM_ (insert_output rbf) (zip [0 ..] (txOut tx))
     when (isNothing mb) $ do
         now <- Nanotime <$> liftIO getSystemTime
         modify $ \s ->
@@ -408,14 +390,20 @@ importNewTx mb prevs tx = do
                                    , B.Short.fromShort (outScript o)))
                               prevs
                     , txValueDeleted = False
+                    , txValueRBF = rbf
                     }
          in s {importTxRecord = H.insert (TxKey tx_hash) txr (importTxRecord s)}
   where
+    is_rbf net =
+        (&& getReplaceByFee net) $
+            or
+            [outRBF o | (_, _, o) <- prevs, isNothing (outBlock o)] ||
+        or [s < 0xffffffff - 1 | input <- txIn tx, let s = txInSequence input]
     tx_hash = txHash tx
     spend_output (i, op, out) = do
         importSpendOutput op out tx_hash i
         importSpendAddress mb op out tx_hash
-    insert_output (i, tx_out) = do
+    insert_output rbf (i, tx_out) = do
         let op = OutPoint tx_hash i
             out =
                 Output
@@ -424,6 +412,7 @@ importNewTx mb prevs tx = do
                     , outScript = B.Short.toShort (scriptOutput tx_out)
                     , outSpender = Nothing
                     , outDeleted = False
+                    , outRBF = rbf
                     }
         importUnspentOutput op out
         importUnspentAddress mb op out
@@ -732,6 +721,7 @@ importUndoSpendOutput op out = do
 -- | Update a transaction without deleting it.
 importUpdateTx :: (MonadBlock m, MonadImport m) => Maybe BlockRef -> TxHash -> m ()
 importUpdateTx mb tx_hash = do
+    net <- asks myNetwork
     etr <-
         importGetTxRecord tx_hash >>= \case
             Nothing ->
@@ -747,6 +737,7 @@ importUpdateTx mb tx_hash = do
             importGetOutput op >>= \case
                 Just out -> return $ Just (i, op, out)
                 Nothing -> return Nothing
+    let rbf = is_rbf net prevs etx
     mapM_ (update_input eb) prevs
     outs <-
         forM (take (length (txOut etx)) [0 ..]) $ \i -> do
@@ -755,20 +746,24 @@ importUpdateTx mb tx_hash = do
                 Nothing ->
                     throwString $ "Could not get output: " <> showOutPoint op
                 Just x -> return x
-    mapM_ (update_output eb) $ zip [0 ..] outs
+    mapM_ (update_output eb rbf) $ zip [0 ..] outs
     when (isNothing eb && isJust mb) $ importDeleteMemTx tx_hash
     when (isJust eb && isNothing mb) $ importInsertMemTx tx_hash
-    let ntr = etr {txValueBlock = mb}
+    let ntr = etr {txValueBlock = mb, txValueRBF = rbf}
     modify $ \s ->
         s {importTxRecord = H.insert (TxKey tx_hash) ntr (importTxRecord s)}
   where
+    is_rbf net prevs tx =
+        (&& getReplaceByFee net) $
+        or [outRBF o | (_, _, o) <- prevs, isNothing (outBlock o)] ||
+        or [s < 0xffffffff - 1 | input <- txIn tx, let s = txInSequence input]
     update_input eb (i, op, out) = do
         importSpendOutput op out tx_hash i
         importUndoSpendAddress eb op out tx_hash
         importSpendAddress mb op out tx_hash
-    update_output eb (i, out) = do
+    update_output eb rbf (i, out) = do
         let op = OutPoint tx_hash i
-            out' = out {outBlock = mb}
+            out' = out {outBlock = mb, outRBF = rbf}
         importUnspentOutput op out'
         importUndoUnspentAddress eb op out'
         importUnspentAddress mb op out'
@@ -780,6 +775,7 @@ importDeleteTx tx_hash =
             importGetTxRecord tx_hash >>= \case
                 Nothing -> mzero
                 Just x -> return x
+        $(logInfoS) "Block" $ "Deleting tx: " <> cs (txHashToHex tx_hash)
         let ops = map prevOutput . txIn $ txValue etr
             etx = txValue etr
             eb = txValueBlock etr
@@ -985,18 +981,20 @@ revertBestBlock = do
 -- | Validate a transaction without script evaluation.
 validateTx :: (MonadBlock m, MonadImport m) => Tx -> ExceptT TxException m ()
 validateTx tx = do
-    when double_input $ throwError DoubleSpend
+    when double_input $ throwError DoubleInput
     prev_outs <-
         forM (txIn tx) $ \TxIn {..} ->
-            importGetOutput prevOutput >>= \case
-                Just o ->
-                    case outSpender o of
-                        Nothing -> return o
-                        Just s
-                            | spenderHash s == txHash tx ->
-                                throwError AlreadyImported
-                            | otherwise -> throwError DoubleSpend
-                Nothing -> throwError OrphanTx
+            if nullOutPoint == prevOutput
+                then throwError ImportCoinbase
+                else importGetOutput prevOutput >>= \case
+                         Just o ->
+                             case outSpender o of
+                                 Nothing -> return o
+                                 Just s
+                                     | spenderHash s == txHash tx ->
+                                         throwError AlreadyImported
+                                     | otherwise -> throwError DoubleSpend
+                         Nothing -> throwError OrphanTx
     let sum_inputs = sum (map outputValue prev_outs)
         sum_outputs = sum (map outValue (txOut tx))
     when (sum_outputs > sum_inputs) (throwError OverSpend)
@@ -1005,6 +1003,33 @@ validateTx tx = do
         (/=)
             (length (txIn tx))
             (length (nubBy ((==) `on` prevOutput) (txIn tx)))
+
+-- | Try to replace transaction in mempool if replace-by-fee is used.
+tryToReplace :: (MonadBlock m, MonadImport m) => Tx -> m Bool
+tryToReplace tx = isJust <$> runMaybeT go
+  where
+    go = do
+        net <- asks myNetwork
+        guard $ getReplaceByFee net
+        prevs <- get_prevs
+        get_conflict prevs >>= mapM_ importDeleteTx
+        importMempoolTx tx
+    is_rbf x =
+        or
+            [ s < 0xffffffff - 1
+            | input <- txIn (txValue x)
+            , let s = txInSequence input
+            ]
+    get_prevs = forM (txIn tx) $ MaybeT . importGetOutput . prevOutput
+    get_conflict prevs = do
+        spenders <-
+            fmap catMaybes . forM prevs $ \out ->
+                case outSpender out of
+                    Just s ->
+                        Just <$> MaybeT (importGetTxRecord (spenderHash s))
+                    Nothing -> return Nothing
+        guard $ all is_rbf spenders
+        return $ map (txHash . txValue) spenders
 
 -- | Import a transaction.
 importMempoolTx ::
@@ -1020,6 +1045,9 @@ importMempoolTx tx =
                     OrphanTx -> do
                         import_orphan
                         return False
+                    DoubleSpend -> do
+                        delete_orphan
+                        tryToReplace tx
                     _ -> do
                         $(logErrorS) "Block" $
                             "Could not import tx hash: " <>
@@ -1028,15 +1056,18 @@ importMempoolTx tx =
                             cs (show e)
                         delete_orphan
                         return False
-            asks myListener >>= \l ->
-                atomically (l (StoreTxException (txHash tx) e))
+            unless ret $
+                asks myListener >>= \l ->
+                    atomically (l (StoreTxException (txHash tx) e))
             return ret
         Right () -> do
-            importInsertTx Nothing tx
-            modify $ \s ->
-                s {importEvents = StoreMempoolNew tx_hash : importEvents s}
+            import_it
             return True
   where
+    import_it = do
+        importInsertTx Nothing tx
+        modify $ \s ->
+            s {importEvents = StoreMempoolNew tx_hash : importEvents s}
     tx_hash = txHash tx
     delete_orphan =
         modify $ \s ->
@@ -1183,8 +1214,10 @@ processBlockMessage (BlockTxReceived _ tx) =
             _ <- runMonadImport $ importMempoolTx tx
             importOrphans
 
-processBlockMessage (BlockTxPublished tx) =
-    void . runMonadImport $ importMempoolTx tx
+processBlockMessage PurgeMempool = do
+    db <- asks myBlockDB
+    txs <- getMempool db def
+    runMonadImport $ forM_ txs importDeleteTx
 
 processBlockMessage (BlockPeerDisconnect p) = do
     peer_box <- asks myPeer
@@ -1248,8 +1281,6 @@ processBlockMessage BlockPing = do
         case mp of
             Just p  -> managerKill PeerTimeout p mgr
             Nothing -> return ()
-
-processBlockMessage _ = return ()
 
 -- | Import orphan transactions that can be imported.
 importOrphans :: (MonadUnliftIO m, MonadBlock m) => m ()
@@ -1485,6 +1516,7 @@ getTx net th db opts = do
                         , detailedTxInputs = is
                         , detailedTxOutputs = os
                         , detailedTxDeleted = txValueDeleted
+                        , detailedTxRBF = txValueRBF
                         }
         Nothing -> return Nothing
   where
