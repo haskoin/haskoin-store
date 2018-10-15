@@ -1,4 +1,4 @@
-resolver: lts-12.9
+resolver: lts-12.12
 nix:
   packages:
     - rocksdb
@@ -7,12 +7,8 @@ nix:
 extra-deps:
   - rocksdb-haskell-1.0.1
   - murmur3-1.0.3
-  - secp256k1-haskell-0.1.2
-  - github: xenog/nqe
-    commit: 017251ac1f5fc67e74022375a2b6c79207ca385d
-  - github: haskoin/haskoin-core
-    commit: 17d6fbeeb62ffb5294989e5f03fee36ac670fe01
-  - github: xenog/rocksdb-query
-    commit: ffba9ee46d9aba19b96eb16c685d99df1c66ce04
-  - github: haskoin/haskoin-node
-    commit: eb8e18393982fde876eacfe833e6f6dae47a6668
+  - secp256k1-haskell-0.1.3
+  - nqe-0.6.1
+  - haskoin-core-0.8.1
+  - rocksdb-query-0.2.0
+  - haskoin-node-0.9.3

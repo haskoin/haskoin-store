@@ -6,25 +6,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.3.0
 ### Added
-- Allow to use a different RocksDB for UTXO and balances (for syncing only for now).
 - Update dependencies.
 - Keep orphan blocks and deleted transactions in database.
-- Add a `mainchain` field for block data and a `deleted` field for transactions and outputs.
+- Add a `mainchain` field for block data and a `deleted` field for transactions.
 - Stream records for performance.
-- Show witness data for transaction inputs.
-- Support RBF in Bitcoin SegWit networks.
+- Show witness data for transaction inputs in SegWit network.
+- Support RBF in SegWit network.
 
 ### Changed
-- Refactor transaction importing code.
+- Refactor all data access code away from actor.
+- Refactor import logic away from actor.
+- Abstract data access using typeclasses.
+- Implement data access using clean layered architecture.
+- Make most of import logic code pure.
 - Database now in `db` as opposed to `blocks` directory.
-- Big changes from `haskoin-node` package.
+- Use latest `haskoin-node`.
 
 ### Removed
-- Remove some data from peers.
-- Remove full transaction data from address transaction output data.
-- Remove limits from address transaction output data.
+- Remove some data from peer information output.
+- Remove full transaction from address transaction data.
+- Remove limits from address transaction data.
 - Remove block data from previous output.
 - Remove spender from JSON response when output not spent.
+- Remove block hash from block reference.
 
 ## 0.2.3
 ### Removed

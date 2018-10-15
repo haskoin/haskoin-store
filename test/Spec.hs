@@ -4,7 +4,6 @@
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
-import           Data.Default
 import           Data.Maybe
 import           Database.RocksDB     (DB)
 import           Database.RocksDB     as R
@@ -29,7 +28,7 @@ main = do
         it "gets 8 blocks" $
             withTestStore net "eight-blocks" $ \TestStore {..} -> do
                 bs <-
-                    replicateM 9 . receiveMatch testStoreEvents $ \case
+                    replicateM 8 . receiveMatch testStoreEvents $ \case
                         StoreBestBlock b -> Just b
                         _ -> Nothing
                 let bestHash = last bs
@@ -46,28 +45,29 @@ main = do
                                 | h == 0 -> return b
                                 | otherwise -> get_the_block ((h :: Int) - 1)
                             _ -> get_the_block h
-                bh <- get_the_block 381
-                m <- getBlock bh testStoreDB def
-                let BlockValue {..} = fromMaybe (error "Could not get block") m
-                blockValueHeight `shouldBe` 381
-                length blockValueTxs `shouldBe` 2
+                bh <- get_the_block 380
+                m <- getBlock (testStoreDB, defaultReadOptions) bh
+                let bd = fromMaybe (error "Could not get block") m
+                blockDataHeight bd `shouldBe` 381
+                length (blockDataTxs bd) `shouldBe` 2
                 let h1 =
                         "e8588129e146eeb0aa7abdc3590f8c5920cc5ff42daf05c23b29d4ae5b51fc22"
                     h2 =
                         "7e621eeb02874ab039a8566fd36f4591e65eca65313875221842c53de6907d6c"
-                head blockValueTxs `shouldBe` h1
-                last blockValueTxs `shouldBe` h2
-                t1 <- getTx net h1 testStoreDB def
+                head (blockDataTxs bd) `shouldBe` h1
+                last (blockDataTxs bd) `shouldBe` h2
+                t1 <- getTransaction (testStoreDB, defaultReadOptions) h1
                 t1 `shouldSatisfy` isJust
-                txHash (detailedTxData (fromJust t1)) `shouldBe` h1
-                t2 <- getTx net h2 testStoreDB def
+                txHash (transactionData (fromJust t1)) `shouldBe` h1
+                t2 <- getTransaction (testStoreDB, defaultReadOptions) h2
                 t2 `shouldSatisfy` isJust
-                txHash (detailedTxData (fromJust t2)) `shouldBe` h2
+                txHash (transactionData (fromJust t2)) `shouldBe` h2
 
 withTestStore ::
        MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
 withTestStore net t f =
-    withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
+    withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w -> do
+        x <- newInbox
         runNoLoggingT $ do
             db <-
                 open
@@ -83,15 +83,14 @@ withTestStore net t f =
                         , storeConfDiscover = True
                         , storeConfDB = db
                         , storeConfNetwork = net
-                        , storeConfUnspentDB = Nothing
+                        , storeConfListen = (`sendSTM` x)
                         }
             withStore cfg $ \Store {..} ->
-                withSubscription storePublisher $ \sub ->
-                    lift $
-                    f
-                        TestStore
-                            { testStoreDB = db
-                            , testStoreBlockStore = storeBlock
-                            , testStoreChain = storeChain
-                            , testStoreEvents = sub
-                            }
+                lift $
+                f
+                    TestStore
+                        { testStoreDB = db
+                        , testStoreBlockStore = storeBlock
+                        , testStoreChain = storeChain
+                        , testStoreEvents = x
+                        }

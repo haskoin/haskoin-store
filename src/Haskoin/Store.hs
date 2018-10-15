@@ -3,56 +3,59 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
+    , StoreConfig(..)
+    , StoreEvent(..)
+    , BlockData(..)
+    , Transaction(..)
+    , Input(..)
     , Output(..)
     , Spender(..)
     , BlockRef(..)
-    , StoreConfig(..)
-    , StoreEvent(..)
-    , BlockValue(..)
-    , DetailedTx(..)
-    , DetailedInput(..)
-    , DetailedOutput(..)
-    , NewTx(..)
-    , AddrOutput(..)
-    , AddrTx(..)
-    , AddressBalance(..)
-    , TxException(..)
+    , Unspent(..)
+    , AddressTx(..)
+    , Balance(..)
     , PeerInformation(..)
     , withStore
     , store
     , getBestBlock
     , getBlocksAtHeight
     , getBlock
-    , getBlocks
-    , getTx
-    , getAddrTxs
-    , getUnspent
+    , getTransaction
     , getBalance
     , getMempool
+    , getAddressUnspents
+    , getAddressTxs
     , getPeersInformation
     , publishTx
+    , transactionData
+    , isCoinbase
+    , confirmed
+    , transactionToJSON
+    , transactionToEncoding
+    , outputToJSON
+    , outputToEncoding
+    , inputToJSON
+    , inputToEncoding
+    , unspentToJSON
+    , unspentToEncoding
+    , balanceToJSON
+    , balanceToEncoding
+    , addressTxToJSON
+    , addressTxToEncoding
     ) where
 
 import           Control.Monad.Except
 import           Control.Monad.Logger
-import           Control.Monad.Trans.Maybe
-import           Data.Default
 import           Data.Maybe
-import           Data.Serialize
-import           Database.RocksDB
+import           Haskoin
 import           Haskoin.Node
-import           Network.Haskoin.Block
-import           Network.Haskoin.Constants
-import           Network.Haskoin.Network
-import           Network.Haskoin.Node.Common
 import           Network.Haskoin.Store.Block
-import           Network.Haskoin.Store.Types
-import           Network.Haskoin.Transaction
-import           Network.Socket              (SockAddr (..))
+import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Store.Messages
+import           Network.Socket                 (SockAddr (..))
 import           NQE
 import           UnliftIO
 
@@ -61,19 +64,17 @@ withStore ::
     => StoreConfig
     -> (Store -> m a)
     -> m a
-withStore cfg f =
-    withPublisher $ \pub -> do
-        mgr_inbox <- newInbox
-        ch_inbox <- newInbox
-        withProcess (store cfg pub mgr_inbox ch_inbox) $ \(Process bs_async bs) -> do
-            link bs_async
-            f
-                Store
-                    { storeManager = inboxToMailbox mgr_inbox
-                    , storeChain = inboxToMailbox ch_inbox
-                    , storeBlock = bs
-                    , storePublisher = pub
-                    }
+withStore cfg f = do
+    mgri <- newInbox
+    chi <- newInbox
+    withProcess (store cfg mgri chi) $ \(Process a b) -> do
+        link a
+        f
+            Store
+                { storeManager = inboxToMailbox mgri
+                , storeChain = inboxToMailbox chi
+                , storeBlock = b
+                }
 
 -- | Run a Haskoin Store instance. It will launch a network node and a
 -- 'BlockStore', connect to the network and start synchronizing blocks and
@@ -81,45 +82,47 @@ withStore cfg f =
 store ::
        (MonadLoggerIO m, MonadUnliftIO m)
     => StoreConfig
-    -> Publisher StoreEvent
     -> Inbox ManagerMessage
     -> Inbox ChainMessage
     -> Inbox BlockMessage
     -> m ()
-store StoreConfig {..} pub mgr_inbox ch_inbox bs_inbox = do
-    let node_cfg =
+store cfg mgri chi bsi = do
+    let ncfg =
             NodeConfig
-                { nodeConfMaxPeers = storeConfMaxPeers
-                , nodeConfDB = storeConfDB
-                , nodeConfPeers = storeConfInitPeers
-                , nodeConfDiscover = storeConfDiscover
-                , nodeConfEvents = storeDispatch (inboxToMailbox bs_inbox) pub
+                { nodeConfMaxPeers = storeConfMaxPeers cfg
+                , nodeConfDB = storeConfDB cfg
+                , nodeConfPeers = storeConfInitPeers cfg
+                , nodeConfDiscover = storeConfDiscover cfg
+                , nodeConfEvents = storeDispatch b l
                 , nodeConfNetAddr = NetworkAddress 0 (SockAddrInet 0 0)
-                , nodeConfNet = storeConfNetwork
+                , nodeConfNet = storeConfNetwork cfg
+                , nodeConfTimeout = 10
                 }
-    withAsync (node node_cfg mgr_inbox ch_inbox) $ \node_async -> do
-        link node_async
-        let block_cfg =
+    withAsync (node ncfg mgri chi) $ \a -> do
+        link a
+        let bcfg =
                 BlockConfig
-                    { blockConfChain = inboxToMailbox ch_inbox
-                    , blockConfManager = inboxToMailbox mgr_inbox
-                    , blockConfListener = (`sendSTM` pub) . Event
-                    , blockConfDB = storeConfDB
-                    , blockConfUnspentDB = storeConfUnspentDB
-                    , blockConfNet = storeConfNetwork
+                    { blockConfChain = inboxToMailbox chi
+                    , blockConfManager = inboxToMailbox mgri
+                    , blockConfListener = l
+                    , blockConfDB = storeConfDB cfg
+                    , blockConfNet = storeConfNetwork cfg
                     }
-        blockStore block_cfg bs_inbox
+        blockStore bcfg bsi
+  where
+    l = storeConfListen cfg
+    b = inboxToMailbox bsi
 
 -- | Dispatcher of node events.
-storeDispatch :: BlockStore -> Publisher StoreEvent -> NodeEvent -> STM ()
+storeDispatch :: BlockStore -> Listen StoreEvent -> Listen NodeEvent
 
-storeDispatch b pub (PeerEvent (PeerConnected p)) = do
-    Event (StorePeerConnected p) `sendSTM` pub
-    BlockPeerConnect p `sendSTM` b
+storeDispatch b pub (PeerEvent (PeerConnected p a)) = do
+    pub (StorePeerConnected p a)
+    BlockPeerConnect p a `sendSTM` b
 
-storeDispatch b pub (PeerEvent (PeerDisconnected p)) = do
-    Event (StorePeerDisconnected p) `sendSTM` pub
-    BlockPeerDisconnect p `sendSTM` b
+storeDispatch b pub (PeerEvent (PeerDisconnected p a)) = do
+    pub (StorePeerDisconnected p a)
+    BlockPeerDisconnect p a `sendSTM` b
 
 storeDispatch b _ (ChainEvent (ChainBestBlock bn)) =
     BlockNewBest bn `sendSTM` b
@@ -127,7 +130,7 @@ storeDispatch b _ (ChainEvent (ChainBestBlock bn)) =
 storeDispatch _ _ (ChainEvent _) = return ()
 
 storeDispatch _ pub (PeerEvent (PeerMessage p (MPong (Pong n)))) =
-    Event (StorePeerPong p n) `sendSTM` pub
+    pub (StorePeerPong p n)
 
 storeDispatch b _ (PeerEvent (PeerMessage p (MBlock block))) =
     BlockReceived p block `sendSTM` b
@@ -147,73 +150,17 @@ storeDispatch b _ (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
     let txs = [TxHash h | InvVector t h <- is, t == InvTx || t == InvWitnessTx]
     unless (null txs) $ BlockTxAvailable p txs `sendSTM` b
 
-storeDispatch _ pub (PeerEvent (PeerMessage _ (MReject Reject {..}))) =
-    when (rejectMessage == MCTx) $
-    case decode_tx_hash rejectData of
-        Nothing -> return ()
-        Just tx_hash ->
-            let e = Event . StoreTxException tx_hash
-                m =
-                    case rejectCode of
-                        RejectInvalid         -> InvalidTx
-                        RejectDuplicate       -> DoubleSpend
-                        RejectNonStandard     -> NonStandard
-                        RejectDust            -> Dust
-                        RejectInsufficientFee -> LowFee
-                        _                     -> PeerRejectOther
-             in e m `sendSTM` pub
-  where
-    decode_tx_hash bytes =
-        case decode bytes of
-            Left _  -> Nothing
-            Right h -> Just h
-
 storeDispatch _ _ (PeerEvent _) = return ()
 
 -- | Publish a new transaction to the network.
-publishTx ::
-       (MonadUnliftIO m, MonadLoggerIO m)
-    => Network
-    -> Store
-    -> DB
-    -> Tx
-    -> m (Either TxException DetailedTx)
-publishTx net Store {..} db tx =
-    getTx net (txHash tx) db def >>= \case
-        Just d -> return (Right d)
-        Nothing ->
-            timeout (10 * 1000 * 1000) (runExceptT go) >>= \case
-                Nothing -> return (Left PublishTimeout)
-                Just e -> return e
-  where
-    go = do
-        p <-
-            managerGetPeers storeManager >>= \case
-                [] -> throwError NoPeers
-                p:_ -> return (onlinePeerMailbox p)
-        ExceptT . withSubscription storePublisher $ \sub ->
-            runExceptT (send_it sub p)
-    send_it sub p = do
-        h <- is_at_height
-        unless h $ throwError NotAtHeight
-        MTx tx `sendMessage` p
-        recv_loop sub p
-        maybeToExceptT CouldNotImport . MaybeT $ getTx net (txHash tx) db def
-    recv_loop sub p =
-        receive sub >>= \case
-            StoreMempoolNew h
-                | h == txHash tx -> return ()
-            StorePeerDisconnected p'
-                | p' == p -> throwError PeerIsGone
-            StoreTxException h AlreadyImported
-                | h == txHash tx -> return ()
-            StoreTxException h x
-                | h == txHash tx -> throwError x
-            _ -> recv_loop sub p
-    is_at_height = do
-        bb <- getBestBlockHash db def
-        cb <- chainGetBest storeChain
-        return (headerHash (nodeHeader cb) == bb)
+publishTx :: (MonadUnliftIO m, MonadLoggerIO m) => Manager -> Tx -> m Bool
+publishTx mgr tx =
+    managerGetPeers mgr >>= \case
+        [] -> return False
+        ps -> do
+            forM_ ps (\OnlinePeer {onlinePeerMailbox = p} -> MTx tx `sendMessage` p)
+            return True
+
 
 -- | Obtain information about connected peers from peer manager process.
 getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]

@@ -5,15 +5,15 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: "0.3.0"
+  version: 0.3.0
   title: Blockchain API
   contact:
     name: Haskoin
-    url: 'http://haskoin.com'
+    url: http://haskoin.com
     email: xenog@protonmail.com
   license:
     name: Unlicense
-    url: 'http://unlicense.org/'
+    url: http://unlicense.org/
 tags:
   - name: address
   - name: transaction
@@ -25,13 +25,15 @@ paths:
       tags:
         - address
       summary: get transactions for an address
-      operationId: getAddressTransactions
+      operationId: getAddressTxs
       parameters:
         - name: address
           in: path
           required: true
           schema:
-             $ref: '#/components/schemas/Address'
+            type: string
+            format: base58
+            example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
       responses:
         '200':
           description: success
@@ -40,15 +42,15 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressTransaction'
+                  $ref: '#/components/schemas/AddressTx'
         '404':
           description: invalid address
   '/address/transactions':
     get:
       tags:
         - address
-      summary: get outputs for multiple addresses
-      operationId: getMultipleAddressTransactions
+      summary: get transactions for multiple addresses
+      operationId: getMultipleAddressTxs
       parameters:
         - name: addresses
           in: query
@@ -57,7 +59,9 @@ paths:
           schema:
             type: array
             items:
-              $ref: '#/components/schemas/Address'
+              type: string
+              format: base58
+              example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
       responses:
         '200':
           description: Success
@@ -66,7 +70,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressTransaction'
+                  $ref: '#/components/schemas/AddressTx'
         '404':
           description: invalid address
   '/address/{address}/balance':
@@ -74,6 +78,7 @@ paths:
       tags:
         - address
       operationId: getBalance
+      summary: get balance for an address
       parameters:
         - name: address
           in: path
@@ -81,6 +86,7 @@ paths:
           schema:
             type: string
             format: base58
+            example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
       responses:
         '200':
           description: success
@@ -106,6 +112,7 @@ paths:
             items:
               type: string
               format: base58
+              example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
       responses:
         '200':
           description: success
@@ -121,28 +128,16 @@ paths:
     get:
       tags:
         - address
-      summary: get only unspent outputs for an address
+      summary: get unspent outputs for an address
       operationId: getAddressUnspent
       parameters:
         - name: address
           in: path
           required: true
           schema:
-            $ref: '#/components/schemas/Address'
-        - name: height
-          description: at or below this block
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-        - name: max
-          description: maximum number of entries
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
+            type: string
+            format: base58
+            example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
       responses:
         '200':
           description: success
@@ -151,14 +146,14 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressOutput'
+                  $ref: '#/components/schemas/Unspent'
         '404':
           description: invalid address
   '/address/unspent':
     get:
       tags:
         - address
-      summary: get only unspent outputs for multiple addresses
+      summary: get unspent outputs for multiple addresses
       operationId: getMultipleAddressUnspent
       parameters:
         - name: addresses
@@ -170,20 +165,7 @@ paths:
             items:
               type: string
               format: base58
-        - name: height
-          description: at or below this block
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-        - name: max
-          description: maximum number of entries
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
+              example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
       responses:
         '200':
           description: success
@@ -192,13 +174,14 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AddressOutput'
+                  $ref: '#/components/schemas/Unspent'
         '404':
           description: invalid address
   '/block/best':
     get:
       tags:
         - block
+      summary: get best block in chain
       operationId: GetBlockHead
       responses:
         '200':
@@ -206,12 +189,36 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Block'
+                $ref: '#/components/schemas/BlockData'
+  '/block/{block}':
+    get:
+      tags:
+        - block
+      operationId: getBlock
+      summary: get block by hash
+      parameters:
+        - name: block
+          in: path
+          required: true
+          schema:
+            type: string
+            format: hex
+            example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockData'
+        '404':
+          description: block not found
   '/blocks':
     get:
       tags:
         - block
       operationId: getBlocks
+      summary: get multiple blocks by hash
       parameters:
         - name: blocks
           in: path
@@ -222,6 +229,7 @@ paths:
             items:
               type: string
               format: hex
+              example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
       responses:
         '200':
           description: success
@@ -233,38 +241,19 @@ paths:
                   $ref: '#/components/schemas/Block'
         '404':
           description: block not found
-  '/block/{block}':
-    get:
-      tags:
-        - block
-      operationId: getBlock
-      parameters:
-        - name: block
-          in: path
-          required: true
-          schema:
-            type: string
-            format: hex
-      responses:
-        '200':
-          description: success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Block'
-        '404':
-          description: block not found
   '/block/height/{height}':
     get:
       tags:
         - block
-      operationId: getBlockHeight
+      operationId: getBlocksAtHeight
+      summary: get block hashes at specified height
       parameters:
         - name: height
           in: path
           required: true
           schema:
             type: integer
+            example: 545199
       responses:
         '200':
           description: success
@@ -273,14 +262,17 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/BlockHash'
+                  type: string
+                  format: hex
+                  example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
         '404':
           description: block not found
   '/block/heights':
     get:
       tags:
         - block
-      operationId: getBlockAtHeight
+      operationId: getBlocksAtHeights
+      summary: get multiple blocks at specified heights
       parameters:
         - name: heights
           in: query
@@ -288,6 +280,10 @@ paths:
           required: true
           schema:
             type: array
+            example:
+              - 545199
+              - 545200
+              - 545201
             items:
               type: integer
       responses:
@@ -297,10 +293,15 @@ paths:
             application/json:
               schema:
                 type: array
+                example:
+                  - ['000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2']
+                  - ['00000000000000000005d49867a529199148faad8cd96b27825e9ec4f6ea2b24']
+                  - ['0000000000000000001752f56a1f25e77c3284a02d9fb0312757320dabc6afcb']
                 items:
                   type: array
                   items:
-                    $ref: '#/components/schemas/BlockHash'
+                    type: string
+                    format: hex
         '404':
           description: block not found
   '/transaction/{txid}':
@@ -315,6 +316,7 @@ paths:
           schema:
             type: string
             format: hex
+            example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
       responses:
         '200':
           description: success
@@ -336,13 +338,16 @@ paths:
           schema:
             type: string
             format: hex
+            example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
       responses:
         '200':
           description: success
           content:
             text/plain:
               schema:
-                $ref: '#/components/schemas/HexTx'
+                type: string
+                format: hex
+                example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
         '404':
           description: transaction not found
   '/transactions':
@@ -360,6 +365,7 @@ paths:
             items:
               type: string
               format: hex
+              example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
       responses:
         '200':
           description: success
@@ -380,7 +386,9 @@ paths:
         content:
           text/plain:
             schema:
-              $ref: '#/components/schemas/HexTx'
+              type: string
+              format: hex
+              example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
       responses:
         '200':
           description: success
@@ -405,6 +413,7 @@ paths:
             items:
               type: string
               format: hex
+              example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
       responses:
         '200':
           description: success
@@ -413,7 +422,9 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/HexTx'
+                  type: string
+                  format: hex
+                  example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
         '404':
           description: transaction not found
   '/mempool':
@@ -429,7 +440,9 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/TxId'
+                  type: string
+                  format: hex
+                  example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
   '/events':
     get:
       tags:
@@ -459,6 +472,290 @@ paths:
                   $ref: '#/components/schemas/Peer'
 components:
   schemas:
+    BlockRef:
+      oneOf:
+        - type: object
+          required:
+            - height
+            - position
+          properties:
+            height:
+              summary: height of block
+              type: integer
+              example: 545199
+            position:
+              summary: position of transaction within block
+              type: integer
+              example: 14
+        - type: object
+          required:
+            - mempool
+          properties:
+            mempool:
+              summary: time transaction was received in mempool
+              type: integer
+              example: 1539278010
+    AddressTx:
+      type: object
+      required:
+        - address
+        - block
+        - txid
+      properties:
+        address:
+          type: string
+          format: base58
+          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+        block:
+          $ref: '#/components/schemas/BlockRef'
+        txid:
+          type: string
+          format: hex
+          example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+    Balance:
+      type: object
+      required:
+        - address
+        - confirmed
+        - unconfirmed
+        - utxo
+      properties:
+        address:
+          type: string
+          format: base58
+          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+        confirmed:
+          type: integer
+          format: int64
+        unconfirmed:
+          type: integer
+          format: int64
+        utxo:
+          description: number of unspent outputs
+          type: integer
+    Unspent:
+      type: object
+      required:
+        - address
+        - block
+        - txid
+        - index
+        - pkscript
+        - value
+      properties:
+        address:
+          type: string
+          format: base58
+          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+        block:
+          $ref: '#/components/schemas/BlockRef'
+        txid:
+          type: string
+          format: hex
+          example: '1e3e9f4d77ad94b28626afba4269a77355279e25e0b4c249bb020aec3cf51773'
+        index:
+          type: integer
+          example: 1
+        pkscript:
+          type: string
+          format: hex
+          example: 'a914edf6588e432cd7dd8d7931ee5657634687874f4b87'
+        value:
+          type: integer
+          format: int64
+          description: output value in satoshi
+          example: 7897897
+    BlockData:
+      type: object
+      required:
+        - hash
+        - height
+        - mainchain
+        - previous
+        - time
+        - version
+        - bits
+        - nonce
+        - size
+        - tx
+      properties:
+        hash:
+          type: string
+          format: hex
+          example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+        size:
+          type: integer
+          example: 1037064
+        height:
+          type: integer
+          example: 545199
+        mainchain:
+          type: boolean
+          example: true
+        previous:
+          type: string
+          format: hex
+          example: '000000000000000000118d430528af530905bc55ff707529f080ca404ef20d08'
+        time:
+          type: integer
+          example: 1539199096
+        version:
+          type: integer
+          format: int32
+          example: 536870912
+        bits:
+          type: integer
+          format: int32
+          example: 388350353
+        nonce:
+          type: integer
+          format: int32
+          example: 611360495
+        tx:
+          type: array
+          example:
+            - '8e2d666571877e01a4509d35fa87862162223637feaaf7de4b609f50801ec8ce'
+            - '87cb6e0c3136a770191ace304e8217d47dac319051e50ddcc2715a4c4ab4e740'
+            - '17c5eeda2ff8ae1674cd63ac62f5eed79f7194d8ec63f936a3304adc925927dd'
+            - '5336186fbf190739e58440823e86999b475a03fe8256e630b1f97eea2b9a2e3f'
+            - '980949e86992634315fe232a3bfac91744d91bb4fcc132e910cc4cdd5dab8569'
+          items:
+            type: string
+            format: hex
+    Input:
+      type: object
+      required:
+        - coinbase
+        - txid
+        - output
+        - sigscript
+        - sequence
+        - pkscript
+        - value
+        - address
+      properties:
+        coinbase:
+          type: boolean
+        txid:
+          type: string
+          format: hex
+          example: '1e3e9f4d77ad94b28626afba4269a77355279e25e0b4c249bb020aec3cf51773'
+        output:
+          type: integer
+          example: 1
+        sigscript:
+          type: string
+          format: hex
+          example: '16001459c667d41f60ca85fe5f7316c6b55b6cba05d6df'
+        value:
+          type: integer
+          example: 7897897
+        sequence:
+          type: integer
+          format: int32
+          example: 4294967294
+        address:
+          type: string
+          format: base58
+          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+        pkscript:
+          type: string
+          format: hex
+          example: '0000000000000017a914edf6588e432cd7dd8d7931ee5657634687874f4b87'
+        witness:
+          description: witness data on segwit networks
+          type: array
+          example:
+            - '000000000000004730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b401'
+            - '000000000000002102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7'
+          items:
+            type: string
+            format: hex
+    Spender:
+      type: object
+      required:
+        - txid
+        - input
+      properties:
+        txid:
+          type: string
+          format: hex
+          example: '958819acf4de7be842def87e9bf13e17a8b04d2a5ebed9042af166c1c86bd297'
+        input:
+          type: integer
+          example: 0
+    Output:
+      type: object
+      required:
+        - address
+        - pkscript
+        - value
+        - spent
+      properties:
+        address:
+          type: string
+          format: base58
+          example: '366yjyxLxaL7RP9KN2pyNfQ9CdsfWErmQz'
+        pkscript:
+          type: string
+          format: hex
+          example: '0000000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87'
+        value:
+          type: integer
+          format: int64
+          example: 1536877
+        spent:
+          type: boolean
+          example: true
+        spender:
+          $ref: '#/components/schemas/Spender'
+    Transaction:
+      type: object
+      required:
+        - txid
+        - size
+        - version
+        - locktime
+        - fee
+        - inputs
+        - outputs
+        - block
+        - deleted
+      properties:
+        txid:
+          type: string
+          format: hex
+          example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+        size:
+          type: integer
+          example: 249
+        version:
+          type: integer
+          example: 2
+        locktime:
+          type: integer
+          example: 545207
+        fee:
+          type: integer
+          format: int64
+          example: 100800
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Input'
+        outputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Output'
+        block:
+          $ref: '#/components/schemas/BlockRef'
+        deleted:
+          type: boolean
+          example: true
+        rbf:
+          type: boolean
+          example: false
+          description: transaction vulnerable to replace-by-fee
     Event:
       type: object
       required:
@@ -474,319 +771,30 @@ components:
           type: string
           format: hex
           description: block or transaction id
-          example: 'ee680b8fd36701c6f91b523547e8158f49e178c2a17b86f94c8ffbf828dbd2d1'
-    AddressOutput:
-      type: object
-      required:
-        - address
-        - txid
-        - index
-        - block
-        - output
-      properties:
-        address:
-          $ref: '#/components/schemas/Address'
-        txid:
-          $ref: '#/components/schemas/TxId'
-        index:
-          $ref: '#/components/schemas/OutputIndex'
-        block:
-          $ref: '#/components/schemas/BlockRef'
-        output:
-          $ref: '#/components/schemas/Output'
-    AddressTransaction:
-      type: object
-      required:
-        - address
-        - txid
-        - height
-        - position
-      properties:
-        address:
-          $ref: '#/components/schemas/Address'
-        txid:
-          $ref: '#/components/schemas/TxId'
-        height:
-          $ref: '#/components/schemas/BlockHeight'
-        position:
-          $ref: '#/components/schemas/BlockPosition'
-    Transaction:
-      type: object
-      required:
-        - txid
-        - size
-        - version
-        - locktime
-        - fee
-        - inputs
-        - outputs
-        - block
-        - deleted
-        - rbf
-        - conflicts
-      properties:
-        txid:
-          $ref: '#/components/schemas/TxId'
-        size:
-          type: integer
-          description: Size of serialized transaction in bytes
-          example: 225
-        version:
-          type: integer
-          format: int32
-          example: 2
-        locktime:
-          type: integer
-          format: int32
-        fee:
-          $ref: '#/components/schemas/Value'
-        inputs:
-          type: array
-          items:
-            $ref: '#/components/schemas/Input'
-        outputs:
-          type: array
-          items:
-            $ref: '#/components/schemas/Output'
-        block:
-          $ref: '#/components/schemas/BlockRef'
-        deleted:
-          type: boolean
-          description: this transaction has been deleted and is no longer valid
-        rbf:
-          type: boolean
-          description: vulnerable to replace-by-fee (never true on bitcoin cash)
-        conflicts:
-          type: array
-          items:
-            $ref: '#/components/schemas/TxHash'
-    HexTx:
-      type: string
-      format: hex
-      example: '01000000019ad107ae28dda494b83d3298ddca3d83264cc0959272f500eff...'
-      description: hex-encoded transaction
-    Input:
-      type: object
-      required:
-        - txid
-        - output
-        - value
-        - coinbase
-        - sequence
-        - address
-        - pkscript
-        - sigscript
-        - witness
-      properties:
-        coinbase:
-          type: boolean
-        txid:
-          $ref: '#/components/schemas/TxId'
-        output:
-          $ref: '#/components/schemas/OutputIndex'
-        sigscript:
-          $ref: '#/components/schemas/SigScript'
-        value:
-          $ref: '#/components/schemas/Value'
-        sequence:
-          type: integer
-          format: int32
-          example: 4294967295
-        address:
-          $ref: '#/components/schemas/Address'
-        pkscript:
-          $ref: '#/components/schemas/PubKeyScript'
-        witness:
-          $ref: '#/components/schemas/Witness'
-    Witness:
-      nullable: true
-      description: witness for an input
-      type: array
-      items:
-        type: string
-        format: hex
-        description: witness stack element
-    Value:
-      description: amount in satoshi
-      type: integer
-      format: int64
-      example: 67614830
-    OutputIndex:
-      description: previous output index
-      type: integer
-    InputIndex:
-      description: input index
-      type: integer
-    SigScript:
-      type: string
-      format: hex
-      example: '510101082f454233322e302f'
-    PubKeyScript:
-      type: string
-      format: hex
-      example: '76a9149a278c60e709d2379b1a6b959d5687b68c5a13d588ac'
-    TxId:
-      type: string
-      format: hex
-      example: '03f374616e55f4ef00f5729295c04c26833dcadd98323db894a4dd28ae07d19a'
-    Address:
-      type: string
-      format: base58
-      example: '1F46SQm7yTotQNBgqCzHFTC6hWqbWS94Bq'
-    Output:
-      type: object
-      required:
-        - address
-        - pkscript
-        - value
-        - spent
-      properties:
-        address:
-          type: string
-          format: base58
-          example: '1F46SQm7yTotQNBgqCzHFTC6hWqbWS94Bq'
-        pkscript:
-          type: string
-          format: hex
-          example: '76a9149a278c60e709d2379b1a6b959d5687b68c5a13d588ac'
-        value:
-          type: integer
-          format: int64
-          example: 67614830
-        spent:
-          type: boolean
-        spender:
-          $ref: '#/components/schemas/Spender'
-    Spender:
-      type: object
-      required:
-        - txid
-        - input
-      properties:
-        txid:
-          $ref: '#/components/schemas/TxId'
-        input:
-          $ref: '#/components/schemas/InputIndex'
-    Balance:
-      type: object
-      required:
-        - address
-        - confirmed
-        - unconfirmed
-        - outputs
-        - utxo
-      properties:
-        address:
-          $ref: '#/components/schemas/Address'
-        confirmed:
-          $ref: '#/components/schemas/Value'
-        unconfirmed:
-          $ref: '#/components/schemas/Value'
-        outputs:
-          description: number of outputs including spent and unspent
-          type: integer
-          format: int64
-          example: 2
-        utxo:
-          description: number of unspent outputs
-          type: integer
-          format: int64
-    BlockHash:
-      type: string
-      format: hex
-      example: '0000000000000000003f2042fd72dc2e8fecfb3a03f40ff1cf9cf3b583142499'
-    BlockHeight:
-      nullable: true
-      type: integer
-      example: 499074
-    BlockRef:
-      nullable: true
-      type: object
-      required:
-        - hash
-        - height
-        - position
-      properties:
-        hash:
-          $ref: '#/components/schemas/BlockHash'
-        height:
-          $ref: '#/components/schemas/BlockHeight'
-        position:
-          $ref: '#/components/schemas/BlockPosition'
-        mainchain:
-          type: boolean
-    BlockPosition:
-      nullable: true
-      type: integer
-      description: position of transaction in block
-    Block:
-      type: object
-      required:
-        - hash
-        - height
-        - mainchain
-        - previous
-        - timestamp
-        - version
-        - bits
-        - nonce
-        - size
-        - tx
-      properties:
-        hash:
-          $ref: '#/components/schemas/BlockHash'
-        size:
-          type: integer
-          example: 1037064
-        height:
-          $ref: '#/components/schemas/BlockHeight'
-        mainchain:
-          type: boolean
-        previous:
-          $ref: '#/components/schemas/BlockHash'
-        timestamp:
-          type: integer
-          format: int32
-          example: 1513171902
-        version:
-          type: integer
-          format: int32
-          example: 536870912
-        bits:
-          type: integer
-          format: int32
-          example: 402698477
-        nonce:
-          type: integer
-          format: int32
-          example: 2785782461
-        tx:
-          type: array
-          items:
-            $ref: '#/components/schemas/TxId'
+          example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
     Peer:
       type: object
       required:
-        - address
-        - relay
-        - services
         - useragent
+        - address
         - version
+        - services
+        - relay
       properties:
-        address:
-          type: string
-          example: "127.0.0.1:8333"
-        relay:
-          type: boolean
-          example: true
-        services:
-          type: integer
-          format: int64
-          example: 37
         useragent:
           type: string
           example: "/Bitcoin ABC:0.17.2(EB32.0)/"
+        address:
+          type: string
+          example: "127.0.0.1:8333"
         version:
           type: integer
           format: int32
           example: 70015
+        services:
+          type: integer
+          format: int64
+          example: 37
+        relay:
+          type: boolean
+          example: true
