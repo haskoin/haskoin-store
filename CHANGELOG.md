@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Do not import transactions to mempool while not synced.
 - Only sync mempool against a single peer.
+- Allow duplicate transactions to fix re-introduced sync bug.
 
 ## 0.3.0
 ### Added

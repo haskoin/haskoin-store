@@ -170,7 +170,7 @@ importTx ::
 importTx net i br tx =
     getTransaction i th >>= \case
         Just t
-            | not (transactionDeleted t) -> throwError (DuplicateTx th)
+            | not (transactionDeleted t) -> return ()
             | otherwise -> go
         Nothing -> go
   where
