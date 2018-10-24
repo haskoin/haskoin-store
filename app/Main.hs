@@ -238,14 +238,16 @@ runWeb conf st db pub = do
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    getBlocksAtHeight d height
+                    bs <- getBlocksAtHeight d height
+                    catMaybes <$> mapM (getBlock d) bs
             S.json res
         S.get "/block/heights" $ do
             heights <- param "heights"
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    mapM (getBlocksAtHeight d) (nub heights)
+                    bs <- mapM (getBlocksAtHeight d) (nub heights)
+                    mapM (fmap catMaybes . mapM (getBlock d)) bs
             S.json res
         S.get "/blocks" $ do
             blocks <- param "blocks"

@@ -86,14 +86,8 @@ isSynced = do
             chainGetBest ch >>= \cb -> return (headerHash (nodeHeader cb) == bb)
 
 mempool ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
-mempool = do
-    mgr <- blockConfManager <$> asks myConfig
-    managerGetPeers mgr >>= \case
-        [] -> return ()
-        p:_ -> do
-            $(logDebugS) "Block" "Syncing mempool against first available peer"
-            MMempool `sendMessage` onlinePeerMailbox p
+       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => Peer -> m ()
+mempool p = MMempool `sendMessage` p
 
 processBlock ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
@@ -117,7 +111,7 @@ processBlock p b = do
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
-                lift $ isSynced >>= \x -> when x mempool
+                lift $ isSynced >>= \x -> when x (mempool p)
             Left e -> do
                 $(logErrorS) "Block" $
                     "Error importing block " <>
@@ -169,18 +163,20 @@ processTx ::
     -> Tx
     -> m ()
 processTx _p tx =
-    void . runMaybeT $ do
-        guard =<< lift isSynced
-        $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
-        now <- preciseUnixTime <$> liftIO getSystemTime
-        net <- blockConfNet <$> asks myConfig
-        db <- blockConfDB <$> asks myConfig
-        runExceptT (runImportDB db $ \i -> newMempoolTx net i tx now) >>= \case
-            Left e ->
-                $(logErrorS) "Block" $
-                "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
-                fromString (show e)
-            Right () -> return ()
+    isSynced >>= \x ->
+        when x $ do
+            $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
+            now <- preciseUnixTime <$> liftIO getSystemTime
+            net <- blockConfNet <$> asks myConfig
+            db <- blockConfDB <$> asks myConfig
+            runExceptT (runImportDB db $ \i -> newMempoolTx net i tx now) >>= \case
+                Left e ->
+                    $(logErrorS) "Block" $
+                    "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
+                    fromString (show e)
+                Right () -> do
+                    l <- blockConfListener <$> asks myConfig
+                    atomically $ l (StoreMempoolNew (txHash tx))
 
 processTxs ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
@@ -188,22 +184,22 @@ processTxs ::
     -> [TxHash]
     -> m ()
 processTxs p hs =
-    void . runMaybeT $ do
-        guard =<< lift isSynced
-        db <- blockConfDB <$> asks myConfig
-        $(logDebugS) "Block" $
-            "Received " <> fromString (show (length hs)) <>
-            " tranasaction inventory"
-        xs <-
-            fmap catMaybes . forM hs $ \h ->
-                runMaybeT $ do
-                    t <- getTransaction (db, defaultReadOptions) h
-                    guard (isNothing t)
-                    return (getTxHash h)
-        $(logDebugS) "Block" $
-            "Requesting " <> fromString (show (length xs)) <>
-            " new transactions"
-        MGetData (GetData (map (InvVector InvTx) xs)) `sendMessage` p
+    isSynced >>= \x ->
+        when x $ do
+            db <- blockConfDB <$> asks myConfig
+            $(logDebugS) "Block" $
+                "Received " <> fromString (show (length hs)) <>
+                " tranasaction inventory"
+            xs <-
+                fmap catMaybes . forM hs $ \h ->
+                    runMaybeT $ do
+                        t <- getTransaction (db, defaultReadOptions) h
+                        guard (isNothing t)
+                        return (getTxHash h)
+            $(logDebugS) "Block" $
+                "Requesting " <> fromString (show (length xs)) <>
+                " new transactions"
+            MGetData (GetData (map (InvVector InvTx) xs)) `sendMessage` p
 
 checkTime :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
 checkTime =

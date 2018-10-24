@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.3.0
+  version: 0.4.0
   title: Blockchain API
   contact:
     name: Haskoin
@@ -262,9 +262,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: string
-                  format: hex
-                  example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+                  $ref: '#/components/schemas/BlockData'
         '404':
           description: block not found
   '/block/heights':
@@ -293,15 +291,10 @@ paths:
             application/json:
               schema:
                 type: array
-                example:
-                  - ['000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2']
-                  - ['00000000000000000005d49867a529199148faad8cd96b27825e9ec4f6ea2b24']
-                  - ['0000000000000000001752f56a1f25e77c3284a02d9fb0312757320dabc6afcb']
                 items:
                   type: array
                   items:
-                    type: string
-                    format: hex
+                    $ref: '#/components/schemas/BlockData'
         '404':
           description: block not found
   '/transaction/{txid}':
