@@ -58,8 +58,8 @@ newMempoolTx ::
     -> m ()
 newMempoolTx net i tx now =
     getTransaction i (txHash tx) >>= \case
-        Just _ -> throwError (DuplicateTx (txHash tx))
-        Nothing -> go
+        Just x | not (transactionDeleted x) -> throwError (DuplicateTx (txHash tx))
+        _ -> go
   where
     go = do
         orp <-
