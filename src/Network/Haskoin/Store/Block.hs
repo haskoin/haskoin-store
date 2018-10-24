@@ -242,10 +242,7 @@ syncMe =
         b <- mbn
         d <- dbn
         c <- cbn
-        when (end b d c) $ do
-            $(logInfoS) "Block" "Blocks are in sync with headers"
-            lift mempoolWhenSynced
-            mzero
+        when (end b d c) mzero
         ns <- bls c b
         setPeer p (last ns)
         vs <- mapM f ns

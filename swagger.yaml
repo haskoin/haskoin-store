@@ -238,7 +238,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Block'
+                  $ref: '#/components/schemas/BlockData'
         '404':
           description: block not found
   '/block/height/{height}':
@@ -474,27 +474,31 @@ components:
   schemas:
     BlockRef:
       oneOf:
-        - type: object
-          required:
-            - height
-            - position
-          properties:
-            height:
-              summary: height of block
-              type: integer
-              example: 545199
-            position:
-              summary: position of transaction within block
-              type: integer
-              example: 14
-        - type: object
-          required:
-            - mempool
-          properties:
-            mempool:
-              summary: time transaction was received in mempool
-              type: integer
-              example: 1539278010
+        - $ref: '#/components/schemas/Block'
+        - $ref: '#/components/schemas/Mempool'
+    Block:
+      type: object
+      required:
+        - height
+        - position
+      properties:
+        height:
+          description: height of block
+          type: integer
+          example: 545199
+        position:
+          description: position of transaction within block
+          type: integer
+          example: 14
+    Mempool:
+      type: object
+      required:
+        - mempool
+      properties:
+        mempool:
+          description: time transaction was received in mempool
+          type: integer
+          example: 1539278010
     AddressTx:
       type: object
       required:
