@@ -252,26 +252,26 @@ inputPairs net Input { inputPoint = OutPoint oph opi
     , "output" .= opi
     , "sigscript" .= String (encodeHex ss)
     , "sequence" .= sq
-    , "witness" .= fmap (map encodeHex) wit
     , "pkscript" .= String (encodeHex ps)
     , "value" .= val
     , "address" .= eitherToMaybe (addrToJSON net <$> scriptToAddressBS ps)
-    ]
-inputPairs _ Coinbase { inputPoint = OutPoint oph opi
-                              , inputSequence = sq
-                              , inputSigScript = ss
-                              , inputWitness = wit
-                              } =
+    ] ++
+    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+inputPairs net Coinbase { inputPoint = OutPoint oph opi
+                        , inputSequence = sq
+                        , inputSigScript = ss
+                        , inputWitness = wit
+                        } =
     [ "coinbase" .= False
     , "txid" .= oph
     , "output" .= opi
     , "sigscript" .= String (encodeHex ss)
     , "sequence" .= sq
-    , "witness" .= fmap (map encodeHex) wit
     , "pkscript" .= Null
     , "value" .= Null
     , "address" .= Null
-    ]
+    ] ++
+    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
 
 inputToJSON :: Network -> Input -> Value
 inputToJSON net = object . inputPairs net
