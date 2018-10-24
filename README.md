@@ -2,6 +2,7 @@
 
 Full blockchain index & store featuring:
 
+- Bitcoin Cash & Bitcoin SegWit support.
 - Address index.
 - Mempool.
 - Persistent storage using RocksDB.
@@ -24,13 +25,3 @@ Full blockchain index & store featuring:
 ## API Documentation
 
 * [Swagger API Documentation](https://btc.haskoin.com/).
-
-
-## Addresses & Balances
-
-For every address Haskoin Store has a balance object that contains basic statistics about the address. These statistics are described below.
-
-* `confirmed` balance is that which is in the blockchain. Will always be positive or zero.
-* `unconfirmed` balance represent aggregate changes done by mempool transactions. Can be negative if the transactions currently in the mempool are expected to reduce the balance when all of them make it into the blockchain.
-* `outputs` is the count of outputs that send funds to this address. It is just a count and not a monetary value.
-* `utxo` is the count of outputs that send funds to this address that remain unspent, taking the mempool into account: if spent in the mempool it will *not* count as unspent.
