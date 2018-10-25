@@ -1,8 +1,9 @@
-{-# LANGUAGE DeriveAnyClass    #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE DeriveAnyClass   #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase       #-}
 module Network.Haskoin.Store.Logic where
 
+import           Conduit
 import           Control.Monad
 import           Control.Monad.Except
 import qualified Data.ByteString                     as B
@@ -152,7 +153,7 @@ importBlock net i b n = do
         let tx = transactionData tr
         when (tx `notElem` blockTxns b) $
             case transactionBlock tr of
-                MemRef t -> newMempoolTx net i tx t
+                MemRef t    -> newMempoolTx net i tx t
                 BlockRef {} -> throwError (TxConfirmed (txHash tx))
   where
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}

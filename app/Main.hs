@@ -16,7 +16,6 @@ import           Data.Bits
 import           Data.ByteString.Builder
 import qualified Data.ByteString.Lazy.Char8 as C
 import           Data.Char
-import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
@@ -366,6 +365,21 @@ runWeb conf st db pub = do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     mapM (getBalance d) addresses
             S.json $ map (balanceToJSON net) res
+        S.get "/xpub/:xpub/transactions" $ do
+            t <- param "xpub"
+            xpub <-
+                case xPubImport net t of
+                    Nothing -> next
+                    Just x -> return x
+            setHeader "Content-Type" "application/json"
+            stream $ \io flush' ->
+                withSnapshot db $ \s ->
+                    runResourceT . runConduit $
+                    xpubTxs (db, defaultReadOptions {useSnapshot = Just s}) xpub .|
+                    mapC (\(a, x) -> (pathToStr a, addressTxToJSON net x)) .|
+                    jsonListConduit toEncoding .|
+                    streamConduit io >>
+                    liftIO flush'
         S.post "/transactions" $ do
             hex_tx <- C.filter (not . isSpace) <$> body
             bin_tx <-
@@ -417,29 +431,6 @@ runWeb conf st db pub = do
     runner f l = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
-
--- Snatched from:
--- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs
-mergeSourcesBy ::
-       (Foldable f, Monad m)
-    => (a -> a -> Ordering)
-    -> f (ConduitT () a m ())
-    -> ConduitT i a m ()
-mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
-  where
-    mergeSealed sources = do
-        prefetchedSources <- lift $ traverse ($$++ await) sources
-        go [(a, s) | (s, Just a) <- prefetchedSources]
-    go [] = pure ()
-    go sources = do
-        let (a, src1):sources1 = sortBy (f `on` fst) sources
-        yield a
-        (src2, mb) <- lift $ src1 $$++ await
-        let sources2 =
-                case mb of
-                    Nothing -> sources1
-                    Just b  -> (b, src2) : sources1
-        go sources2
 
 jsonListConduit :: Monad m => (a -> Encoding) -> ConduitT a Builder m ()
 jsonListConduit f =

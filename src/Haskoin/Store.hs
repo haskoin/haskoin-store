@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TupleSections         #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -45,10 +46,16 @@ module Haskoin.Store
     , balanceToEncoding
     , addressTxToJSON
     , addressTxToEncoding
+    , xpubTxs
+    , mergeSourcesBy
     ) where
 
+import           Conduit
 import           Control.Monad.Except
 import           Control.Monad.Logger
+import           Data.Foldable
+import           Data.Function
+import           Data.List
 import           Data.Maybe
 import           Haskoin
 import           Haskoin.Node
@@ -181,3 +188,47 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerServices = sv
                 , peerRelay = rl
                 }
+
+xpubTxs ::
+       (Monad m, StoreStream i m)
+    => i
+    -> XPubKey
+    -> ConduitT () (SoftPath, AddressTx) m ()
+xpubTxs i xpub = do
+    as0 <- top 0 (pubSubKey xpub 0)
+    as1 <- top 0 (pubSubKey xpub 1)
+    let cds = map (uncurry (cnd 0)) as0 <> map (uncurry (cnd 1)) as1
+    mergeSourcesBy (compare `on` (addressTxBlock . snd)) cds
+    undefined
+  where
+    top n k = do
+        let as = map (\(a, _, d) -> (a, d)) (take 100 (deriveAddrs k n))
+            f a = not <$> lift (runConduit (getAddressTxs i a .| nullC))
+        t <- or <$> mapM (f . fst) as
+        if t
+            then (as <>) <$> top (n + 20) k
+            else return []
+    cnd n a d = getAddressTxs i a .| mapC (Deriv :/ n :/ d, )
+
+-- Snatched from:
+-- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs
+mergeSourcesBy ::
+       (Foldable f, Monad m)
+    => (a -> a -> Ordering)
+    -> f (ConduitT () a m ())
+    -> ConduitT i a m ()
+mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
+  where
+    mergeSealed sources = do
+        prefetchedSources <- lift $ traverse ($$++ await) sources
+        go [(a, s) | (s, Just a) <- prefetchedSources]
+    go [] = pure ()
+    go sources = do
+        let (a, src1):sources1 = sortBy (f `on` fst) sources
+        yield a
+        (src2, mb) <- lift $ src1 $$++ await
+        let sources2 =
+                case mb of
+                    Nothing -> sources1
+                    Just b  -> (b, src2) : sources1
+        go sources2
