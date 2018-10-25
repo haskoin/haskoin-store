@@ -365,19 +365,33 @@ runWeb conf st db pub = do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     mapM (getBalance d) addresses
             S.json $ map (balanceToJSON net) res
+        S.get "/xpub/:xpub/balances" $ do
+            xpub <- parse_xpub
+            res <-
+                withSnapshot db $ \s -> do
+                    let d = (db, defaultReadOptions {useSnapshot = Just s})
+                    runResourceT $ xpubBals d xpub
+            S.json $ map (xPubBalToJSON net) res
         S.get "/xpub/:xpub/transactions" $ do
-            t <- param "xpub"
-            xpub <-
-                case xPubImport net t of
-                    Nothing -> next
-                    Just x -> return x
+            xpub <- parse_xpub
             setHeader "Content-Type" "application/json"
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     xpubTxs (db, defaultReadOptions {useSnapshot = Just s}) xpub .|
-                    mapC (\(a, x) -> (pathToStr a, addressTxToJSON net x)) .|
-                    jsonListConduit toEncoding .|
+                    jsonListConduit (xPubTxToEncoding net) .|
+                    streamConduit io >>
+                    liftIO flush'
+        S.get "/xpub/:xpub/unspent" $ do
+            xpub <- parse_xpub
+            setHeader "Content-Type" "application/json"
+            stream $ \io flush' ->
+                withSnapshot db $ \s ->
+                    runResourceT . runConduit $
+                    xpubUnspent
+                        (db, defaultReadOptions {useSnapshot = Just s})
+                        xpub .|
+                    jsonListConduit (xPubUnspentToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
         S.post "/transactions" $ do
@@ -427,6 +441,11 @@ runWeb conf st db pub = do
         let as = mapMaybe (stringToAddr net) addresses
         unless (length as == length addresses) next
         return as
+    parse_xpub = do
+        t <- param "xpub"
+        case xPubImport net t of
+            Nothing -> next
+            Just x -> return x
     net = configNetwork conf
     runner f l = do
         u <- askUnliftIO

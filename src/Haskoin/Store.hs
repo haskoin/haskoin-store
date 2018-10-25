@@ -3,7 +3,6 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TupleSections         #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -17,6 +16,9 @@ module Haskoin.Store
     , BlockRef(..)
     , Unspent(..)
     , AddressTx(..)
+    , XPubTx(..)
+    , XPubBal(..)
+    , XPubUnspent(..)
     , Balance(..)
     , PeerInformation(..)
     , withStore
@@ -30,6 +32,9 @@ module Haskoin.Store
     , getAddressUnspents
     , getAddressTxs
     , getPeersInformation
+    , xpubTxs
+    , xpubBals
+    , xpubUnspent
     , publishTx
     , transactionData
     , isCoinbase
@@ -46,7 +51,12 @@ module Haskoin.Store
     , balanceToEncoding
     , addressTxToJSON
     , addressTxToEncoding
-    , xpubTxs
+    , xPubTxToJSON
+    , xPubTxToEncoding
+    , xPubBalToJSON
+    , xPubBalToEncoding
+    , xPubUnspentToJSON
+    , xPubUnspentToEncoding
     , mergeSourcesBy
     ) where
 
@@ -57,6 +67,7 @@ import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
+import           Data.Word
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
@@ -189,26 +200,68 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
+xpubAddrs ::
+       (Monad m, StoreStream i m)
+    => i
+    -> XPubKey
+    -> m [(Address, SoftPath)]
+xpubAddrs i k = (<>) <$> go 0 0 <*> go 1 0
+  where
+    go m n = do
+        let g a = not <$> runConduit (getAddressTxs i a .| nullC)
+        t <- or <$> mapM (g . fst) (as m n)
+        if t
+            then (as m n <>) <$> go m (n + 100)
+            else return []
+    as m n =
+        map
+            (\(a, _, n) -> (a, Deriv :/ m :/ n))
+            (take 100 (deriveAddrs (pubSubKey k m) n))
+
 xpubTxs ::
        (Monad m, StoreStream i m)
     => i
     -> XPubKey
-    -> ConduitT () (SoftPath, AddressTx) m ()
+    -> ConduitT () XPubTx m ()
 xpubTxs i xpub = do
-    as0 <- top 0 (pubSubKey xpub 0)
-    as1 <- top 0 (pubSubKey xpub 1)
-    let cds = map (uncurry (cnd 0)) as0 <> map (uncurry (cnd 1)) as1
-    mergeSourcesBy (compare `on` (addressTxBlock . snd)) cds
-    undefined
+    as <- lift $ xpubAddrs i xpub
+    let cds = map (uncurry cnd) as
+    mergeSourcesBy (compare `on` (addressTxBlock . xPubTx)) cds
   where
-    top n k = do
-        let as = map (\(a, _, d) -> (a, d)) (take 100 (deriveAddrs k n))
-            f a = not <$> lift (runConduit (getAddressTxs i a .| nullC))
-        t <- or <$> mapM (f . fst) as
-        if t
-            then (as <>) <$> top (n + 20) k
-            else return []
-    cnd n a d = getAddressTxs i a .| mapC (Deriv :/ n :/ d, )
+    cnd a p = getAddressTxs i a .| mapC (f p)
+    f p t = XPubTx {xPubTxKey = xpub, xPubTxPath = p, xPubTx = t}
+
+xpubBals ::
+       (Monad m, StoreStream i m, StoreRead i m) => i -> XPubKey -> m [XPubBal]
+xpubBals i xpub = do
+    as <- xpubAddrs i xpub
+    fmap catMaybes $
+        forM as $ \(a, p) ->
+            getBalance i a >>= \b ->
+                return $
+                if balanceCount b == 0
+                    then Nothing
+                    else Just
+                             XPubBal
+                                 { xPubBalKey = xpub
+                                 , xPubBalPath = p
+                                 , xPubBal = b
+                                 }
+
+xpubUnspent ::
+       (Monad m, StoreStream i m, StoreRead i m)
+    => i
+    -> XPubKey
+    -> ConduitT () XPubUnspent m ()
+xpubUnspent i xpub = do
+    as <- lift $ xpubAddrs i xpub
+    let cds = map (uncurry cnd) as
+    mergeSourcesBy (compare `on` (unspentBlock . xPubUnspent)) cds
+  where
+    cnd a p = getAddressUnspents i a .| mapC (f p)
+    f p t =
+        XPubUnspent
+            {xPubUnspentKey = xpub, xPubUnspentPath = p, xPubUnspent = t}
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs

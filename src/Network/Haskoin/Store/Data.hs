@@ -325,21 +325,21 @@ outputToEncoding net = pairs . mconcat . outputPairs net
 
 -- | Detailed transaction information.
 data Transaction = Transaction
-    { transactionBlock     :: !BlockRef
+    { transactionBlock    :: !BlockRef
       -- ^ block information for this transaction
-    , transactionVersion   :: !Word32
+    , transactionVersion  :: !Word32
       -- ^ transaction version
-    , transactionLockTime  :: !Word32
+    , transactionLockTime :: !Word32
       -- ^ lock time
-    , transactionFee       :: !Word64
+    , transactionFee      :: !Word64
       -- ^ transaction fees paid to miners in satoshi
-    , transactionInputs    :: ![Input]
+    , transactionInputs   :: ![Input]
       -- ^ transaction inputs
-    , transactionOutputs   :: ![Output]
+    , transactionOutputs  :: ![Output]
       -- ^ transaction outputs
-    , transactionDeleted   :: !Bool
+    , transactionDeleted  :: !Bool
       -- ^ this transaction has been deleted and is no longer valid
-    , transactionRBF       :: !Bool
+    , transactionRBF      :: !Bool
       -- ^ this transaction can be replaced in the mempool
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize)
 
@@ -409,3 +409,69 @@ peerInformationPairs p =
 instance ToJSON PeerInformation where
     toJSON = object . peerInformationPairs
     toEncoding = pairs . mconcat . peerInformationPairs
+
+-- | Address transaction from an extended public key.
+data XPubTx = XPubTx
+    { xPubTxKey  :: !XPubKey
+    , xPubTxPath :: !SoftPath
+    , xPubTx     :: !AddressTx
+    } deriving (Show, Eq, Generic)
+
+-- | JSON serialization for 'XPubTx'.
+xPubTxPairs :: A.KeyValue kv => Network -> XPubTx -> [kv]
+xPubTxPairs net XPubTx {xPubTxKey = k, xPubTxPath = p, xPubTx = tx} =
+    [ "key" .= xPubExport net k
+    , "path" .= pathToStr p
+    , "tx" .= addressTxToJSON net tx
+    ]
+
+xPubTxToJSON :: Network -> XPubTx -> Value
+xPubTxToJSON net = object . xPubTxPairs net
+
+xPubTxToEncoding :: Network -> XPubTx -> Encoding
+xPubTxToEncoding net = pairs . mconcat . xPubTxPairs net
+
+-- | Address balances for an extended public key.
+data XPubBal = XPubBal
+    { xPubBalKey  :: !XPubKey
+    , xPubBalPath :: !SoftPath
+    , xPubBal     :: !Balance
+    } deriving (Show, Eq, Generic)
+
+-- | JSON serialization for 'XPubBal'.
+xPubBalPairs :: A.KeyValue kv => Network -> XPubBal -> [kv]
+xPubBalPairs net XPubBal {xPubBalKey = k, xPubBalPath = p, xPubBal = b} =
+    [ "key" .= xPubExport net k
+    , "path" .= pathToStr p
+    , "balance" .= balanceToJSON net b
+    ]
+
+xPubBalToJSON :: Network -> XPubBal -> Value
+xPubBalToJSON net = object . xPubBalPairs net
+
+xPubBalToEncoding :: Network -> XPubBal -> Encoding
+xPubBalToEncoding net = pairs . mconcat . xPubBalPairs net
+
+-- | Unspent transaction for extended public key.
+data XPubUnspent = XPubUnspent
+    { xPubUnspentKey  :: !XPubKey
+    , xPubUnspentPath :: !SoftPath
+    , xPubUnspent     :: !Unspent
+    } deriving (Show, Eq, Generic)
+
+-- | JSON serialization for 'XPubUnspent'.
+xPubUnspentPairs :: A.KeyValue kv => Network -> XPubUnspent -> [kv]
+xPubUnspentPairs net XPubUnspent { xPubUnspentKey = k
+                                 , xPubUnspentPath = p
+                                 , xPubUnspent = u
+                                 } =
+    [ "key" .= xPubExport net k
+    , "path" .= pathToStr p
+    , "unspent" .= unspentToJSON net u
+    ]
+
+xPubUnspentToJSON :: Network -> XPubUnspent -> Value
+xPubUnspentToJSON net = object . xPubUnspentPairs net
+
+xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
+xPubUnspentToEncoding net = pairs . mconcat . xPubUnspentPairs net
