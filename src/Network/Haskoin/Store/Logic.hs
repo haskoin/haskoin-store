@@ -280,7 +280,7 @@ deleteTx i mo h =
                 if mo && confirmed (transactionBlock t)
                     then throwError (TxConfirmed h)
                     else go t
-            | otherwise -> throwError (TxDeleted h)
+            | otherwise -> return ()
   where
     go t = do
         forM_ (mapMaybe outputSpender (transactionOutputs t)) $ \s ->
