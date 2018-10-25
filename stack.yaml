@@ -7,7 +7,7 @@ nix:
 extra-deps:
   - rocksdb-haskell-1.0.1
   - murmur3-1.0.3
-  - secp256k1-haskell-0.1.3
+  - secp256k1-haskell-0.1.4
   - nqe-0.6.1
   - haskoin-core-0.8.1
   - rocksdb-query-0.2.0
