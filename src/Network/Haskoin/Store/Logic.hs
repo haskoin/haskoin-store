@@ -73,7 +73,7 @@ newMempoolTx net i tx now =
                 getTxOutput (outPointIndex op) t
         let ds = map spenderHash (mapMaybe outputSpender us)
         if null ds
-            then importTx net i (MemRef now) tx
+            then importTx i (MemRef now) tx
             else g ds
     g ds = do
         rbf <-
@@ -84,8 +84,8 @@ newMempoolTx net i tx now =
             then r ds
             else n
     r ds = do
-        forM_ ds (recursiveDeleteTx net i)
-        importTx net i (MemRef now) tx
+        forM_ ds (deleteTx i False)
+        importTx i (MemRef now) tx
     n = insertDeletedMempoolTx i tx now
     isrbf th = transactionRBF <$> getImportTx i th
 
@@ -147,7 +147,7 @@ importBlock net i b n = do
     setBest i (headerHash (nodeHeader n))
     txs <- concat <$> mapM (getRecursiveTx i . txHash) (tail (blockTxns b))
     mapM_ (deleteTx i False . txHash . transactionData) (reverse txs)
-    zipWithM_ (\x t -> importTx net i (br x) t) [0 ..] (blockTxns b)
+    zipWithM_ (\x t -> importTx i (br x) t) [0 ..] (blockTxns b)
     forM_ txs $ \tr -> do
         let tx = transactionData tr
         when (tx `notElem` blockTxns b) $
@@ -162,12 +162,11 @@ importTx ::
        , StoreRead i m
        , StoreWrite i m
        )
-    => Network
-    -> i
+    => i
     -> BlockRef
     -> Tx
     -> m ()
-importTx net i br tx =
+importTx i br tx =
     getTransaction i th >>= \case
         Just t
             | not (transactionDeleted t) -> return ()
@@ -189,7 +188,7 @@ importTx net i br tx =
                 throwError (InsufficientFunds th)
             when (confirmed br && any (isJust . outputSpender) us) $ do
                 let ds = map spenderHash (mapMaybe outputSpender us)
-                mapM_ (recursiveDeleteTx net i) ds
+                mapM_ (deleteTx i False) ds
             when (not (confirmed br) && any (isJust . outputSpender) us) $
                 throwError (TxDoubleSpend th)
             zipWithM_
@@ -267,26 +266,6 @@ getRecursiveTx i th =
                                  (mapMaybe outputSpender (transactionOutputs t)))
                 concat <$> mapM (getRecursiveTx i) ss
 
-
-recursiveDeleteTx ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
-    => Network
-    -> i
-    -> TxHash
-    -> m ()
-recursiveDeleteTx net i th =
-    getTransaction i th >>= \case
-        Nothing -> throwError (TxNotFound th)
-        Just tx
-            | not (transactionDeleted tx) -> do
-                let ss =
-                        map
-                            spenderHash
-                            (mapMaybe outputSpender (transactionOutputs tx))
-                forM_ ss (recursiveDeleteTx net i)
-                deleteTx i True th
-            | otherwise -> throwError (TxDeleted th)
-
 deleteTx ::
        (MonadError ImportException m, StoreRead i m, StoreWrite i m)
     => i
@@ -304,12 +283,12 @@ deleteTx i mo h =
             | otherwise -> throwError (TxDeleted h)
   where
     go t = do
-        when (any (isJust . outputSpender) (transactionOutputs t)) $
-            throwError (TxOutputsSpent h)
+        forM_ (mapMaybe outputSpender (transactionOutputs t)) $ \s ->
+            deleteTx i False (spenderHash s)
         forM_ (take (length (transactionOutputs t)) [0 ..]) $ \n ->
             deleteOutput i (OutPoint h n)
-        forM_ (map inputPoint (transactionInputs t)) $ \op ->
-            unspendOutput i op (transactionBlock t)
+        let ps = filter (/= nullOutPoint) (map inputPoint (transactionInputs t))
+        forM_ ps $ \op -> unspendOutput i op (transactionBlock t)
         unless (confirmed (transactionBlock t)) $
             deleteMempoolTx i h (memRefTime (transactionBlock t))
         insertTx i t {transactionDeleted = True}
