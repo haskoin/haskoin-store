@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.4.2
 ### Removed
-- Removed extended public key itself from output of relevant endpoints.
+- Remove extended public key itself from output of relevant endpoints to save bandwidth.
 
 ## 0.4.1
 ### Changed
