@@ -67,7 +67,6 @@ import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
-import           Data.Word
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
@@ -215,7 +214,7 @@ xpubAddrs i k = (<>) <$> go 0 0 <*> go 1 0
             else return []
     as m n =
         map
-            (\(a, _, n) -> (a, Deriv :/ m :/ n))
+            (\(a, _, n') -> (a, Deriv :/ m :/ n'))
             (take 100 (deriveAddrs (pubSubKey k m) n))
 
 xpubTxs ::
@@ -229,7 +228,7 @@ xpubTxs i xpub = do
     mergeSourcesBy (compare `on` (addressTxBlock . xPubTx)) cds
   where
     cnd a p = getAddressTxs i a .| mapC (f p)
-    f p t = XPubTx {xPubTxKey = xpub, xPubTxPath = p, xPubTx = t}
+    f p t = XPubTx {xPubTxPath = p, xPubTx = t}
 
 xpubBals ::
        (Monad m, StoreStream i m, StoreRead i m) => i -> XPubKey -> m [XPubBal]
@@ -243,8 +242,7 @@ xpubBals i xpub = do
                     then Nothing
                     else Just
                              XPubBal
-                                 { xPubBalKey = xpub
-                                 , xPubBalPath = p
+                                 { xPubBalPath = p
                                  , xPubBal = b
                                  }
 
@@ -261,7 +259,7 @@ xpubUnspent i xpub = do
     cnd a p = getAddressUnspents i a .| mapC (f p)
     f p t =
         XPubUnspent
-            {xPubUnspentKey = xpub, xPubUnspentPath = p, xPubUnspent = t}
+            {xPubUnspentPath = p, xPubUnspent = t}
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs

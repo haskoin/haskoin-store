@@ -567,15 +567,9 @@ components:
     XPubTx:
       type: object
       required:
-        - key
         - path
         - tx
       properties:
-        key:
-          description: extended public key
-          type: string
-          format: base58
-          example: tpubD9zZePks3yj7D2Mv6w8FsMrRLiuXUwx2z47cXV1abqR48DrMg9yQx4FWHuXat3wzKPnUAETDruzWjCwGks5eorZhdxe5S73R8DJKRrshu6G
         path:
           description: derivation path (non-hardened)
           type: string
@@ -585,15 +579,9 @@ components:
     XPubBalance:
       type: object
       required:
-        - key
         - path
         - balance
       properties:
-        key:
-          description: extended public key
-          type: string
-          format: base58
-          example: tpubD9zZePks3yj7D2Mv6w8FsMrRLiuXUwx2z47cXV1abqR48DrMg9yQx4FWHuXat3wzKPnUAETDruzWjCwGks5eorZhdxe5S73R8DJKRrshu6G
         path:
           description: derivation path (non-hardened)
           type: string
@@ -603,15 +591,9 @@ components:
     XPubUnspent:
       type: object
       required:
-        - key
         - path
         - unspent
       properties:
-        key:
-          description: extended public key
-          type: string
-          format: base58
-          example: tpubD9zZePks3yj7D2Mv6w8FsMrRLiuXUwx2z47cXV1abqR48DrMg9yQx4FWHuXat3wzKPnUAETDruzWjCwGks5eorZhdxe5S73R8DJKRrshu6G
         path:
           description: derivation path (non-hardened)
           type: string

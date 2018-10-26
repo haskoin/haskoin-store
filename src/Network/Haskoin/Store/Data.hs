@@ -412,16 +412,14 @@ instance ToJSON PeerInformation where
 
 -- | Address transaction from an extended public key.
 data XPubTx = XPubTx
-    { xPubTxKey  :: !XPubKey
-    , xPubTxPath :: !SoftPath
+    { xPubTxPath :: !SoftPath
     , xPubTx     :: !AddressTx
     } deriving (Show, Eq, Generic)
 
 -- | JSON serialization for 'XPubTx'.
 xPubTxPairs :: A.KeyValue kv => Network -> XPubTx -> [kv]
-xPubTxPairs net XPubTx {xPubTxKey = k, xPubTxPath = p, xPubTx = tx} =
-    [ "key" .= xPubExport net k
-    , "path" .= pathToStr p
+xPubTxPairs net XPubTx {xPubTxPath = p, xPubTx = tx} =
+    [ "path" .= pathToStr p
     , "tx" .= addressTxToJSON net tx
     ]
 
@@ -433,16 +431,14 @@ xPubTxToEncoding net = pairs . mconcat . xPubTxPairs net
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
-    { xPubBalKey  :: !XPubKey
-    , xPubBalPath :: !SoftPath
+    { xPubBalPath :: !SoftPath
     , xPubBal     :: !Balance
     } deriving (Show, Eq, Generic)
 
 -- | JSON serialization for 'XPubBal'.
 xPubBalPairs :: A.KeyValue kv => Network -> XPubBal -> [kv]
-xPubBalPairs net XPubBal {xPubBalKey = k, xPubBalPath = p, xPubBal = b} =
-    [ "key" .= xPubExport net k
-    , "path" .= pathToStr p
+xPubBalPairs net XPubBal {xPubBalPath = p, xPubBal = b} =
+    [ "path" .= pathToStr p
     , "balance" .= balanceToJSON net b
     ]
 
@@ -454,19 +450,16 @@ xPubBalToEncoding net = pairs . mconcat . xPubBalPairs net
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
-    { xPubUnspentKey  :: !XPubKey
-    , xPubUnspentPath :: !SoftPath
+    { xPubUnspentPath :: !SoftPath
     , xPubUnspent     :: !Unspent
     } deriving (Show, Eq, Generic)
 
 -- | JSON serialization for 'XPubUnspent'.
 xPubUnspentPairs :: A.KeyValue kv => Network -> XPubUnspent -> [kv]
-xPubUnspentPairs net XPubUnspent { xPubUnspentKey = k
-                                 , xPubUnspentPath = p
+xPubUnspentPairs net XPubUnspent { xPubUnspentPath = p
                                  , xPubUnspent = u
                                  } =
-    [ "key" .= xPubExport net k
-    , "path" .= pathToStr p
+    [ "path" .= pathToStr p
     , "unspent" .= unspentToJSON net u
     ]
 
