@@ -412,14 +412,14 @@ instance ToJSON PeerInformation where
 
 -- | Address transaction from an extended public key.
 data XPubTx = XPubTx
-    { xPubTxPath :: !SoftPath
+    { xPubTxPath :: ![KeyIndex]
     , xPubTx     :: !AddressTx
     } deriving (Show, Eq, Generic)
 
 -- | JSON serialization for 'XPubTx'.
 xPubTxPairs :: A.KeyValue kv => Network -> XPubTx -> [kv]
 xPubTxPairs net XPubTx {xPubTxPath = p, xPubTx = tx} =
-    [ "path" .= pathToStr p
+    [ "path" .= p
     , "tx" .= addressTxToJSON net tx
     ]
 
@@ -431,14 +431,14 @@ xPubTxToEncoding net = pairs . mconcat . xPubTxPairs net
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
-    { xPubBalPath :: !SoftPath
+    { xPubBalPath :: ![KeyIndex]
     , xPubBal     :: !Balance
     } deriving (Show, Eq, Generic)
 
 -- | JSON serialization for 'XPubBal'.
 xPubBalPairs :: A.KeyValue kv => Network -> XPubBal -> [kv]
 xPubBalPairs net XPubBal {xPubBalPath = p, xPubBal = b} =
-    [ "path" .= pathToStr p
+    [ "path" .= p
     , "balance" .= balanceToJSON net b
     ]
 
@@ -450,7 +450,7 @@ xPubBalToEncoding net = pairs . mconcat . xPubBalPairs net
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
-    { xPubUnspentPath :: !SoftPath
+    { xPubUnspentPath :: ![KeyIndex]
     , xPubUnspent     :: !Unspent
     } deriving (Show, Eq, Generic)
 
@@ -459,7 +459,7 @@ xPubUnspentPairs :: A.KeyValue kv => Network -> XPubUnspent -> [kv]
 xPubUnspentPairs net XPubUnspent { xPubUnspentPath = p
                                  , xPubUnspent = u
                                  } =
-    [ "path" .= pathToStr p
+    [ "path" .= p
     , "unspent" .= unspentToJSON net u
     ]
 

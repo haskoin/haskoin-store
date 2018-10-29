@@ -228,7 +228,7 @@ xpubTxs i xpub = do
     mergeSourcesBy (compare `on` (addressTxBlock . xPubTx)) cds
   where
     cnd a p = getAddressTxs i a .| mapC (f p)
-    f p t = XPubTx {xPubTxPath = p, xPubTx = t}
+    f p t = XPubTx {xPubTxPath = pathToList p, xPubTx = t}
 
 xpubBals ::
        (Monad m, StoreStream i m, StoreRead i m) => i -> XPubKey -> m [XPubBal]
@@ -242,7 +242,7 @@ xpubBals i xpub = do
                     then Nothing
                     else Just
                              XPubBal
-                                 { xPubBalPath = p
+                                 { xPubBalPath = pathToList p
                                  , xPubBal = b
                                  }
 
@@ -259,7 +259,7 @@ xpubUnspent i xpub = do
     cnd a p = getAddressUnspents i a .| mapC (f p)
     f p t =
         XPubUnspent
-            {xPubUnspentPath = p, xPubUnspent = t}
+            {xPubUnspentPath = pathToList p, xPubUnspent = t}
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs

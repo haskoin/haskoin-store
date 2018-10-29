@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.4.2
+  version: 0.5.0
   title: Blockchain API
   contact:
     name: Haskoin
@@ -575,8 +575,10 @@ components:
       properties:
         path:
           description: derivation path (non-hardened)
-          type: string
-          example: '/1/25'
+          type: array
+          items:
+            type: integer
+          example: [1, 25]
         tx:
           $ref: '#/components/schemas/AddressTx'
     XPubBalance:
