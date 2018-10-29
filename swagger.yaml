@@ -541,6 +541,9 @@ components:
       oneOf:
         - $ref: '#/components/schemas/Block'
         - $ref: '#/components/schemas/Mempool'
+      example:
+        height: 545199
+        position: 14
     Block:
       type: object
       required:
