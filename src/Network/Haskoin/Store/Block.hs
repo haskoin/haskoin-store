@@ -199,7 +199,9 @@ processTxs p hs =
             $(logDebugS) "Block" $
                 "Requesting " <> fromString (show (length xs)) <>
                 " new transactions"
-            MGetData (GetData (map (InvVector InvTx) xs)) `sendMessage` p
+            net <- blockConfNet <$> asks myConfig
+            let inv = if getSegWit net then InvWitnessTx else InvTx
+            MGetData (GetData (map (InvVector inv) xs)) `sendMessage` p
 
 checkTime :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
 checkTime =
@@ -247,7 +249,9 @@ syncMe =
         when (end b d c) mzero
         ns <- bls c b
         setPeer p (last ns)
-        vs <- mapM f ns
+        net <- blockConfNet <$> asks myConfig
+        let inv = if getSegWit net then InvWitnessBlock else InvBlock
+        vs <- mapM (f inv) ns
         $(logInfoS) "Block" $
             "Requesting " <> fromString (show (length vs)) <> " blocks"
         MGetData (GetData vs) `sendMessage` p
@@ -283,9 +287,9 @@ syncMe =
     end b d c
         | nodeHeader b == nodeHeader c = True
         | otherwise = nodeHeight b > nodeHeight d + 500
-    f GenesisNode {} = throwIO UnexpectedGenesisNode
-    f BlockNode {nodeHeader = bh} =
-        return $ InvVector InvBlock (getBlockHash (headerHash bh))
+    f _ GenesisNode {} = throwIO UnexpectedGenesisNode
+    f inv BlockNode {nodeHeader = bh} =
+        return $ InvVector inv (getBlockHash (headerHash bh))
     bls c b = do
         t <- top c (tts (nodeHeight c) (nodeHeight b))
         ch <- blockConfChain <$> asks myConfig
