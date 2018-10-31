@@ -7,6 +7,10 @@ import           Conduit
 import           Control.Monad
 import           Control.Monad.Except
 import qualified Data.ByteString                     as B
+import qualified Data.ByteString.Short               as B.Short
+import           Data.Function
+import qualified Data.HashMap.Strict                 as M
+import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
 import           Data.Serialize
@@ -14,15 +18,19 @@ import           Data.Word
 import           Database.RocksDB
 import           Haskoin
 import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Store.Data.HashMap
 import           Network.Haskoin.Store.Data.ImportDB
 import           UnliftIO
 
 data ImportException
     = PrevBlockNotBest !BlockHash
+    | UnconfirmedCoinbase !TxHash
     | BestBlockUnknown
     | BestBlockNotFound !BlockHash
     | BlockNotBest !BlockHash
+    | OrphanTx !TxHash
     | TxNotFound !TxHash
+    | NoUnspent !OutPoint
     | DuplicateTx !TxHash
     | TxDeleted !TxHash
     | TxDoubleSpend !TxHash
@@ -40,9 +48,14 @@ data ImportException
     | DuplicatePrevOutput !TxHash
     deriving (Show, Read, Eq, Ord, Exception)
 
-initDB :: (MonadIO m, MonadError ImportException m) => Network -> DB -> m ()
-initDB net db =
-    runImportDB db $ \i ->
+initDB ::
+       (MonadIO m, MonadError ImportException m)
+    => Network
+    -> DB
+    -> TVar UnspentMap
+    -> m ()
+initDB net db um =
+    runImportDB db um $ \i ->
         isInitialized i >>= \case
             Left e -> throwError (InitException e)
             Right True -> return ()
@@ -51,7 +64,11 @@ initDB net db =
                 setInit i
 
 newMempoolTx ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => Network
     -> i
     -> Tx
@@ -94,13 +111,18 @@ newBlock ::
        (MonadError ImportException m, MonadIO m)
     => Network
     -> DB
+    -> TVar UnspentMap
     -> Block
     -> BlockNode
     -> m ()
-newBlock net db b n = runImportDB db $ \i -> importBlock net i b n
+newBlock net db um b n = runImportDB db um $ \i -> importBlock net i b n
 
 revertBlock ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => i
     -> BlockHash
     -> m ()
@@ -119,7 +141,7 @@ revertBlock i bh = do
     insertBlock i bd {blockDataMainChain = False}
 
 importBlock ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       (MonadError ImportException m, StoreRead i m, StoreWrite i m, UnspentStore i m)
     => Network
     -> i
     -> Block
@@ -162,67 +184,75 @@ importTx ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
+       , UnspentStore i m
        )
     => i
     -> BlockRef
     -> Tx
     -> m ()
-importTx i br tx =
-    getTransaction i th >>= \case
-        Just t
-            | not (transactionDeleted t) -> return ()
-            | otherwise -> go
-        Nothing -> go
+importTx i br tx = do
+    when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $
+        throwError (DuplicatePrevOutput (txHash tx))
+    us <-
+        if iscb
+            then return []
+            else forM (txIn tx) $ \TxIn {prevOutput = op} ->
+                     getUnspent i op >>= \case
+                         Nothing
+                             | confirmed br ->
+                                 getOutput i op >>= \case
+                                     Nothing ->
+                                         throwError (OrphanTx (txHash tx))
+                                     Just Output {outputSpender = Just s} -> do
+                                         deleteTx i False (spenderHash s)
+                                         getUnspent i op >>= \case
+                                             Nothing ->
+                                                 throwError
+                                                     (TxDoubleSpend (txHash tx))
+                                             Just u -> return u
+                                     Just Output {outputSpender = Nothing} ->
+                                         throwError (TxDoubleSpend (txHash tx))
+                             | otherwise -> throwError (NoUnspent op)
+                         Just u -> return u
+    when (iscb && not (confirmed br)) $
+        throwError (UnconfirmedCoinbase (txHash tx))
+    unless iscb $ do
+        when (sum (map unspentAmount us) < sum (map outValue (txOut tx))) $
+            throwError (InsufficientFunds th)
+        zipWithM_
+            (spendOutput i br (txHash tx))
+            [0 ..]
+            us
+    zipWithM_ (newOutput i br (txHash tx)) [0 ..] (txOut tx)
+    rbf <- getrbf
+    insertTx
+        i
+        Transaction
+            { transactionBlock = br
+            , transactionVersion = txVersion tx
+            , transactionLockTime = txLockTime tx
+            , transactionFee = fee us
+            , transactionInputs =
+                  if iscb
+                      then zipWith mkcb (txIn tx) ws
+                      else zipWith3 mkin us (txIn tx) ws
+            , transactionOutputs = map mkout (txOut tx)
+            , transactionDeleted = False
+            , transactionRBF = rbf
+            }
+    unless (confirmed br) $ insertMempoolTx i (txHash tx) (memRefTime br)
   where
     th = txHash tx
-    go = do
-        when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $
-            throwError (DuplicatePrevOutput (txHash tx))
-        us <-
-            if iscb
-                then return []
-                else forM (txIn tx) $ \TxIn {prevOutput = op} ->
-                         getImportTx i (outPointHash op) >>=
-                         getTxOutput (outPointIndex op)
-        unless iscb $ do
-            when (sum (map outputAmount us) < sum (map outValue (txOut tx))) $
-                throwError (InsufficientFunds th)
-            when (confirmed br && any (isJust . outputSpender) us) $ do
-                let ds = map spenderHash (mapMaybe outputSpender us)
-                mapM_ (deleteTx i False) ds
-            when (not (confirmed br) && any (isJust . outputSpender) us) $
-                throwError (TxDoubleSpend th)
-            zipWithM_
-                (spendOutput i br (txHash tx))
-                [0 ..]
-                (map prevOutput (txIn tx))
-        zipWithM_ (insertOutput i br (txHash tx)) [0 ..] (txOut tx)
-        rbf <- getrbf
-        insertTx
-            i
-            Transaction
-                { transactionBlock = br
-                , transactionVersion = txVersion tx
-                , transactionLockTime = txLockTime tx
-                , transactionFee = fee us
-                , transactionInputs =
-                      if iscb
-                          then zipWith mkcb (txIn tx) ws
-                          else zipWith3 mkin us (txIn tx) ws
-                , transactionOutputs = map mkout (txOut tx)
-                , transactionDeleted = False
-                , transactionRBF = rbf
-                }
-        unless (confirmed br) $ insertMempoolTx i (txHash tx) (memRefTime br)
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
     fee us =
         if iscb
             then 0
-            else sum (map outputAmount us) - sum (map outValue (txOut tx))
+            else sum (map unspentAmount us) - sum (map outValue (txOut tx))
     ws = map Just (txWitness tx) <> repeat Nothing
     getrbf
         | iscb = return False
         | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) = return True
+        | confirmed br = return False
         | otherwise =
             let hs = nub $ map (outPointHash . prevOutput) (txIn tx)
              in fmap or . forM hs $ \h ->
@@ -244,8 +274,8 @@ importTx i br tx =
             { inputPoint = prevOutput ip
             , inputSequence = txInSequence ip
             , inputSigScript = scriptInput ip
-            , inputPkScript = outputScript u
-            , inputAmount = outputAmount u
+            , inputPkScript = B.Short.fromShort (unspentScript u)
+            , inputAmount = unspentAmount u
             , inputWitness = w
             }
     mkout o =
@@ -268,7 +298,11 @@ getRecursiveTx i th =
                 concat <$> mapM (getRecursiveTx i) ss
 
 deleteTx ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => i
     -> Bool -- ^ only delete transaction if unconfirmed
     -> TxHash
@@ -287,7 +321,7 @@ deleteTx i mo h =
         forM_ (mapMaybe outputSpender (transactionOutputs t)) $ \s ->
             deleteTx i False (spenderHash s)
         forM_ (take (length (transactionOutputs t)) [0 ..]) $ \n ->
-            deleteOutput i (OutPoint h n)
+            delOutput i (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map inputPoint (transactionInputs t))
         forM_ ps $ \op -> unspendOutput i op (transactionBlock t)
         unless (confirmed (transactionBlock t)) $
@@ -347,15 +381,20 @@ insertDeletedMempoolTx i tx now = do
             , outputSpender = Nothing
             }
 
-insertOutput ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+newOutput ::
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => i
     -> BlockRef
     -> TxHash
     -> Word32
     -> TxOut
     -> m ()
-insertOutput i tb th ix to =
+newOutput i tb th ix to = do
+    addUnspent i u
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
         Right a -> do
@@ -373,18 +412,23 @@ insertOutput i tb th ix to =
         Unspent
             { unspentBlock = tb
             , unspentAmount = outValue to
-            , unspentScript = scriptOutput to
+            , unspentScript = B.Short.toShort (scriptOutput to)
             , unspentPoint = OutPoint th ix
             }
 
-deleteOutput ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+delOutput ::
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => i
     -> OutPoint
     -> m ()
-deleteOutput i op = do
+delOutput i op = do
     t <- getImportTx i (outPointHash op)
     u <- getTxOutput (outPointIndex op) t
+    delUnspent i op
     case scriptToAddressBS (outputScript u) of
         Left _ -> return ()
         Right a -> do
@@ -392,7 +436,7 @@ deleteOutput i op = do
                 i
                 a
                 Unspent
-                    { unspentScript = outputScript u
+                    { unspentScript = B.Short.toShort (outputScript u)
                     , unspentBlock = transactionBlock t
                     , unspentPoint = op
                     , unspentAmount = outputAmount u
@@ -433,33 +477,32 @@ getTxOutput i tx = do
     return $ transactionOutputs tx !! fromIntegral i
 
 spendOutput ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => i
     -> BlockRef
     -> TxHash
     -> Word32
-    -> OutPoint
+    -> Unspent
     -> m ()
-spendOutput i tb th ix op = do
-    tx <- getImportTx i (outPointHash op)
-    out <- getTxOutput (outPointIndex op) tx
-    when (isJust (outputSpender out)) $ throwError (OutputAlreadySpent op)
-    insertTx
+spendOutput i tb th ix u = do
+    insertOutput
         i
-        tx {transactionOutputs = zipWith f [0 ..] (transactionOutputs tx)}
-    case scriptToAddressBS (outputScript out) of
+        (unspentPoint u)
+        Output
+            { outputAmount = unspentAmount u
+            , outputScript = B.Short.fromShort (unspentScript u)
+            , outputSpender = Just Spender {spenderHash = th, spenderIndex = ix}
+            }
+    delUnspent i (unspentPoint u)
+    case scriptToAddressBS (B.Short.fromShort (unspentScript u)) of
         Left _ -> return ()
         Right a -> do
-            removeAddrUnspent
-                i
-                a
-                Unspent
-                    { unspentScript = outputScript out
-                    , unspentAmount = outputAmount out
-                    , unspentBlock = transactionBlock tx
-                    , unspentPoint = op
-                    }
-            reduceBalance i (confirmed tb) a (outputAmount out)
+            removeAddrUnspent i a u
+            reduceBalance i (confirmed tb) a (unspentAmount u)
             insertAddrTx
                 i
                 AddressTx
@@ -467,13 +510,13 @@ spendOutput i tb th ix op = do
                     , addressTxHash = th
                     , addressTxBlock = tb
                     }
-  where
-    f n o
-        | n == outPointIndex op = o {outputSpender = Just (Spender th ix)}
-        | otherwise = o
 
 unspendOutput ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentStore i m
+       )
     => i
     -> OutPoint
     -> BlockRef
@@ -489,9 +532,10 @@ unspendOutput i op br = do
             Unspent
                 { unspentAmount = outputAmount out
                 , unspentBlock = transactionBlock tx
-                , unspentScript = outputScript out
+                , unspentScript = B.Short.toShort (outputScript out)
                 , unspentPoint = op
                 }
+    addUnspent i u
     case scriptToAddressBS (outputScript out) of
         Left _ -> return ()
         Right a -> do
@@ -553,3 +597,14 @@ increaseBalance i c a v = do
                      { balanceZero = balanceZero b + fromIntegral v
                      , balanceCount = balanceCount b + 1
                      }
+
+pruneUnspentMap :: UnspentMap -> UnspentMap
+pruneUnspentMap um
+    | M.size um > 1000 * 1000 =
+        let f is = unspentBlock (head (I.elems is))
+            ls =
+                sortBy
+                    (compare `on` (f . snd))
+                    (filter (not . I.null . snd) (M.toList um))
+         in M.fromList (drop (500 * 1000) ls)
+    | otherwise = um

@@ -8,6 +8,8 @@ import           Conduit
 import           Data.Aeson              as A
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
+import           Data.ByteString.Short   (ShortByteString)
+import qualified Data.ByteString.Short   as B.Short
 import           Data.Hashable
 import           Data.Int
 import           Data.Maybe
@@ -25,12 +27,18 @@ type UnixTime = Int64
 newtype InitException = IncorrectVersion Word32
     deriving (Show, Read, Eq, Ord, Exception)
 
+class UnspentStore u m where
+    addUnspent :: u -> Unspent -> m ()
+    delUnspent :: u -> OutPoint -> m ()
+    getUnspent :: u -> OutPoint -> m (Maybe Unspent)
+
 class StoreRead r m where
     isInitialized :: r -> m (Either InitException Bool)
     getBestBlock :: r -> m (Maybe BlockHash)
     getBlocksAtHeight :: r -> BlockHeight -> m [BlockHash]
     getBlock :: r -> BlockHash -> m (Maybe BlockData)
     getTransaction :: r -> TxHash -> m (Maybe Transaction)
+    getOutput :: r -> OutPoint -> m (Maybe Output)
     getBalance :: r -> Address -> m Balance
 
 class StoreStream r m where
@@ -44,6 +52,7 @@ class StoreWrite w m where
     insertBlock :: w -> BlockData -> m ()
     insertAtHeight :: w -> BlockHash -> BlockHeight -> m ()
     insertTx :: w -> Transaction -> m ()
+    insertOutput :: w -> OutPoint -> Output -> m ()
     setBalance :: w -> Balance -> m ()
     insertAddrTx :: w -> AddressTx -> m ()
     removeAddrTx :: w -> AddressTx -> m ()
@@ -145,22 +154,34 @@ balanceToEncoding net = pairs . mconcat . balancePairs net
 data Unspent = Unspent
     { unspentBlock  :: !BlockRef
       -- ^ block information for output
-    , unspentAmount :: !Word64
-      -- ^ value of output in satoshi
-    , unspentScript :: !ByteString
-      -- ^ pubkey (output) script
     , unspentPoint  :: !OutPoint
       -- ^ txid and index where output located
-    } deriving (Show, Eq, Ord, Generic, Serialize, Hashable)
+    , unspentAmount :: !Word64
+      -- ^ value of output in satoshi
+    , unspentScript :: !ShortByteString
+      -- ^ pubkey (output) script
+    } deriving (Show, Eq, Ord, Generic, Hashable)
+
+instance Serialize Unspent where
+    put u = do
+        put $ unspentBlock u
+        put $ unspentPoint u
+        put $ unspentAmount u
+        put $ B.Short.length (unspentScript u)
+        putShortByteString $ unspentScript u
+    get =
+        Unspent <$> get <*> get <*> get <*> (getShortByteString =<< get)
 
 unspentPairs :: A.KeyValue kv => Network -> Unspent -> [kv]
 unspentPairs net u =
     [ "address" .=
-      eitherToMaybe (addrToJSON net <$> scriptToAddressBS (unspentScript u))
+      eitherToMaybe
+          (addrToJSON net <$>
+           scriptToAddressBS (B.Short.fromShort (unspentScript u)))
     , "block" .= unspentBlock u
     , "txid" .= outPointHash (unspentPoint u)
     , "index" .= outPointIndex (unspentPoint u)
-    , "pkscript" .= String (encodeHex (unspentScript u))
+    , "pkscript" .= String (encodeHex (B.Short.fromShort (unspentScript u)))
     , "value" .= unspentAmount u
     ]
 

@@ -7,6 +7,8 @@
 module Network.Haskoin.Store.Data.RocksDB where
 
 import           Conduit
+import           Control.Monad.Trans.Maybe
+import qualified Data.ByteString.Short               as B.Short
 import           Data.Maybe
 import           Data.Word
 import           Database.RocksDB                    (DB, ReadOptions)
@@ -17,7 +19,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 dataVersion :: Word32
-dataVersion = 5
+dataVersion = 6
 
 data ExceptRocksDB =
     MempoolTxNotFound
@@ -46,7 +48,17 @@ getBlockDB db opts h = retrieve db opts (BlockKey h)
 
 getTransactionDB ::
        MonadIO m => DB -> ReadOptions -> TxHash -> m (Maybe Transaction)
-getTransactionDB db opts th = retrieve db opts (TxKey th)
+getTransactionDB db opts th = runMaybeT $ do
+    tx <- MaybeT $ retrieve db opts (TxKey th)
+    outs <- lift $ getOutputsDB db opts th
+    return tx {transactionOutputs = outs}
+
+getOutputDB :: MonadIO m => DB -> ReadOptions -> OutPoint -> m (Maybe Output)
+getOutputDB db opts = retrieve db opts . OutputKey
+
+getOutputsDB :: MonadIO m => DB -> ReadOptions -> TxHash -> m [Output]
+getOutputsDB db opts th =
+    map snd <$> liftIO (matchingAsList db opts (OutputKeyS th))
 
 getBalanceDB :: MonadIO m => DB -> ReadOptions -> Address -> m (Maybe Balance)
 getBalanceDB db opts a = fmap f <$> retrieve db opts (BalKey a)
@@ -67,7 +79,7 @@ getMempoolDB ::
 getMempoolDB db opts = matching db opts MemKeyS .| mapC (uncurry f)
   where
     f (MemKey u t) () = (u, t)
-    f _ _ = undefined
+    f _ _             = undefined
 
 getAddressTxsDB ::
        (MonadIO m, MonadResource m)
@@ -99,10 +111,21 @@ getAddressUnspentsDB db opts a =
         Unspent
             { unspentBlock = b
             , unspentAmount = v
-            , unspentScript = s
+            , unspentScript = B.Short.toShort s
             , unspentPoint = p
             }
     f _ _ = undefined
+
+getUnspentDB :: MonadIO m => DB -> ReadOptions -> OutPoint -> m (Maybe Unspent)
+getUnspentDB db opts op = fmap f <$> retrieve db opts (UnspentKey op)
+  where
+    f u =
+        Unspent
+            { unspentBlock = unspentValBlock u
+            , unspentPoint = op
+            , unspentAmount = unspentValAmount u
+            , unspentScript = B.Short.toShort (unspentValScript u)
+            }
 
 instance MonadIO m => StoreRead (DB, ReadOptions) m where
     isInitialized (db, opts) = isInitializedDB db opts
@@ -110,6 +133,7 @@ instance MonadIO m => StoreRead (DB, ReadOptions) m where
     getBlocksAtHeight (db, opts) = getBlocksAtHeightDB db opts
     getBlock (db, opts) = getBlockDB db opts
     getTransaction (db, opts) = getTransactionDB db opts
+    getOutput (db, opts) = getOutputDB db opts
     getBalance (db, opts) a = fromMaybe b <$> getBalanceDB db opts a
       where
         b =

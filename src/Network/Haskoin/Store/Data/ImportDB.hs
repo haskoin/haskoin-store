@@ -8,9 +8,13 @@ import           Conduit
 import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Trans.Maybe
+import qualified Data.ByteString.Short               as B.Short
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
+import           Data.IntMap.Strict                  (IntMap)
+import qualified Data.IntMap.Strict                  as I
 import           Data.List
+import           Data.Maybe
 import           Database.RocksDB                    as R
 import           Database.RocksDB.Query              as R
 import           Haskoin
@@ -23,16 +27,18 @@ import           UnliftIO
 data ImportDB = ImportDB
     { importRocksDB :: !(DB, ReadOptions)
     , importHashMap :: !(TVar HashMapDB)
+    , importUnspentMap :: !(TVar UnspentMap)
     }
 
 runImportDB ::
        (MonadError e m, MonadIO m)
     => DB
+    -> TVar UnspentMap
     -> (ImportDB -> m a)
     -> m a
-runImportDB db f = do
+runImportDB db um f = do
     hm <- newTVarIO emptyHashMapDB
-    x <- f ImportDB {importRocksDB = d, importHashMap = hm}
+    x <- f ImportDB {importRocksDB = d, importHashMap = hm, importUnspentMap = um}
     ops <- hashMapOps <$> readTVarIO hm
     writeBatch db ops
     return x
@@ -45,10 +51,12 @@ hashMapOps db =
     blockHashOps (hBlock db) <>
     blockHeightOps (hHeight db) <>
     txOps (hTx db) <>
+    outOps (hOut db) <>
     balOps (hBalance db) <>
     addrTxOps (hAddrTx db) <>
     addrOutOps (hAddrOut db) <>
-    mempoolOps (hMempool db)
+    mempoolOps (hMempool db) <>
+    unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
 bestBlockOp Nothing  = []
@@ -68,6 +76,12 @@ txOps :: HashMap TxHash Transaction -> [BatchOp]
 txOps = map f . M.toList
   where
     f (h, t) = insertOp (TxKey h) t
+
+outOps :: HashMap TxHash (IntMap Output) -> [BatchOp]
+outOps = concatMap (uncurry f) . M.toList
+  where
+    f h = map (uncurry (g h)) . I.toList
+    g h i = insertOp (OutputKey (OutPoint h (fromIntegral i)))
 
 balOps :: HashMap Address (Maybe BalVal) -> [BatchOp]
 balOps = map (uncurry f) . M.toList
@@ -122,14 +136,22 @@ mempoolOps ::
 mempoolOps = concatMap (uncurry f) . M.toList
   where
     f u = map (uncurry (g u)) . M.toList
-    g u t True = insertOp (MemKey u t) ()
+    g u t True  = insertOp (MemKey u t) ()
     g u t False = deleteOp (MemKey u t)
 
-unspentOps :: HashMap OutPoint (Maybe OutVal) -> [BatchOp]
-unspentOps = map (uncurry f) . M.toList
+unspentOps :: HashMap TxHash (IntMap (Maybe Unspent)) -> [BatchOp]
+unspentOps = concatMap (uncurry f) . M.toList
   where
-    f p (Just o) = insertOp (UnspentKey p) o
-    f p Nothing  = deleteOp (UnspentKey p)
+    f h = map (uncurry (g h)) . I.toList
+    g h i (Just u) =
+        insertOp
+            (UnspentKey (OutPoint h (fromIntegral i)))
+            UnspentVal
+                { unspentValAmount = unspentAmount u
+                , unspentValBlock = unspentBlock u
+                , unspentValScript = B.Short.fromShort (unspentScript u)
+                }
+    g h i Nothing = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
 isInitializedI ImportDB {importRocksDB = db}= isInitialized db
@@ -151,7 +173,17 @@ getBlockI ImportDB {importRocksDB = db, importHashMap = hm} bh =
 getTransactionI ::
        MonadIO m => ImportDB -> TxHash -> m (Maybe Transaction)
 getTransactionI ImportDB {importRocksDB = db, importHashMap = hm} th =
-    runMaybeT $ MaybeT (getTransaction hm th) <|> MaybeT (getTransaction db th)
+    runMaybeT $ do
+        tx <- MaybeT (getTransaction hm th) <|> MaybeT (getTransaction db th)
+        outs <-
+            forM (take (length (transactionOutputs tx)) [0 ..]) $ \i ->
+                fromMaybe (transactionOutputs tx !! fromIntegral i) <$>
+                getOutput hm (OutPoint th i)
+        return tx {transactionOutputs = outs}
+
+getOutputI :: MonadIO m => ImportDB -> OutPoint -> m (Maybe Output)
+getOutputI ImportDB {importRocksDB = db, importHashMap = hm} op =
+    runMaybeT $ MaybeT (getOutput hm op) <|> MaybeT (getOutput db op)
 
 getBalanceI :: MonadIO m => ImportDB -> Address -> m Balance
 getBalanceI ImportDB {importRocksDB = db, importHashMap = hm} a =
@@ -159,12 +191,23 @@ getBalanceI ImportDB {importRocksDB = db, importHashMap = hm} a =
         Just b -> return b
         Nothing -> getBalance db a
 
+getUnspentI :: MonadIO m => ImportDB -> OutPoint -> m (Maybe Unspent)
+getUnspentI ImportDB { importRocksDB = (db, opts)
+                     , importHashMap = hm
+                     , importUnspentMap = um
+                     } p =
+    runMaybeT $
+    MaybeT (getUnspent hm p) <|>
+    MaybeT (getUnspent um p) <|>
+    MaybeT (getUnspentDB db opts p)
+
 instance MonadIO m => StoreRead ImportDB m where
     isInitialized = isInitializedI
     getBestBlock = getBestBlockI
     getBlocksAtHeight = getBlocksAtHeightI
     getBlock = getBlockI
     getTransaction = getTransactionI
+    getOutput = getOutputI
     getBalance = getBalanceI
 
 instance MonadIO m => StoreWrite ImportDB m where
@@ -174,6 +217,7 @@ instance MonadIO m => StoreWrite ImportDB m where
     insertBlock ImportDB {importHashMap = hm} = insertBlock hm
     insertAtHeight ImportDB {importHashMap = hm} = insertAtHeight hm
     insertTx ImportDB {importHashMap = hm} = insertTx hm
+    insertOutput ImportDB {importHashMap = hm} = insertOutput hm
     setBalance ImportDB {importHashMap = hm} = setBalance hm
     insertAddrTx ImportDB {importHashMap = hm} = insertAddrTx hm
     removeAddrTx ImportDB {importHashMap = hm} = removeAddrTx hm
@@ -181,3 +225,9 @@ instance MonadIO m => StoreWrite ImportDB m where
     removeAddrUnspent ImportDB {importHashMap = hm} = removeAddrUnspent hm
     insertMempoolTx ImportDB {importHashMap = hm} = insertMempoolTx hm
     deleteMempoolTx ImportDB {importHashMap = hm} = deleteMempoolTx hm
+
+instance MonadIO m => UnspentStore ImportDB m where
+    addUnspent ImportDB {importHashMap = hm, importUnspentMap = um} u =
+        addUnspent hm u >> addUnspent um u
+    delUnspent ImportDB {importHashMap = hm} = delUnspent hm
+    getUnspent = getUnspentI

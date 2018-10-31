@@ -13,6 +13,7 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
+import qualified Data.HashMap.Strict                 as M
 import           Data.Maybe
 import           Data.String
 import           Data.Time.Clock.System
@@ -20,6 +21,7 @@ import           Database.RocksDB
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Store.Data.HashMap
 import           Network.Haskoin.Store.Data.ImportDB
 import           Network.Haskoin.Store.Logic
 import           Network.Haskoin.Store.Messages
@@ -45,9 +47,10 @@ data Syncing = Syncing
 
 -- | Block store process state.
 data BlockRead = BlockRead
-    { mySelf   :: !BlockStore
-    , myConfig :: !BlockConfig
-    , myPeer   :: !(TVar (Maybe Syncing))
+    { mySelf    :: !BlockStore
+    , myConfig  :: !BlockConfig
+    , myPeer    :: !(TVar (Maybe Syncing))
+    , myUnspent :: !(TVar UnspentMap)
     }
 
 -- | Run block store process.
@@ -59,14 +62,16 @@ blockStore ::
 blockStore cfg inbox = do
     $(logInfoS) "Block" "Initializing block store..."
     pb <- newTVarIO Nothing
+    um <- newTVarIO M.empty
     runReaderT
         (ini >> run)
-        BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb}
+        BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb, myUnspent = um}
   where
     ini = do
         db <- blockConfDB <$> asks myConfig
         net <- blockConfNet <$> asks myConfig
-        runExceptT (initDB net db) >>= \case
+        um <- asks myUnspent
+        runExceptT (initDB net db um) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -89,6 +94,19 @@ mempool ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => Peer -> m ()
 mempool p = MMempool `sendMessage` p
 
+pruneUnspent :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
+pruneUnspent = do
+    um <- asks myUnspent
+    u <- readTVarIO um
+    $(logDebugS) "Block" $
+        "Unspent output cache pre-prune tx count: " <>
+        fromString (show (M.size u))
+    atomically $ modifyTVar um pruneUnspentMap
+    v <- readTVarIO um
+    $(logDebugS) "Block" $
+        "Unspent output cache post-prune tx count: " <>
+        fromString (show (M.size v))
+
 processBlock ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
     => Peer
@@ -107,11 +125,13 @@ processBlock p b = do
         n <- cbn
         upr
         net <- blockConfNet <$> asks myConfig
-        runExceptT (newBlock net db b n) >>= \case
+        um <- asks myUnspent
+        runExceptT (newBlock net db um b n) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
                 lift $ isSynced >>= \x -> when x (mempool p)
+                when (nodeHeight n `mod` 1000 == 0) (lift pruneUnspent)
             Left e -> do
                 $(logErrorS) "Block" $
                     "Error importing block " <>
@@ -169,7 +189,8 @@ processTx _p tx =
             now <- preciseUnixTime <$> liftIO getSystemTime
             net <- blockConfNet <$> asks myConfig
             db <- blockConfDB <$> asks myConfig
-            runExceptT (runImportDB db $ \i -> newMempoolTx net i tx now) >>= \case
+            um <- asks myUnspent
+            runExceptT (runImportDB db um $ \i -> newMempoolTx net i tx now) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -250,7 +271,10 @@ syncMe =
         ns <- bls c b
         setPeer p (last ns)
         net <- blockConfNet <$> asks myConfig
-        let inv = if getSegWit net then InvWitnessBlock else InvBlock
+        let inv =
+                if getSegWit net
+                    then InvWitnessBlock
+                    else InvBlock
         vs <- mapM (f inv) ns
         $(logInfoS) "Block" $
             "Requesting " <> fromString (show (length vs)) <> " blocks"
@@ -325,7 +349,8 @@ syncMe =
                     " as it is not in main chain..."
                 resetPeer
                 db <- blockConfDB <$> asks myConfig
-                runExceptT (runImportDB db $ \i -> revertBlock i d) >>= \case
+                um <- asks myUnspent
+                runExceptT (runImportDB db um $ \i -> revertBlock i d) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>

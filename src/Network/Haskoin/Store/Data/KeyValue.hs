@@ -113,23 +113,59 @@ instance Key TxKey
 
 instance KeyValue TxKey Transaction
 
+data OutputKey
+    = OutputKey { outputPoint :: !OutPoint }
+    | OutputKeyS { outputKeyS :: !TxHash }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+
+instance Serialize OutputKey where
+    -- 0x10 · TxHash · Index
+    put (OutputKey OutPoint {outPointHash = h, outPointIndex = i}) = do
+        putWord8 0x10
+        put h
+        put i
+    put (OutputKeyS h) = do
+        putWord8 0x10
+        put h
+    get = do
+        guard . (== 0x10) =<< getWord8
+        op <- OutPoint <$> get <*> get
+        return $ OutputKey op
+
+instance Key OutputKey
+
+instance KeyValue OutputKey Output
+
 -- | Unspent output database key.
-newtype UnspentKey
-    = UnspentKey { unspentKey :: OutPoint }
+data UnspentKey
+    = UnspentKey { unspentKey :: !OutPoint }
+    | UnspentKeyS { unspentKeyS :: !TxHash }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize UnspentKey where
-    -- 0x09 · OutPoint
-    put UnspentKey {unspentKey = k} = do
+    -- 0x09 · TxHash · Index
+    put UnspentKey {unspentKey = OutPoint {outPointHash = h, outPointIndex = i}} = do
         putWord8 0x09
-        put k
+        put h
+        put i
+    put UnspentKeyS {unspentKeyS = t} = do
+        putWord8 0x09
+        put t
     get = do
         guard . (== 0x09) =<< getWord8
-        UnspentKey <$> get
+        h <- get
+        i <- get
+        return $ UnspentKey OutPoint {outPointHash = h, outPointIndex = i}
+
+data UnspentVal = UnspentVal
+    { unspentValBlock  :: !BlockRef
+    , unspentValAmount :: !Word64
+    , unspentValScript :: !ByteString
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
 
 instance Key UnspentKey
 
-instance KeyValue UnspentKey OutVal
+instance KeyValue UnspentKey UnspentVal
 
 -- | Mempool transaction database key.
 data MemKey
