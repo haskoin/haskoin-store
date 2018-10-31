@@ -601,11 +601,11 @@ increaseBalance i c a v = do
 
 pruneUnspentMap :: UnspentMap -> UnspentMap
 pruneUnspentMap um
-    | M.size um > 1000 * 1000 =
+    | M.size um > 2000 * 1000 =
         let f is = unspentBlock (head (I.elems is))
             ls =
                 sortBy
                     (compare `on` (f . snd))
                     (filter (not . I.null . snd) (M.toList um))
-         in M.fromList (drop (500 * 1000) ls)
+         in M.fromList (drop (1000 * 1000) ls)
     | otherwise = um
