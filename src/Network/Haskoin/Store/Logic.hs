@@ -31,7 +31,6 @@ data ImportException
     | OrphanTx !TxHash
     | TxNotFound !TxHash
     | NoUnspent !OutPoint
-    | DuplicateTx !TxHash
     | TxDeleted !TxHash
     | TxDoubleSpend !TxHash
     | TxOutputsSpent !TxHash
@@ -76,7 +75,7 @@ newMempoolTx ::
     -> m ()
 newMempoolTx net i tx now =
     getTransaction i (txHash tx) >>= \case
-        Just x | not (transactionDeleted x) -> throwError (DuplicateTx (txHash tx))
+        Just x | not (transactionDeleted x) -> return ()
         _ -> go
   where
     go = do
@@ -173,11 +172,13 @@ importBlock net i b n = do
     zipWithM_ (\x t -> importTx i (br x) t) [0 ..] (blockTxns b)
     forM_ txs $ \tr -> do
         let tx = transactionData tr
-        when (tx `notElem` blockTxns b) $
+            th = txHash tx
+        when (th `notElem` hs) $
             case transactionBlock tr of
-                MemRef t    -> newMempoolTx net i tx t
+                MemRef t -> newMempoolTx net i tx t
                 BlockRef {} -> throwError (TxConfirmed (txHash tx))
   where
+    hs = map txHash (blockTxns b)
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
 
 importTx ::
