@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Paths for derivations in xpubs is a list and no longer a string.
 - Get transactions with witness data in segwit networks.
 - Add UTXO cache in memory.
+- Various bug fixes.
 
 ## 0.4.2
 ### Removed
