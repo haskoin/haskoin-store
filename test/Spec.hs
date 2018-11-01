@@ -74,6 +74,7 @@ withTestStore net t f =
                     w
                     defaultOptions
                         { createIfMissing = True
+                        , errorIfExists = True
                         , compression = SnappyCompression
                         }
             let cfg =
