@@ -356,14 +356,31 @@ runWeb conf st db pub = do
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    getBalance d address
+                    getBalance d address >>= \case
+                        Just b -> return b
+                        Nothing ->
+                            return
+                                Balance
+                                    { balanceAddress = address
+                                    , balanceAmount = 0
+                                    , balanceCount = 0
+                                    , balanceZero = 0
+                                    }
             S.json $ balanceToJSON net res
         S.get "/address/balances" $ do
             addresses <- parse_addresses
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    mapM (getBalance d) addresses
+                        f a Nothing =
+                            Balance
+                                { balanceAddress = a
+                                , balanceAmount = 0
+                                , balanceCount = 0
+                                , balanceZero = 0
+                                }
+                        f _ (Just b) = b
+                    mapM (\a -> f a <$> getBalance d a) addresses
             S.json $ map (balanceToJSON net) res
         S.get "/xpub/:xpub/balances" $ do
             xpub <- parse_xpub

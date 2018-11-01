@@ -47,10 +47,11 @@ data Syncing = Syncing
 
 -- | Block store process state.
 data BlockRead = BlockRead
-    { mySelf    :: !BlockStore
-    , myConfig  :: !BlockConfig
-    , myPeer    :: !(TVar (Maybe Syncing))
-    , myUnspent :: !(TVar UnspentMap)
+    { mySelf     :: !BlockStore
+    , myConfig   :: !BlockConfig
+    , myPeer     :: !(TVar (Maybe Syncing))
+    , myUnspent  :: !(TVar UnspentMap)
+    , myBalances :: !(TVar BalanceMap)
     }
 
 -- | Run block store process.
@@ -63,15 +64,23 @@ blockStore cfg inbox = do
     $(logInfoS) "Block" "Initializing block store..."
     pb <- newTVarIO Nothing
     um <- newTVarIO M.empty
+    bm <- newTVarIO (M.empty, [])
     runReaderT
         (ini >> run)
-        BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb, myUnspent = um}
+        BlockRead
+            { mySelf = inboxToMailbox inbox
+            , myConfig = cfg
+            , myPeer = pb
+            , myUnspent = um
+            , myBalances = bm
+            }
   where
     ini = do
         db <- blockConfDB <$> asks myConfig
         net <- blockConfNet <$> asks myConfig
         um <- asks myUnspent
-        runExceptT (initDB net db um) >>= \case
+        bm <- asks myBalances
+        runExceptT (initDB net db um bm) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -94,18 +103,27 @@ mempool ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => Peer -> m ()
 mempool p = MMempool `sendMessage` p
 
-pruneUnspent :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
-pruneUnspent = do
+pruneCache :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
+pruneCache = do
     um <- asks myUnspent
+    bm <- asks myBalances
     u <- readTVarIO um
+    b <- readTVarIO bm
     $(logDebugS) "Block" $
         "Unspent output cache pre-prune tx count: " <>
         fromString (show (M.size u))
-    atomically $ modifyTVar um pruneUnspentMap
-    v <- readTVarIO um
+    $(logDebugS) "Block" $
+        "Address cache pre-prune count: " <> fromString (show (M.size (fst b)))
+    pruneUnspent um
+    pruneBalance bm
+    u' <- readTVarIO um
+    b' <- readTVarIO bm
     $(logDebugS) "Block" $
         "Unspent output cache post-prune tx count: " <>
-        fromString (show (M.size v))
+        fromString (show (M.size u'))
+    $(logDebugS) "Block" $
+        "Address cache post-prune count: " <>
+        fromString (show (M.size (fst b')))
 
 processBlock ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
@@ -126,12 +144,13 @@ processBlock p b = do
         upr
         net <- blockConfNet <$> asks myConfig
         um <- asks myUnspent
-        runExceptT (newBlock net db um b n) >>= \case
+        bm <- asks myBalances
+        runExceptT (newBlock net db um bm b n) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
                 lift $ isSynced >>= \x -> when x (mempool p)
-                when (nodeHeight n `mod` 1000 == 0) (lift pruneUnspent)
+                when (nodeHeight n `mod` 1000 == 0) (lift pruneCache)
             Left e -> do
                 $(logErrorS) "Block" $
                     "Error importing block " <>
@@ -190,7 +209,8 @@ processTx _p tx =
             net <- blockConfNet <$> asks myConfig
             db <- blockConfDB <$> asks myConfig
             um <- asks myUnspent
-            runExceptT (runImportDB db um $ \i -> newMempoolTx net i tx now) >>= \case
+            bm <- asks myBalances
+            runExceptT (runImportDB db um bm $ \i -> newMempoolTx net i tx now) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -350,7 +370,8 @@ syncMe =
                 resetPeer
                 db <- blockConfDB <$> asks myConfig
                 um <- asks myUnspent
-                runExceptT (runImportDB db um $ \i -> revertBlock i d) >>= \case
+                bm <- asks myBalances
+                runExceptT (runImportDB db um bm $ \i -> revertBlock i d) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>

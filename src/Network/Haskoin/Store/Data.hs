@@ -27,10 +27,22 @@ type UnixTime = Int64
 newtype InitException = IncorrectVersion Word32
     deriving (Show, Read, Eq, Ord, Exception)
 
-class UnspentStore u m where
+class Applicative m => UnspentWrite u m where
     addUnspent :: u -> Unspent -> m ()
     delUnspent :: u -> OutPoint -> m ()
+    pruneUnspent :: u -> m ()
+    pruneUnspent _ = pure ()
+
+class UnspentRead u m where
     getUnspent :: u -> OutPoint -> m (Maybe Unspent)
+
+class Applicative m => BalanceWrite b m where
+    setBalance :: b -> Balance -> m ()
+    pruneBalance :: b -> m ()
+    pruneBalance _ = pure ()
+
+class BalanceRead b m where
+    getBalance :: b -> Address -> m (Maybe Balance)
 
 class StoreRead r m where
     isInitialized :: r -> m (Either InitException Bool)
@@ -39,7 +51,6 @@ class StoreRead r m where
     getBlock :: r -> BlockHash -> m (Maybe BlockData)
     getTransaction :: r -> TxHash -> m (Maybe Transaction)
     getOutput :: r -> OutPoint -> m (Maybe Output)
-    getBalance :: r -> Address -> m Balance
 
 class StoreStream r m where
     getMempool :: r -> ConduitT () (PreciseUnixTime, TxHash) m ()
@@ -53,7 +64,6 @@ class StoreWrite w m where
     insertAtHeight :: w -> BlockHash -> BlockHeight -> m ()
     insertTx :: w -> Transaction -> m ()
     insertOutput :: w -> OutPoint -> Output -> m ()
-    setBalance :: w -> Balance -> m ()
     insertAddrTx :: w -> AddressTx -> m ()
     removeAddrTx :: w -> AddressTx -> m ()
     insertAddrUnspent :: w -> Address -> Unspent -> m ()

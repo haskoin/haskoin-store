@@ -28,17 +28,26 @@ data ImportDB = ImportDB
     { importRocksDB :: !(DB, ReadOptions)
     , importHashMap :: !(TVar HashMapDB)
     , importUnspentMap :: !(TVar UnspentMap)
+    , importBalanceMap :: !(TVar BalanceMap)
     }
 
 runImportDB ::
        (MonadError e m, MonadIO m)
     => DB
     -> TVar UnspentMap
+    -> TVar BalanceMap
     -> (ImportDB -> m a)
     -> m a
-runImportDB db um f = do
+runImportDB db um bm f = do
     hm <- newTVarIO emptyHashMapDB
-    x <- f ImportDB {importRocksDB = d, importHashMap = hm, importUnspentMap = um}
+    x <-
+        f
+            ImportDB
+                { importRocksDB = d
+                , importHashMap = hm
+                , importUnspentMap = um
+                , importBalanceMap = bm
+                }
     ops <- hashMapOps <$> readTVarIO hm
     writeBatch db ops
     return x
@@ -86,8 +95,8 @@ outOps = concatMap (uncurry f) . M.toList
 balOps :: HashMap Address (Maybe BalVal) -> [BatchOp]
 balOps = map (uncurry f) . M.toList
   where
+    f a Nothing = deleteOp (BalKey a)
     f a (Just b) = insertOp (BalKey a) b
-    f a Nothing  = deleteOp (BalKey a)
 
 addrTxOps ::
        HashMap Address (HashMap BlockRef (HashMap TxHash Bool)) -> [BatchOp]
@@ -185,21 +194,29 @@ getOutputI :: MonadIO m => ImportDB -> OutPoint -> m (Maybe Output)
 getOutputI ImportDB {importRocksDB = db, importHashMap = hm} op =
     runMaybeT $ MaybeT (getOutput hm op) <|> MaybeT (getOutput db op)
 
-getBalanceI :: MonadIO m => ImportDB -> Address -> m Balance
-getBalanceI ImportDB {importRocksDB = db, importHashMap = hm} a =
-    getBalanceH <$> readTVarIO hm <*> pure a >>= \case
-        Just b -> return b
-        Nothing -> getBalance db a
+getBalanceI :: MonadIO m => ImportDB -> Address -> m (Maybe Balance)
+getBalanceI ImportDB { importRocksDB = db
+                     , importHashMap = hm
+                     , importBalanceMap = bm
+                     } a =
+    getBalance bm a >>= \case
+        Just b -> return (Just b)
+        Nothing ->
+            getBalanceH <$> readTVarIO hm <*> pure a >>= \case
+                Just x -> return x
+                Nothing -> getBalance db a
 
 getUnspentI :: MonadIO m => ImportDB -> OutPoint -> m (Maybe Unspent)
-getUnspentI ImportDB { importRocksDB = (db, opts)
+getUnspentI ImportDB { importRocksDB = db
                      , importHashMap = hm
                      , importUnspentMap = um
-                     } p =
-    runMaybeT $
-    MaybeT (getUnspent hm p) <|>
-    MaybeT (getUnspent um p) <|>
-    MaybeT (getUnspentDB db opts p)
+                     } op =
+    getUnspent um op >>= \case
+        Just b -> return (Just b)
+        Nothing ->
+            getUnspentH <$> readTVarIO hm <*> pure op >>= \case
+                Just x -> return x
+                Nothing -> getUnspent db op
 
 instance MonadIO m => StoreRead ImportDB m where
     isInitialized = isInitializedI
@@ -208,7 +225,6 @@ instance MonadIO m => StoreRead ImportDB m where
     getBlock = getBlockI
     getTransaction = getTransactionI
     getOutput = getOutputI
-    getBalance = getBalanceI
 
 instance MonadIO m => StoreWrite ImportDB m where
     setInit ImportDB {importHashMap = hm, importRocksDB = (db, _)} =
@@ -218,7 +234,6 @@ instance MonadIO m => StoreWrite ImportDB m where
     insertAtHeight ImportDB {importHashMap = hm} = insertAtHeight hm
     insertTx ImportDB {importHashMap = hm} = insertTx hm
     insertOutput ImportDB {importHashMap = hm} = insertOutput hm
-    setBalance ImportDB {importHashMap = hm} = setBalance hm
     insertAddrTx ImportDB {importHashMap = hm} = insertAddrTx hm
     removeAddrTx ImportDB {importHashMap = hm} = removeAddrTx hm
     insertAddrUnspent ImportDB {importHashMap = hm} = insertAddrUnspent hm
@@ -226,8 +241,17 @@ instance MonadIO m => StoreWrite ImportDB m where
     insertMempoolTx ImportDB {importHashMap = hm} = insertMempoolTx hm
     deleteMempoolTx ImportDB {importHashMap = hm} = deleteMempoolTx hm
 
-instance MonadIO m => UnspentStore ImportDB m where
+instance MonadIO m => UnspentRead ImportDB m where
+    getUnspent = getUnspentI
+
+instance MonadIO m => UnspentWrite ImportDB m where
     addUnspent ImportDB {importHashMap = hm, importUnspentMap = um} u =
         addUnspent hm u >> addUnspent um u
     delUnspent ImportDB {importHashMap = hm} = delUnspent hm
-    getUnspent = getUnspentI
+
+instance MonadIO m => BalanceRead ImportDB m where
+    getBalance = getBalanceI
+
+instance MonadIO m => BalanceWrite ImportDB m where
+    setBalance ImportDB {importHashMap = hm, importBalanceMap = bm} b =
+        setBalance hm b >> setBalance bm b

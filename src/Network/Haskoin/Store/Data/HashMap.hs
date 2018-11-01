@@ -8,6 +8,7 @@ module Network.Haskoin.Store.Data.HashMap where
 import           Conduit
 import           Control.Monad
 import qualified Data.ByteString.Short               as B.Short
+import           Data.Function
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
 import           Data.IntMap.Strict                  (IntMap)
@@ -20,6 +21,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 type UnspentMap = HashMap TxHash (IntMap Unspent)
+type BalanceMap = (HashMap Address Balance, [Address])
 
 data HashMapDB = HashMapDB
     { hBest :: !(Maybe BlockHash)
@@ -75,26 +77,16 @@ getOutputH db op = do
     m <- M.lookup (outPointHash op) (hOut db)
     I.lookup (fromIntegral (outPointIndex op)) m
 
-getBalanceH :: HashMapDB -> Address -> Maybe Balance
-getBalanceH db a =
-    case M.lookup a (hBalance db) of
-        Nothing -> Nothing
-        Just Nothing ->
-            Just
-                Balance
-                    { balanceAddress = a
-                    , balanceAmount = 0
-                    , balanceZero = 0
-                    , balanceCount = 0
-                    }
-        Just (Just b) ->
-            Just
-                Balance
-                    { balanceAddress = a
-                    , balanceAmount = balValAmount b
-                    , balanceZero = balValZero b
-                    , balanceCount = balValCount b
-                    }
+getBalanceH :: HashMapDB -> Address -> Maybe (Maybe Balance)
+getBalanceH db a = fmap f <$> M.lookup a (hBalance db)
+  where
+    f b =
+        Balance
+            { balanceAddress = a
+            , balanceAmount = balValAmount b
+            , balanceZero = balValZero b
+            , balanceCount = balValCount b
+            }
 
 getMempoolH :: HashMapDB -> HashMap PreciseUnixTime (HashMap TxHash Bool)
 getMempoolH = hMempool
@@ -170,12 +162,15 @@ insertOutputH op out db =
 setBalanceH :: Balance -> HashMapDB -> HashMapDB
 setBalanceH b db = db {hBalance = M.insert (balanceAddress b) x (hBalance db)}
   where
-    x =
-        case b of
-            Balance {balanceAmount = 0, balanceZero = 0, balanceCount = 0} ->
-                Nothing
-            Balance {balanceAmount = v, balanceZero = z, balanceCount = c} ->
-                Just BalVal {balValAmount = v, balValZero = z, balValCount = c}
+    x
+        | balanceCount b == 0 = Nothing
+        | otherwise =
+            Just
+                BalVal
+                    { balValAmount = balanceAmount b
+                    , balValZero = balanceZero b
+                    , balValCount = balanceCount b
+                    }
 
 insertAddrTxH :: AddressTx -> HashMapDB -> HashMapDB
 insertAddrTxH a db =
@@ -232,6 +227,35 @@ deleteMempoolTxH h u db =
     let s = M.singleton u (M.singleton h False)
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
+getUnspentH :: HashMapDB -> OutPoint -> Maybe (Maybe Unspent)
+getUnspentH db op = do
+    m <- M.lookup (outPointHash op) (hUnspent db)
+    I.lookup (fromIntegral (outPointIndex op)) m
+
+addUnspentH :: Unspent -> HashMapDB -> HashMapDB
+addUnspentH u db =
+    db
+        { hUnspent =
+              M.insertWith
+                  (<>)
+                  (outPointHash (unspentPoint u))
+                  (I.singleton
+                       (fromIntegral (outPointIndex (unspentPoint u)))
+                       (Just u))
+                  (hUnspent db)
+        }
+
+delUnspentH :: OutPoint -> HashMapDB -> HashMapDB
+delUnspentH op db =
+    db
+        { hUnspent =
+              M.insertWith
+                  (<>)
+                  (outPointHash op)
+                  (I.singleton (fromIntegral (outPointIndex op)) Nothing)
+                  (hUnspent db)
+        }
+
 instance Applicative m => StoreRead HashMapDB m where
     isInitialized = pure . isInitializedH
     getBestBlock = pure . getBestBlockH
@@ -239,15 +263,12 @@ instance Applicative m => StoreRead HashMapDB m where
     getBlock db = pure . getBlockH db
     getTransaction db = pure . getTransactionH db
     getOutput db = pure . getOutputH db
-    getBalance db a = pure . fromMaybe b $ getBalanceH db a
-      where
-        b =
-            Balance
-                { balanceAddress = a
-                , balanceAmount = 0
-                , balanceZero = 0
-                , balanceCount = 0
-                }
+
+instance Applicative m => BalanceRead HashMapDB m where
+    getBalance db = pure . join . getBalanceH db
+
+instance Applicative m => UnspentRead HashMapDB m where
+    getUnspent db = pure . join . getUnspentH db
 
 instance Monad m => StoreStream HashMapDB m where
     getMempool db =
@@ -258,14 +279,22 @@ instance Monad m => StoreStream HashMapDB m where
         yieldMany . sort . catMaybes . getAddressUnspentsH db
 
 instance MonadIO m => StoreRead (TVar HashMapDB) m where
-    isInitialized v = atomically $ readTVar v >>= isInitialized
-    getBestBlock v = atomically $ readTVar v >>= getBestBlock
-    getBlocksAtHeight v h =
-        atomically $ readTVar v >>= \db -> getBlocksAtHeight db h
-    getBlock v b = atomically $ readTVar v >>= \db -> getBlock db b
-    getTransaction v t = atomically $ readTVar v >>= \db -> getTransaction db t
-    getOutput v t = atomically $ readTVar v >>= \db -> getOutput db t
-    getBalance v t = atomically $ readTVar v >>= \db -> getBalance db t
+    isInitialized v = readTVarIO v >>= isInitialized
+    getBestBlock v = readTVarIO v >>= getBestBlock
+    getBlocksAtHeight v h = readTVarIO v >>= \db -> getBlocksAtHeight db h
+    getBlock v b = readTVarIO v >>= \db -> getBlock db b
+    getTransaction v t = readTVarIO v >>= \db -> getTransaction db t
+    getOutput v t = readTVarIO v >>= \db -> getOutput db t
+
+instance MonadIO m => BalanceRead (TVar HashMapDB) m where
+    getBalance v a =
+        readTVarIO v >>= \db -> getBalance db a
+
+instance MonadIO m => UnspentRead (TVar HashMapDB) m where
+    getUnspent v op = readTVarIO v >>= \db -> getUnspent db op
+
+instance MonadIO m => BalanceWrite (TVar HashMapDB) m where
+    setBalance v b = atomically $ modifyTVar v (setBalanceH b)
 
 instance MonadIO m => StoreStream (TVar HashMapDB) m where
     getMempool v = readTVarIO v >>= getMempool
@@ -279,13 +308,16 @@ instance StoreWrite ((HashMapDB -> HashMapDB) -> m ()) m where
     insertAtHeight f h = f . insertAtHeightH h
     insertTx f = f . insertTxH
     insertOutput f p = f . insertOutputH p
-    setBalance f = f . setBalanceH
     insertAddrTx f = f . insertAddrTxH
     removeAddrTx f = f . removeAddrTxH
     insertAddrUnspent f a = f . insertAddrUnspentH a
     removeAddrUnspent f a = f . removeAddrUnspentH a
     insertMempoolTx f h = f . insertMempoolTxH h
     deleteMempoolTx f h = f . deleteMempoolTxH h
+
+instance Applicative m => UnspentWrite ((HashMapDB -> HashMapDB) -> m ()) m where
+    addUnspent f = f . addUnspentH
+    delUnspent f = f . delUnspentH
 
 instance MonadIO m => StoreWrite (TVar HashMapDB) m where
     setInit v = atomically $ setInit (modifyTVar v)
@@ -294,7 +326,6 @@ instance MonadIO m => StoreWrite (TVar HashMapDB) m where
     insertAtHeight v h = atomically . insertAtHeight (modifyTVar v) h
     insertTx v = atomically . insertTx (modifyTVar v)
     insertOutput v p = atomically . insertOutput (modifyTVar v) p
-    setBalance v = atomically . setBalance (modifyTVar v)
     insertAddrTx v = atomically . insertAddrTx (modifyTVar v)
     removeAddrTx v = atomically . removeAddrTx (modifyTVar v)
     insertAddrUnspent v a = atomically . insertAddrUnspent (modifyTVar v) a
@@ -302,49 +333,78 @@ instance MonadIO m => StoreWrite (TVar HashMapDB) m where
     insertMempoolTx v h = atomically . insertMempoolTx (modifyTVar v) h
     deleteMempoolTx v h = atomically . deleteMempoolTx (modifyTVar v) h
 
-instance MonadIO m => UnspentStore (TVar HashMapDB) m where
-    addUnspent v u =
-        atomically . modifyTVar v $ \x ->
-            x
-                { hUnspent =
-                      M.insertWith
-                          (<>)
-                          (outPointHash (unspentPoint u))
-                          (I.singleton
-                               (fromIntegral (outPointIndex (unspentPoint u)))
-                               (Just u))
-                          (hUnspent x)
-                }
-    delUnspent v p =
-        atomically . modifyTVar v $ \x ->
-            x
-                { hUnspent =
-                      M.insertWith
-                          (<>)
-                          (outPointHash p)
-                          (I.singleton (fromIntegral (outPointIndex p)) Nothing)
-                          (hUnspent x)
-                }
-    getUnspent v p =
-        (join . I.lookup (fromIntegral (outPointIndex p)) <=<
-         M.lookup (outPointHash p)) .
-        hUnspent <$>
-        readTVarIO v
+instance MonadIO m => UnspentWrite (TVar HashMapDB) m where
+    addUnspent v = atomically . addUnspent (modifyTVar v)
+    delUnspent v = atomically . delUnspent (modifyTVar v)
 
-instance MonadIO m => UnspentStore (TVar UnspentMap) m where
-    addUnspent v u =
-        atomically . modifyTVar v $
+instance Applicative m => UnspentRead UnspentMap m where
+    getUnspent um op = pure $ do
+        m <- M.lookup (outPointHash op) um
+        I.lookup (fromIntegral (outPointIndex op)) m
+
+instance MonadIO m => UnspentRead (TVar UnspentMap) m where
+    getUnspent v op = readTVarIO v >>= \um -> getUnspent um op
+
+instance Applicative m =>
+         UnspentWrite ((UnspentMap -> UnspentMap) -> m ()) m where
+    addUnspent f u =
+        f $
         M.insertWith
             (<>)
             (outPointHash (unspentPoint u))
             (I.singleton (fromIntegral (outPointIndex (unspentPoint u))) u)
-    delUnspent v p = atomically . modifyTVar v $ M.update f (outPointHash p)
+    delUnspent f op = f $ M.update g (outPointHash op)
       where
-        f m =
-            let n = I.delete (fromIntegral (outPointIndex p)) m
+        g m =
+            let n = I.delete (fromIntegral (outPointIndex op)) m
              in if I.null n
                     then Nothing
                     else Just n
-    getUnspent v p =
-        (I.lookup (fromIntegral (outPointIndex p)) <=< M.lookup (outPointHash p)) <$>
-        readTVarIO v
+    pruneUnspent f =
+        f $ \um ->
+            if M.size um > 2000 * 1000
+                then let g is = unspentBlock (head (I.elems is))
+                         ls =
+                             sortBy
+                                 (compare `on` (g . snd))
+                                 (filter (not . I.null . snd) (M.toList um))
+                      in M.fromList (drop (1000 * 1000) ls)
+                else um
+
+instance MonadIO m => UnspentWrite (TVar UnspentMap) m where
+    addUnspent v = atomically . addUnspent (modifyTVar v)
+    delUnspent v = atomically . delUnspent (modifyTVar v)
+    pruneUnspent = atomically . pruneUnspent . modifyTVar
+
+instance Applicative m => BalanceRead BalanceMap m where
+    getBalance m a = pure $ M.lookup a (fst m)
+
+instance Applicative m =>
+         BalanceWrite ((BalanceMap -> BalanceMap) -> m ()) m where
+    setBalance f b =
+        f $ \(m, s) ->
+            if balanceCount b == 0
+                then let m' = M.delete (balanceAddress b) m
+                      in (m', s)
+                else let m' = M.insert (balanceAddress b) b m
+                         s' = balanceAddress b : s
+                      in (m', s')
+    pruneBalance f =
+        f $ \(m, s) ->
+            if length s > 2000 * 1000
+                then let s' = take (1000 * 1000) s
+                         m' = M.fromList (mapMaybe (g m) s')
+                      in (m', s')
+                else (m, s)
+      where
+        g m a =
+            case M.lookup a m of
+                Nothing -> Nothing
+                Just b -> Just (a, b)
+
+instance MonadIO m => BalanceWrite (TVar BalanceMap) m where
+    setBalance v = atomically . setBalance (modifyTVar v)
+    pruneBalance = atomically . pruneBalance . modifyTVar
+
+instance MonadIO m => BalanceRead (TVar BalanceMap) m where
+    getBalance v a = readTVarIO v >>= \m -> getBalance m a

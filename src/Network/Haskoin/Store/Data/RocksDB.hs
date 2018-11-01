@@ -9,7 +9,6 @@ module Network.Haskoin.Store.Data.RocksDB where
 import           Conduit
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString.Short               as B.Short
-import           Data.Maybe
 import           Data.Word
 import           Database.RocksDB                    (DB, ReadOptions)
 import           Database.RocksDB.Query
@@ -134,20 +133,17 @@ instance MonadIO m => StoreRead (DB, ReadOptions) m where
     getBlock (db, opts) = getBlockDB db opts
     getTransaction (db, opts) = getTransactionDB db opts
     getOutput (db, opts) = getOutputDB db opts
-    getBalance (db, opts) a = fromMaybe b <$> getBalanceDB db opts a
-      where
-        b =
-            Balance
-                { balanceAddress = a
-                , balanceAmount = 0
-                , balanceZero = 0
-                , balanceCount = 0
-                }
 
 instance (MonadIO m, MonadResource m) => StoreStream (DB, ReadOptions) m where
     getMempool (db, opts) = getMempoolDB db opts
     getAddressTxs (db, opts) = getAddressTxsDB db opts
     getAddressUnspents (db, opts) = getAddressUnspentsDB db opts
+
+instance MonadIO m => BalanceRead (DB, ReadOptions) m where
+    getBalance (db, opts) = getBalanceDB db opts
+
+instance MonadIO m => UnspentRead (DB, ReadOptions) m where
+    getUnspent (db, opts) = getUnspentDB db opts
 
 setInitDB :: MonadIO m => DB -> m ()
 setInitDB db = insert db VersionKey dataVersion

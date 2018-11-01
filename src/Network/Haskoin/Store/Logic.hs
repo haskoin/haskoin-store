@@ -8,9 +8,6 @@ import           Control.Monad
 import           Control.Monad.Except
 import qualified Data.ByteString                     as B
 import qualified Data.ByteString.Short               as B.Short
-import           Data.Function
-import qualified Data.HashMap.Strict                 as M
-import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
 import           Data.Serialize
@@ -47,9 +44,10 @@ initDB ::
     => Network
     -> DB
     -> TVar UnspentMap
+    -> TVar BalanceMap
     -> m ()
-initDB net db um =
-    runImportDB db um $ \i ->
+initDB net db um bm =
+    runImportDB db um bm $ \i ->
         isInitialized i >>= \case
             Left e -> throwError (InitException e)
             Right True -> return ()
@@ -61,7 +59,10 @@ newMempoolTx ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => Network
     -> i
@@ -106,16 +107,20 @@ newBlock ::
     => Network
     -> DB
     -> TVar UnspentMap
+    -> TVar BalanceMap
     -> Block
     -> BlockNode
     -> m ()
-newBlock net db um b n = runImportDB db um $ \i -> importBlock net i b n
+newBlock net db um bm b n = runImportDB db um bm $ \i -> importBlock net i b n
 
 revertBlock ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> BlockHash
@@ -135,7 +140,14 @@ revertBlock i bh = do
     insertBlock i bd {blockDataMainChain = False}
 
 importBlock ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m, UnspentStore i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
+       )
     => Network
     -> i
     -> Block
@@ -180,7 +192,10 @@ importTx ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> BlockRef
@@ -297,7 +312,10 @@ deleteTx ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> Bool -- ^ only delete transaction if unconfirmed
@@ -381,7 +399,10 @@ newOutput ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> BlockRef
@@ -416,7 +437,10 @@ delOutput ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> OutPoint
@@ -476,7 +500,10 @@ spendOutput ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> BlockRef
@@ -511,7 +538,10 @@ unspendOutput ::
        ( MonadError ImportException m
        , StoreRead i m
        , StoreWrite i m
-       , UnspentStore i m
+       , UnspentRead i m
+       , UnspentWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
        )
     => i
     -> OutPoint
@@ -543,46 +573,70 @@ unspendOutput i op br = do
         | otherwise = o
 
 reduceBalance ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
+       )
     => i
     -> Bool -- ^ confirmed
     -> Address
     -> Word64
     -> m ()
-reduceBalance i c a v = do
-    b <- getBalance i a
-    setBalance i =<<
-        if c
-            then do
-                unless (v <= balanceAmount b) $
-                    throwError (InsufficientBalance a)
-                unless (balanceCount b > 0) $ throwError (InsufficientOutputs a)
-                return
-                    b
-                        { balanceAmount = balanceAmount b - v
-                        , balanceCount = balanceCount b - 1
-                        }
-            else do
-                unless
-                    (fromIntegral v <=
-                     fromIntegral (balanceAmount b) + balanceZero b) $
-                    throwError (InsufficientBalance a)
-                unless (balanceCount b > 0) $ throwError (InsufficientOutputs a)
-                return
-                    b
-                        { balanceZero = balanceZero b - fromIntegral v
-                        , balanceCount = balanceCount b - 1
-                        }
+reduceBalance i c a v =
+    getBalance i a >>= \case
+        Nothing -> throwError (InsufficientBalance a)
+        Just b ->
+            setBalance i =<<
+                if c
+                    then do
+                        unless (v <= balanceAmount b) $
+                            throwError (InsufficientBalance a)
+                        unless (balanceCount b > 0) $
+                            throwError (InsufficientOutputs a)
+                        return
+                            b
+                                { balanceAmount = balanceAmount b - v
+                                , balanceCount = balanceCount b - 1
+                                }
+                    else do
+                        unless
+                            (fromIntegral v <=
+                             fromIntegral (balanceAmount b) + balanceZero b) $
+                            throwError (InsufficientBalance a)
+                        unless (balanceCount b > 0) $
+                            throwError (InsufficientOutputs a)
+                        return
+                            b
+                                { balanceZero = balanceZero b - fromIntegral v
+                                , balanceCount = balanceCount b - 1
+                                }
 
 increaseBalance ::
-       (MonadError ImportException m, StoreRead i m, StoreWrite i m)
+       ( MonadError ImportException m
+       , StoreRead i m
+       , StoreWrite i m
+       , BalanceRead i m
+       , BalanceWrite i m
+       )
     => i
     -> Bool -- ^ confirmed
     -> Address
     -> Word64
     -> m ()
 increaseBalance i c a v = do
-    b <- getBalance i a
+    b <-
+        getBalance i a >>= \case
+            Nothing ->
+                return
+                    Balance
+                        { balanceAddress = a
+                        , balanceAmount = 0
+                        , balanceZero = 0
+                        , balanceCount = 0
+                        }
+            Just b -> return b
     setBalance i $
         if c
             then b
@@ -593,14 +647,3 @@ increaseBalance i c a v = do
                      { balanceZero = balanceZero b + fromIntegral v
                      , balanceCount = balanceCount b + 1
                      }
-
-pruneUnspentMap :: UnspentMap -> UnspentMap
-pruneUnspentMap um
-    | M.size um > 2000 * 1000 =
-        let f is = unspentBlock (head (I.elems is))
-            ls =
-                sortBy
-                    (compare `on` (f . snd))
-                    (filter (not . I.null . snd) (M.toList um))
-         in M.fromList (drop (1000 * 1000) ls)
-    | otherwise = um

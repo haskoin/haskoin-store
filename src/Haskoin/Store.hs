@@ -231,20 +231,17 @@ xpubTxs i xpub = do
     f p t = XPubTx {xPubTxPath = pathToList p, xPubTx = t}
 
 xpubBals ::
-       (Monad m, StoreStream i m, StoreRead i m) => i -> XPubKey -> m [XPubBal]
+       (Monad m, StoreStream i m, BalanceRead i m)
+    => i
+    -> XPubKey
+    -> m [XPubBal]
 xpubBals i xpub = do
     as <- xpubAddrs i xpub
-    fmap catMaybes $
-        forM as $ \(a, p) ->
-            getBalance i a >>= \b ->
-                return $
-                if balanceCount b == 0
-                    then Nothing
-                    else Just
-                             XPubBal
-                                 { xPubBalPath = pathToList p
-                                 , xPubBal = b
-                                 }
+    fmap catMaybes . forM as $ \(a, p) ->
+        getBalance i a >>= \case
+            Nothing -> return Nothing
+            Just b ->
+                return $ Just XPubBal {xPubBalPath = pathToList p, xPubBal = b}
 
 xpubUnspent ::
        (Monad m, StoreStream i m, StoreRead i m)

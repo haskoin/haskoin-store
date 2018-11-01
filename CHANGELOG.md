@@ -4,11 +4,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+### Added
+- Address balance cache in memory.
+
 ## 0.5.0
+### Added
+- Add UTXO cache in memory.
+- Get transactions with witness data in segwit networks.
+
 ### Changed
 - Paths for derivations in xpubs is a list and no longer a string.
-- Get transactions with witness data in segwit networks.
-- Add UTXO cache in memory.
 - Various bug fixes.
 
 ## 0.4.2
