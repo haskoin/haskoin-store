@@ -11,4 +11,4 @@ extra-deps:
   - nqe-0.6.1
   - haskoin-core-0.8.1
   - rocksdb-query-0.2.0
-  - haskoin-node-0.9.3
+  - haskoin-node-0.9.4
