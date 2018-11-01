@@ -525,23 +525,23 @@ unspendOutput ::
 unspendOutput i op br = do
     tx <- getImportTx i (outPointHash op)
     out <- getTxOutput (outPointIndex op) tx
-    when (isNothing (outputSpender out)) $ throwError (OutputAlreadyUnspent op)
-    insertTx
-        i
-        tx {transactionOutputs = zipWith f [0 ..] (transactionOutputs tx)}
-    let u =
-            Unspent
-                { unspentAmount = outputAmount out
-                , unspentBlock = transactionBlock tx
-                , unspentScript = B.Short.toShort (outputScript out)
-                , unspentPoint = op
-                }
-    addUnspent i u
-    case scriptToAddressBS (outputScript out) of
-        Left _ -> return ()
-        Right a -> do
-            insertAddrUnspent i a u
-            increaseBalance i (confirmed br) a (outputAmount out)
+    when (isJust (outputSpender out)) $ do
+        insertTx
+            i
+            tx {transactionOutputs = zipWith f [0 ..] (transactionOutputs tx)}
+        let u =
+                Unspent
+                    { unspentAmount = outputAmount out
+                    , unspentBlock = transactionBlock tx
+                    , unspentScript = B.Short.toShort (outputScript out)
+                    , unspentPoint = op
+                    }
+        addUnspent i u
+        case scriptToAddressBS (outputScript out) of
+            Left _ -> return ()
+            Right a -> do
+                insertAddrUnspent i a u
+                increaseBalance i (confirmed br) a (outputAmount out)
   where
     f n o
         | n == outPointIndex op = o {outputSpender = Nothing}
