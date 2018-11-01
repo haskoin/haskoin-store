@@ -33,13 +33,8 @@ data ImportException
     | NoUnspent !OutPoint
     | TxDeleted !TxHash
     | TxDoubleSpend !TxHash
-    | TxOutputsSpent !TxHash
     | TxConfirmed !TxHash
     | OutputOutOfRange !OutPoint
-    | OutputAlreadyUnspent !OutPoint
-    | OutputAlreadySpent !OutPoint
-    | OutputDoesNotExist !OutPoint
-    | BalanceNotFound !Address
     | InsufficientBalance !Address
     | InsufficientOutputs !Address
     | InsufficientFunds !TxHash
