@@ -234,7 +234,7 @@ processTxs p hs =
             xs <-
                 fmap catMaybes . forM hs $ \h ->
                     runMaybeT $ do
-                        t <- getTransaction (db, defaultReadOptions) h
+                        t <- getTxData (db, defaultReadOptions) h
                         guard (isNothing t)
                         return (getTxHash h)
             $(logDebugS) "Block" $
@@ -371,7 +371,8 @@ syncMe =
                 db <- blockConfDB <$> asks myConfig
                 um <- asks myUnspent
                 bm <- asks myBalances
-                runExceptT (runImportDB db um bm $ \i -> revertBlock i d) >>= \case
+                net <- blockConfNet <$> asks myConfig
+                runExceptT (runImportDB db um bm $ \i -> revertBlock net i d) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>

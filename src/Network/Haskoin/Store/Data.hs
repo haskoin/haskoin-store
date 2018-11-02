@@ -5,21 +5,24 @@
 module Network.Haskoin.Store.Data where
 
 import           Conduit
-import           Data.Aeson              as A
-import           Data.ByteString         (ByteString)
-import qualified Data.ByteString         as B
-import           Data.ByteString.Short   (ShortByteString)
-import qualified Data.ByteString.Short   as B.Short
+import           Control.Monad.Trans.Maybe
+import           Data.Aeson                as A
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString           as B
+import           Data.ByteString.Short     (ShortByteString)
+import qualified Data.ByteString.Short     as B.Short
 import           Data.Hashable
 import           Data.Int
+import qualified Data.IntMap               as I
+import           Data.IntMap.Strict        (IntMap)
 import           Data.Maybe
-import           Data.Serialize          as S
+import           Data.Serialize            as S
 import           Data.String.Conversions
 import           Data.Time.Clock.System
 import           Data.Word
 import           GHC.Generics
 import           Haskoin
-import           Network.Socket          (SockAddr)
+import           Network.Socket            (SockAddr)
 import           UnliftIO.Exception
 
 type UnixTime = Int64
@@ -49,8 +52,16 @@ class StoreRead r m where
     getBestBlock :: r -> m (Maybe BlockHash)
     getBlocksAtHeight :: r -> BlockHeight -> m [BlockHash]
     getBlock :: r -> BlockHash -> m (Maybe BlockData)
-    getTransaction :: r -> TxHash -> m (Maybe Transaction)
-    getOutput :: r -> OutPoint -> m (Maybe Output)
+    getTxData :: r -> TxHash -> m (Maybe TxData)
+    getSpenders :: r -> TxHash -> m (IntMap Spender)
+    getSpender :: r -> OutPoint -> m (Maybe Spender)
+
+getTransaction ::
+       (Monad m, StoreRead r m) => r -> TxHash -> m (Maybe Transaction)
+getTransaction r h = runMaybeT $ do
+    d <- MaybeT $ getTxData r h
+    sm <- lift $ getSpenders r h
+    return $ toTransaction d sm
 
 class StoreStream r m where
     getMempool :: r -> ConduitT () (PreciseUnixTime, TxHash) m ()
@@ -62,8 +73,9 @@ class StoreWrite w m where
     setBest :: w -> BlockHash -> m ()
     insertBlock :: w -> BlockData -> m ()
     insertAtHeight :: w -> BlockHash -> BlockHeight -> m ()
-    insertTx :: w -> Transaction -> m ()
-    insertOutput :: w -> OutPoint -> Output -> m ()
+    insertTx :: w -> TxData -> m ()
+    insertSpender :: w -> OutPoint -> Spender -> m ()
+    deleteSpender :: w -> OutPoint -> m ()
     insertAddrTx :: w -> AddressTx -> m ()
     removeAddrTx :: w -> AddressTx -> m ()
     insertAddrUnspent :: w -> Address -> Unspent -> m ()
@@ -139,8 +151,8 @@ data Balance = Balance
       -- ^ address balance
     , balanceAmount  :: !Word64
       -- ^ confirmed balance
-    , balanceZero    :: !Int64
-      -- ^ unconfirmed balance (can be negative)
+    , balanceZero    :: !Word64
+      -- ^ unconfirmed balance
     , balanceCount   :: !Word64
       -- ^ number of unspent outputs
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
@@ -288,6 +300,7 @@ inputPairs net Input { inputPoint = OutPoint oph opi
     , "address" .= eitherToMaybe (addrToJSON net <$> scriptToAddressBS ps)
     ] ++
     ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+
 inputPairs net Coinbase { inputPoint = OutPoint oph opi
                         , inputSequence = sq
                         , inputSigScript = ss
@@ -354,6 +367,84 @@ outputToJSON net = object . outputPairs net
 outputToEncoding :: Network -> Output -> Encoding
 outputToEncoding net = pairs . mconcat . outputPairs net
 
+data Prev = Prev
+    { prevScript :: !ByteString
+    , prevAmount :: !Word64
+    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize)
+
+toInput :: TxIn -> Maybe Prev -> Maybe WitnessStack -> Input
+toInput i Nothing w =
+    Coinbase
+        { inputPoint = prevOutput i
+        , inputSequence = txInSequence i
+        , inputSigScript = scriptInput i
+        , inputWitness = w
+        }
+toInput i (Just p) w =
+    Input
+        { inputPoint = prevOutput i
+        , inputSequence = txInSequence i
+        , inputSigScript = scriptInput i
+        , inputPkScript = prevScript p
+        , inputAmount = prevAmount p
+        , inputWitness = w
+        }
+
+toOutput :: TxOut -> Maybe Spender -> Output
+toOutput o s =
+    Output
+        { outputAmount = outValue o
+        , outputScript = scriptOutput o
+        , outputSpender = s
+        }
+
+data TxData = TxData
+    { txDataBlock   :: !BlockRef
+    , txData        :: !Tx
+    , txDataPrevs   :: !(IntMap Prev)
+    , txDataDeleted :: !Bool
+    , txDataRBF     :: Bool
+    } deriving (Show, Eq, Ord, Generic, Serialize)
+
+toTransaction :: TxData -> IntMap Spender -> Transaction
+toTransaction t sm =
+    Transaction
+        { transactionBlock = txDataBlock t
+        , transactionVersion = txVersion (txData t)
+        , transactionLockTime = txLockTime (txData t)
+        , transactionInputs = ins
+        , transactionOutputs = outs
+        , transactionDeleted = txDataDeleted t
+        , transactionRBF = txDataRBF t
+        }
+  where
+    ws =
+        take (length (txIn (txData t))) $
+        map Just (txWitness (txData t)) <> repeat Nothing
+    f n i = toInput i (I.lookup n (txDataPrevs t)) (ws !! n)
+    ins = zipWith f [0 ..] (txIn (txData t))
+    g n o = toOutput o (I.lookup n sm)
+    outs = zipWith g [0 ..] (txOut (txData t))
+
+fromTransaction :: Transaction -> (TxData, IntMap Spender)
+fromTransaction t = (d, sm)
+  where
+    d =
+        TxData
+            { txDataBlock = transactionBlock t
+            , txData = transactionData t
+            , txDataPrevs = ps
+            , txDataDeleted = transactionDeleted t
+            , txDataRBF = transactionRBF t
+            }
+    f _ Coinbase {} = Nothing
+    f n Input {inputPkScript = s, inputAmount = v} =
+        Just (n, Prev {prevScript = s, prevAmount = v})
+    ps = I.fromList . catMaybes $ zipWith f [0 ..] (transactionInputs t)
+    g _ Output {outputSpender = Nothing} = Nothing
+    g n Output {outputSpender = Just s}  = Just (n, s)
+    sm = I.fromList . catMaybes $ zipWith g [0 ..] (transactionOutputs t)
+
 -- | Detailed transaction information.
 data Transaction = Transaction
     { transactionBlock    :: !BlockRef
@@ -362,8 +453,6 @@ data Transaction = Transaction
       -- ^ transaction version
     , transactionLockTime :: !Word32
       -- ^ lock time
-    , transactionFee      :: !Word64
-      -- ^ transaction fees paid to miners in satoshi
     , transactionInputs   :: ![Input]
       -- ^ transaction inputs
     , transactionOutputs  :: ![Output]
@@ -398,9 +487,15 @@ transactionPairs net dtx =
     , "size" .= B.length (S.encode (transactionData dtx))
     , "version" .= transactionVersion dtx
     , "locktime" .= transactionLockTime dtx
-    , "fee" .= transactionFee dtx
-    , "inputs" .= map (object . inputPairs net) (transactionInputs dtx)
-    , "outputs" .= map (object . outputPairs net) (transactionOutputs dtx)
+    , "fee" .=
+      if all isCoinbase (transactionInputs dtx)
+          then 0
+          else sum (map inputAmount (transactionInputs dtx)) -
+               sum (map outputAmount (transactionOutputs dtx))
+    , "inputs" .=
+      map (object . inputPairs net) (transactionInputs dtx)
+    , "outputs" .=
+      map (object . outputPairs net) (transactionOutputs dtx)
     , "block" .= transactionBlock dtx
     , "deleted" .= transactionDeleted dtx
     ] ++

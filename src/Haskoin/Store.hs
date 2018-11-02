@@ -27,6 +27,11 @@ module Haskoin.Store
     , getBlocksAtHeight
     , getBlock
     , getTransaction
+    , getTxData
+    , getSpenders
+    , getSpender
+    , fromTransaction
+    , toTransaction
     , getBalance
     , getMempool
     , getAddressUnspents

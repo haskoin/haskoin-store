@@ -4,9 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## 0.5.1
+## 0.6.0
 ### Added
 - Address balance cache in memory.
+
+### Changed
+- Simplify data model further.
+- Fix bug importing outputs with UTXO cache.
+- Unspent balances cannot be negative.
 
 ## 0.5.0
 ### Added

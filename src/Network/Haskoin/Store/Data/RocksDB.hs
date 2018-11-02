@@ -7,8 +7,9 @@
 module Network.Haskoin.Store.Data.RocksDB where
 
 import           Conduit
-import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString.Short               as B.Short
+import           Data.IntMap                         (IntMap)
+import qualified Data.IntMap.Strict                  as I
 import           Data.Word
 import           Database.RocksDB                    (DB, ReadOptions)
 import           Database.RocksDB.Query
@@ -18,7 +19,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 dataVersion :: Word32
-dataVersion = 6
+dataVersion = 8
 
 data ExceptRocksDB =
     MempoolTxNotFound
@@ -45,19 +46,20 @@ getBlocksAtHeightDB db opts h =
 getBlockDB :: MonadIO m => DB -> ReadOptions -> BlockHash -> m (Maybe BlockData)
 getBlockDB db opts h = retrieve db opts (BlockKey h)
 
-getTransactionDB ::
-       MonadIO m => DB -> ReadOptions -> TxHash -> m (Maybe Transaction)
-getTransactionDB db opts th = runMaybeT $ do
-    tx <- MaybeT $ retrieve db opts (TxKey th)
-    outs <- lift $ getOutputsDB db opts th
-    return tx {transactionOutputs = outs}
+getTxDataDB ::
+       MonadIO m => DB -> ReadOptions -> TxHash -> m (Maybe TxData)
+getTxDataDB db opts th = retrieve db opts (TxKey th)
 
-getOutputDB :: MonadIO m => DB -> ReadOptions -> OutPoint -> m (Maybe Output)
-getOutputDB db opts = retrieve db opts . OutputKey
+getSpenderDB :: MonadIO m => DB -> ReadOptions -> OutPoint -> m (Maybe Spender)
+getSpenderDB db opts = retrieve db opts . SpenderKey
 
-getOutputsDB :: MonadIO m => DB -> ReadOptions -> TxHash -> m [Output]
-getOutputsDB db opts th =
-    map snd <$> liftIO (matchingAsList db opts (OutputKeyS th))
+getSpendersDB :: MonadIO m => DB -> ReadOptions -> TxHash -> m (IntMap Spender)
+getSpendersDB db opts th =
+    I.fromList . map (uncurry f) <$>
+    liftIO (matchingAsList db opts (SpenderKeyS th))
+  where
+    f (SpenderKey op) s = (fromIntegral (outPointIndex op), s)
+    f _ _ = undefined
 
 getBalanceDB :: MonadIO m => DB -> ReadOptions -> Address -> m (Maybe Balance)
 getBalanceDB db opts a = fmap f <$> retrieve db opts (BalKey a)
@@ -131,8 +133,9 @@ instance MonadIO m => StoreRead (DB, ReadOptions) m where
     getBestBlock (db, opts) = getBestBlockDB db opts
     getBlocksAtHeight (db, opts) = getBlocksAtHeightDB db opts
     getBlock (db, opts) = getBlockDB db opts
-    getTransaction (db, opts) = getTransactionDB db opts
-    getOutput (db, opts) = getOutputDB db opts
+    getTxData (db, opts) = getTxDataDB db opts
+    getSpenders (db, opts) = getSpendersDB db opts
+    getSpender (db, opts) = getSpenderDB db opts
 
 instance (MonadIO m, MonadResource m) => StoreStream (DB, ReadOptions) m where
     getMempool (db, opts) = getMempoolDB db opts

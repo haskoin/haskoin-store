@@ -637,9 +637,11 @@ components:
         confirmed:
           type: integer
           format: int64
+          description: sum of confirmed unspent output values
         unconfirmed:
           type: integer
           format: int64
+          description: sum of unconfirmed unspent output values
         utxo:
           description: number of unspent outputs
           type: integer

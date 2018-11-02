@@ -11,7 +11,6 @@ import           Data.ByteString            (ByteString)
 import qualified Data.ByteString            as B
 import           Data.Default
 import           Data.Hashable
-import           Data.Int
 import           Data.Serialize             as S
 import           Data.Word
 import           Database.RocksDB.Query
@@ -111,30 +110,30 @@ instance Serialize TxKey where
 
 instance Key TxKey
 
-instance KeyValue TxKey Transaction
+instance KeyValue TxKey TxData
 
-data OutputKey
-    = OutputKey { outputPoint :: !OutPoint }
-    | OutputKeyS { outputKeyS :: !TxHash }
+data SpenderKey
+    = SpenderKey { outputPoint :: !OutPoint }
+    | SpenderKeyS { outputKeyS :: !TxHash }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
-instance Serialize OutputKey where
+instance Serialize SpenderKey where
     -- 0x10 · TxHash · Index
-    put (OutputKey OutPoint {outPointHash = h, outPointIndex = i}) = do
+    put (SpenderKey OutPoint {outPointHash = h, outPointIndex = i}) = do
         putWord8 0x10
         put h
         put i
-    put (OutputKeyS h) = do
+    put (SpenderKeyS h) = do
         putWord8 0x10
         put h
     get = do
         guard . (== 0x10) =<< getWord8
         op <- OutPoint <$> get <*> get
-        return $ OutputKey op
+        return $ SpenderKey op
 
-instance Key OutputKey
+instance Key SpenderKey
 
-instance KeyValue OutputKey Output
+instance KeyValue SpenderKey Spender
 
 -- | Unspent output database key.
 data UnspentKey
@@ -241,8 +240,8 @@ instance Key BalKey
 data BalVal = BalVal
     { balValAmount :: !Word64
       -- ^ balance in satoshi
-    , balValZero   :: !Int64
-      -- ^ unconfirmed balance in satoshi (can be negative)
+    , balValZero   :: !Word64
+      -- ^ unconfirmed balance in satoshi
     , balValCount  :: !Word64
       -- ^ number of unspent outputs
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)

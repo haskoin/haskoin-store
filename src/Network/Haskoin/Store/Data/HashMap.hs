@@ -27,8 +27,8 @@ data HashMapDB = HashMapDB
     { hBest :: !(Maybe BlockHash)
     , hBlock :: !(HashMap BlockHash BlockData)
     , hHeight :: !(HashMap BlockHeight [BlockHash])
-    , hTx :: !(HashMap TxHash Transaction)
-    , hOut :: !(HashMap TxHash (IntMap Output))
+    , hTx :: !(HashMap TxHash TxData)
+    , hSpender :: !(HashMap TxHash (IntMap (Maybe Spender)))
     , hUnspent :: !(HashMap TxHash (IntMap (Maybe Unspent)))
     , hBalance :: !(HashMap Address (Maybe BalVal))
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
@@ -44,7 +44,7 @@ emptyHashMapDB =
         , hBlock = M.empty
         , hHeight = M.empty
         , hTx = M.empty
-        , hOut = M.empty
+        , hSpender = M.empty
         , hUnspent = M.empty
         , hBalance = M.empty
         , hAddrTx = M.empty
@@ -66,16 +66,16 @@ getBlocksAtHeightH db h = M.lookupDefault [] h (hHeight db)
 getBlockH :: HashMapDB -> BlockHash -> Maybe BlockData
 getBlockH db h = M.lookup h (hBlock db)
 
-getTransactionH :: HashMapDB -> TxHash -> Maybe Transaction
-getTransactionH db t = do
-    tx <- M.lookup t (hTx db)
-    m <- M.lookup t (hOut db)
-    return tx {transactionOutputs = I.elems m}
+getTxDataH :: HashMapDB -> TxHash -> Maybe TxData
+getTxDataH db t = M.lookup t (hTx db)
 
-getOutputH :: HashMapDB -> OutPoint -> Maybe Output
-getOutputH db op = do
-    m <- M.lookup (outPointHash op) (hOut db)
+getSpenderH :: HashMapDB -> OutPoint -> Maybe (Maybe Spender)
+getSpenderH db op = do
+    m <- M.lookup (outPointHash op) (hSpender db)
     I.lookup (fromIntegral (outPointIndex op)) m
+
+getSpendersH :: HashMapDB -> TxHash -> IntMap (Maybe Spender)
+getSpendersH db t = M.lookupDefault I.empty t (hSpender db)
 
 getBalanceH :: HashMapDB -> Address -> Maybe (Maybe Balance)
 getBalanceH db a = fmap f <$> M.lookup a (hBalance db)
@@ -133,30 +133,29 @@ insertAtHeightH h g db = db {hHeight = M.insertWith f g [h] (hHeight db)}
   where
     f xs ys = nub $ xs <> ys
 
-insertTxH :: Transaction -> HashMapDB -> HashMapDB
-insertTxH tx db =
-    db
-        { hTx =
-              M.insert
-                  (txHash (transactionData tx))
-                  tx {transactionOutputs = []}
-                  (hTx db)
-        , hOut =
-              M.insert
-                  (txHash (transactionData tx))
-                  (I.fromList (zip [0 ..] (transactionOutputs tx)))
-                  (hOut db)
-        }
+insertTxH :: TxData -> HashMapDB -> HashMapDB
+insertTxH tx db = db {hTx = M.insert (txHash (txData tx)) tx (hTx db)}
 
-insertOutputH :: OutPoint -> Output -> HashMapDB -> HashMapDB
-insertOutputH op out db =
+insertSpenderH :: OutPoint -> Spender -> HashMapDB -> HashMapDB
+insertSpenderH op s db =
     db
-        { hOut =
+        { hSpender =
               M.insertWith
                   (<>)
                   (outPointHash op)
-                  (I.singleton (fromIntegral (outPointIndex op)) out)
-                  (hOut db)
+                  (I.singleton (fromIntegral (outPointIndex op)) (Just s))
+                  (hSpender db)
+        }
+
+deleteSpenderH :: OutPoint -> HashMapDB -> HashMapDB
+deleteSpenderH op db =
+    db
+        { hSpender =
+              M.insertWith
+                  (<>)
+                  (outPointHash op)
+                  (I.singleton (fromIntegral (outPointIndex op)) Nothing)
+                  (hSpender db)
         }
 
 setBalanceH :: Balance -> HashMapDB -> HashMapDB
@@ -261,8 +260,9 @@ instance Applicative m => StoreRead HashMapDB m where
     getBestBlock = pure . getBestBlockH
     getBlocksAtHeight db = pure . getBlocksAtHeightH db
     getBlock db = pure . getBlockH db
-    getTransaction db = pure . getTransactionH db
-    getOutput db = pure . getOutputH db
+    getTxData db = pure . getTxDataH db
+    getSpenders db = pure . I.map fromJust . I.filter isJust . getSpendersH db
+    getSpender db = pure . join . getSpenderH db
 
 instance Applicative m => BalanceRead HashMapDB m where
     getBalance db = pure . join . getBalanceH db
@@ -283,8 +283,9 @@ instance MonadIO m => StoreRead (TVar HashMapDB) m where
     getBestBlock v = readTVarIO v >>= getBestBlock
     getBlocksAtHeight v h = readTVarIO v >>= \db -> getBlocksAtHeight db h
     getBlock v b = readTVarIO v >>= \db -> getBlock db b
-    getTransaction v t = readTVarIO v >>= \db -> getTransaction db t
-    getOutput v t = readTVarIO v >>= \db -> getOutput db t
+    getTxData v t = readTVarIO v >>= \db -> getTxData db t
+    getSpender v t = readTVarIO v >>= \db -> getSpender db t
+    getSpenders v t = readTVarIO v >>= \db -> getSpenders db t
 
 instance MonadIO m => BalanceRead (TVar HashMapDB) m where
     getBalance v a =
@@ -307,7 +308,8 @@ instance StoreWrite ((HashMapDB -> HashMapDB) -> m ()) m where
     insertBlock f = f . insertBlockH
     insertAtHeight f h = f . insertAtHeightH h
     insertTx f = f . insertTxH
-    insertOutput f p = f . insertOutputH p
+    insertSpender f p = f . insertSpenderH p
+    deleteSpender f = f . deleteSpenderH
     insertAddrTx f = f . insertAddrTxH
     removeAddrTx f = f . removeAddrTxH
     insertAddrUnspent f a = f . insertAddrUnspentH a
@@ -325,7 +327,8 @@ instance MonadIO m => StoreWrite (TVar HashMapDB) m where
     insertBlock v = atomically . insertBlock (modifyTVar v)
     insertAtHeight v h = atomically . insertAtHeight (modifyTVar v) h
     insertTx v = atomically . insertTx (modifyTVar v)
-    insertOutput v p = atomically . insertOutput (modifyTVar v) p
+    insertSpender v p = atomically . insertSpender (modifyTVar v) p
+    deleteSpender v = atomically . deleteSpender (modifyTVar v)
     insertAddrTx v = atomically . insertAddrTx (modifyTVar v)
     removeAddrTx v = atomically . removeAddrTx (modifyTVar v)
     insertAddrUnspent v a = atomically . insertAddrUnspent (modifyTVar v) a
@@ -400,7 +403,7 @@ instance Applicative m =>
         g m a =
             case M.lookup a m of
                 Nothing -> Nothing
-                Just b -> Just (a, b)
+                Just b  -> Just (a, b)
 
 instance MonadIO m => BalanceWrite (TVar BalanceMap) m where
     setBalance v = atomically . setBalance (modifyTVar v)
