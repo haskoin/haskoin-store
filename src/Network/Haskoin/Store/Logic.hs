@@ -231,7 +231,7 @@ importBlock net i b n = do
             }
     insertAtHeight i (headerHash (nodeHeader n)) (nodeHeight n)
     setBest i (headerHash (nodeHeader n))
-    txs <- concat <$> mapM (getRecursiveTx i . txHash) (tail (blockTxns b))
+    txs <- nub . concat <$> mapM (getRecursiveTx i . txHash) (tail (blockTxns b))
     mapM_ (deleteTx net i False . txHash . transactionData) (reverse txs)
     zipWithM_ (\x t -> importTx net i (br x) t) [0 ..] (blockTxns b)
     forM_ txs $ \tr -> do
