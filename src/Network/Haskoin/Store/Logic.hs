@@ -473,8 +473,8 @@ confirmTx net i br tx =
                                     , unspentScript =
                                           B.Short.toShort (scriptOutput o)
                                     }
-                        reduceBalance net i False a (outValue o)
-                        increaseBalance net i True a (outValue o)
+                            reduceBalance net i False a (outValue o)
+                            increaseBalance net i True a (outValue o)
             insertTx i t {txDataBlock = br}
             deleteMempoolTx i (txHash tx) (memRefTime (txDataBlock t))
 
