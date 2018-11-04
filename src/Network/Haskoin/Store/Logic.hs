@@ -427,10 +427,10 @@ deleteTx net i mo h = do
     go t = do
         ss <- nub . map spenderHash . I.elems <$> getSpenders i h
         mapM_ (deleteTx net i True) ss
-        let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
-        mapM_ (unspendOutput net i) ps
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
             delOutput net i (OutPoint h n)
+        let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
+        mapM_ (unspendOutput net i) ps
         unless (confirmed (txDataBlock t)) $
             deleteMempoolTx i h (memRefTime (txDataBlock t))
         insertTx i t {txDataDeleted = True}
