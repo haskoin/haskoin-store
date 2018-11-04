@@ -101,10 +101,10 @@ newMempoolTx net i tx now = do
         orp <-
             any isNothing <$>
             mapM (getTxData i . outPointHash . prevOutput) (txIn tx)
-        when orp $
-            $(logErrorS) "BlockLogic" $
-            "Transaction is orphan: " <> txHashToHex (txHash tx)
-        unless orp f
+        if orp
+            then $(logErrorS) "BlockLogic" $
+                 "Transaction is orphan: " <> txHashToHex (txHash tx)
+            else f
     f = do
         us <-
             forM (txIn tx) $ \TxIn {prevOutput = op} -> do
@@ -415,7 +415,7 @@ deleteTx net i mo h = do
             throwError (TxNotFound h)
         Just t
             | txDataDeleted t -> do
-                $(logErrorS) "BlockLogic" $
+                $(logWarnS) "BlockLogic" $
                     "Transaction already deleted: " <> txHashToHex h
                 return ()
             | mo && confirmed (txDataBlock t) -> do
@@ -733,9 +733,18 @@ reduceBalance net i c a v =
                 (v >
                  if c
                      then balanceAmount b
-                     else balanceZero b) $
+                     else balanceZero b) $ do
                 $(logErrorS) "BlockLogic" $
-                "Insufficient balance: " <> addrToString net a
+                    "Insufficient " <>
+                    (if c
+                         then "confirmed "
+                         else "unconfirmed ") <>
+                    "balance: " <>
+                    addrToString net a
+                throwError $
+                    if c
+                        then InsufficientBalance a
+                        else InsufficientZeroBalance a
             setBalance i $
                 b
                     { balanceAmount =
