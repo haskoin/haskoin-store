@@ -233,9 +233,18 @@ importBlock net i b n = do
             }
     insertAtHeight i (headerHash (nodeHeader n)) (nodeHeight n)
     setBest i (headerHash (nodeHeader n))
-    zipWithM_ (\x t -> importTx net i (br x) t) [0 ..] (blockTxns b)
+    zipWithM_ (\x t -> importTx net i (br x) t) [0 ..] (sortTxs (blockTxns b))
   where
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
+
+sortTxs :: [Tx] -> [Tx]
+sortTxs [] = []
+sortTxs txs = is <> sortTxs ds
+  where
+    (is, ds) =
+        partition
+            (all ((`notElem` map txHash txs) . outPointHash . prevOutput) . txIn)
+            txs
 
 importTx ::
        ( MonadError ImportException m
