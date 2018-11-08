@@ -589,8 +589,10 @@ components:
       properties:
         path:
           description: derivation path (non-hardened)
-          type: string
-          example: '/1/25'
+          type: array
+          items:
+            type: integer
+          example: [1, 25]
         balance:
           $ref: '#/components/schemas/Balance'
     XPubUnspent:
@@ -601,8 +603,10 @@ components:
       properties:
         path:
           description: derivation path (non-hardened)
-          type: string
-          example: '/1/25'
+          type: array
+          items:
+            type: integer
+          example: [1, 25]
         unspent:
           $ref: '#/components/schemas/Unspent'
     AddressTx:
