@@ -371,8 +371,9 @@ runWeb conf st db pub = do
                                 Balance
                                     { balanceAddress = address
                                     , balanceAmount = 0
-                                    , balanceCount = 0
+                                    , balanceUnspentCount = 0
                                     , balanceZero = 0
+                                    , balanceTotalReceived = 0
                                     }
             S.json $ balanceToJSON net res
         S.get "/address/balances" $ do
@@ -384,8 +385,9 @@ runWeb conf st db pub = do
                             Balance
                                 { balanceAddress = a
                                 , balanceAmount = 0
-                                , balanceCount = 0
+                                , balanceUnspentCount = 0
                                 , balanceZero = 0
+                                , balanceTotalReceived = 0
                                 }
                         f _ (Just b) = b
                     mapM (\a -> f a <$> getBalance d a) addresses

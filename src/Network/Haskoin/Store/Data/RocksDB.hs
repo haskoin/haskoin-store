@@ -19,7 +19,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 dataVersion :: Word32
-dataVersion = 8
+dataVersion = 9
 
 data ExceptRocksDB =
     MempoolTxNotFound
@@ -64,12 +64,17 @@ getSpendersDB db opts th =
 getBalanceDB :: MonadIO m => DB -> ReadOptions -> Address -> m (Maybe Balance)
 getBalanceDB db opts a = fmap f <$> retrieve db opts (BalKey a)
   where
-    f BalVal {balValAmount = v, balValZero = z, balValCount = c} =
+    f BalVal { balValAmount = v
+             , balValZero = z
+             , balValUnspentCount = c
+             , balValTotalReceived = r
+             } =
         Balance
             { balanceAddress = a
             , balanceAmount = v
             , balanceZero = z
-            , balanceCount = c
+            , balanceUnspentCount = c
+            , balanceTotalReceived = r
             }
 
 getMempoolDB ::

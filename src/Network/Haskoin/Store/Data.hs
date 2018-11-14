@@ -147,14 +147,16 @@ addressTxToEncoding net = pairs . mconcat . addressTxPairs net
 
 -- | Address balance information.
 data Balance = Balance
-    { balanceAddress :: !Address
+    { balanceAddress       :: !Address
       -- ^ address balance
-    , balanceAmount  :: !Word64
+    , balanceAmount        :: !Word64
       -- ^ confirmed balance
-    , balanceZero    :: !Word64
+    , balanceZero          :: !Word64
       -- ^ unconfirmed balance
-    , balanceCount   :: !Word64
+    , balanceUnspentCount  :: !Word64
       -- ^ number of unspent outputs
+    , balanceTotalReceived :: !Word64
+      -- ^ total amount from all outputs in this address
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
 
 -- | JSON serialization for 'Balance'.
@@ -163,7 +165,8 @@ balancePairs net ab =
     [ "address" .= addrToJSON net (balanceAddress ab)
     , "confirmed" .= balanceAmount ab
     , "unconfirmed" .= balanceZero ab
-    , "utxo" .= balanceCount ab
+    , "utxo" .= balanceUnspentCount ab
+    , "received" .= balanceTotalReceived ab
     ]
 
 balanceToJSON :: Network -> Balance -> Value

@@ -72,19 +72,19 @@ bestBlockOp Nothing  = []
 bestBlockOp (Just b) = [insertOp BestKey b]
 
 blockHashOps :: HashMap BlockHash BlockData -> [BatchOp]
-blockHashOps = map f . M.toList
+blockHashOps = map (uncurry f) . M.toList
   where
-    f (h, d) = insertOp (BlockKey h) d
+    f = insertOp . BlockKey
 
 blockHeightOps :: HashMap BlockHeight [BlockHash] -> [BatchOp]
-blockHeightOps = map f . M.toList
+blockHeightOps = map (uncurry f) . M.toList
   where
-    f (g, ls) = insertOp (HeightKey g) ls
+    f = insertOp . HeightKey
 
 txOps :: HashMap TxHash TxData -> [BatchOp]
-txOps = map f . M.toList
+txOps = map (uncurry f) . M.toList
   where
-    f (h, t) = insertOp (TxKey h) t
+    f = insertOp . TxKey
 
 spenderOps :: HashMap TxHash (IntMap (Maybe Spender)) -> [BatchOp]
 spenderOps = concatMap (uncurry f) . M.toList
@@ -93,11 +93,10 @@ spenderOps = concatMap (uncurry f) . M.toList
     g h i (Just s) = insertOp (SpenderKey (OutPoint h (fromIntegral i))) s
     g h i Nothing  = deleteOp (SpenderKey (OutPoint h (fromIntegral i)))
 
-balOps :: HashMap Address (Maybe BalVal) -> [BatchOp]
+balOps :: HashMap Address BalVal -> [BatchOp]
 balOps = map (uncurry f) . M.toList
   where
-    f a Nothing  = deleteOp (BalKey a)
-    f a (Just b) = insertOp (BalKey a) b
+    f = insertOp . BalKey
 
 addrTxOps ::
        HashMap Address (HashMap BlockRef (HashMap TxHash Bool)) -> [BatchOp]
@@ -201,13 +200,11 @@ getBalanceI :: MonadIO m => ImportDB -> Address -> m (Maybe Balance)
 getBalanceI ImportDB { importRocksDB = db
                      , importHashMap = hm
                      , importBalanceMap = bm
-                     } a =
-    getBalance bm a >>= \case
-        Just b -> return (Just b)
-        Nothing ->
-            getBalanceH <$> readTVarIO hm <*> pure a >>= \case
-                Just x -> return x
-                Nothing -> getBalance db a
+                     } a = runMaybeT $ cachemap <|> hashmap <|> database
+  where
+    cachemap = MaybeT $ getBalance bm a
+    hashmap = MaybeT $ getBalance hm a
+    database = MaybeT $ getBalance db a
 
 getUnspentI :: MonadIO m => ImportDB -> OutPoint -> m (Maybe Unspent)
 getUnspentI ImportDB { importRocksDB = db

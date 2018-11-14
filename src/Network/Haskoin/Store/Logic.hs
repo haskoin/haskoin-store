@@ -288,7 +288,7 @@ importTx net i br tx = do
     zipWithM_ (spendOutput net i br (txHash tx)) [0 ..] us
     if | iscb || not (null us) ->
            do zipWithM_
-                  (newOutput net i br . OutPoint (txHash tx))
+                  (newOutput i br . OutPoint (txHash tx))
                   [0 ..]
                   (txOut tx)
               rbf <- getrbf
@@ -484,8 +484,8 @@ confirmTx net i br tx =
                                     , unspentScript =
                                           B.Short.toShort (scriptOutput o)
                                     }
-                            reduceBalance net i False a (outValue o)
-                            increaseBalance net i True a (outValue o)
+                            reduceBalance net i False False a (outValue o)
+                            increaseBalance i True False a (outValue o)
             insertTx i t {txDataBlock = br}
             deleteMempoolTx i (txHash tx) (memRefTime (txDataBlock t))
 
@@ -540,7 +540,7 @@ deleteTx net i mo h = do
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
             delOutput net i (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
-        mapM_ (unspendOutput net i) ps
+        mapM_ (unspendOutput i) ps
         unless (confirmed (txDataBlock t)) $
             deleteMempoolTx i h (memRefTime (txDataBlock t))
         insertTx i t {txDataDeleted = True}
@@ -616,13 +616,12 @@ newOutput ::
        , BalanceWrite i m
        , MonadLogger m
        )
-    => Network
-    -> i
+    => i
     -> BlockRef
     -> OutPoint
     -> TxOut
     -> m ()
-newOutput net i br op to = do
+newOutput i br op to = do
     addUnspent i u
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
@@ -635,7 +634,7 @@ newOutput net i br op to = do
                     , addressTxHash = outPointHash op
                     , addressTxBlock = br
                     }
-            increaseBalance net i (confirmed br) a (outValue to)
+            increaseBalance i (confirmed br) True a (outValue to)
   where
     u =
         Unspent
@@ -686,6 +685,7 @@ delOutput net i op = do
                 net
                 i
                 (confirmed (transactionBlock t))
+                True
                 a
                 (outputAmount u)
 
@@ -753,7 +753,13 @@ spendOutput net i br th ix u = do
     case scriptToAddressBS (B.Short.fromShort (unspentScript u)) of
         Left _ -> return ()
         Right a -> do
-            reduceBalance net i (confirmed (unspentBlock u)) a (unspentAmount u)
+            reduceBalance
+                net
+                i
+                (confirmed (unspentBlock u))
+                False
+                a
+                (unspentAmount u)
             removeAddrUnspent i a u
             insertAddrTx
                 i
@@ -774,11 +780,10 @@ unspendOutput ::
        , BalanceWrite i m
        , MonadLogger m
        )
-    => Network
-    -> i
+    => i
     -> OutPoint
     -> m ()
-unspendOutput net i op = do
+unspendOutput i op = do
     t <- getImportTx i (outPointHash op)
     o <- getTxOutput (outPointIndex op) t
     s <-
@@ -812,9 +817,9 @@ unspendOutput net i op = do
                     , addressTxBlock = transactionBlock x
                     }
             increaseBalance
-                net
                 i
                 (confirmed (unspentBlock u))
+                False
                 a
                 (outputAmount o)
 
@@ -829,10 +834,11 @@ reduceBalance ::
     => Network
     -> i
     -> Bool -- ^ spend or delete confirmed output
+    -> Bool -- ^ reduce total received
     -> Address
     -> Word64
     -> m ()
-reduceBalance net i c a v =
+reduceBalance net i c t a v =
     getBalance i a >>= \case
         Nothing -> do
             $(logErrorS) "BlockLogic" $
@@ -867,7 +873,12 @@ reduceBalance net i c a v =
                           if c
                               then 0
                               else v
-                    , balanceCount = balanceCount b - 1
+                    , balanceUnspentCount = balanceUnspentCount b - 1
+                    , balanceTotalReceived =
+                          balanceTotalReceived b -
+                          if t
+                              then v
+                              else 0
                     }
 
 increaseBalance ::
@@ -878,13 +889,13 @@ increaseBalance ::
        , BalanceWrite i m
        , MonadLogger m
        )
-    => Network
-    -> i
+    => i
     -> Bool -- ^ add confirmed output
+    -> Bool -- ^ increase total received
     -> Address
     -> Word64
     -> m ()
-increaseBalance _net i c a v = do
+increaseBalance i c t a v = do
     b <-
         getBalance i a >>= \case
             Nothing ->
@@ -893,7 +904,8 @@ increaseBalance _net i c a v = do
                         { balanceAddress = a
                         , balanceAmount = 0
                         , balanceZero = 0
-                        , balanceCount = 0
+                        , balanceUnspentCount = 0
+                        , balanceTotalReceived = 0
                         }
             Just b -> return b
     setBalance i $
@@ -908,5 +920,10 @@ increaseBalance _net i c a v = do
                   if c
                       then 0
                       else v
-            , balanceCount = balanceCount b + 1
+            , balanceUnspentCount = balanceUnspentCount b + 1
+            , balanceTotalReceived =
+                  balanceTotalReceived b +
+                  if t
+                      then v
+                      else 0
             }

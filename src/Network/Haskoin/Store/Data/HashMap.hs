@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TupleSections         #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Network.Haskoin.Store.Data.HashMap where
 
@@ -30,7 +31,7 @@ data HashMapDB = HashMapDB
     , hTx :: !(HashMap TxHash TxData)
     , hSpender :: !(HashMap TxHash (IntMap (Maybe Spender)))
     , hUnspent :: !(HashMap TxHash (IntMap (Maybe Unspent)))
-    , hBalance :: !(HashMap Address (Maybe BalVal))
+    , hBalance :: !(HashMap Address BalVal)
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
     , hMempool :: !(HashMap PreciseUnixTime (HashMap TxHash Bool))
@@ -77,15 +78,16 @@ getSpenderH db op = do
 getSpendersH :: HashMapDB -> TxHash -> IntMap (Maybe Spender)
 getSpendersH db t = M.lookupDefault I.empty t (hSpender db)
 
-getBalanceH :: HashMapDB -> Address -> Maybe (Maybe Balance)
-getBalanceH db a = fmap f <$> M.lookup a (hBalance db)
+getBalanceH :: HashMapDB -> Address -> Maybe Balance
+getBalanceH db a = f <$> M.lookup a (hBalance db)
   where
     f b =
         Balance
             { balanceAddress = a
             , balanceAmount = balValAmount b
             , balanceZero = balValZero b
-            , balanceCount = balValCount b
+            , balanceUnspentCount = balValUnspentCount b
+            , balanceTotalReceived = balValTotalReceived b
             }
 
 getMempoolH :: HashMapDB -> HashMap PreciseUnixTime (HashMap TxHash Bool)
@@ -161,14 +163,12 @@ deleteSpenderH op db =
 setBalanceH :: Balance -> HashMapDB -> HashMapDB
 setBalanceH b db = db {hBalance = M.insert (balanceAddress b) x (hBalance db)}
   where
-    x
-        | balanceCount b == 0 = Nothing
-        | otherwise =
-            Just
+    x =
                 BalVal
                     { balValAmount = balanceAmount b
                     , balValZero = balanceZero b
-                    , balValCount = balanceCount b
+                    , balValUnspentCount = balanceUnspentCount b
+                    , balValTotalReceived = balanceTotalReceived b
                     }
 
 insertAddrTxH :: AddressTx -> HashMapDB -> HashMapDB
@@ -265,7 +265,7 @@ instance Applicative m => StoreRead HashMapDB m where
     getSpender db = pure . join . getSpenderH db
 
 instance Applicative m => BalanceRead HashMapDB m where
-    getBalance db = pure . join . getBalanceH db
+    getBalance db = pure . getBalanceH db
 
 instance Applicative m => UnspentRead HashMapDB m where
     getUnspent db = pure . join . getUnspentH db
@@ -386,12 +386,9 @@ instance Applicative m =>
          BalanceWrite ((BalanceMap -> BalanceMap) -> m ()) m where
     setBalance f b =
         f $ \(m, s) ->
-            if balanceCount b == 0
-                then let m' = M.delete (balanceAddress b) m
-                      in (m', s)
-                else let m' = M.insert (balanceAddress b) b m
-                         s' = balanceAddress b : s
-                      in (m', s')
+            let m' = M.insert (balanceAddress b) b m
+                s' = balanceAddress b : s
+             in (m', s')
     pruneBalance f =
         f $ \(m, s) ->
             if length s > 2000 * 1000
@@ -400,10 +397,7 @@ instance Applicative m =>
                       in (m', s')
                 else (m, s)
       where
-        g m a =
-            case M.lookup a m of
-                Nothing -> Nothing
-                Just b  -> Just (a, b)
+        g m a = (a, ) <$> M.lookup a m
 
 instance MonadIO m => BalanceWrite (TVar BalanceMap) m where
     setBalance v = atomically . setBalance (modifyTVar v)

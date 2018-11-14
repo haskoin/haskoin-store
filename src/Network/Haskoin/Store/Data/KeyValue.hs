@@ -238,17 +238,25 @@ instance Key BalKey
 
 -- | Address balance database value.
 data BalVal = BalVal
-    { balValAmount :: !Word64
+    { balValAmount        :: !Word64
       -- ^ balance in satoshi
-    , balValZero   :: !Word64
+    , balValZero          :: !Word64
       -- ^ unconfirmed balance in satoshi
-    , balValCount  :: !Word64
+    , balValUnspentCount  :: !Word64
       -- ^ number of unspent outputs
+    , balValTotalReceived :: !Word64
+      -- ^ total amount received by this address
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
 
 -- | Default balance for an address.
 instance Default BalVal where
-    def = BalVal {balValAmount = 0, balValZero = 0, balValCount = 0}
+    def =
+        BalVal
+            { balValAmount = 0
+            , balValZero = 0
+            , balValUnspentCount = 0
+            , balValTotalReceived = 0
+            }
 
 instance KeyValue BalKey BalVal
 
