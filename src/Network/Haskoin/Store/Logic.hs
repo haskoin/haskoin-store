@@ -104,8 +104,9 @@ newMempoolTx net i tx now = do
             any isNothing <$>
             mapM (getTxData i . outPointHash . prevOutput) (txIn tx)
         if orp
-            then $(logErrorS) "BlockLogic" $
-                 "Transaction is orphan: " <> txHashToHex (txHash tx)
+            then do
+                $(logErrorS) "BlockLogic" $ "Transaction is orphan: " <> txHashToHex (txHash tx)
+                throwError $ OrphanTx (txHash tx)
             else f
     f = do
         us <-
