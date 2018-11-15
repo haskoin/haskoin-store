@@ -182,7 +182,8 @@ revertBlock net i bh = do
                                 "Attempted to delete block that isn't best: " <>
                                 blockHashToHex h
                             throwError (BlockNotBest bh)
-    mapM_ (deleteTx net i False) (reverse (blockDataTxs bd))
+    txs <- mapM (fmap transactionData . getImportTx i) (blockDataTxs bd)
+    mapM_ (deleteTx net i False . txHash) (reverse (sortTxs txs))
     setBest i (prevBlock (blockDataHeader bd))
     insertBlock i bd {blockDataMainChain = False}
 
