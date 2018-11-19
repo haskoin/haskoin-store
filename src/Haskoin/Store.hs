@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -266,16 +267,31 @@ xpubUnspent i xpub = do
             {xPubUnspentPath = pathToList p, xPubUnspent = t}
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
--- specified height.
-cbAfterHeight :: (Monad m, StoreRead i m) => i -> BlockHeight -> TxHash -> m Bool
-cbAfterHeight i h t = fmap (fromMaybe False) . runMaybeT $ do
-    tx <- MaybeT $ getTransaction i t
-    if any isCoinbase (transactionInputs tx)
-       then
-        return $ blockRefHeight (transactionBlock tx) > h
-       else do
-        let ins = nub $ map (outPointHash . inputPoint) (transactionInputs tx)
-        or <$> mapM (lift . cbAfterHeight i h) ins
+-- specified height. Returns 'Nothing' if answer cannot be computed before
+-- hitting limits.
+cbAfterHeight ::
+       (Monad m, StoreRead i m)
+    => i
+    -> Int
+    -> BlockHeight
+    -> TxHash
+    -> m (Maybe Bool)
+cbAfterHeight _ 0 _ _ = return Nothing
+cbAfterHeight i d h t =
+    runMaybeT $ do
+        tx <- MaybeT $ getTransaction i t
+        if any isCoinbase (transactionInputs tx)
+            then return $ blockRefHeight (transactionBlock tx) > h
+            else case transactionBlock tx of
+                     BlockRef {blockRefHeight = b}
+                         | b <= h -> return False
+                     _ -> do
+                         let ins =
+                                 nub $
+                                 map
+                                     (outPointHash . inputPoint)
+                                     (transactionInputs tx)
+                         or <$> mapM (MaybeT . cbAfterHeight i (d - 1) h) ins
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs

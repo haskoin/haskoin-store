@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.6.6
+  version: 0.6.7
   title: Blockchain API
   contact:
     name: Haskoin
@@ -377,6 +377,7 @@ paths:
                   result:
                     description: transaction has a coinbase ancestor after height
                     type: boolean
+                    nullable: true
   '/transactions':
     get:
       tags:

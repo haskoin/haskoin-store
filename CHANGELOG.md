@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.6.7
+### Changed
+- Impose restrictions on recursion for coinbase after height checks.
+
 ## 0.6.6
 ### Added
 - Check whether a transaction can be traced back to a coinbase after certain height.
