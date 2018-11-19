@@ -277,6 +277,7 @@ cbAfterHeight ::
     -> TxHash
     -> m (Maybe Bool)
 cbAfterHeight _ 0 _ _ = return Nothing
+
 cbAfterHeight i d h t =
     runMaybeT $ do
         tx <- MaybeT $ getTransaction i t
@@ -285,13 +286,16 @@ cbAfterHeight i d h t =
             else case transactionBlock tx of
                      BlockRef {blockRefHeight = b}
                          | b <= h -> return False
-                     _ -> do
-                         let ins =
-                                 nub $
-                                 map
-                                     (outPointHash . inputPoint)
-                                     (transactionInputs tx)
-                         or <$> mapM (MaybeT . cbAfterHeight i (d - 1) h) ins
+                     _ ->
+                         r . nub $
+                         map (outPointHash . inputPoint) (transactionInputs tx)
+  where
+    r [] = return False
+    r (n:ns) = do
+        x <- MaybeT $ cbAfterHeight i (d - 1) h n
+        if x
+            then return True
+            else r ns
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs
