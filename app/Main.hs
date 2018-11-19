@@ -289,7 +289,7 @@ runWeb conf st db pub = do
             res <-
                 withSnapshot db $ \s -> do
                 let d = (db, defaultReadOptions {useSnapshot = Just s})
-                cbAfterHeight d 50 height txid
+                cbAfterHeight d 100000 height txid
             S.json $ object ["result" .= res]
         S.get "/transactions" $ do
             txids <- param "txids"
