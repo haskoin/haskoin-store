@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.6.0
+  version: 0.6.6
   title: Blockchain API
   contact:
     name: Haskoin
@@ -343,6 +343,40 @@ paths:
                 example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
         '404':
           description: transaction not found
+  '/transaction/{txid}/after/{height}':
+    get:
+      tags:
+        - transaction
+      operationId: cbAfterHeight
+      summary: find out if transaction has a coinbase ancestor past height
+      parameters:
+        - name: txid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: hex
+            example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+        - name: height
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int32
+            example: 500000
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - result
+                properties:
+                  result:
+                    description: transaction has a coinbase ancestor after height
+                    type: boolean
   '/transactions':
     get:
       tags:

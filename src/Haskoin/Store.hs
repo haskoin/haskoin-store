@@ -62,12 +62,14 @@ module Haskoin.Store
     , xPubBalToEncoding
     , xPubUnspentToJSON
     , xPubUnspentToEncoding
+    , cbAfterHeight
     , mergeSourcesBy
     ) where
 
 import           Conduit
 import           Control.Monad.Except
 import           Control.Monad.Logger
+import           Control.Monad.Trans.Maybe
 import           Data.Foldable
 import           Data.Function
 import           Data.List
@@ -262,6 +264,18 @@ xpubUnspent i xpub = do
     f p t =
         XPubUnspent
             {xPubUnspentPath = pathToList p, xPubUnspent = t}
+
+-- | Check if any of the ancestors of this transaction is a coinbase after the
+-- specified height.
+cbAfterHeight :: (Monad m, StoreRead i m) => i -> BlockHeight -> TxHash -> m Bool
+cbAfterHeight i h t = fmap (fromMaybe False) . runMaybeT $ do
+    tx <- MaybeT $ getTransaction i t
+    if any isCoinbase (transactionInputs tx)
+       then
+        return $ blockRefHeight (transactionBlock tx) > h
+       else do
+        let ins = nub $ map (outPointHash . inputPoint) (transactionInputs tx)
+        or <$> mapM (lift . cbAfterHeight i h) ins
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs

@@ -283,6 +283,14 @@ runWeb conf st db pub = do
                 Nothing -> raise ThingNotFound
                 Just x ->
                     text . cs . encodeHex $ Serialize.encode (transactionData x)
+        S.get "/transaction/:txid/after/:height" $ do
+            txid <- param "txid"
+            height <- param "height"
+            res <-
+                withSnapshot db $ \s -> do
+                let d = (db, defaultReadOptions {useSnapshot = Just s})
+                cbAfterHeight d height txid
+            S.json $ object ["result" .= res]
         S.get "/transactions" $ do
             txids <- param "txids"
             res <-
