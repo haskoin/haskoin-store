@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.6.7
+  version: 0.7.0
   title: Blockchain API
   contact:
     name: Haskoin
@@ -668,6 +668,7 @@ components:
         - confirmed
         - unconfirmed
         - utxo
+        - received
       properties:
         address:
           type: string
@@ -683,6 +684,9 @@ components:
           description: sum of unconfirmed unspent output values
         utxo:
           description: number of unspent outputs
+          type: integer
+        received:
+          description: total received by this address
           type: integer
     Unspent:
       type: object
