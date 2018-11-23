@@ -5,6 +5,8 @@
 module Network.Haskoin.Store.Data where
 
 import           Conduit
+import           Control.Applicative
+import           Control.Monad
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson                as A
 import           Data.ByteString           (ByteString)
@@ -105,7 +107,28 @@ data BlockRef
       -- ^ position of transaction within the block
                 }
     | MemRef { memRefTime :: !PreciseUnixTime }
-    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+
+-- | Serialization will sort in reverse order when comparing byte strings.
+instance Serialize BlockRef where
+    put MemRef {memRefTime = PreciseUnixTime w} = do
+        putWord8 0x00
+        putWord64be (maxBound - w)
+    put BlockRef {blockRefHeight = h, blockRefPos = p} = do
+        putWord8 0x01
+        putWord32be (maxBound - h)
+        putWord32be (maxBound - p)
+    get = getmemref <|> getblockref
+      where
+        getmemref = do
+            guard . (== 0x00) =<< getWord8
+            w <- (maxBound -) <$> getWord64be
+            return MemRef {memRefTime = PreciseUnixTime w}
+        getblockref = do
+            guard . (== 0x01) =<< getWord8
+            h <- (maxBound -) <$> getWord32be
+            p <- (maxBound -) <$> getWord32be
+            return BlockRef {blockRefHeight = h, blockRefPos = p}
 
 -- | JSON serialization for 'BlockRef'.
 blockRefPairs :: A.KeyValue kv => BlockRef -> [kv]

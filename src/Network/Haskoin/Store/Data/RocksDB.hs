@@ -19,7 +19,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 dataVersion :: Word32
-dataVersion = 9
+dataVersion = 10
 
 data ExceptRocksDB =
     MempoolTxNotFound

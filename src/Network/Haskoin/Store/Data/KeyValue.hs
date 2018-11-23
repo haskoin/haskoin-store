@@ -27,7 +27,7 @@ data AddrTxKey
     deriving (Show, Eq, Ord, Generic, Hashable)
 
 instance Serialize AddrTxKey
-    -- 0x05 · Address · Maybe (BlockHeight, BlockPos) · TxHash
+    -- 0x05 · Address · BlockRef · TxHash
                                                                where
     put AddrTxKey {addrTxKey = AddressTx { addressTxAddress = a
                                          , addressTxBlock = b
@@ -71,7 +71,7 @@ data AddrOutKey
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize AddrOutKey where
-    -- 0x06 · StoreAddr · BlockHeight · MainChain · BlockPos · BlockHash · OutPoint
+    -- 0x06 · StoreAddr · BlockRef · OutPoint
     put AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p} = do
         putWord8 0x06
         put a
@@ -193,6 +193,7 @@ newtype BlockKey = BlockKey
     } deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BlockKey where
+    -- 0x01 · BlockHash
     put (BlockKey h) = do
         putWord8 0x01
         put h
@@ -266,7 +267,7 @@ data BestKey =
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BestKey where
-    -- 0x00 (x32)
+    -- 0x00 × 32
     put BestKey = put (B.replicate 32 0x00)
     get = do
         guard . (== B.replicate 32 0x00) =<< getBytes 32
