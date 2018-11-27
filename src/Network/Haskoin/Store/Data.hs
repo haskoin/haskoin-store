@@ -66,9 +66,14 @@ getTransaction r h = runMaybeT $ do
     return $ toTransaction d sm
 
 class StoreStream r m where
-    getMempool :: r -> ConduitT () (PreciseUnixTime, TxHash) m ()
-    getAddressUnspents :: r -> Address -> ConduitT () Unspent m ()
-    getAddressTxs :: r -> Address -> ConduitT () AddressTx m ()
+    getMempool ::
+           r
+        -> Maybe PreciseUnixTime
+        -> ConduitT () (PreciseUnixTime, TxHash) m ()
+    getAddressUnspents ::
+           r -> Address -> Maybe BlockRef -> ConduitT () Unspent m ()
+    getAddressTxs ::
+           r -> Address -> Maybe BlockRef -> ConduitT () AddressTx m ()
 
 class StoreWrite w m where
     setInit :: w -> m ()
@@ -85,9 +90,14 @@ class StoreWrite w m where
     insertMempoolTx :: w -> TxHash -> PreciseUnixTime -> m ()
     deleteMempoolTx :: w -> TxHash -> PreciseUnixTime -> m ()
 
--- | Unix time with nanosecond precision for mempool transactions
+-- | Unix time with nanosecond precision for mempool transactions.
 newtype PreciseUnixTime = PreciseUnixTime Word64
-    deriving (Show, Eq, Read, Generic, Ord, Hashable, Serialize)
+    deriving (Show, Eq, Read, Generic, Ord, Hashable)
+
+-- | Serialize such that ordering is inverted.
+instance Serialize PreciseUnixTime where
+    put (PreciseUnixTime w) = putWord64be $ maxBound - w
+    get = PreciseUnixTime . (maxBound -) <$> getWord64be
 
 preciseUnixTime :: SystemTime -> PreciseUnixTime
 preciseUnixTime s =
@@ -109,11 +119,11 @@ data BlockRef
     | MemRef { memRefTime :: !PreciseUnixTime }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
--- | Serialization will sort in reverse order when comparing byte strings.
+-- | Serialized entities will sort in reverse order.
 instance Serialize BlockRef where
-    put MemRef {memRefTime = PreciseUnixTime w} = do
+    put MemRef {memRefTime = t} = do
         putWord8 0x00
-        putWord64be (maxBound - w)
+        put t
     put BlockRef {blockRefHeight = h, blockRefPos = p} = do
         putWord8 0x01
         putWord32be (maxBound - h)
@@ -429,7 +439,8 @@ data TxData = TxData
     , txData        :: !Tx
     , txDataPrevs   :: !(IntMap Prev)
     , txDataDeleted :: !Bool
-    , txDataRBF     :: Bool
+    , txDataRBF     :: !Bool
+    , txDataTime    :: !Word64
     } deriving (Show, Eq, Ord, Generic, Serialize)
 
 toTransaction :: TxData -> IntMap Spender -> Transaction
@@ -442,6 +453,7 @@ toTransaction t sm =
         , transactionOutputs = outs
         , transactionDeleted = txDataDeleted t
         , transactionRBF = txDataRBF t
+        , transactionTime = txDataTime t
         }
   where
     ws =
@@ -462,6 +474,7 @@ fromTransaction t = (d, sm)
             , txDataPrevs = ps
             , txDataDeleted = transactionDeleted t
             , txDataRBF = transactionRBF t
+            , txDataTime = transactionTime t
             }
     f _ Coinbase {} = Nothing
     f n Input {inputPkScript = s, inputAmount = v} =
@@ -487,6 +500,8 @@ data Transaction = Transaction
       -- ^ this transaction has been deleted and is no longer valid
     , transactionRBF      :: !Bool
       -- ^ this transaction can be replaced in the mempool
+    , transactionTime     :: !Word64
+      -- ^ time the transaction was first seen or time of block
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize)
 
 transactionData :: Transaction -> Tx
@@ -518,12 +533,11 @@ transactionPairs net dtx =
           then 0
           else sum (map inputAmount (transactionInputs dtx)) -
                sum (map outputAmount (transactionOutputs dtx))
-    , "inputs" .=
-      map (object . inputPairs net) (transactionInputs dtx)
-    , "outputs" .=
-      map (object . outputPairs net) (transactionOutputs dtx)
+    , "inputs" .= map (object . inputPairs net) (transactionInputs dtx)
+    , "outputs" .= map (object . outputPairs net) (transactionOutputs dtx)
     , "block" .= transactionBlock dtx
     , "deleted" .= transactionDeleted dtx
+    , "time" .= transactionTime dtx
     ] ++
     ["rbf" .= transactionRBF dtx | getReplaceByFee net]
 

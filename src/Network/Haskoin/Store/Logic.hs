@@ -1,9 +1,9 @@
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
-{-# LANGUAGE MultiWayIf #-}
 module Network.Haskoin.Store.Logic where
 
 import           Conduit
@@ -88,7 +88,7 @@ newMempoolTx ::
     -> Tx
     -> PreciseUnixTime
     -> m ()
-newMempoolTx net i tx now = do
+newMempoolTx net i tx now@(PreciseUnixTime w) = do
     $(logInfoS) "BlockLogic" $
         "Adding transaction to mempool: " <> txHashToHex (txHash tx)
     getTxData i (txHash tx) >>= \case
@@ -115,7 +115,7 @@ newMempoolTx net i tx now = do
                 getTxOutput (outPointIndex op) t
         let ds = map spenderHash (mapMaybe outputSpender us)
         if null ds
-            then importTx net i (MemRef now) tx
+            then importTx net i (MemRef now) (w `div` 1000) tx
             else g ds
     g ds = do
         $(logWarnS) "BlockLogic" $
@@ -131,7 +131,7 @@ newMempoolTx net i tx now = do
         $(logWarnS) "BlockLogic" $
             "Replacting RBF transaction with: " <> txHashToHex (txHash tx)
         forM_ ds (deleteTx net i True)
-        importTx net i (MemRef now) tx
+        importTx net i (MemRef now) (w `div` 1000) tx
     n = do
         $(logWarnS) "BlockLogic" $
             "Inserting transaction with deleted flag: " <>
@@ -235,7 +235,16 @@ importBlock net i b n = do
             }
     insertAtHeight i (headerHash (nodeHeader n)) (nodeHeight n)
     setBest i (headerHash (nodeHeader n))
-    zipWithM_ (\x t -> importTx net i (br x) t) [0 ..] (sortTxs (blockTxns b))
+    zipWithM_
+        (\x t ->
+             importTx
+                 net
+                 i
+                 (br x)
+                 (fromIntegral (blockTimestamp (nodeHeader n)))
+                 t)
+        [0 ..]
+        (sortTxs (blockTxns b))
   where
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
 
@@ -261,9 +270,10 @@ importTx ::
     => Network
     -> i
     -> BlockRef
+    -> Word64 -- ^ unix time
     -> Tx
     -> m ()
-importTx net i br tx = do
+importTx net i br tt tx = do
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
         $(logErrorS) "BlockLogic" $
             "Transaction spends same output twice: " <> txHashToHex (txHash tx)
@@ -305,6 +315,7 @@ importTx net i br tx = do
                               , transactionOutputs = map mkout (txOut tx)
                               , transactionDeleted = False
                               , transactionRBF = rbf
+                              , transactionTime = tt
                               }
               insertTx i d
               unless (confirmed br) $
@@ -555,7 +566,7 @@ insertDeletedMempoolTx ::
     -> Tx
     -> PreciseUnixTime
     -> m ()
-insertDeletedMempoolTx i tx now = do
+insertDeletedMempoolTx i tx now@(PreciseUnixTime w) = do
     us <-
         forM (txIn tx) $ \TxIn {prevOutput = op} ->
             getImportTx i (outPointHash op) >>= getTxOutput (outPointIndex op)
@@ -570,6 +581,7 @@ insertDeletedMempoolTx i tx now = do
                     , transactionOutputs = map mkout (txOut tx)
                     , transactionDeleted = True
                     , transactionRBF = rbf
+                    , transactionTime = w `div` 1000
                     }
     $(logWarnS) "BlockLogic" $
         "Inserting deleted mempool transaction: " <> txHashToHex (txHash tx)
@@ -590,14 +602,14 @@ insertDeletedMempoolTx i tx now = do
                             | confirmed (txDataBlock t) -> return False
                             | txDataRBF t -> return True
                             | otherwise -> return False
-    mkin u ip w =
+    mkin u ip wit =
         Input
             { inputPoint = prevOutput ip
             , inputSequence = txInSequence ip
             , inputSigScript = scriptInput ip
             , inputPkScript = outputScript u
             , inputAmount = outputAmount u
-            , inputWitness = w
+            , inputWitness = wit
             }
     mkout o =
         Output

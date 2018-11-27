@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.8.0
+### Added
+- Low level support for skipping some transactions when returning a set.
+- Add timestamps to transactions.
+
+### Changed
+- Data model update.
+- Performance improvement for xpub calls.
+
 ## 0.7.0
 ### Added
 - Total funds received by an address now shows up in balance.

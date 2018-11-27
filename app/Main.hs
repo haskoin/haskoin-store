@@ -260,7 +260,9 @@ runWeb conf st db pub = do
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
-                    getMempool (db, defaultReadOptions {useSnapshot = Just s}) .|
+                    getMempool
+                        (db, defaultReadOptions {useSnapshot = Just s})
+                        Nothing .|
                     mapC snd .|
                     jsonListConduit toEncoding .|
                     streamConduit io >>
@@ -288,8 +290,8 @@ runWeb conf st db pub = do
             height <- param "height"
             res <-
                 withSnapshot db $ \s -> do
-                let d = (db, defaultReadOptions {useSnapshot = Just s})
-                cbAfterHeight d 10000 height txid
+                    let d = (db, defaultReadOptions {useSnapshot = Just s})
+                    cbAfterHeight d 10000 height txid
             S.json $ object ["result" .= res]
         S.get "/transactions" $ do
             txids <- param "txids"
@@ -313,7 +315,8 @@ runWeb conf st db pub = do
                     runResourceT . runConduit $
                     getAddressTxs
                         (db, defaultReadOptions {useSnapshot = Just s})
-                        address .|
+                        address
+                        Nothing .|
                     jsonListConduit (addressTxToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
@@ -325,9 +328,13 @@ runWeb conf st db pub = do
                     runResourceT . runConduit $
                     mergeSourcesBy
                         (compare `on` addressTxBlock)
-                        (map (getAddressTxs
-                                  ( db
-                                  , defaultReadOptions {useSnapshot = Just s}))
+                        (map (\a ->
+                                  getAddressTxs
+                                      ( db
+                                      , defaultReadOptions
+                                            {useSnapshot = Just s})
+                                      a
+                                      Nothing)
                              addresses) .|
                     jsonListConduit (addressTxToEncoding net) .|
                     streamConduit io >>
@@ -340,7 +347,8 @@ runWeb conf st db pub = do
                     runResourceT . runConduit $
                     getAddressUnspents
                         (db, defaultReadOptions {useSnapshot = Just s})
-                        address .|
+                        address
+                        Nothing .|
                     jsonListConduit (unspentToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
@@ -352,9 +360,13 @@ runWeb conf st db pub = do
                     runResourceT . runConduit $
                     mergeSourcesBy
                         (compare `on` unspentBlock)
-                        (map (getAddressUnspents
-                                  ( db
-                                  , defaultReadOptions {useSnapshot = Just s}))
+                        (map (\a ->
+                                  getAddressUnspents
+                                      ( db
+                                      , defaultReadOptions
+                                            {useSnapshot = Just s})
+                                      a
+                                      Nothing)
                              addresses) .|
                     jsonListConduit (unspentToEncoding net) .|
                     streamConduit io >>
@@ -405,7 +417,10 @@ runWeb conf st db pub = do
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
-                    xpubTxs (db, defaultReadOptions {useSnapshot = Just s}) xpub .|
+                    xpubTxs
+                        (db, defaultReadOptions {useSnapshot = Just s})
+                        Nothing
+                        xpub .|
                     jsonListConduit (xPubTxToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
@@ -417,6 +432,7 @@ runWeb conf st db pub = do
                     runResourceT . runConduit $
                     xpubUnspent
                         (db, defaultReadOptions {useSnapshot = Just s})
+                        Nothing
                         xpub .|
                     jsonListConduit (xPubUnspentToEncoding net) .|
                     streamConduit io >>

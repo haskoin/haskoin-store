@@ -207,64 +207,53 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-xpubAddrs ::
-       (Monad m, StoreStream i m)
-    => i
-    -> XPubKey
-    -> m [(Address, SoftPath)]
-xpubAddrs i k = (<>) <$> go 0 0 <*> go 1 0
+xpubBals :: (Monad m, BalanceRead i m) => i -> XPubKey -> m [XPubBal]
+xpubBals i xpub = (<>) <$> go 0 0 <*> go 1 0
   where
+    g = getBalance i
     go m n = do
-        let g a = not <$> runConduit (getAddressTxs i a .| nullC)
-        t <- or <$> mapM (g . fst) (as m n)
-        if t
-            then (as m n <>) <$> go m (n + 100)
-            else return []
+        xs <- catMaybes <$> mapM (uncurry b) (as m n)
+        case xs of
+            [] -> return []
+            _ -> (xs <>) <$> go m (n + 100)
+    b a p =
+        g a >>= \case
+            Nothing -> return Nothing
+            Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
     as m n =
         map
-            (\(a, _, n') -> (a, Deriv :/ m :/ n'))
-            (take 100 (deriveAddrs (pubSubKey k m) n))
+            (\(a, _, n') -> (a, [m, n']))
+            (take 100 (deriveAddrs (pubSubKey xpub m) n))
 
 xpubTxs ::
-       (Monad m, StoreStream i m)
+       (Monad m, BalanceRead i m, StoreStream i m)
     => i
+    -> Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubTx m ()
-xpubTxs i xpub = do
-    as <- lift $ xpubAddrs i xpub
-    let cds = map (uncurry cnd) as
-    mergeSourcesBy (compare `on` (addressTxBlock . xPubTx)) cds
+xpubTxs i mbr xpub = do
+    bals <- lift $ xpubBals i xpub
+    xs <-
+        forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
+            return $ getAddressTxs i (balanceAddress b) mbr .| mapC (f p)
+    mergeSourcesBy (flip compare `on` (addressTxBlock . xPubTx)) xs
   where
-    cnd a p = getAddressTxs i a .| mapC (f p)
-    f p t = XPubTx {xPubTxPath = pathToList p, xPubTx = t}
-
-xpubBals ::
-       (Monad m, StoreStream i m, BalanceRead i m)
-    => i
-    -> XPubKey
-    -> m [XPubBal]
-xpubBals i xpub = do
-    as <- xpubAddrs i xpub
-    fmap catMaybes . forM as $ \(a, p) ->
-        getBalance i a >>= \case
-            Nothing -> return Nothing
-            Just b ->
-                return $ Just XPubBal {xPubBalPath = pathToList p, xPubBal = b}
+    f p t = XPubTx {xPubTxPath = p, xPubTx = t}
 
 xpubUnspent ::
-       (Monad m, StoreStream i m, StoreRead i m)
+       (Monad m, StoreStream i m, BalanceRead i m, StoreRead i m)
     => i
+    -> Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
-xpubUnspent i xpub = do
-    as <- lift $ xpubAddrs i xpub
-    let cds = map (uncurry cnd) as
-    mergeSourcesBy (compare `on` (unspentBlock . xPubUnspent)) cds
+xpubUnspent i mbr xpub = do
+    bals <- lift $ xpubBals i xpub
+    xs <-
+        forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
+            return $ getAddressUnspents i (balanceAddress b) mbr .| mapC (f p)
+    mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
-    cnd a p = getAddressUnspents i a .| mapC (f p)
-    f p t =
-        XPubUnspent
-            {xPubUnspentPath = pathToList p, xPubUnspent = t}
+    f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
 -- specified height. Returns 'Nothing' if answer cannot be computed before
@@ -272,25 +261,29 @@ xpubUnspent i xpub = do
 cbAfterHeight ::
        (Monad m, StoreRead i m)
     => i
-    -> Int
+    -> Int -- ^ how many ancestors to test before giving up
     -> BlockHeight
     -> TxHash
     -> m (Maybe Bool)
-cbAfterHeight _ 0 _ _ = return Nothing
-cbAfterHeight i d h t = runMaybeT $ snd <$> tst d t
+cbAfterHeight i d h t
+    | d <= 0 = return Nothing
+    | otherwise = runMaybeT $ snd <$> tst d t
   where
-    tst 0 _ = MaybeT $ return Nothing
-    tst e x = do
-        let e' = e - 1
-        tx <- MaybeT $ getTransaction i x
-        if any isCoinbase (transactionInputs tx)
-            then return (e', blockRefHeight (transactionBlock tx) > h)
-            else case transactionBlock tx of
-                     BlockRef {blockRefHeight = b}
-                         | b <= h -> return (e', False)
-                     _ ->
-                         r e' . nub $
-                         map (outPointHash . inputPoint) (transactionInputs tx)
+    tst e x
+        | e <= 0 = MaybeT $ return Nothing
+        | otherwise = do
+            let e' = e - 1
+            tx <- MaybeT $ getTransaction i x
+            if any isCoinbase (transactionInputs tx)
+                then return (e', blockRefHeight (transactionBlock tx) > h)
+                else case transactionBlock tx of
+                         BlockRef {blockRefHeight = b}
+                             | b <= h -> return (e', False)
+                         _ ->
+                             r e' . nub $
+                             map
+                                 (outPointHash . inputPoint)
+                                 (transactionInputs tx)
     r e [] = return (e, False)
     r e (n:ns) = do
         (e', s) <- tst e n

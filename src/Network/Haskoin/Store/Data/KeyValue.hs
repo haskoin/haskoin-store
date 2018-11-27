@@ -24,6 +24,9 @@ data AddrTxKey
       -- ^ key for a transaction affecting an address
     | AddrTxKeyA { addrTxKeyA :: !Address }
       -- ^ short key that matches all entries
+    | AddrTxKeyB { addrTxKeyA :: !Address
+                 , addrTxKeyB :: !BlockRef
+                 }
     deriving (Show, Eq, Ord, Generic, Hashable)
 
 instance Serialize AddrTxKey
@@ -41,6 +44,11 @@ instance Serialize AddrTxKey
     put AddrTxKeyA {addrTxKeyA = a} = do
         putWord8 0x05
         put a
+    -- 0x05 · Address · BlockRef
+    put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b} = do
+        putWord8 0x05
+        put a
+        put b
     get = do
         guard . (== 0x05) =<< getWord8
         a <- get
@@ -68,10 +76,14 @@ data AddrOutKey
       -- ^ full key
     | AddrOutKeyA { addrOutKeyA :: !Address }
       -- ^ short key for all spent or unspent outputs
+    | AddrOutKeyB { addrOutKeyA :: !Address
+                  , addrOutKeyB :: !BlockRef
+                  }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
-instance Serialize AddrOutKey where
+instance Serialize AddrOutKey
     -- 0x06 · StoreAddr · BlockRef · OutPoint
+                                              where
     put AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p} = do
         putWord8 0x06
         put a
@@ -81,6 +93,11 @@ instance Serialize AddrOutKey where
     put AddrOutKeyA {addrOutKeyA = a} = do
         putWord8 0x06
         put a
+    -- 0x06 · StoreAddr · BlockRef
+    put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b} = do
+        putWord8 0x06
+        put a
+        put b
     get = do
         guard . (== 0x06) =<< getWord8
         AddrOutKey <$> get <*> get <*> get
@@ -168,7 +185,9 @@ instance KeyValue UnspentKey UnspentVal
 
 -- | Mempool transaction database key.
 data MemKey
-    = MemKey { memTime :: !PreciseUnixTime, memKey :: !TxHash }
+    = MemKey { memTime :: !PreciseUnixTime
+             , memKey :: !TxHash }
+    | MemKeyT { memTime :: !PreciseUnixTime }
     | MemKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
@@ -178,6 +197,9 @@ instance Serialize MemKey where
         putWord8 0x07
         put t
         put h
+    put (MemKeyT t) = do
+        putWord8 0x07
+        put t
     -- 0x07
     put MemKeyS = putWord8 0x07
     get = do
@@ -227,7 +249,7 @@ newtype BalKey
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BalKey where
-    -- 0x04 · StoreAddr
+    -- 0x04 · Address
     put BalKey {balanceKey = a} = do
         putWord8 0x04
         put a

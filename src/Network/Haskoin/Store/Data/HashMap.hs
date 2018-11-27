@@ -90,24 +90,43 @@ getBalanceH db a = f <$> M.lookup a (hBalance db)
             , balanceTotalReceived = balValTotalReceived b
             }
 
-getMempoolH :: HashMapDB -> HashMap PreciseUnixTime (HashMap TxHash Bool)
-getMempoolH = hMempool
+getMempoolH ::
+       Monad m
+    => HashMapDB
+    -> Maybe PreciseUnixTime
+    -> ConduitT () (PreciseUnixTime, TxHash) m ()
+getMempoolH db mpu =
+    let f ts =
+            case mpu of
+                Nothing -> False
+                Just pu -> pu <= ts
+        ls =
+            dropWhile (f . fst) .
+            sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
+            hMempool db
+     in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
 
-getAddressTxsH :: HashMapDB -> Address -> [AddressTx]
-getAddressTxsH db a =
+getAddressTxsH :: HashMapDB -> Address -> Maybe BlockRef -> [AddressTx]
+getAddressTxsH db a mbr =
+    dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty a (hAddrTx db)
   where
     f b hm = map (uncurry (g b)) $ M.toList hm
-    g b h True =
+    g b h' True =
         Just
             AddressTx
-                {addressTxAddress = a, addressTxBlock = b, addressTxHash = h}
+                {addressTxAddress = a, addressTxBlock = b, addressTxHash = h'}
     g _ _ False = Nothing
+    h AddressTx {addressTxBlock = b} =
+        case mbr of
+            Nothing -> False
+            Just br -> br <= b
 
 getAddressUnspentsH ::
-       HashMapDB -> Address -> [Unspent]
-getAddressUnspentsH db a =
+       HashMapDB -> Address -> Maybe BlockRef -> [Unspent]
+getAddressUnspentsH db a mbr =
+    dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty a (hAddrOut db)
   where
@@ -121,6 +140,10 @@ getAddressUnspentsH db a =
                 , unspentPoint = p
                 }
     g _ _ Nothing = Nothing
+    h Unspent {unspentBlock = b} =
+        case mbr of
+            Nothing -> False
+            Just br -> br <= b
 
 setInitH :: HashMapDB -> HashMapDB
 setInitH db = db {hInit = True}
@@ -273,13 +296,18 @@ instance Applicative m => UnspentRead HashMapDB m where
     getUnspent db = pure . join . getUnspentH db
 
 instance Monad m => StoreStream HashMapDB m where
-    getMempool db =
-        let ls =
+    getMempool db t =
+        let f ts =
+                case t of
+                    Nothing -> False
+                    Just u -> u <= ts
+            ls =
+                dropWhile (f . fst) .
                 sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
-                getMempoolH db
+                hMempool db
          in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
-    getAddressTxs db = yieldMany . getAddressTxsH db
-    getAddressUnspents db = yieldMany . getAddressUnspentsH db
+    getAddressUnspents db a = yieldMany . getAddressUnspentsH db a
+    getAddressTxs db a = yieldMany . getAddressTxsH db a
 
 instance MonadIO m => StoreRead (TVar HashMapDB) m where
     isInitialized v = readTVarIO v >>= isInitialized
@@ -301,9 +329,9 @@ instance MonadIO m => BalanceWrite (TVar HashMapDB) m where
     setBalance v b = atomically $ modifyTVar v (setBalanceH b)
 
 instance MonadIO m => StoreStream (TVar HashMapDB) m where
-    getMempool v = readTVarIO v >>= getMempool
-    getAddressTxs v a = readTVarIO v >>= \db -> getAddressTxs db a
-    getAddressUnspents v a = readTVarIO v >>= \db -> getAddressUnspents db a
+    getMempool v m = readTVarIO v >>= \db -> getMempool db m
+    getAddressTxs v a m = readTVarIO v >>= \db -> getAddressTxs db a m
+    getAddressUnspents v a m = readTVarIO v >>= \db -> getAddressUnspents db a m
 
 instance StoreWrite ((HashMapDB -> HashMapDB) -> m ()) m where
     setInit f = f setInitH
