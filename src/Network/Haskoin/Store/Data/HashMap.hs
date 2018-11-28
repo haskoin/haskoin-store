@@ -87,6 +87,7 @@ getBalanceH db a = f <$> M.lookup a (hBalance db)
             , balanceAmount = balValAmount b
             , balanceZero = balValZero b
             , balanceUnspentCount = balValUnspentCount b
+            , balanceTxCount = balValTxCount b
             , balanceTotalReceived = balValTotalReceived b
             }
 
@@ -193,6 +194,7 @@ setBalanceH b db = db {hBalance = M.insert (balanceAddress b) x (hBalance db)}
                     { balValAmount = balanceAmount b
                     , balValZero = balanceZero b
                     , balValUnspentCount = balanceUnspentCount b
+                    , balValTxCount = balanceTxCount b
                     , balValTotalReceived = balanceTotalReceived b
                     }
 

@@ -267,6 +267,8 @@ data BalVal = BalVal
       -- ^ unconfirmed balance in satoshi
     , balValUnspentCount  :: !Word64
       -- ^ number of unspent outputs
+    , balValTxCount       :: !Word64
+      -- ^ number of transactions
     , balValTotalReceived :: !Word64
       -- ^ total amount received by this address
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
@@ -278,6 +280,7 @@ instance Default BalVal where
             { balValAmount = 0
             , balValZero = 0
             , balValUnspentCount = 0
+            , balValTxCount = 0
             , balValTotalReceived = 0
             }
 

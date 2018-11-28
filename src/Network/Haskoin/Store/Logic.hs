@@ -12,6 +12,7 @@ import           Control.Monad.Except
 import           Control.Monad.Logger
 import qualified Data.ByteString                     as B
 import qualified Data.ByteString.Short               as B.Short
+import           Data.Either
 import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
@@ -302,22 +303,23 @@ importTx net i br tt tx = do
                   [0 ..]
                   (txOut tx)
               rbf <- getrbf
-              let (d, _) =
-                      fromTransaction
-                          Transaction
-                              { transactionBlock = br
-                              , transactionVersion = txVersion tx
-                              , transactionLockTime = txLockTime tx
-                              , transactionInputs =
-                                    if iscb
-                                        then zipWith mkcb (txIn tx) ws
-                                        else zipWith3 mkin us (txIn tx) ws
-                              , transactionOutputs = map mkout (txOut tx)
-                              , transactionDeleted = False
-                              , transactionRBF = rbf
-                              , transactionTime = tt
-                              }
+              let t =
+                      Transaction
+                          { transactionBlock = br
+                          , transactionVersion = txVersion tx
+                          , transactionLockTime = txLockTime tx
+                          , transactionInputs =
+                                if iscb
+                                    then zipWith mkcb (txIn tx) ws
+                                    else zipWith3 mkin us (txIn tx) ws
+                          , transactionOutputs = map mkout (txOut tx)
+                          , transactionDeleted = False
+                          , transactionRBF = rbf
+                          , transactionTime = tt
+                          }
+              let (d, _) = fromTransaction t
               insertTx i d
+              updateAddressCounts i (txAddresses t) (+1)
               unless (confirmed br) $
                   insertMempoolTx i (txHash tx) (memRefTime br)
        | null us && confirmed br -> confirmTx net i br tx
@@ -555,6 +557,7 @@ deleteTx net i mo h = do
         unless (confirmed (txDataBlock t)) $
             deleteMempoolTx i h (memRefTime (txDataBlock t))
         insertTx i t {txDataDeleted = True}
+        updateAddressCounts i (txDataAddresses t) (subtract 1)
 
 insertDeletedMempoolTx ::
        ( MonadError ImportException m
@@ -917,6 +920,7 @@ increaseBalance i c t a v = do
                         , balanceAmount = 0
                         , balanceZero = 0
                         , balanceUnspentCount = 0
+                        , balanceTxCount = 0
                         , balanceTotalReceived = 0
                         }
             Just b -> return b
@@ -939,3 +943,30 @@ increaseBalance i c t a v = do
                       then v
                       else 0
             }
+
+updateAddressCounts ::
+       (MonadError ImportException m, BalanceWrite i m, BalanceRead i m)
+    => i
+    -> [Address]
+    -> (Word64 -> Word64)
+    -> m ()
+updateAddressCounts i as f =
+    forM_ as $ \a -> do
+        b <-
+            getBalance i a >>= \case
+                Nothing -> throwError (BalanceNotFound a)
+                Just b -> return b
+        setBalance i b {balanceTxCount = f (balanceTxCount b)}
+
+txAddresses :: Transaction -> [Address]
+txAddresses t =
+    nub . rights $
+    map (scriptToAddressBS . inputPkScript)
+        (filter (not . isCoinbase) (transactionInputs t)) <>
+    map (scriptToAddressBS . outputScript) (transactionOutputs t)
+
+txDataAddresses :: TxData -> [Address]
+txDataAddresses t =
+    nub . rights $
+    map (scriptToAddressBS . prevScript) (I.elems (txDataPrevs t)) <>
+    map (scriptToAddressBS . scriptOutput) (txOut (txData t))

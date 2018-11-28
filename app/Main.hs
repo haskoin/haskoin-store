@@ -385,6 +385,7 @@ runWeb conf st db pub = do
                                     , balanceAmount = 0
                                     , balanceUnspentCount = 0
                                     , balanceZero = 0
+                                    , balanceTxCount = 0
                                     , balanceTotalReceived = 0
                                     }
             S.json $ balanceToJSON net res
@@ -399,6 +400,7 @@ runWeb conf st db pub = do
                                 , balanceAmount = 0
                                 , balanceUnspentCount = 0
                                 , balanceZero = 0
+                                , balanceTxCount = 0
                                 , balanceTotalReceived = 0
                                 }
                         f _ (Just b) = b

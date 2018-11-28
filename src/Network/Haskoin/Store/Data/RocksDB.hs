@@ -19,7 +19,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 dataVersion :: Word32
-dataVersion = 11
+dataVersion = 12
 
 data ExceptRocksDB =
     MempoolTxNotFound
@@ -67,6 +67,7 @@ getBalanceDB db opts a = fmap f <$> retrieve db opts (BalKey a)
     f BalVal { balValAmount = v
              , balValZero = z
              , balValUnspentCount = c
+             , balValTxCount = t
              , balValTotalReceived = r
              } =
         Balance
@@ -74,6 +75,7 @@ getBalanceDB db opts a = fmap f <$> retrieve db opts (BalKey a)
             , balanceAmount = v
             , balanceZero = z
             , balanceUnspentCount = c
+            , balanceTxCount = t
             , balanceTotalReceived = r
             }
 

@@ -188,6 +188,8 @@ data Balance = Balance
       -- ^ unconfirmed balance
     , balanceUnspentCount  :: !Word64
       -- ^ number of unspent outputs
+    , balanceTxCount       :: !Word64
+      -- ^ number of transactions
     , balanceTotalReceived :: !Word64
       -- ^ total amount from all outputs in this address
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
@@ -199,6 +201,7 @@ balancePairs net ab =
     , "confirmed" .= balanceAmount ab
     , "unconfirmed" .= balanceZero ab
     , "utxo" .= balanceUnspentCount ab
+    , "txs" .= balanceTxCount ab
     , "received" .= balanceTotalReceived ab
     ]
 
