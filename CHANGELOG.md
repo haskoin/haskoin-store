@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Low level support for skipping some transactions when returning a set.
 - Add timestamps to transactions.
+- Add transaction count to address balance object.
 
 ### Changed
 - Data model update.
