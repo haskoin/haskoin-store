@@ -99,7 +99,7 @@ getMempoolH db mpu =
     let f ts =
             case mpu of
                 Nothing -> False
-                Just pu -> pu <= ts
+                Just pu -> ts > pu
         ls =
             dropWhile (f . fst) .
             sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
@@ -121,7 +121,7 @@ getAddressTxsH db a mbr =
     h AddressTx {addressTxBlock = b} =
         case mbr of
             Nothing -> False
-            Just br -> br <= b
+            Just br -> b > br
 
 getAddressUnspentsH ::
        HashMapDB -> Address -> Maybe BlockRef -> [Unspent]
@@ -143,7 +143,7 @@ getAddressUnspentsH db a mbr =
     h Unspent {unspentBlock = b} =
         case mbr of
             Nothing -> False
-            Just br -> br <= b
+            Just br -> b > br
 
 setInitH :: HashMapDB -> HashMapDB
 setInitH db = db {hInit = True}
@@ -296,16 +296,7 @@ instance Applicative m => UnspentRead HashMapDB m where
     getUnspent db = pure . join . getUnspentH db
 
 instance Monad m => StoreStream HashMapDB m where
-    getMempool db t =
-        let f ts =
-                case t of
-                    Nothing -> False
-                    Just u -> u <= ts
-            ls =
-                dropWhile (f . fst) .
-                sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
-                hMempool db
-         in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
+    getMempool = getMempoolH
     getAddressUnspents db a = yieldMany . getAddressUnspentsH db a
     getAddressTxs db a = yieldMany . getAddressTxsH db a
 

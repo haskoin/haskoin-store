@@ -84,16 +84,12 @@ getMempoolDB ::
     -> Maybe PreciseUnixTime
     -> ConduitT () (PreciseUnixTime, TxHash) m ()
 getMempoolDB db opts mpu =
-    matching db opts k .| mapC (uncurry f) .| filterC (g . fst)
+    matching db opts k .| mapC (uncurry f)
   where
     k = case mpu of Nothing -> MemKeyS
                     Just pu -> MemKeyT pu
     f (MemKey u t) () = (u, t)
     f _ _ = undefined
-    g u =
-        case mpu of
-            Nothing -> True
-            Just pu -> pu > u
 
 getAddressTxsDB ::
        (MonadIO m, MonadResource m)
@@ -103,7 +99,7 @@ getAddressTxsDB ::
     -> Maybe BlockRef
     -> ConduitT () AddressTx m ()
 getAddressTxsDB db opts a mbr =
-    matching db opts k .| mapC (uncurry f) .| filterC g
+    matching db opts k .| mapC (uncurry f)
   where
     k =
         case mbr of
@@ -111,10 +107,6 @@ getAddressTxsDB db opts a mbr =
             Just br -> AddrTxKeyB a br
     f AddrTxKey {addrTxKey = t} () = t
     f _ _ = undefined
-    g AddressTx {addressTxBlock = b} =
-        case mbr of
-            Nothing -> True
-            Just br -> br > b
 
 getAddressUnspentsDB ::
        (MonadIO m, MonadResource m)
@@ -124,7 +116,7 @@ getAddressUnspentsDB ::
     -> Maybe BlockRef
     -> ConduitT () Unspent m ()
 getAddressUnspentsDB db opts a mbr =
-    matching db opts k .| mapC (uncurry f) .| filterC g
+    matching db opts k .| mapC (uncurry f)
   where
     k =
         case mbr of
@@ -140,10 +132,6 @@ getAddressUnspentsDB db opts a mbr =
             , unspentPoint = p
             }
     f _ _ = undefined
-    g Unspent {unspentBlock = b} =
-        case mbr of
-            Nothing -> True
-            Just br -> br > b
 
 getUnspentDB :: MonadIO m => DB -> ReadOptions -> OutPoint -> m (Maybe Unspent)
 getUnspentDB db opts op = fmap f <$> retrieve db opts (UnspentKey op)
