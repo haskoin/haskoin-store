@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.7.0
+  version: 0.8.0
   title: Blockchain API
   contact:
     name: Haskoin
@@ -733,6 +733,7 @@ components:
         - nonce
         - size
         - tx
+        - merkle
       properties:
         hash:
           type: string
@@ -777,6 +778,10 @@ components:
           items:
             type: string
             format: hex
+        merkle:
+          type: string
+          format: hex
+          example: '32ba7f6528d9f227f517ae667d66aed4771e23814eaeed606db13be2fc915d15'
     Input:
       type: object
       required:
