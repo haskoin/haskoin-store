@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.8.0
 ### Added
-- Low level support for skipping some transactions when returning a set.
+- Limits and skips.
 - Add timestamps to transactions.
 - Add transaction count to address balance object.
 - Add Merkle root to block data.

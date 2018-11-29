@@ -85,11 +85,12 @@ getMempoolDB ::
     -> ReadOptions
     -> Maybe PreciseUnixTime
     -> ConduitT () (PreciseUnixTime, TxHash) m ()
-getMempoolDB db opts mpu =
-    matching db opts k .| mapC (uncurry f)
+getMempoolDB db opts mpu = x .| mapC (uncurry f)
   where
-    k = case mpu of Nothing -> MemKeyS
-                    Just pu -> MemKeyT pu
+    x =
+        case mpu of
+            Nothing -> matching db opts MemKeyS
+            Just pu -> matchingSkip db opts MemKeyS (MemKeyT pu)
     f (MemKey u t) () = (u, t)
     f _ _ = undefined
 
@@ -100,13 +101,12 @@ getAddressTxsDB ::
     -> Address
     -> Maybe BlockRef
     -> ConduitT () AddressTx m ()
-getAddressTxsDB db opts a mbr =
-    matching db opts k .| mapC (uncurry f)
+getAddressTxsDB db opts a mbr = x .| mapC (uncurry f)
   where
-    k =
+    x =
         case mbr of
-            Nothing -> AddrTxKeyA a
-            Just br -> AddrTxKeyB a br
+            Nothing -> matching db opts (AddrTxKeyA a)
+            Just br -> matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a br)
     f AddrTxKey {addrTxKey = t} () = t
     f _ _ = undefined
 
@@ -117,13 +117,12 @@ getAddressUnspentsDB ::
     -> Address
     -> Maybe BlockRef
     -> ConduitT () Unspent m ()
-getAddressUnspentsDB db opts a mbr =
-    matching db opts k .| mapC (uncurry f)
+getAddressUnspentsDB db opts a mbr = x .| mapC (uncurry f)
   where
-    k =
+    x =
         case mbr of
-            Nothing -> AddrOutKeyA a
-            Just br -> AddrOutKeyB a br
+            Nothing -> matching db opts (AddrOutKeyA a)
+            Just br -> matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a br)
     f AddrOutKey {addrOutKeyB = b, addrOutKeyP = p} OutVal { outValAmount = v
                                                            , outValScript = s
                                                            } =

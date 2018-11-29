@@ -22,6 +22,7 @@ module Haskoin.Store
     , XPubUnspent(..)
     , Balance(..)
     , PeerInformation(..)
+    , PreciseUnixTime(..)
     , withStore
     , store
     , getBestBlock

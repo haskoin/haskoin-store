@@ -257,13 +257,22 @@ runWeb conf st db pub = do
             S.json res
         S.get "/mempool" $ do
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
+            mpu <-
+                case mbr of
+                    Just BlockRef {} ->
+                        raise $
+                        UserError "mempool transactions do not have height"
+                    Just (MemRef t) -> return $ Just t
+                    Nothing -> return Nothing
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     getMempool
                         (db, defaultReadOptions {useSnapshot = Just s})
-                        Nothing .|
+                        mpu .|
                     mapC snd .|
+                    apply_limit mlimit .|
                     jsonListConduit toEncoding .|
                     streamConduit io >>
                     liftIO flush'
@@ -310,19 +319,23 @@ runWeb conf st db pub = do
         S.get "/address/:address/transactions" $ do
             address <- parse_address
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
+            liftIO $ print (mlimit, mbr)
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     getAddressTxs
                         (db, defaultReadOptions {useSnapshot = Just s})
                         address
-                        Nothing .|
+                        mbr .|
+                    apply_limit mlimit .|
                     jsonListConduit (addressTxToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/transactions" $ do
             addresses <- parse_addresses
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
@@ -334,27 +347,31 @@ runWeb conf st db pub = do
                                       , defaultReadOptions
                                             {useSnapshot = Just s})
                                       a
-                                      Nothing)
+                                      mbr)
                              addresses) .|
+                    apply_limit mlimit .|
                     jsonListConduit (addressTxToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/:address/unspent" $ do
             address <- parse_address
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     getAddressUnspents
                         (db, defaultReadOptions {useSnapshot = Just s})
                         address
-                        Nothing .|
+                        mbr .|
+                    apply_limit mlimit .|
                     jsonListConduit (unspentToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/unspent" $ do
             addresses <- parse_addresses
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
@@ -366,8 +383,9 @@ runWeb conf st db pub = do
                                       , defaultReadOptions
                                             {useSnapshot = Just s})
                                       a
-                                      Nothing)
+                                      mbr)
                              addresses) .|
+                    apply_limit mlimit .|
                     jsonListConduit (unspentToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
@@ -416,26 +434,30 @@ runWeb conf st db pub = do
         S.get "/xpub/:xpub/transactions" $ do
             xpub <- parse_xpub
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     xpubTxs
                         (db, defaultReadOptions {useSnapshot = Just s})
-                        Nothing
+                        mbr
                         xpub .|
+                    apply_limit mlimit .|
                     jsonListConduit (xPubTxToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
             xpub <- parse_xpub
             setHeader "Content-Type" "application/json"
+            (mlimit, mbr) <- parse_limits
             stream $ \io flush' ->
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     xpubUnspent
                         (db, defaultReadOptions {useSnapshot = Just s})
-                        Nothing
+                        mbr
                         xpub .|
+                    apply_limit mlimit .|
                     jsonListConduit (xPubUnspentToEncoding net) .|
                     streamConduit io >>
                     liftIO flush'
@@ -476,6 +498,23 @@ runWeb conf st db pub = do
         S.get "/peers" $ getPeersInformation (storeManager st) >>= S.json
         notFound $ raise ThingNotFound
   where
+    parse_limits = do
+        let b = do
+                height <- param "height"
+                pos <- param "pos" `rescue` const (return maxBound)
+                return $ BlockRef height pos
+            m = do
+                time <- param "time"
+                return $ MemRef (PreciseUnixTime time)
+        mlimit <- fmap Just (param "limit") `rescue` const (return Nothing)
+        case mlimit of
+            Just l
+                | l < 0 -> raise $ UserError "limit cannot be negative"
+            _ -> return ()
+        mbr <- Just <$> b <|> Just <$> m <|> return Nothing
+        return (mlimit, mbr)
+    apply_limit Nothing = mapC id
+    apply_limit (Just l) = takeC l
     parse_address = do
         address <- param "address"
         case stringToAddr net address of
