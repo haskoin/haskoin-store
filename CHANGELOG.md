@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Low level support for skipping some transactions when returning a set.
 - Add timestamps to transactions.
 - Add transaction count to address balance object.
+- Add Merkle root to block data.
 
 ### Changed
 - Data model update.
