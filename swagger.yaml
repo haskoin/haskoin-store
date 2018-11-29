@@ -41,16 +41,19 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: height
+          in: query
           required: false
           schema:
             type: integer
           description: top height in the blockchain
         - name: pos
+          in: query
           required: false
           schema:
             type: integer
           description: top transaction position in the block at height specified
         - name: time
+          in: query
           required: false
           schema:
             type: integer
@@ -90,16 +93,19 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: height
+          in: query
           required: false
           schema:
             type: integer
           description: top height in the blockchain
         - name: pos
+          in: query
           required: false
           schema:
             type: integer
           description: top transaction position in the block at height specified
         - name: time
+          in: query
           required: false
           schema:
             type: integer
@@ -187,16 +193,19 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: height
+          in: query
           required: false
           schema:
             type: integer
           description: top height in the blockchain
         - name: pos
+          in: query
           required: false
           schema:
             type: integer
           description: top transaction position in the block at height specified
         - name: time
+          in: query
           required: false
           schema:
             type: integer
@@ -236,16 +245,19 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: height
+          in: query
           required: false
           schema:
             type: integer
           description: top height in the blockchain
         - name: pos
+          in: query
           required: false
           schema:
             type: integer
           description: top transaction position in the block at height specified
         - name: time
+          in: query
           required: false
           schema:
             type: integer
@@ -552,6 +564,7 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: time
+          in: query
           required: false
           schema:
             type: integer
@@ -614,16 +627,19 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: height
+          in: query
           required: false
           schema:
             type: integer
           description: top height in the blockchain
         - name: pos
+          in: query
           required: false
           schema:
             type: integer
           description: top transaction position in the block at height specified
         - name: time
+          in: query
           required: false
           schema:
             type: integer
@@ -683,16 +699,19 @@ paths:
             type: integer
           description: maximum number of entries to return
         - name: height
+          in: query
           required: false
           schema:
             type: integer
           description: top height in the blockchain
         - name: pos
+          in: query
           required: false
           schema:
             type: integer
           description: top transaction position in the block at height specified
         - name: time
+          in: query
           required: false
           schema:
             type: integer
