@@ -281,6 +281,7 @@ blockDataPairs bv =
     , "nonce" .= bhNonce (blockDataHeader bv)
     , "size" .= blockDataSize bv
     , "tx" .= blockDataTxs bv
+    , "merkle" .= encodeHex (S.encode (buildMerkleRoot (blockDataTxs bv)))
     ]
 
 instance ToJSON BlockData where
