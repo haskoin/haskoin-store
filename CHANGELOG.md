@@ -4,23 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.8.1
+### Added
+- Health check endpoint.
+
 ## 0.8.0
 ### Added
 - Limits and skips.
 - Add timestamps to transactions.
 - Add transaction count to address balance object.
 - Add Merkle root to block data.
-
-### Changed
-- Data model update.
-- Performance improvement for xpub calls.
-
-## 0.7.0
-### Added
 - Total funds received by an address now shows up in balance.
 - Balances for any address that ever had funds show up in xpub endpoints.
 
 ### Changed
+- Data model update.
+- Performance improvement for xpub calls.
 - Transactions are returned in reverse mempool/block order (highest or most recent first).
 - Balance objects do not get deleted from database ever.
 

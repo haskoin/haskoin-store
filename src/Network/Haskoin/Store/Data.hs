@@ -281,7 +281,7 @@ blockDataPairs bv =
     , "nonce" .= bhNonce (blockDataHeader bv)
     , "size" .= blockDataSize bv
     , "tx" .= blockDataTxs bv
-    , "merkle" .= TxHash (buildMerkleRoot (blockDataTxs bv))
+    , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
     ]
 
 instance ToJSON BlockData where
@@ -638,3 +638,30 @@ xPubUnspentToJSON net = object . xPubUnspentPairs net
 
 xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
 xPubUnspentToEncoding net = pairs . mconcat . xPubUnspentPairs net
+
+data HealthCheck = HealthCheck
+    { healthHeaderBest   :: !(Maybe BlockHash)
+    , healthHeaderHeight :: !(Maybe BlockHeight)
+    , healthBlockBest    :: !(Maybe BlockHash)
+    , healthBlockHeight  :: !(Maybe BlockHeight)
+    , healthPeers        :: !(Maybe Int)
+    , healthNetwork      :: !String
+    , healthOK           :: !Bool
+    , healthSynced       :: !Bool
+    } deriving (Show, Eq, Generic, Serialize)
+
+healthCheckPairs :: A.KeyValue kv => HealthCheck -> [kv]
+healthCheckPairs h =
+    [ "headers" .=
+      object ["hash" .= healthHeaderBest h, "height" .= healthHeaderHeight h]
+    , "blocks" .=
+      object ["hash" .= healthBlockBest h, "height" .= healthBlockHeight h]
+    , "peers" .= healthPeers h
+    , "net" .= healthNetwork h
+    , "ok" .= healthOK h
+    , "synced" .= healthSynced h
+    ]
+
+instance ToJSON HealthCheck where
+    toJSON = object . healthCheckPairs
+    toEncoding = pairs . mconcat . healthCheckPairs

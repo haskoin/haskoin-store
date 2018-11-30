@@ -1,9 +1,9 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiWayIf            #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -23,6 +23,7 @@ module Haskoin.Store
     , Balance(..)
     , PeerInformation(..)
     , PreciseUnixTime(..)
+    , HealthCheck(..)
     , withStore
     , store
     , getBestBlock
@@ -65,6 +66,7 @@ module Haskoin.Store
     , xPubUnspentToJSON
     , xPubUnspentToEncoding
     , cbAfterHeight
+    , healthCheck
     , mergeSourcesBy
     ) where
 
@@ -76,6 +78,7 @@ import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
+import           Data.Time.Clock.System
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
@@ -178,6 +181,40 @@ storeDispatch b _ (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
 
 storeDispatch _ _ (PeerEvent _) = return ()
 
+healthCheck ::
+       (MonadUnliftIO m, StoreRead r m)
+    => Network
+    -> r
+    -> Manager
+    -> Chain
+    -> m HealthCheck
+healthCheck net i mgr ch = do
+    n <- timeout (5 * 1000 * 1000) $ chainGetBest ch
+    b <-
+        runMaybeT $ do
+            h <- MaybeT $ getBestBlock i
+            MaybeT $ getBlock i h
+    p <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
+    let k = isNothing n || isNothing b || maybe False (not . null) p
+    t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    let s =
+            isJust $ do
+                x <- n
+                y <- b
+                guard $ nodeHeader x == blockDataHeader y
+                guard $ blockTimestamp (blockDataHeader y) >= t - 7200
+    return
+        HealthCheck
+            { healthBlockBest = headerHash . blockDataHeader <$> b
+            , healthBlockHeight = blockDataHeight <$> b
+            , healthHeaderBest = headerHash . nodeHeader <$> n
+            , healthHeaderHeight = nodeHeight <$> n
+            , healthPeers = length <$> p
+            , healthNetwork = getNetworkName net
+            , healthOK = k
+            , healthSynced = s
+            }
+
 -- | Publish a new transaction to the network.
 publishTx :: (MonadUnliftIO m, MonadLoggerIO m) => Manager -> Tx -> m Bool
 publishTx mgr tx =
@@ -216,7 +253,7 @@ xpubBals i xpub = (<>) <$> go 0 0 <*> go 1 0
         xs <- catMaybes <$> mapM (uncurry b) (as m n)
         case xs of
             [] -> return []
-            _ -> (xs <>) <$> go m (n + 100)
+            _  -> (xs <>) <$> go m (n + 100)
     b a p =
         g a >>= \case
             Nothing -> return Nothing

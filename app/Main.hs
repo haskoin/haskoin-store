@@ -496,6 +496,15 @@ runWeb conf st db pub = do
                             io (lazyByteString bs)
                         _ -> return ()
         S.get "/peers" $ getPeersInformation (storeManager st) >>= S.json
+        S.get "/health" $ do
+            h <-
+                liftIO $
+                healthCheck
+                    net
+                    (db, defaultReadOptions)
+                    (storeManager st)
+                    (storeChain st)
+            S.json h
         notFound $ raise ThingNotFound
   where
     parse_limits = do

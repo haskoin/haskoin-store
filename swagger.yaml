@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.8.0
+  version: 0.8.1
   title: Blockchain API
   contact:
     name: Haskoin
@@ -20,6 +20,19 @@ tags:
   - name: block
   - name: network
 paths:
+  '/health':
+    get:
+      tags:
+        - network
+      summary: get health status information
+      operationId: healthCheck
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheck'
   '/address/{address}/transactions':
     get:
       tags:
@@ -1119,3 +1132,53 @@ components:
         relay:
           type: boolean
           example: true
+    HealthCheck:
+      type: object
+      required:
+        - headers
+        - blocks
+        - peers
+        - net
+        - ok
+        - synced
+      properties:
+        headers:
+          type: object
+          required:
+            - hash
+            - height
+          properties:
+            hash:
+              type: string
+              nullable: true
+              format: hex
+              example: '7f47c17900ba70ac7e15ab08c51f96e6bf90fdb58e9a7e34662fd41e76cfa982'
+            height:
+              type: integer
+              nullable: true
+              example: 600
+        blocks:
+          type: object
+          required:
+            - hash
+            - height
+          properties:
+            hash:
+              type: string
+              nullable: true
+              format: hex
+              example: '7f47c17900ba70ac7e15ab08c51f96e6bf90fdb58e9a7e34662fd41e76cfa982'
+            height:
+              type: integer
+              nullable: true
+              example: 600
+        peers:
+          type: integer
+          nullable: true
+        net:
+          type: string
+          example: bchreg
+        ok:
+          type: bool
+        synced:
+          type: bool
