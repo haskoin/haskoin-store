@@ -826,6 +826,7 @@ components:
         - unconfirmed
         - utxo
         - received
+        - txs
       properties:
         address:
           type: string
@@ -844,6 +845,9 @@ components:
           type: integer
         received:
           description: total received by this address
+          type: integer
+        txs:
+          description: count of transactions affecting this address
           type: integer
     Unspent:
       type: object
