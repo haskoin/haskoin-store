@@ -1179,6 +1179,6 @@ components:
           type: string
           example: bchreg
         ok:
-          type: bool
+          type: boolean
         synced:
-          type: bool
+          type: boolean
