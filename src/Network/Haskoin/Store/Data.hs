@@ -25,6 +25,7 @@ import           Data.Word
 import           GHC.Generics
 import           Haskoin
 import           Network.Socket            (SockAddr)
+import           Paths_haskoin_store       as P
 import           UnliftIO.Exception
 
 type UnixTime = Int64
@@ -264,13 +265,15 @@ data BlockData = BlockData
       -- ^ block header
     , blockDataSize      :: !Word32
       -- ^ size of the block including witnesses
+    , blockDataWeight    :: !Word32
+      -- ^ weight of this block (for segwit networks)
     , blockDataTxs       :: ![TxHash]
       -- ^ block transactions
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
 
 -- | JSON serialization for 'BlockData'.
-blockDataPairs :: A.KeyValue kv => BlockData -> [kv]
-blockDataPairs bv =
+blockDataPairs :: A.KeyValue kv => Network -> BlockData -> [kv]
+blockDataPairs net bv =
     [ "hash" .= headerHash (blockDataHeader bv)
     , "height" .= blockDataHeight bv
     , "mainchain" .= blockDataMainChain bv
@@ -282,11 +285,13 @@ blockDataPairs bv =
     , "size" .= blockDataSize bv
     , "tx" .= blockDataTxs bv
     , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
-    ]
+    ] ++ ["weight" .= blockDataWeight bv | getSegWit net]
 
-instance ToJSON BlockData where
-    toJSON = object . blockDataPairs
-    toEncoding = pairs . mconcat . blockDataPairs
+blockDataToJSON :: Network -> BlockData -> Value
+blockDataToJSON net = object . blockDataPairs net
+
+blockDataToEncoding :: Network -> BlockData -> Encoding
+blockDataToEncoding net = pairs . mconcat . blockDataPairs net
 
 -- | Input information.
 data Input
@@ -543,7 +548,13 @@ transactionPairs net dtx =
     , "deleted" .= transactionDeleted dtx
     , "time" .= transactionTime dtx
     ] ++
-    ["rbf" .= transactionRBF dtx | getReplaceByFee net]
+    ["rbf" .= transactionRBF dtx | getReplaceByFee net] ++
+    ["weight" .= w | getSegWit net]
+  where
+    w = let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
+            x = B.length $ S.encode (transactionData dtx)
+            d = x - b
+        in b * 4 + d
 
 transactionToJSON :: Network -> Transaction -> Value
 transactionToJSON net = object . transactionPairs net
@@ -660,6 +671,7 @@ healthCheckPairs h =
     , "net" .= healthNetwork h
     , "ok" .= healthOK h
     , "synced" .= healthSynced h
+    , "version" .= P.version
     ]
 
 instance ToJSON HealthCheck where

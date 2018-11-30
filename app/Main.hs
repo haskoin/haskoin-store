@@ -224,21 +224,22 @@ runWeb conf st db pub = do
                         let d = (db, defaultReadOptions {useSnapshot = Just s})
                         bh <- MaybeT $ getBestBlock d
                         MaybeT $ getBlock d bh
-            maybeJSON res
+            maybeJSON (blockDataToJSON net <$> res)
         S.get "/block/:block" $ do
             block <- param "block"
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     getBlock d block
-            maybeJSON res
+            maybeJSON (blockDataToJSON net <$> res)
         S.get "/block/height/:height" $ do
             height <- param "height"
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     bs <- getBlocksAtHeight d height
-                    catMaybes <$> mapM (getBlock d) bs
+                    catMaybes <$>
+                        mapM (fmap (fmap (blockDataToJSON net)) . getBlock d) bs
             S.json res
         S.get "/block/heights" $ do
             heights <- param "heights"
@@ -246,14 +247,19 @@ runWeb conf st db pub = do
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     bs <- mapM (getBlocksAtHeight d) (nub heights)
-                    mapM (fmap catMaybes . mapM (getBlock d)) bs
+                    mapM
+                        (fmap catMaybes .
+                         mapM (fmap (fmap (blockDataToJSON net)) . getBlock d))
+                        bs
             S.json res
         S.get "/blocks" $ do
             blocks <- param "blocks"
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    mapM (getBlock d) (blocks :: [BlockHash])
+                    mapM
+                        (fmap (fmap (blockDataToJSON net)) . getBlock d)
+                        (blocks :: [BlockHash])
             S.json res
         S.get "/mempool" $ do
             setHeader "Content-Type" "application/json"

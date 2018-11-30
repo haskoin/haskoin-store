@@ -47,6 +47,8 @@ module Haskoin.Store
     , transactionData
     , isCoinbase
     , confirmed
+    , blockDataToJSON
+    , blockDataToEncoding
     , transactionToJSON
     , transactionToEncoding
     , outputToJSON

@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.8.1
+  version: 0.9.0
   title: Blockchain API
   contact:
     name: Haskoin
@@ -956,6 +956,9 @@ components:
           type: string
           format: hex
           example: '32ba7f6528d9f227f517ae667d66aed4771e23814eaeed606db13be2fc915d15'
+        weight:
+          type: integer
+          description: block weight for segwit networks
     Input:
       type: object
       required:
@@ -1090,6 +1093,9 @@ components:
           type: boolean
           example: false
           description: transaction vulnerable to replace-by-fee
+        weight:
+          type: integer
+          description: transaction weight for segwit networks
     Event:
       type: object
       required:
@@ -1141,6 +1147,7 @@ components:
         - net
         - ok
         - synced
+        - version
       properties:
         headers:
           type: object
@@ -1182,3 +1189,7 @@ components:
           type: boolean
         synced:
           type: boolean
+        version:
+          type: string
+          example: 0.9.0
+

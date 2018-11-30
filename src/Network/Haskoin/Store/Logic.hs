@@ -233,6 +233,7 @@ importBlock net i b n = do
             , blockDataHeader = nodeHeader n
             , blockDataSize = fromIntegral (B.length (encode b))
             , blockDataTxs = map txHash (blockTxns b)
+            , blockDataWeight = fromIntegral w
             }
     insertAtHeight i (headerHash (nodeHeader n)) (nodeHeight n)
     setBest i (headerHash (nodeHeader n))
@@ -248,6 +249,10 @@ importBlock net i b n = do
         (sortTxs (blockTxns b))
   where
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
+    w = let s = B.length (encode b {blockTxns = map (\t -> t {txWitness = []}) (blockTxns b)})
+            x = B.length (encode b)
+            d = x - s
+        in s * 4 + d
 
 sortTxs :: [Tx] -> [Tx]
 sortTxs [] = []
