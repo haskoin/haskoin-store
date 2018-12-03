@@ -986,6 +986,7 @@ components:
           example: '16001459c667d41f60ca85fe5f7316c6b55b6cba05d6df'
         value:
           type: integer
+          nullable: true
           example: 7897897
         sequence:
           type: integer
@@ -994,10 +995,12 @@ components:
         address:
           type: string
           format: base58
+          nullable: true
           example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
         pkscript:
           type: string
           format: hex
+          nullable: true
           example: '0000000000000017a914edf6588e432cd7dd8d7931ee5657634687874f4b87'
         witness:
           description: witness data on segwit networks
@@ -1032,6 +1035,7 @@ components:
         address:
           type: string
           format: base58
+          nullable: true
           example: '366yjyxLxaL7RP9KN2pyNfQ9CdsfWErmQz'
         pkscript:
           type: string
