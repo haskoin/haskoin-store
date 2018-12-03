@@ -553,8 +553,7 @@ transactionPairs net dtx =
   where
     w = let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
             x = B.length $ S.encode (transactionData dtx)
-            d = x - b
-        in b * 4 + d
+        in b * 3 + x
 
 transactionToJSON :: Network -> Transaction -> Value
 transactionToJSON net = object . transactionPairs net

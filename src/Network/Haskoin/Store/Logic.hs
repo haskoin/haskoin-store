@@ -251,8 +251,7 @@ importBlock net i b n = do
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
     w = let s = B.length (encode b {blockTxns = map (\t -> t {txWitness = []}) (blockTxns b)})
             x = B.length (encode b)
-            d = x - s
-        in s * 4 + d
+        in s * 3 + x
 
 sortTxs :: [Tx] -> [Tx]
 sortTxs [] = []
