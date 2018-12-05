@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.9.1
+### Added
+- Total block fees.
+- Total block outputs.
+- Block subsidy.
+
+### Changed
+- Do not consider the blocks less one block away from headers as out of sync in health check.
+- Health check now returns HTTP 503 when not OK or out of sync.
+
 ## 0.9.0
 ### Added
 - Version to health check output.

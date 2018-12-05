@@ -1,5 +1,6 @@
 {-# LANGUAGE ApplicativeDo     #-}
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -510,6 +511,7 @@ runWeb conf st db pub = do
                     (db, defaultReadOptions)
                     (storeManager st)
                     (storeChain st)
+            when (not (healthOK h) || not (healthSynced h)) $ status status503
             S.json h
         notFound $ raise ThingNotFound
   where

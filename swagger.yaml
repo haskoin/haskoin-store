@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.9.0
+  version: 0.9.1
   title: Blockchain API
   contact:
     name: Haskoin
@@ -29,6 +29,12 @@ paths:
       responses:
         '200':
           description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheck'
+        '503':
+          description: unavailable
           content:
             application/json:
               schema:
@@ -908,6 +914,9 @@ components:
         - size
         - tx
         - merkle
+        - subsidy
+        - fees
+        - outputs
       properties:
         hash:
           type: string
@@ -956,6 +965,21 @@ components:
           type: string
           format: hex
           example: '32ba7f6528d9f227f517ae667d66aed4771e23814eaeed606db13be2fc915d15'
+        subsidy:
+          type: integer
+          format: int64
+          description: block subsidies
+          example: 2500000000
+        fees:
+          type: integer
+          format: int64
+          description: transaction fees
+          example: 21825859
+        outputs:
+          type: integer
+          format: int64
+          description: all outputs
+          example: 28548283922
         weight:
           type: integer
           description: block weight for segwit networks

@@ -269,6 +269,12 @@ data BlockData = BlockData
       -- ^ weight of this block (for segwit networks)
     , blockDataTxs       :: ![TxHash]
       -- ^ block transactions
+    , blockDataOutputs   :: !Word64
+      -- ^ sum of all transaction outputs
+    , blockDataFees      :: !Word64
+      -- ^ sum of all transaction fees
+    , blockDataSubsidy   :: !Word64
+      -- ^ block subsidy
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
 
 -- | JSON serialization for 'BlockData'.
@@ -285,6 +291,9 @@ blockDataPairs net bv =
     , "size" .= blockDataSize bv
     , "tx" .= blockDataTxs bv
     , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
+    , "subsidy" .= blockDataSubsidy bv
+    , "fees" .= blockDataFees bv
+    , "outputs" .= blockDataOutputs bv
     ] ++ ["weight" .= blockDataWeight bv | getSegWit net]
 
 blockDataToJSON :: Network -> BlockData -> Value

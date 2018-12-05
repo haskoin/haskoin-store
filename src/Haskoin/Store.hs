@@ -203,7 +203,7 @@ healthCheck net i mgr ch = do
             isJust $ do
                 x <- n
                 y <- b
-                guard $ nodeHeader x == blockDataHeader y
+                guard $ nodeHeight x - blockDataHeight y <= 1
                 guard $ blockTimestamp (blockDataHeader y) >= t - 7200
     return
         HealthCheck

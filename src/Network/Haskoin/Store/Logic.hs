@@ -21,6 +21,7 @@ import           Data.String
 import           Data.Word
 import           Database.RocksDB
 import           Haskoin
+import           Network.Haskoin.Block.Headers       (computeSubsidy)
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.HashMap
 import           Network.Haskoin.Store.Data.ImportDB
@@ -234,6 +235,9 @@ importBlock net i b n = do
             , blockDataSize = fromIntegral (B.length (encode b))
             , blockDataTxs = map txHash (blockTxns b)
             , blockDataWeight = fromIntegral w
+            , blockDataSubsidy = subsidy (nodeHeight n)
+            , blockDataFees = cb_out_val - subsidy (nodeHeight n)
+            , blockDataOutputs = ts_out_val
             }
     insertAtHeight i (headerHash (nodeHeader n)) (nodeHeight n)
     setBest i (headerHash (nodeHeader n))
@@ -248,6 +252,9 @@ importBlock net i b n = do
         [0 ..]
         (sortTxs (blockTxns b))
   where
+    subsidy = computeSubsidy net
+    cb_out_val = sum (map outValue (txOut (head (blockTxns b))))
+    ts_out_val = sum (map (\tx -> sum (map outValue (txOut tx))) (tail (blockTxns b)))
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
     w = let s = B.length (encode b {blockTxns = map (\t -> t {txWitness = []}) (blockTxns b)})
             x = B.length (encode b)
