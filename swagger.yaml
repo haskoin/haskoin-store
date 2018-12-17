@@ -298,6 +298,13 @@ paths:
         - block
       summary: get best block in chain
       operationId: GetBlockHead
+      parameters:
+        - name: notx
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: do not include block transactions (only coinbase)
       responses:
         '200':
           description: success
@@ -319,6 +326,12 @@ paths:
             type: string
             format: hex
             example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+        - name: notx
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: do not include block transactions (only coinbase)
       responses:
         '200':
           description: success
@@ -345,6 +358,12 @@ paths:
               type: string
               format: hex
               example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+        - name: notx
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: do not include block transactions (only coinbase)
       responses:
         '200':
           description: success
@@ -369,6 +388,12 @@ paths:
           schema:
             type: integer
             example: 545199
+        - name: notx
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: do not include block transactions (only coinbase)
       responses:
         '200':
           description: success
@@ -399,6 +424,12 @@ paths:
               - 545201
             items:
               type: integer
+        - name: notx
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: do not include block transactions (only coinbase)
       responses:
         '200':
           description: success

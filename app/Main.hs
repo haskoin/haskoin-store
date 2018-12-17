@@ -219,48 +219,84 @@ runWeb conf st db pub = do
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
         S.get "/block/best" $ do
+            n <- parse_no_tx
             res <-
                 withSnapshot db $ \s ->
                     runMaybeT $ do
                         let d = (db, defaultReadOptions {useSnapshot = Just s})
                         bh <- MaybeT $ getBestBlock d
-                        MaybeT $ getBlock d bh
+                        b <- MaybeT $ getBlock d bh
+                        if n
+                            then return
+                                     b {blockDataTxs = take 1 (blockDataTxs b)}
+                            else return b
             maybeJSON (blockDataToJSON net <$> res)
         S.get "/block/:block" $ do
             block <- param "block"
+            n <- parse_no_tx
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    getBlock d block
+                withSnapshot db $ \s ->
+                    runMaybeT $ do
+                        let d = (db, defaultReadOptions {useSnapshot = Just s})
+                        b <- MaybeT $ getBlock d block
+                        if n
+                            then return
+                                     b {blockDataTxs = take 1 (blockDataTxs b)}
+                            else return b
             maybeJSON (blockDataToJSON net <$> res)
         S.get "/block/height/:height" $ do
             height <- param "height"
+            n <- parse_no_tx
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     bs <- getBlocksAtHeight d height
-                    catMaybes <$>
-                        mapM (fmap (fmap (blockDataToJSON net)) . getBlock d) bs
+                    fmap catMaybes . forM bs $ \bh ->
+                        runMaybeT $ do
+                            b <- MaybeT $ getBlock d bh
+                            return . blockDataToJSON net $
+                                if n
+                                    then b
+                                             { blockDataTxs =
+                                                   take 1 (blockDataTxs b)
+                                             }
+                                    else b
             S.json res
         S.get "/block/heights" $ do
             heights <- param "heights"
+            n <- parse_no_tx
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
                     bs <- mapM (getBlocksAtHeight d) (nub heights)
-                    mapM
-                        (fmap catMaybes .
-                         mapM (fmap (fmap (blockDataToJSON net)) . getBlock d))
-                        bs
+                    forM bs $ \hs ->
+                        fmap catMaybes . forM hs $ \bh ->
+                            runMaybeT $ do
+                                b <- MaybeT $ getBlock d bh
+                                return . blockDataToJSON net $
+                                    if n
+                                        then b
+                                                 { blockDataTxs =
+                                                       take 1 (blockDataTxs b)
+                                                 }
+                                        else b
             S.json res
         S.get "/blocks" $ do
             blocks <- param "blocks"
+            n <- parse_no_tx
             res <-
                 withSnapshot db $ \s -> do
                     let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    mapM
-                        (fmap (fmap (blockDataToJSON net)) . getBlock d)
-                        (blocks :: [BlockHash])
+                    fmap catMaybes . forM blocks $ \bh ->
+                        runMaybeT $ do
+                            b <- MaybeT $ getBlock d bh
+                            return . blockDataToJSON net $
+                                if n
+                                    then b
+                                             { blockDataTxs =
+                                                   take 1 (blockDataTxs b)
+                                             }
+                                    else b
             S.json res
         S.get "/mempool" $ do
             setHeader "Content-Type" "application/json"
@@ -548,6 +584,7 @@ runWeb conf st db pub = do
             Nothing -> next
             Just x -> return x
     net = configNetwork conf
+    parse_no_tx = param "notx" `rescue` const (return False)
     runner f l = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
