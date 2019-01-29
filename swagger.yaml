@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.9.1
+  version: 0.9.3
   title: Blockchain API
   contact:
     name: Haskoin
@@ -51,8 +51,7 @@ paths:
           required: true
           schema:
             type: string
-            format: base58
-            example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+            example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
         - name: limit
           in: query
           required: false
@@ -86,6 +85,17 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AddressTx'
+                example:
+                  - address: 'bchtest:qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+                    txid: '128d3979e1837631688d54a5e55716d44617ef70da1237042abcea51128d4ae2'
+                    block:
+                      height: 1283392
+                      position: 1
+                  - address: 'bchtest:qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+                    txid: '5d53eb8a24d02f7b92825ff1b2b68f478c9b0129e8bbc90e9a893b461086c6b7'
+                    block:
+                      height: 1283391
+                      position: 1
         '404':
           description: invalid address
   '/address/transactions':
@@ -103,8 +113,7 @@ paths:
             type: array
             items:
               type: string
-              format: base58
-              example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+              example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
         - name: limit
           in: query
           required: false
@@ -138,6 +147,17 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AddressTx'
+                example:
+                  - address: 'bchtest:qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+                    txid: '128d3979e1837631688d54a5e55716d44617ef70da1237042abcea51128d4ae2'
+                    block:
+                      height: 1283392
+                      position: 1
+                  - address: 'bchtest:qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+                    txid: '5d53eb8a24d02f7b92825ff1b2b68f478c9b0129e8bbc90e9a893b461086c6b7'
+                    block:
+                      height: 1283391
+                      position: 1
         '404':
           description: invalid address
   '/address/{address}/balance':
@@ -152,8 +172,7 @@ paths:
           required: true
           schema:
             type: string
-            format: base58
-            example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+            example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
       responses:
         '200':
           description: success
@@ -178,8 +197,7 @@ paths:
             type: array
             items:
               type: string
-              format: base58
-              example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+              example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
       responses:
         '200':
           description: success
@@ -203,8 +221,7 @@ paths:
           required: true
           schema:
             type: string
-            format: base58
-            example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+            example: 'qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
         - name: limit
           in: query
           required: false
@@ -255,8 +272,7 @@ paths:
             type: array
             items:
               type: string
-              format: base58
-              example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+              example: 'qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
         - name: limit
           in: query
           required: false
@@ -325,7 +341,7 @@ paths:
           schema:
             type: string
             format: hex
-            example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+            example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         - name: notx
           in: query
           required: false
@@ -357,7 +373,7 @@ paths:
             items:
               type: string
               format: hex
-              example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+              example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         - name: notx
           in: query
           required: false
@@ -387,7 +403,7 @@ paths:
           required: true
           schema:
             type: integer
-            example: 545199
+            example: 1283393
         - name: notx
           in: query
           required: false
@@ -419,9 +435,7 @@ paths:
           schema:
             type: array
             example:
-              - 545199
-              - 545200
-              - 545201
+              - 1283393
             items:
               type: integer
         - name: notx
@@ -455,7 +469,7 @@ paths:
           schema:
             type: string
             format: hex
-            example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
           description: success
@@ -477,7 +491,7 @@ paths:
           schema:
             type: string
             format: hex
-            example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
           description: success
@@ -486,7 +500,7 @@ paths:
               schema:
                 type: string
                 format: hex
-                example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
+                example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
         '404':
           description: transaction not found
   '/transaction/{txid}/after/{height}':
@@ -502,14 +516,14 @@ paths:
           schema:
             type: string
             format: hex
-            example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         - name: height
           in: path
           required: true
           schema:
             type: integer
             format: int32
-            example: 500000
+            example: 200000
       responses:
         '200':
           description: success
@@ -524,6 +538,7 @@ paths:
                     description: transaction has a coinbase ancestor after height
                     type: boolean
                     nullable: true
+                    example: true
   '/transactions':
     get:
       tags:
@@ -539,7 +554,7 @@ paths:
             items:
               type: string
               format: hex
-              example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+              example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
           description: success
@@ -562,7 +577,7 @@ paths:
             schema:
               type: string
               format: hex
-              example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
+              example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
       responses:
         '200':
           description: success
@@ -587,7 +602,7 @@ paths:
             items:
               type: string
               format: hex
-              example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+              example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
           description: success
@@ -598,7 +613,7 @@ paths:
                 items:
                   type: string
                   format: hex
-                  example: '020000000001017317f53cec0a02bb49c2b4e0259e275573a76942baaf2686b294ad774d9f3e1e010000001716001459c667d41f60ca85fe5f7316c6b55b6cba05d6dffeffffff02fc855f00000000001976a91420742f31c6412adba11cfdd9dd4e4b1ef53512b888ac6d7317000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87024730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b4012102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7b7510800'
+                  example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
         '404':
           description: transaction not found
   '/mempool':
@@ -629,7 +644,11 @@ paths:
                 items:
                   type: string
                   format: hex
-                  example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+                example:
+                  - '8198a7924b0c4cc5d1b71e48b4f28e5106d2d536181d018acecb6e9f7ebce689'
+                  - 'eed4160b9919901e7f55a93d5e9f1add5c7e56c930276532673105844c233b3f'
+                  - 'cdb3793bb6c2669e01da5e8751d8975766c81fbce7bd9d7d08414b84448d3129'
+                  - '870d7515f9ab782f7b84d3bf15d40e801b835d4abc5389f522d29e5ace223de9'
   '/events':
     get:
       tags:
@@ -657,6 +676,17 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Peer'
+                example:
+                  - useragent: '/Bitcoin ABC:0.18.5(EB32.0)/'
+                    address: '34.245.216.80:18333'
+                    version: 70015
+                    services: 37
+                    relay: true
+                  - useragent: '/Bitcoin SV:0.1.0(EB128.0)/'
+                    address: '142.93.42.82:18333'
+                    version: 70015
+                    services: 37
+                    relay: true
   '/xpub/{xpub}/transactions':
     get:
       tags:
@@ -669,7 +699,7 @@ paths:
           schema:
             type: string
             format: base58
-            example: tpubD9zZePks3yj7D2Mv6w8FsMrRLiuXUwx2z47cXV1abqR48DrMg9yQx4FWHuXat3wzKPnUAETDruzWjCwGks5eorZhdxe5S73R8DJKRrshu6G
+            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
         - name: limit
           in: query
           required: false
@@ -703,6 +733,25 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/XPubTx'
+                example:
+                  - path: [0,4]
+                    address: 'bchtest:qzwzklyevkh66e9vfljck725dwn48vedzyqm7pujx9'
+                    block:
+                      height: 765798
+                      position: 6
+                    txid: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
+                  - path: [0,3]
+                    address: 'bchtest:qz0ckvh2ckafw7xct9j7gcp6g4gu3h0mayf7vwlxac'
+                    block:
+                      height: 765798
+                      position: 5
+                    txid: 'be45116b6f505a4d5d8fb17cfe12678f70e9ac2df003aae1ce89c37cbc034384'
+                  - path: [0,1]
+                    address: 'bchtest:qrf83qn0rsrwx39ak8x7rupdh2ue9jmm05gl2c4f5d'
+                    block:
+                      height: 765798
+                      position: 4
+                    txid: '14288fc7465fa8c786fd19e31d163688ced5d66636e9f761b4e8e376f2421492'
         '400':
           description: invalid xpub
   '/xpub/{xpub}/balances':
@@ -717,7 +766,7 @@ paths:
           schema:
             type: string
             format: base58
-            example: tpubD9zZePks3yj7D2Mv6w8FsMrRLiuXUwx2z47cXV1abqR48DrMg9yQx4FWHuXat3wzKPnUAETDruzWjCwGks5eorZhdxe5S73R8DJKRrshu6G
+            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
       responses:
         '200':
           description: success
@@ -727,6 +776,31 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/XPubBalance'
+                example:
+                  - path: [1,8]
+                    balance:
+                      received: 199880000
+                      utxo: 0
+                      address: 'bchtest:qrmaylmr0t7ad0sg80nwdfw2ft5ysn3hccvhk5rp89'
+                      txs: 2
+                      unconfirmed: 0
+                      confirmed: 0
+                  - path: [1,9]
+                    balance:
+                      received: 199770000
+                      utxo: 0
+                      address: 'bchtest:qrta9zrumx2x9xlkj3ecxurpkv0zspv9xy7tlreccv'
+                      txs: 2
+                      unconfirmed: 0
+                      confirmed: 0
+                  - path: [1,10]
+                    balance:
+                      received: 199770000
+                      utxo: 0
+                      address: 'bchtest:qquvk7vrffk7m76x24tnr572mjpykghhg5fjptsjs6'
+                      txs: 2
+                      unconfirmed: 0
+                      confirmed: 0
         '400':
           description: invalid xpub
   '/xpub/{xpub}/unspent':
@@ -741,7 +815,7 @@ paths:
           schema:
             type: string
             format: base58
-            example: tpubD9zZePks3yj7D2Mv6w8FsMrRLiuXUwx2z47cXV1abqR48DrMg9yQx4FWHuXat3wzKPnUAETDruzWjCwGks5eorZhdxe5S73R8DJKRrshu6G
+            example: tpubD8XsNAGEy3PzdR7jnDntK2DWYkzGeCkwyPWkA8ktYqFJFGRUEg5T1RrQqFWgZdLxLiZDzdYn1Hq2oqJnjix1yZk2qsJAivKAt43irDWaaUA
         - name: limit
           in: query
           required: false
@@ -775,6 +849,27 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/XPubUnspent'
+                example:
+                  - path: [0,1959]
+                    unspent:
+                      pkscript: '76a914a7ec2ca3345ebe30c265bab1f4bbfb0e7716727288ac'
+                      value: 1000000
+                      address: 'bchtest:qzn7ct9rx30tuvxzvkatra9mlv88w9njwg0p0gqkjv'
+                      block:
+                        height: 1096570
+                        position: 9
+                      index: 0
+                      txid: '717c7732a6e30c7a06b3c0f5eac040878d6e6f91e17c2471d38eb28050af8cac'
+                  - path: [0,1792]
+                    unspent:
+                      pkscript: '76a91472dbe14842d2e6d7da1c03e81012a9835c6c646488ac'
+                      value: 10000
+                      address: 'bchtest:qpedhc2ggtfwd476rsp7syqj4xp4cmryvs98s3w6u2'
+                      block:
+                        height: 1092503
+                        position: 12
+                      index: 1
+                      txid: '2733fcd7d55f5f7696e18f1eaaa5f9970cd88e063af4775e4139f1eb5482a856'
         '400':
           description: invalid xpub
 components:
@@ -784,8 +879,7 @@ components:
         - $ref: '#/components/schemas/Block'
         - $ref: '#/components/schemas/Mempool'
       example:
-        height: 545199
-        position: 14
+        mempool: 1548766186903
     Block:
       type: object
       required:
@@ -795,11 +889,11 @@ components:
         height:
           description: height of block
           type: integer
-          example: 545199
+          example: 1283393
         position:
           description: position of transaction within block
           type: integer
-          example: 14
+          example: 2
     Mempool:
       type: object
       required:
@@ -808,7 +902,7 @@ components:
         mempool:
           description: time transaction was received in mempool
           type: integer
-          example: 1539278010
+          example: 1548766186903
     XPubTx:
       type: object
       required:
@@ -820,7 +914,7 @@ components:
           type: array
           items:
             type: integer
-          example: [1, 25]
+          example: [1, 10]
         tx:
           $ref: '#/components/schemas/AddressTx'
     XPubBalance:
@@ -834,7 +928,7 @@ components:
           type: array
           items:
             type: integer
-          example: [1, 25]
+          example: [1, 10]
         balance:
           $ref: '#/components/schemas/Balance'
     XPubUnspent:
@@ -848,7 +942,7 @@ components:
           type: array
           items:
             type: integer
-          example: [1, 25]
+          example: [1, 10]
         unspent:
           $ref: '#/components/schemas/Unspent'
     AddressTx:
@@ -860,14 +954,13 @@ components:
       properties:
         address:
           type: string
-          format: base58
-          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+          example: 'qzwzklyevkh66e9vfljck725dwn48vedzyqm7pujx9'
         block:
           $ref: '#/components/schemas/BlockRef'
         txid:
           type: string
           format: hex
-          example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+          example: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
     Balance:
       type: object
       required:
@@ -880,25 +973,29 @@ components:
       properties:
         address:
           type: string
-          format: base58
-          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+          example: 'bchtest:qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
         confirmed:
           type: integer
           format: int64
           description: sum of confirmed unspent output values
+          example: 0
         unconfirmed:
           type: integer
           format: int64
           description: sum of unconfirmed unspent output values
+          example: 0
         utxo:
           description: number of unspent outputs
           type: integer
+          example: 0
         received:
           description: total received by this address
           type: integer
+          example: 4013201
         txs:
           description: count of transactions affecting this address
           type: integer
+          example: 2
     Unspent:
       type: object
       required:
@@ -911,26 +1008,25 @@ components:
       properties:
         address:
           type: string
-          format: base58
-          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+          example: 'qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
         block:
           $ref: '#/components/schemas/BlockRef'
         txid:
           type: string
           format: hex
-          example: '1e3e9f4d77ad94b28626afba4269a77355279e25e0b4c249bb020aec3cf51773'
+          example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         index:
           type: integer
-          example: 1
+          example: 0
         pkscript:
           type: string
           format: hex
-          example: 'a914edf6588e432cd7dd8d7931ee5657634687874f4b87'
+          example: '76a914151a5bd62929872630531213391c3e2952fa069c88ac'
         value:
           type: integer
           format: int64
           description: output value in satoshi
-          example: 7897897
+          example: 4005704
     BlockData:
       type: object
       required:
@@ -952,23 +1048,23 @@ components:
         hash:
           type: string
           format: hex
-          example: '000000000000000000048a43c2930e4826c4262b5d8cef0f5da620e428ab32e2'
+          example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         size:
           type: integer
-          example: 1037064
+          example: 722
         height:
           type: integer
-          example: 545199
+          example: 1283393
         mainchain:
           type: boolean
           example: true
         previous:
           type: string
           format: hex
-          example: '000000000000000000118d430528af530905bc55ff707529f080ca404ef20d08'
+          example: '000000000000024005a247066be86876777cd84f5bbbc21ba02d32e7822c2fb9'
         time:
           type: integer
-          example: 1539199096
+          example: 1548766137
         version:
           type: integer
           format: int32
@@ -976,41 +1072,39 @@ components:
         bits:
           type: integer
           format: int32
-          example: 388350353
+          example: 437016577
         nonce:
           type: integer
           format: int32
-          example: 611360495
+          example: 12019207
         tx:
           type: array
           example:
-            - '8e2d666571877e01a4509d35fa87862162223637feaaf7de4b609f50801ec8ce'
-            - '87cb6e0c3136a770191ace304e8217d47dac319051e50ddcc2715a4c4ab4e740'
-            - '17c5eeda2ff8ae1674cd63ac62f5eed79f7194d8ec63f936a3304adc925927dd'
-            - '5336186fbf190739e58440823e86999b475a03fe8256e630b1f97eea2b9a2e3f'
-            - '980949e86992634315fe232a3bfac91744d91bb4fcc132e910cc4cdd5dab8569'
+            - '17106222f0c49ff2553e0fe39966d6fbd08b1d5ea3ef5b2359d94a69846b50fc'
+            - '5fb7685ebec529851d2b0c4dacc8e0ada028191e5279d68baf5a0d96e9e29577'
+            - 'ce0b0d3ac21b91f24b5b0fc8f057071656496aa898fa7ee01f6b1f7d9b169a9a'
           items:
             type: string
             format: hex
         merkle:
           type: string
           format: hex
-          example: '32ba7f6528d9f227f517ae667d66aed4771e23814eaeed606db13be2fc915d15'
+          example: '76999ce20135a02df2d7a7a78282fd748b8804b76a817a25ced05f1cf4f2d2a5'
         subsidy:
           type: integer
           format: int64
           description: block subsidies
-          example: 2500000000
+          example: 78125000
         fees:
           type: integer
           format: int64
           description: transaction fees
-          example: 21825859
+          example: 115499
         outputs:
           type: integer
           format: int64
           description: all outputs
-          example: 28548283922
+          example: 470103316006
         weight:
           type: integer
           description: block weight for segwit networks
@@ -1028,41 +1122,39 @@ components:
       properties:
         coinbase:
           type: boolean
+          example: false
         txid:
           type: string
           format: hex
-          example: '1e3e9f4d77ad94b28626afba4269a77355279e25e0b4c249bb020aec3cf51773'
+          example: '5fb7685ebec529851d2b0c4dacc8e0ada028191e5279d68baf5a0d96e9e29577'
         output:
           type: integer
-          example: 1
+          example: 0
         sigscript:
           type: string
           format: hex
-          example: '16001459c667d41f60ca85fe5f7316c6b55b6cba05d6df'
+          example: '483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006c'
         value:
           type: integer
           nullable: true
-          example: 7897897
+          example: 4008203
         sequence:
           type: integer
           format: int32
           example: 4294967294
         address:
           type: string
-          format: base58
           nullable: true
-          example: '3PPFBRSZWSF2gNmfFLKeVTHvnRmwJAzKED'
+          example: 'bchtest:qzyrvsm6z4ucrhaq4zza3wylre7mavvldgr67jrxt4'
         pkscript:
           type: string
           format: hex
           nullable: true
-          example: '0000000000000017a914edf6588e432cd7dd8d7931ee5657634687874f4b87'
+          example: '76a9148836437a157981dfa0a885d8b89f1e7dbeb19f6a88ac'
         witness:
           description: witness data on segwit networks
           type: array
-          example:
-            - '000000000000004730440220096a41d374c1fbbc973213f71409c984b8cd08dc633b20753c6872db0435d23d0220019aeb659de050ef630536095ea1d8cfd6cfa8993c4f535afc5bcc60afddc4b401'
-            - '000000000000002102080366d33615dc0b93c9e2d76c52a7383490e183382fafc51f2a3ec2d35ff9b7'
+          example: []
           items:
             type: string
             format: hex
@@ -1075,7 +1167,7 @@ components:
         txid:
           type: string
           format: hex
-          example: '958819acf4de7be842def87e9bf13e17a8b04d2a5ebed9042af166c1c86bd297'
+          example: '5fb7685ebec529851d2b0c4dacc8e0ada028191e5279d68baf5a0d96e9e29577'
         input:
           type: integer
           example: 0
@@ -1089,17 +1181,16 @@ components:
       properties:
         address:
           type: string
-          format: base58
           nullable: true
-          example: '366yjyxLxaL7RP9KN2pyNfQ9CdsfWErmQz'
+          example: 'bchtest:qzy3e4pnrglcd3ump5ndqrwu5qv2j8szcv6extyerq'
         pkscript:
           type: string
           format: hex
-          example: '0000000000000017a9143068aa2a15f7bb05d5d9b5665787452ff3fd499a87'
+          example: '76a914891cd4331a3f86c79b0d26d00ddca018a91e02c388ac'
         value:
           type: integer
           format: int64
-          example: 1536877
+          example: 4010702
         spent:
           type: boolean
           example: true
@@ -1121,39 +1212,58 @@ components:
         txid:
           type: string
           format: hex
-          example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+          example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         size:
           type: integer
-          example: 249
+          example: 245
         version:
           type: integer
-          example: 2
+          example: 1
         locktime:
           type: integer
-          example: 545207
+          example: 0
         fee:
           type: integer
           format: int64
-          example: 100800
+          example: 2499
         inputs:
           type: array
           items:
             $ref: '#/components/schemas/Input'
+          example:
+            - pkscript: '76a9148836437a157981dfa0a885d8b89f1e7dbeb19f6a88ac'
+              value: 4008203 
+              address: 'bchtest:qzyrvsm6z4ucrhaq4zza3wylre7mavvldgr67jrxt4'
+              sequence: 4294967294
+              output: 0
+              sigscript: '483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006c'
+              coinbase: false
+              txid: '5fb7685ebec529851d2b0c4dacc8e0ada028191e5279d68baf5a0d96e9e29577'
         outputs:
           type: array
           items:
             $ref: '#/components/schemas/Output'
+          example:
+            - spent: false
+              pkscript: '76a914151a5bd62929872630531213391c3e2952fa069c88ac'
+              value: 4005704
+              address: 'bchtest:qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
+            - spent: false
+              pkscript: '6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c30'
+              value: 0
+              address: null
         block:
           $ref: '#/components/schemas/BlockRef'
         deleted:
           type: boolean
-          example: true
+          example: false
         rbf:
           type: boolean
           example: false
           description: transaction vulnerable to replace-by-fee
         weight:
           type: integer
+          example: 980
           description: transaction weight for segwit networks
     Event:
       type: object
@@ -1166,11 +1276,12 @@ components:
           enum:
             - tx
             - block
+          example: block
         id:
           type: string
           format: hex
           description: block or transaction id
-          example: '67de069965dcf6b09c9cb7290bc7db05d4d116477359ebbc8748915186cc9384'
+          example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
     Peer:
       type: object
       required:
@@ -1182,10 +1293,10 @@ components:
       properties:
         useragent:
           type: string
-          example: "/Bitcoin ABC:0.17.2(EB32.0)/"
+          example: '/Bitcoin ABC:0.18.4(EB32.0)/'
         address:
           type: string
-          example: "127.0.0.1:8333"
+          example: '34.253.51.235:18333'
         version:
           type: integer
           format: int32
@@ -1218,7 +1329,7 @@ components:
               type: string
               nullable: true
               format: hex
-              example: '7f47c17900ba70ac7e15ab08c51f96e6bf90fdb58e9a7e34662fd41e76cfa982'
+              example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
             height:
               type: integer
               nullable: true
@@ -1233,22 +1344,25 @@ components:
               type: string
               nullable: true
               format: hex
-              example: '7f47c17900ba70ac7e15ab08c51f96e6bf90fdb58e9a7e34662fd41e76cfa982'
+              example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
             height:
               type: integer
               nullable: true
-              example: 600
+              example: 1283393
         peers:
           type: integer
           nullable: true
+          example: 20
         net:
           type: string
-          example: bchreg
+          example: bchtest
         ok:
           type: boolean
+          example: true
         synced:
           type: boolean
+          example: true
         version:
           type: string
-          example: 0.9.0
+          example: 0.9.3
 

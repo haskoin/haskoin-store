@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+
+## 0.9.3
+### Added
+- Permissive CORS headers to allow queries from any domain.
+- Improved documentation using real-world examples from the BCH testnet.
+
 ## 0.9.2
 ### Added
 - HTTP JSON API switch to turn off transaction list when retrieving blocks.

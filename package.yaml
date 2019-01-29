@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.9.2
+version: 0.9.3
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
@@ -7,9 +7,9 @@ author: Jean-Pierre Rupp
 maintainer: xenog@protonmail.com
 license: PublicDomain
 license-file: UNLICENSE
-github: haskoin/haskoin.git
-homepage: http://github.com/haskoin/haskoin#readme
-bug-reports: http://github.com/haskoin/haskoin/issues
+github: haskoin/haskoin-store.git
+homepage: http://github.com/haskoin/haskoin-store#readme
+bug-reports: http://github.com/haskoin/haskoin-store/issues
 extra-source-files:
   - README.md
   - CHANGELOG.md

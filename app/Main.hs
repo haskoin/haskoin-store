@@ -219,6 +219,7 @@ runWeb conf st db pub = do
     scottyT (configPort conf) (runner l) $ do
         defaultHandler defHandler
         S.get "/block/best" $ do
+            cors
             n <- parse_no_tx
             res <-
                 withSnapshot db $ \s ->
@@ -232,6 +233,7 @@ runWeb conf st db pub = do
                             else return b
             maybeJSON (blockDataToJSON net <$> res)
         S.get "/block/:block" $ do
+            cors
             block <- param "block"
             n <- parse_no_tx
             res <-
@@ -245,6 +247,7 @@ runWeb conf st db pub = do
                             else return b
             maybeJSON (blockDataToJSON net <$> res)
         S.get "/block/height/:height" $ do
+            cors
             height <- param "height"
             n <- parse_no_tx
             res <-
@@ -263,6 +266,7 @@ runWeb conf st db pub = do
                                     else b
             S.json res
         S.get "/block/heights" $ do
+            cors
             heights <- param "heights"
             n <- parse_no_tx
             res <-
@@ -282,6 +286,7 @@ runWeb conf st db pub = do
                                         else b
             S.json res
         S.get "/blocks" $ do
+            cors
             blocks <- param "blocks"
             n <- parse_no_tx
             res <-
@@ -299,6 +304,7 @@ runWeb conf st db pub = do
                                     else b
             S.json res
         S.get "/mempool" $ do
+            cors
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
             mpu <-
@@ -320,6 +326,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.get "/transaction/:txid" $ do
+            cors
             txid <- param "txid"
             res <-
                 withSnapshot db $ \s -> do
@@ -328,6 +335,7 @@ runWeb conf st db pub = do
             let f = transactionToJSON net
             maybeJSON $ fmap f res
         S.get "/transaction/:txid/hex" $ do
+            cors
             txid <- param "txid"
             res <-
                 withSnapshot db $ \s -> do
@@ -338,6 +346,7 @@ runWeb conf st db pub = do
                 Just x ->
                     text . cs . encodeHex $ Serialize.encode (transactionData x)
         S.get "/transaction/:txid/after/:height" $ do
+            cors
             txid <- param "txid"
             height <- param "height"
             res <-
@@ -346,6 +355,7 @@ runWeb conf st db pub = do
                     cbAfterHeight d 10000 height txid
             S.json $ object ["result" .= res]
         S.get "/transactions" $ do
+            cors
             txids <- param "txids"
             res <-
                 withSnapshot db $ \s -> do
@@ -353,6 +363,7 @@ runWeb conf st db pub = do
                     catMaybes <$> mapM (getTransaction d) (nub txids)
             S.json $ map (transactionToJSON net) res
         S.get "/transactions/hex" $ do
+            cors
             txids <- param "txids"
             res <-
                 withSnapshot db $ \s -> do
@@ -360,6 +371,7 @@ runWeb conf st db pub = do
                     catMaybes <$> mapM (getTransaction d) (nub txids)
             S.json $ map (encodeHex . Serialize.encode . transactionData) res
         S.get "/address/:address/transactions" $ do
+            cors
             address <- parse_address
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
@@ -376,6 +388,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/transactions" $ do
+            cors
             addresses <- parse_addresses
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
@@ -397,6 +410,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/:address/unspent" $ do
+            cors
             address <- parse_address
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
@@ -412,6 +426,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/unspent" $ do
+            cors
             addresses <- parse_addresses
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
@@ -433,6 +448,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/:address/balance" $ do
+            cors
             address <- parse_address
             res <-
                 withSnapshot db $ \s -> do
@@ -451,6 +467,7 @@ runWeb conf st db pub = do
                                     }
             S.json $ balanceToJSON net res
         S.get "/address/balances" $ do
+            cors
             addresses <- parse_addresses
             res <-
                 withSnapshot db $ \s -> do
@@ -468,6 +485,7 @@ runWeb conf st db pub = do
                     mapM (\a -> f a <$> getBalance d a) addresses
             S.json $ map (balanceToJSON net) res
         S.get "/xpub/:xpub/balances" $ do
+            cors
             xpub <- parse_xpub
             res <-
                 withSnapshot db $ \s -> do
@@ -475,6 +493,7 @@ runWeb conf st db pub = do
                     runResourceT $ xpubBals d xpub
             S.json $ map (xPubBalToJSON net) res
         S.get "/xpub/:xpub/transactions" $ do
+            cors
             xpub <- parse_xpub
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
@@ -490,6 +509,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
+            cors
             xpub <- parse_xpub
             setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
@@ -505,6 +525,7 @@ runWeb conf st db pub = do
                     streamConduit io >>
                     liftIO flush'
         S.post "/transactions" $ do
+            cors
             hex_tx <- C.filter (not . isSpace) <$> body
             bin_tx <-
                 case decodeHex (cs hex_tx) of
@@ -523,8 +544,11 @@ runWeb conf st db pub = do
             lift (publishTx (storeManager st) tx) >>= \case
                 True -> S.json $ object ["sent" .= True]
                 False -> S.json $ object ["sent" .= False]
-        S.get "/dbstats" $ getProperty db Stats >>= text . cs . fromJust
+        S.get "/dbstats" $ do
+            cors
+            getProperty db Stats >>= text . cs . fromJust
         S.get "/events" $ do
+            cors
             setHeader "Content-Type" "application/x-json-stream"
             stream $ \io flush' ->
                 withSubscription pub $ \sub ->
@@ -538,8 +562,11 @@ runWeb conf st db pub = do
                             let bs = A.encode (JsonEventTx tx_hash) <> "\n"
                             io (lazyByteString bs)
                         _ -> return ()
-        S.get "/peers" $ getPeersInformation (storeManager st) >>= S.json
+        S.get "/peers" $ do
+            cors
+            getPeersInformation (storeManager st) >>= S.json
         S.get "/health" $ do
+            cors
             h <-
                 liftIO $
                 healthCheck
@@ -588,6 +615,7 @@ runWeb conf st db pub = do
     runner f l = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
+    cors = setHeader "Access-Control-Allow-Origin" "*"
 
 jsonListConduit :: Monad m => (a -> Encoding) -> ConduitT a Builder m ()
 jsonListConduit f =
