@@ -2,15 +2,14 @@
 
 Full blockchain index & store featuring:
 
-- Bitcoin Cash & Bitcoin SegWit support.
-- Address index.
-- Mempool.
+- Bitcoin Cash (BCH) & Bitcoin SegWit (BTC) support.
+- Address balance, transaction, and UTXO index.
+- Mempool support (SPV).
+- XPub balance, transaction, and UTXO support.
 - Persistent storage using RocksDB.
 - RESTful endpoints for blockchain data.
-- Concurrent design.
-- No blocking on database access.
+- Concurrent non-blocking transactional design.
 - Guaranteed consistency within a request.
-- Atomic updates to prevent corruption.
 
 
 ## Install

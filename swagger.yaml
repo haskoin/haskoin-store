@@ -39,6 +39,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthCheck'
+              example:
+                headers:
+                  height: 1283593
+                  hash: '00000000000003ad033d7508575ea8f8fd4d9d5d331a9ecd22ab712bdbc35dbb'
+                blocks:
+                  height: 0
+                  hash: '000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943'
+                peers: 0
+                net: bchtest
+                ok: false
+                synced: false
+                version: 0.9.3
   '/address/{address}/transactions':
     get:
       tags:
@@ -1333,7 +1345,7 @@ components:
             height:
               type: integer
               nullable: true
-              example: 600
+              example: 1283393
         blocks:
           type: object
           required:
