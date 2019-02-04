@@ -47,7 +47,7 @@ paths:
                   height: 0
                   hash: '000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943'
                 peers: 0
-         OrderedMap       net: bchtest
+                net: bchtest
                 ok: false
                 synced: false
                 version: 0.9.3
@@ -1380,4 +1380,3 @@ components:
         version:
           type: string
           example: 0.9.3
-
