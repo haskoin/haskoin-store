@@ -47,7 +47,7 @@ paths:
                   height: 0
                   hash: '000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943'
                 peers: 0
-                net: bchtest
+         OrderedMap       net: bchtest
                 ok: false
                 synced: false
                 version: 0.9.3
@@ -748,22 +748,25 @@ paths:
                 example:
                   - path: [0,4]
                     address: 'bchtest:qzwzklyevkh66e9vfljck725dwn48vedzyqm7pujx9'
-                    block:
-                      height: 765798
-                      position: 6
-                    txid: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
+                    tx:
+                      block:
+                        height: 765798
+                        position: 6
+                      txid: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
                   - path: [0,3]
                     address: 'bchtest:qz0ckvh2ckafw7xct9j7gcp6g4gu3h0mayf7vwlxac'
-                    block:
-                      height: 765798
-                      position: 5
-                    txid: 'be45116b6f505a4d5d8fb17cfe12678f70e9ac2df003aae1ce89c37cbc034384'
+                    tx:
+                      block:
+                        height: 765798
+                        position: 5
+                      txid: 'be45116b6f505a4d5d8fb17cfe12678f70e9ac2df003aae1ce89c37cbc034384'
                   - path: [0,1]
                     address: 'bchtest:qrf83qn0rsrwx39ak8x7rupdh2ue9jmm05gl2c4f5d'
-                    block:
-                      height: 765798
-                      position: 4
-                    txid: '14288fc7465fa8c786fd19e31d163688ced5d66636e9f761b4e8e376f2421492'
+                    tx:
+                      block:
+                        height: 765798
+                        position: 4
+                      txid: '14288fc7465fa8c786fd19e31d163688ced5d66636e9f761b4e8e376f2421492'
         '400':
           description: invalid xpub
   '/xpub/{xpub}/balances':
