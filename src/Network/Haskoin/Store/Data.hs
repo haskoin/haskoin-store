@@ -74,7 +74,7 @@ class StoreStream r m where
     getAddressUnspents ::
            r -> Address -> Maybe BlockRef -> ConduitT () Unspent m ()
     getAddressTxs ::
-           r -> Address -> Maybe BlockRef -> ConduitT () AddressTx m ()
+           r -> Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
 
 class StoreWrite w m where
     setInit :: w -> m ()
@@ -84,8 +84,8 @@ class StoreWrite w m where
     insertTx :: w -> TxData -> m ()
     insertSpender :: w -> OutPoint -> Spender -> m ()
     deleteSpender :: w -> OutPoint -> m ()
-    insertAddrTx :: w -> AddressTx -> m ()
-    removeAddrTx :: w -> AddressTx -> m ()
+    insertAddrTx :: w -> Address -> BlockTx -> m ()
+    removeAddrTx :: w -> Address -> BlockTx -> m ()
     insertAddrUnspent :: w -> Address -> Unspent -> m ()
     removeAddrUnspent :: w -> Address -> Unspent -> m ()
     insertMempoolTx :: w -> TxHash -> PreciseUnixTime -> m ()
@@ -156,28 +156,23 @@ instance ToJSON BlockRef where
     toEncoding = pairs . mconcat . blockRefPairs
 
 -- | Transaction in relation to an address.
-data AddressTx = AddressTx
-    { addressTxAddress :: !Address
-      -- ^ transaction address
-    , addressTxBlock   :: !BlockRef
+data BlockTx = BlockTx
+    { blockTxBlock   :: !BlockRef
       -- ^ block information
-    , addressTxHash    :: !TxHash
+    , blockTxHash    :: !TxHash
       -- ^ transaction hash
     } deriving (Show, Eq, Ord, Generic, Serialize, Hashable)
 
 -- | JSON serialization for 'AddressTx'.
-addressTxPairs :: A.KeyValue kv => Network -> AddressTx -> [kv]
-addressTxPairs net atx =
-    [ "address" .= addrToJSON net (addressTxAddress atx)
-    , "txid" .= addressTxHash atx
-    , "block" .= addressTxBlock atx
+blockTxPairs :: A.KeyValue kv => BlockTx -> [kv]
+blockTxPairs btx =
+    [ "txid" .= blockTxHash btx
+    , "block" .= blockTxBlock btx
     ]
 
-addressTxToJSON :: Network -> AddressTx -> Value
-addressTxToJSON net = object . addressTxPairs net
-
-addressTxToEncoding :: Network -> AddressTx -> Encoding
-addressTxToEncoding net = pairs . mconcat . addressTxPairs net
+instance ToJSON BlockTx where
+    toJSON = object . blockTxPairs
+    toEncoding = pairs . mconcat . blockTxPairs
 
 -- | Address balance information.
 data Balance = Balance
@@ -598,25 +593,6 @@ peerInformationPairs p =
 instance ToJSON PeerInformation where
     toJSON = object . peerInformationPairs
     toEncoding = pairs . mconcat . peerInformationPairs
-
--- | Address transaction from an extended public key.
-data XPubTx = XPubTx
-    { xPubTxPath :: ![KeyIndex]
-    , xPubTx     :: !AddressTx
-    } deriving (Show, Eq, Generic)
-
--- | JSON serialization for 'XPubTx'.
-xPubTxPairs :: A.KeyValue kv => Network -> XPubTx -> [kv]
-xPubTxPairs net XPubTx {xPubTxPath = p, xPubTx = tx} =
-    [ "path" .= p
-    , "tx" .= addressTxToJSON net tx
-    ]
-
-xPubTxToJSON :: Network -> XPubTx -> Value
-xPubTxToJSON net = object . xPubTxPairs net
-
-xPubTxToEncoding :: Network -> XPubTx -> Encoding
-xPubTxToEncoding net = pairs . mconcat . xPubTxPairs net
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal

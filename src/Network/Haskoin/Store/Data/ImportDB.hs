@@ -107,22 +107,22 @@ addrTxOps = concat . concatMap (uncurry f) . M.toList
     h a b t True =
         insertOp
             (AddrTxKey
-                 { addrTxKey =
-                       AddressTx
-                           { addressTxAddress = a
-                           , addressTxBlock = b
-                           , addressTxHash = t
+                 { addrTxKeyA = a
+                 , addrTxKeyT =
+                       BlockTx
+                           { blockTxBlock = b
+                           , blockTxHash = t
                            }
                  })
             ()
     h a b t False =
         deleteOp
             AddrTxKey
-                { addrTxKey =
-                      AddressTx
-                          { addressTxAddress = a
-                          , addressTxBlock = b
-                          , addressTxHash = t
+                { addrTxKeyA = a
+                , addrTxKeyT =
+                      BlockTx
+                          { blockTxBlock = b
+                          , blockTxHash = t
                           }
                 }
 

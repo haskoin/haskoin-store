@@ -20,7 +20,9 @@ import           Network.Haskoin.Store.Data
 
 -- | Database key for an address transaction.
 data AddrTxKey
-    = AddrTxKey { addrTxKey :: !AddressTx }
+    = AddrTxKey { addrTxKeyA :: !Address
+                , addrTxKeyT :: !BlockTx
+                }
       -- ^ key for a transaction affecting an address
     | AddrTxKeyA { addrTxKeyA :: !Address }
       -- ^ short key that matches all entries
@@ -32,10 +34,11 @@ data AddrTxKey
 instance Serialize AddrTxKey
     -- 0x05 · Address · BlockRef · TxHash
                                                                where
-    put AddrTxKey {addrTxKey = AddressTx { addressTxAddress = a
-                                         , addressTxBlock = b
-                                         , addressTxHash = t
-                                         }} = do
+    put AddrTxKey { addrTxKeyA = a
+                  , addrTxKeyT = BlockTx { blockTxBlock = b
+                                         , blockTxHash = t
+                                         }
+                  } = do
         putWord8 0x05
         put a
         put b
@@ -56,11 +59,11 @@ instance Serialize AddrTxKey
         t <- get
         return
             AddrTxKey
-                { addrTxKey =
-                      AddressTx
-                          { addressTxAddress = a
-                          , addressTxBlock = b
-                          , addressTxHash = t
+                { addrTxKeyA = a
+                , addrTxKeyT =
+                      BlockTx
+                          { blockTxBlock = b
+                          , blockTxHash = t
                           }
                 }
 
@@ -186,7 +189,7 @@ instance KeyValue UnspentKey UnspentVal
 -- | Mempool transaction database key.
 data MemKey
     = MemKey { memTime :: !PreciseUnixTime
-             , memKey :: !TxHash }
+             , memKey  :: !TxHash }
     | MemKeyT { memTime :: !PreciseUnixTime }
     | MemKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)

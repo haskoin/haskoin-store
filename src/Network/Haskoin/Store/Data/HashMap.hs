@@ -107,7 +107,7 @@ getMempoolH db mpu =
             hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
 
-getAddressTxsH :: HashMapDB -> Address -> Maybe BlockRef -> [AddressTx]
+getAddressTxsH :: HashMapDB -> Address -> Maybe BlockRef -> [BlockTx]
 getAddressTxsH db a mbr =
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
@@ -116,10 +116,10 @@ getAddressTxsH db a mbr =
     f b hm = map (uncurry (g b)) $ M.toList hm
     g b h' True =
         Just
-            AddressTx
-                {addressTxAddress = a, addressTxBlock = b, addressTxHash = h'}
+            BlockTx
+                {blockTxBlock = b, blockTxHash = h'}
     g _ _ False = Nothing
-    h AddressTx {addressTxBlock = b} =
+    h BlockTx {blockTxBlock = b} =
         case mbr of
             Nothing -> False
             Just br -> b > br
@@ -198,24 +198,24 @@ setBalanceH b db = db {hBalance = M.insert (balanceAddress b) x (hBalance db)}
                     , balValTotalReceived = balanceTotalReceived b
                     }
 
-insertAddrTxH :: AddressTx -> HashMapDB -> HashMapDB
-insertAddrTxH a db =
+insertAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
+insertAddrTxH a btx db =
     let s =
             M.singleton
-                (addressTxAddress a)
+                a
                 (M.singleton
-                     (addressTxBlock a)
-                     (M.singleton (addressTxHash a) True))
+                     (blockTxBlock btx)
+                     (M.singleton (blockTxHash btx) True))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-removeAddrTxH :: AddressTx -> HashMapDB -> HashMapDB
-removeAddrTxH a db =
+removeAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
+removeAddrTxH a btx db =
     let s =
             M.singleton
-                (addressTxAddress a)
+                a
                 (M.singleton
-                     (addressTxBlock a)
-                     (M.singleton (addressTxHash a) False))
+                     (blockTxBlock btx)
+                     (M.singleton (blockTxHash btx) False))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
 insertAddrUnspentH :: Address -> Unspent -> HashMapDB -> HashMapDB
@@ -334,8 +334,8 @@ instance StoreWrite ((HashMapDB -> HashMapDB) -> m ()) m where
     insertTx f = f . insertTxH
     insertSpender f p = f . insertSpenderH p
     deleteSpender f = f . deleteSpenderH
-    insertAddrTx f = f . insertAddrTxH
-    removeAddrTx f = f . removeAddrTxH
+    insertAddrTx f a = f . insertAddrTxH a
+    removeAddrTx f a = f . removeAddrTxH a
     insertAddrUnspent f a = f . insertAddrUnspentH a
     removeAddrUnspent f a = f . removeAddrUnspentH a
     insertMempoolTx f h = f . insertMempoolTxH h
@@ -353,8 +353,8 @@ instance MonadIO m => StoreWrite (TVar HashMapDB) m where
     insertTx v = atomically . insertTx (modifyTVar v)
     insertSpender v p = atomically . insertSpender (modifyTVar v) p
     deleteSpender v = atomically . deleteSpender (modifyTVar v)
-    insertAddrTx v = atomically . insertAddrTx (modifyTVar v)
-    removeAddrTx v = atomically . removeAddrTx (modifyTVar v)
+    insertAddrTx v a = atomically . insertAddrTx (modifyTVar v) a
+    removeAddrTx v a = atomically . removeAddrTx (modifyTVar v) a
     insertAddrUnspent v a = atomically . insertAddrUnspent (modifyTVar v) a
     removeAddrUnspent v a = atomically . removeAddrUnspent (modifyTVar v) a
     insertMempoolTx v h = atomically . insertMempoolTx (modifyTVar v) h

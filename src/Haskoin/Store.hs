@@ -16,8 +16,7 @@ module Haskoin.Store
     , Spender(..)
     , BlockRef(..)
     , Unspent(..)
-    , AddressTx(..)
-    , XPubTx(..)
+    , BlockTx(..)
     , XPubBal(..)
     , XPubUnspent(..)
     , Balance(..)
@@ -59,10 +58,6 @@ module Haskoin.Store
     , unspentToEncoding
     , balanceToJSON
     , balanceToEncoding
-    , addressTxToJSON
-    , addressTxToEncoding
-    , xPubTxToJSON
-    , xPubTxToEncoding
     , xPubBalToJSON
     , xPubBalToEncoding
     , xPubUnspentToJSON
@@ -270,15 +265,13 @@ xpubTxs ::
     => i
     -> Maybe BlockRef
     -> XPubKey
-    -> ConduitT () XPubTx m ()
+    -> ConduitT () BlockTx m ()
 xpubTxs i mbr xpub = do
     bals <- lift $ xpubBals i xpub
     xs <-
-        forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
-            return $ getAddressTxs i (balanceAddress b) mbr .| mapC (f p)
-    mergeSourcesBy (flip compare `on` (addressTxBlock . xPubTx)) xs
-  where
-    f p t = XPubTx {xPubTxPath = p, xPubTx = t}
+        forM bals $ \XPubBal {xPubBal = b} ->
+            return $ getAddressTxs i (balanceAddress b) mbr
+    mergeSourcesBy (flip compare `on` blockTxBlock) xs
 
 xpubUnspent ::
        (Monad m, StoreStream i m, BalanceRead i m, StoreRead i m)

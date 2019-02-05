@@ -100,14 +100,14 @@ getAddressTxsDB ::
     -> ReadOptions
     -> Address
     -> Maybe BlockRef
-    -> ConduitT () AddressTx m ()
+    -> ConduitT () BlockTx m ()
 getAddressTxsDB db opts a mbr = x .| mapC (uncurry f)
   where
     x =
         case mbr of
             Nothing -> matching db opts (AddrTxKeyA a)
             Just br -> matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a br)
-    f AddrTxKey {addrTxKey = t} () = t
+    f AddrTxKey {addrTxKeyT = t} () = t
     f _ _ = undefined
 
 getAddressUnspentsDB ::

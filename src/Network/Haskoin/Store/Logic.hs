@@ -445,17 +445,17 @@ confirmTx net i br tx =
                     Right a -> do
                         removeAddrTx
                             i
-                            AddressTx
-                                { addressTxAddress = a
-                                , addressTxBlock = txDataBlock t
-                                , addressTxHash = txHash tx
+                            a
+                            BlockTx
+                                { blockTxBlock = txDataBlock t
+                                , blockTxHash = txHash tx
                                 }
                         insertAddrTx
                             i
-                            AddressTx
-                                { addressTxAddress = a
-                                , addressTxBlock = br
-                                , addressTxHash = txHash tx
+                            a
+                            BlockTx
+                                { blockTxBlock = br
+                                , blockTxHash = txHash tx
                                 }
             forM_ (zip [0 ..] (txOut tx)) $ \(n, o) -> do
                 let op = OutPoint (txHash tx) n
@@ -475,17 +475,17 @@ confirmTx net i br tx =
                     Right a -> do
                         removeAddrTx
                             i
-                            AddressTx
-                                { addressTxAddress = a
-                                , addressTxBlock = txDataBlock t
-                                , addressTxHash = txHash tx
+                            a
+                            BlockTx
+                                { blockTxBlock = txDataBlock t
+                                , blockTxHash = txHash tx
                                 }
                         insertAddrTx
                             i
-                            AddressTx
-                                { addressTxAddress = a
-                                , addressTxBlock = br
-                                , addressTxHash = txHash tx
+                            a
+                            BlockTx
+                                { blockTxBlock = br
+                                , blockTxHash = txHash tx
                                 }
                         when (isNothing s) $ do
                             removeAddrUnspent
@@ -655,10 +655,10 @@ newOutput i br op to = do
             insertAddrUnspent i a u
             insertAddrTx
                 i
-                AddressTx
-                    { addressTxAddress = a
-                    , addressTxHash = outPointHash op
-                    , addressTxBlock = br
+                a
+                BlockTx
+                    { blockTxHash = outPointHash op
+                    , blockTxBlock = br
                     }
             increaseBalance i (confirmed br) True a (outValue to)
   where
@@ -702,10 +702,10 @@ delOutput net i op = do
                     }
             removeAddrTx
                 i
-                AddressTx
-                    { addressTxAddress = a
-                    , addressTxHash = outPointHash op
-                    , addressTxBlock = transactionBlock t
+                a
+                BlockTx
+                    { blockTxHash = outPointHash op
+                    , blockTxBlock = transactionBlock t
                     }
             reduceBalance
                 net
@@ -789,10 +789,10 @@ spendOutput net i br th ix u = do
             removeAddrUnspent i a u
             insertAddrTx
                 i
-                AddressTx
-                    { addressTxAddress = a
-                    , addressTxHash = th
-                    , addressTxBlock = br
+                a
+                BlockTx
+                    { blockTxHash = th
+                    , blockTxBlock = br
                     }
     delUnspent i (unspentPoint u)
 
@@ -837,10 +837,10 @@ unspendOutput i op = do
             insertAddrUnspent i a u
             removeAddrTx
                 i
-                AddressTx
-                    { addressTxAddress = a
-                    , addressTxHash = spenderHash s
-                    , addressTxBlock = transactionBlock x
+                a
+                BlockTx
+                    { blockTxHash = spenderHash s
+                    , blockTxBlock = transactionBlock x
                     }
             increaseBalance
                 i

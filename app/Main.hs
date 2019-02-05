@@ -384,7 +384,7 @@ runWeb conf st db pub = do
                         address
                         mbr .|
                     apply_limit mlimit .|
-                    jsonListConduit (addressTxToEncoding net) .|
+                    jsonListConduit toEncoding .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/transactions" $ do
@@ -396,7 +396,7 @@ runWeb conf st db pub = do
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     mergeSourcesBy
-                        (compare `on` addressTxBlock)
+                        (compare `on` blockTxBlock)
                         (map (\a ->
                                   getAddressTxs
                                       ( db
@@ -405,8 +405,9 @@ runWeb conf st db pub = do
                                       a
                                       mbr)
                              addresses) .|
+                    dedup .|
                     apply_limit mlimit .|
-                    jsonListConduit (addressTxToEncoding net) .|
+                    jsonListConduit toEncoding .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/address/:address/unspent" $ do
@@ -504,8 +505,9 @@ runWeb conf st db pub = do
                         (db, defaultReadOptions {useSnapshot = Just s})
                         mbr
                         xpub .|
+                    dedup .|
                     apply_limit mlimit .|
-                    jsonListConduit (xPubTxToEncoding net) .|
+                    jsonListConduit toEncoding .|
                     streamConduit io >>
                     liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
@@ -595,6 +597,22 @@ runWeb conf st db pub = do
         return (mlimit, mbr)
     apply_limit Nothing = mapC id
     apply_limit (Just l) = takeC l
+    dedup =
+        let dd Nothing =
+                await >>= \case
+                    Just x -> do
+                        yield x
+                        dd (Just x)
+                    Nothing -> return ()
+            dd (Just x) =
+                await >>= \case
+                    Just y
+                        | x == y -> dd (Just x)
+                        | otherwise -> do
+                            yield y
+                            dd (Just y)
+                    Nothing -> return ()
+         in dd Nothing
     parse_address = do
         address <- param "address"
         case stringToAddr net address of
