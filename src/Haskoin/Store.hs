@@ -250,7 +250,7 @@ xpubBals i xpub = (<>) <$> go 0 0 <*> go 1 0
         xs <- catMaybes <$> mapM (uncurry b) (as m n)
         case xs of
             [] -> return []
-            _  -> (xs <>) <$> go m (n + 100)
+            _  -> (xs <>) <$> go m (n + 20)
     b a p =
         g a >>= \case
             Nothing -> return Nothing
@@ -258,7 +258,7 @@ xpubBals i xpub = (<>) <$> go 0 0 <*> go 1 0
     as m n =
         map
             (\(a, _, n') -> (a, [m, n']))
-            (take 100 (deriveAddrs (pubSubKey xpub m) n))
+            (take 20 (deriveAddrs (pubSubKey xpub m) n))
 
 xpubTxs ::
        (Monad m, BalanceRead i m, StoreStream i m)
