@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.10.1
 ### Changed
 - Fix bug where transaction lists from multiple addresses would sort incorrectly.
+- Address gap reduced to 20.
 
 ## 0.10.0
 ### Removed
