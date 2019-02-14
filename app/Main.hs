@@ -396,7 +396,7 @@ runWeb conf st db pub = do
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     mergeSourcesBy
-                        (compare `on` blockTxBlock)
+                        (flip compare `on` blockTxBlock)
                         (map (\a ->
                                   getAddressTxs
                                       ( db
@@ -435,7 +435,7 @@ runWeb conf st db pub = do
                 withSnapshot db $ \s ->
                     runResourceT . runConduit $
                     mergeSourcesBy
-                        (compare `on` unspentBlock)
+                        (flip compare `on` unspentBlock)
                         (map (\a ->
                                   getAddressUnspents
                                       ( db
