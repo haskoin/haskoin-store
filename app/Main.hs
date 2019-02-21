@@ -543,9 +543,17 @@ runWeb conf st db pub = do
                         S.json (UserError "decode tx within hex fail")
                         finish
                     Right x -> return x
-            lift (publishTx (storeManager st) tx) >>= \case
-                True -> S.json $ object ["sent" .= True]
-                False -> S.json $ object ["sent" .= False]
+            lift (publishTx pub st db tx) >>= \case
+                Right () -> S.json $ object ["txid" .= txHash tx]
+                Left e -> do
+                    case e of
+                        PubNoPeers -> status status500
+                        PubTimeout -> status status500
+                        PubPeerDisconnected -> status status500
+                        PubNotFound -> status status500
+                        PubReject _ -> status status400
+                    S.json (UserError (show e))
+                    finish
         S.get "/dbstats" $ do
             cors
             getProperty db Stats >>= text . cs . fromJust

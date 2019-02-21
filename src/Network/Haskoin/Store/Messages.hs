@@ -4,8 +4,9 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Network.Haskoin.Store.Messages where
 
+import           Data.ByteString  (ByteString)
 import           Data.Word
-import           Database.RocksDB        (DB)
+import           Database.RocksDB (DB)
 import           Haskoin
 import           Haskoin.Node
 import           Network.Socket
@@ -16,11 +17,11 @@ type BlockStore = Mailbox BlockMessage
 
 -- | Store mailboxes.
 data Store = Store
-    { storeManager   :: !Manager
+    { storeManager :: !Manager
       -- ^ peer manager mailbox
-    , storeChain     :: !Chain
+    , storeChain   :: !Chain
       -- ^ chain header process mailbox
-    , storeBlock     :: !BlockStore
+    , storeBlock   :: !BlockStore
       -- ^ block storage mailbox
     }
 
@@ -41,15 +42,15 @@ data StoreConfig = StoreConfig
 
 -- | Configuration for a block store.
 data BlockConfig = BlockConfig
-    { blockConfManager   :: !Manager
+    { blockConfManager  :: !Manager
       -- ^ peer manager from running node
-    , blockConfChain     :: !Chain
+    , blockConfChain    :: !Chain
       -- ^ chain from a running node
-    , blockConfListener  :: !(Listen StoreEvent)
+    , blockConfListener :: !(Listen StoreEvent)
       -- ^ listener for store events
-    , blockConfDB        :: !DB
+    , blockConfDB       :: !DB
       -- ^ RocksDB database handle
-    , blockConfNet       :: !Network
+    , blockConfNet      :: !Network
       -- ^ network constants
     }
 
@@ -95,4 +96,11 @@ data StoreEvent
     | StorePeerPong !Peer
                     !Word64
       -- ^ peer responded 'Ping'
-
+    | StoreTxAvailable !Peer
+                       ![TxHash]
+      -- ^ peer inv transactions
+    | StoreTxReject !Peer
+                    !TxHash
+                    !RejectCode
+                    !ByteString
+      -- ^ peer rejected transaction

@@ -592,9 +592,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Transaction'
+                type: object
+                required:
+                  - txid
+                properties:
+                  txid:
+                    type: string
+                    format: hex
+                    example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         '400':
           description: invalid transaction
+        '500':
+          description: server or network error
   '/transactions/hex':
     get:
       tags:

@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf            #-}
+{-# LANGUAGE OverloadedStrings     #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -23,6 +24,7 @@ module Haskoin.Store
     , PeerInformation(..)
     , PreciseUnixTime(..)
     , HealthCheck(..)
+    , PubExcept(..)
     , withStore
     , store
     , getBestBlock
@@ -68,14 +70,16 @@ module Haskoin.Store
     ) where
 
 import           Conduit
-import           Control.Monad.Except
+import           Control.Monad.Except           as E
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
 import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
+import           Data.Serialize                 (decode)
 import           Data.Time.Clock.System
+import           Database.RocksDB               as R
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
@@ -83,7 +87,35 @@ import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Messages
 import           Network.Socket                 (SockAddr (..))
 import           NQE
+import           System.Random
 import           UnliftIO
+
+data PubExcept
+    = PubNoPeers
+    | PubReject RejectCode
+    | PubTimeout
+    | PubNotFound
+    | PubPeerDisconnected
+    deriving Eq
+
+instance Show PubExcept where
+    show PubNoPeers = "no peers"
+    show (PubReject c) =
+        "rejected: " <>
+        case c of
+            RejectMalformed       -> "malformed"
+            RejectInvalid         -> "invalid"
+            RejectObsolete        -> "obsolete"
+            RejectDuplicate       -> "duplicate"
+            RejectNonStandard     -> "not standard"
+            RejectDust            -> "dust"
+            RejectInsufficientFee -> "insufficient fee"
+            RejectCheckpoint      -> "checkpoint"
+    show PubTimeout = "timeout"
+    show PubNotFound = "not found"
+    show PubPeerDisconnected = "peer disconnected"
+
+instance Exception PubExcept
 
 withStore ::
        (MonadLoggerIO m, MonadUnliftIO m)
@@ -172,9 +204,18 @@ storeDispatch b _ (PeerEvent (PeerMessage p (MNotFound (NotFound is)))) = do
             ]
     unless (null blocks) $ BlockNotFound p blocks `sendSTM` b
 
-storeDispatch b _ (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
+storeDispatch b pub (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
     let txs = [TxHash h | InvVector t h <- is, t == InvTx || t == InvWitnessTx]
+    pub (StoreTxAvailable p txs)
     unless (null txs) $ BlockTxAvailable p txs `sendSTM` b
+
+storeDispatch _ pub (PeerEvent (PeerMessage p (MReject r))) =
+    when (rejectMessage r == MCTx) $
+    case decode (rejectData r) of
+        Left _ -> return ()
+        Right th ->
+            pub $
+            StoreTxReject p th (rejectCode r) (getVarString (rejectReason r))
 
 storeDispatch _ _ (PeerEvent _) = return ()
 
@@ -213,14 +254,43 @@ healthCheck net i mgr ch = do
             }
 
 -- | Publish a new transaction to the network.
-publishTx :: (MonadUnliftIO m, MonadLoggerIO m) => Manager -> Tx -> m Bool
-publishTx mgr tx =
-    managerGetPeers mgr >>= \case
-        [] -> return False
-        ps -> do
-            forM_ ps (\OnlinePeer {onlinePeerMailbox = p} -> MTx tx `sendMessage` p)
-            return True
-
+publishTx ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Publisher StoreEvent
+    -> Store
+    -> DB
+    -> Tx
+    -> m (Either PubExcept ())
+publishTx pub st db tx =
+    withSubscription pub $ \s -> do
+        let d = (db, defaultReadOptions)
+        getTransaction d (txHash tx) >>= \case
+            Just _ -> return $ Right ()
+            Nothing ->
+                runExceptT $
+                managerGetPeers (storeManager st) >>= \case
+                    [] -> throwError PubNoPeers
+                    OnlinePeer {onlinePeerMailbox = p}:_ -> do
+                        MTx tx `sendMessage` p
+                        MMempool `sendMessage` p
+                        f p s
+  where
+    t = 15 * 1000 * 1000
+    f p s = do
+        n <- liftIO randomIO
+        MPing (Ping n) `sendMessage` p
+        liftIO (timeout t (runExceptT (g p s n))) >>= \case
+            Nothing -> throwError PubTimeout
+            Just e -> E.liftEither e
+    g p s n =
+        receive s >>= \case
+            StoreTxReject p' h' c _
+                | p == p' && h' == txHash tx -> throwError $ PubReject c
+            StorePeerDisconnected p' _
+                | p == p' -> throwError PubPeerDisconnected
+            StoreMempoolNew h'
+                | h' == txHash tx -> return ()
+            _ -> g p s n
 
 -- | Obtain information about connected peers from peer manager process.
 getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
