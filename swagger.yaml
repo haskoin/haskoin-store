@@ -1237,10 +1237,13 @@ components:
           items:
             $ref: '#/components/schemas/Output'
           example:
-            - spent: false
+            - spent: true
               pkscript: '76a914151a5bd62929872630531213391c3e2952fa069c88ac'
               value: 4005704
               address: 'bchtest:qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
+              spender:
+                input: 0
+                txid: 'f1173bb9269c5f7da1e188fae7b6295f3ed4d2861fbd45f4b5415f5bbe06d8ae'
             - spent: false
               pkscript: '6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c30'
               value: 0
