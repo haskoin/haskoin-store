@@ -240,7 +240,6 @@ healthCheck net i mgr ch = do
                 x <- n
                 y <- b
                 guard $ nodeHeight x - blockDataHeight y <= 1
-                guard $ blockTimestamp (blockDataHeader y) >= t - 7200
     return
         HealthCheck
             { healthBlockBest = headerHash . blockDataHeader <$> b
