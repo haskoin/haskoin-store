@@ -78,7 +78,6 @@ import           Data.Function
 import           Data.List
 import           Data.Maybe
 import           Data.Serialize                 (decode)
-import           Data.Time.Clock.System
 import           Database.RocksDB               as R
 import           Haskoin
 import           Haskoin.Node
@@ -234,8 +233,7 @@ healthCheck net i mgr ch = do
             MaybeT $ getBlock i h
     p <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
     let k = isNothing n || isNothing b || maybe False (not . null) p
-    t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-    let s =
+        s =
             isJust $ do
                 x <- n
                 y <- b

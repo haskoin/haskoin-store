@@ -89,7 +89,7 @@ newMempoolTx ::
     -> i
     -> Tx
     -> PreciseUnixTime
-    -> m ()
+    -> m Bool
 newMempoolTx net i tx now@(PreciseUnixTime w) = do
     $(logInfoS) "BlockLogic" $
         "Adding transaction to mempool: " <> txHashToHex (txHash tx)
@@ -98,7 +98,7 @@ newMempoolTx net i tx now@(PreciseUnixTime w) = do
             | not (txDataDeleted x) -> do
                 $(logWarnS) "BlockLogic" $
                     "Transaction already exists: " <> txHashToHex (txHash tx)
-                return ()
+                return False
         _ -> go
   where
     go = do
@@ -107,7 +107,8 @@ newMempoolTx net i tx now@(PreciseUnixTime w) = do
             mapM (getTxData i . outPointHash . prevOutput) (txIn tx)
         if orp
             then do
-                $(logErrorS) "BlockLogic" $ "Transaction is orphan: " <> txHashToHex (txHash tx)
+                $(logErrorS) "BlockLogic" $
+                    "Transaction is orphan: " <> txHashToHex (txHash tx)
                 throwError $ OrphanTx (txHash tx)
             else f
     f = do
@@ -117,7 +118,9 @@ newMempoolTx net i tx now@(PreciseUnixTime w) = do
                 getTxOutput (outPointIndex op) t
         let ds = map spenderHash (mapMaybe outputSpender us)
         if null ds
-            then importTx net i (MemRef now) (w `div` 1000) tx
+            then do
+                importTx net i (MemRef now) (w `div` 1000) tx
+                return True
             else g ds
     g ds = do
         $(logWarnS) "BlockLogic" $
@@ -134,11 +137,13 @@ newMempoolTx net i tx now@(PreciseUnixTime w) = do
             "Replacting RBF transaction with: " <> txHashToHex (txHash tx)
         forM_ ds (deleteTx net i True)
         importTx net i (MemRef now) (w `div` 1000) tx
+        return True
     n = do
         $(logWarnS) "BlockLogic" $
             "Inserting transaction with deleted flag: " <>
             txHashToHex (txHash tx)
         insertDeletedMempoolTx i tx now
+        return False
     isrbf th = transactionRBF <$> getImportTx i th
 
 newBlock ::

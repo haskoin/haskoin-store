@@ -215,9 +215,10 @@ processTx _p tx =
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
                     fromString (show e)
-                Right () -> do
+                Right True -> do
                     l <- blockConfListener <$> asks myConfig
                     atomically $ l (StoreMempoolNew (txHash tx))
+                Right False -> return ()
 
 processTxs ::
        (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
