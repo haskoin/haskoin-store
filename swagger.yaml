@@ -1,11 +1,11 @@
-openapi: 3.0.0
+openapi: '3.0.0'
 servers:
   - url: 'https://btc.haskoin.com/api/'
   - url: 'https://bch.haskoin.com/api/'
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: 0.11.0
+  version: '0.12.0'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -33,6 +33,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthCheck'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
         '503':
           description: unavailable
           content:
@@ -50,7 +54,12 @@ paths:
                 net: bchtest
                 ok: false
                 synced: false
-                version: 0.9.3
+                version: '0.12.0'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: HealthCheck
   '/address/{address}/transactions':
     get:
       tags:
@@ -87,6 +96,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -106,6 +116,11 @@ paths:
                     block:
                       height: 1283391
                       position: 1
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BlockTx
         '404':
           description: invalid address
   '/address/transactions':
@@ -147,6 +162,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -166,6 +182,11 @@ paths:
                     block:
                       height: 1283391
                       position: 1
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: TxIdList
         '404':
           description: invalid address
   '/address/{address}/balance':
@@ -188,6 +209,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Balance'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: Balance
         '404':
           description: invalid address
   '/address/balances':
@@ -215,6 +241,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Balance'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BalanceList
         '404':
           description: invalid address
   '/address/{address}/unspent':
@@ -253,6 +284,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -263,6 +295,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Unspent'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: UnspentList
         '404':
           description: invalid address
   '/address/unspent':
@@ -304,6 +341,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -314,6 +352,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Unspent'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: UnspentList
         '404':
           description: invalid address
   '/block/best':
@@ -336,6 +379,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlockData'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BlockData
   '/block/{block}':
     get:
       tags:
@@ -348,7 +396,6 @@ paths:
           required: true
           schema:
             type: string
-            format: hex
             example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         - name: notx
           in: query
@@ -363,6 +410,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlockData'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BlockData
         '404':
           description: block not found
   '/blocks':
@@ -380,7 +432,6 @@ paths:
             type: array
             items:
               type: string
-              format: hex
               example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         - name: notx
           in: query
@@ -397,6 +448,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BlockDataList
         '404':
           description: block not found
   '/block/height/{height}':
@@ -427,6 +483,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BlockDataList
         '404':
           description: block not found
   '/block/heights':
@@ -460,9 +521,12 @@ paths:
               schema:
                 type: array
                 items:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/BlockData'
+                  $ref: '#/components/schemas/BlockData'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: BlockDataList
         '404':
           description: block not found
   '/transaction/{txid}':
@@ -476,7 +540,6 @@ paths:
           required: true
           schema:
             type: string
-            format: hex
             example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
@@ -485,20 +548,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transaction'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: Transaction
         '404':
           description: transaction not found
   '/transaction/{txid}/hex':
     get:
       tags:
         - transaction
-      operationId: getTransaction
+      operationId: getHexTransaction
       parameters:
         - name: txid
           in: path
           required: true
           schema:
             type: string
-            format: hex
             example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
@@ -507,10 +574,30 @@ paths:
             text/plain:
               schema:
                 type: string
-                format: hex
                 example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
         '404':
           description: transaction not found
+  '/transaction/{txid}/bin':
+    get:
+      tags:
+        - transaction
+      operationId: getBinTransaction
+      parameters:
+        - name: txid
+          in: path
+          required: true
+          schema:
+            type: string
+            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+      responses:
+        '200':
+          description: success
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                description: bitcoin tx message serialization
   '/transaction/{txid}/after/{height}':
     get:
       tags:
@@ -523,14 +610,12 @@ paths:
           required: true
           schema:
             type: string
-            format: hex
             example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         - name: height
           in: path
           required: true
           schema:
             type: integer
-            format: int32
             example: 200000
       responses:
         '200':
@@ -547,6 +632,11 @@ paths:
                     type: boolean
                     nullable: true
                     example: true
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: TxAfterHeight
   '/transactions':
     get:
       tags:
@@ -561,7 +651,6 @@ paths:
             type: array
             items:
               type: string
-              format: hex
               example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
@@ -572,6 +661,11 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Transaction'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: TransactionList
         '404':
           description: transaction not found
     post:
@@ -584,22 +678,20 @@ paths:
           text/plain:
             schema:
               type: string
-              format: hex
               example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: bitcoin tx message serialization
       responses:
         '200':
           description: success
           content:
-            application/json:
+            text/plain:
               schema:
-                type: object
-                required:
-                  - txid
-                properties:
-                  txid:
-                    type: string
-                    format: hex
-                    example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+                type: string
+                example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         '400':
           description: invalid transaction
         '500':
@@ -608,7 +700,7 @@ paths:
     get:
       tags:
         - transaction
-      operationId: getTransactions
+      operationId: getHexTransactions
       parameters:
         - name: txids
           in: query
@@ -618,7 +710,6 @@ paths:
             type: array
             items:
               type: string
-              format: hex
               example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
       responses:
         '200':
@@ -629,8 +720,33 @@ paths:
                 type: array
                 items:
                   type: string
-                  format: hex
                   example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
+        '404':
+          description: transaction not found
+  '/transactions/bin':
+    get:
+      tags:
+        - transaction
+      operationId: getBinTransactions
+      parameters:
+        - name: txids
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+      responses:
+        '200':
+          description: success
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                description: concatenated using bitcoin tx message serialization
         '404':
           description: transaction not found
   '/mempool':
@@ -650,6 +766,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -660,12 +777,16 @@ paths:
                 type: array
                 items:
                   type: string
-                  format: hex
                 example:
                   - '8198a7924b0c4cc5d1b71e48b4f28e5106d2d536181d018acecb6e9f7ebce689'
                   - 'eed4160b9919901e7f55a93d5e9f1add5c7e56c930276532673105844c233b3f'
                   - 'cdb3793bb6c2669e01da5e8751d8975766c81fbce7bd9d7d08414b84448d3129'
                   - '870d7515f9ab782f7b84d3bf15d40e801b835d4abc5389f522d29e5ace223de9'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: TxIdList
   '/events':
     get:
       tags:
@@ -679,6 +800,11 @@ paths:
             application/x-json-stream:
               schema:
                 $ref: '#/components/schemas/Event'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: EventList
   '/peers':
     get:
       tags:
@@ -688,7 +814,7 @@ paths:
         '200':
           description: success
           content:
-            application/x-json-stream:
+            application/json:
               schema:
                 type: array
                 items:
@@ -697,13 +823,18 @@ paths:
                   - useragent: '/Bitcoin ABC:0.18.5(EB32.0)/'
                     address: '34.245.216.80:18333'
                     version: 70015
-                    services: 37
+                    services: '0000000000000025'
                     relay: true
                   - useragent: '/Bitcoin SV:0.1.0(EB128.0)/'
                     address: '142.93.42.82:18333'
                     version: 70015
-                    services: 37
+                    services: '0000000000000025'
                     relay: true
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+                description: TxList
   '/xpub/{xpub}/transactions':
     get:
       tags:
@@ -715,7 +846,6 @@ paths:
           required: true
           schema:
             type: string
-            format: base58
             example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
         - name: limit
           in: query
@@ -740,6 +870,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -763,6 +894,10 @@ paths:
                       height: 765798
                       position: 4
                     txid: '14288fc7465fa8c786fd19e31d163688ced5d66636e9f761b4e8e376f2421492'
+            application/x-protobuf:
+              type: string
+              format: binary
+              description: BlockTxList
         '400':
           description: invalid xpub
   '/xpub/{xpub}/balances':
@@ -776,7 +911,6 @@ paths:
           required: true
           schema:
             type: string
-            format: base58
             example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
       responses:
         '200':
@@ -812,6 +946,10 @@ paths:
                       txs: 2
                       unconfirmed: 0
                       confirmed: 0
+            application/x-protobuf:
+              type: string
+              format: binary
+              description: XPubBalanceList
         '400':
           description: invalid xpub
   '/xpub/{xpub}/unspent':
@@ -825,7 +963,6 @@ paths:
           required: true
           schema:
             type: string
-            format: base58
             example: tpubD8XsNAGEy3PzdR7jnDntK2DWYkzGeCkwyPWkA8ktYqFJFGRUEg5T1RrQqFWgZdLxLiZDzdYn1Hq2oqJnjix1yZk2qsJAivKAt43irDWaaUA
         - name: limit
           in: query
@@ -850,6 +987,7 @@ paths:
           required: false
           schema:
             type: integer
+            format: int64
           description: top Unix time in milliseconds to return entries from mempool
       responses:
         '200':
@@ -881,6 +1019,10 @@ paths:
                         position: 12
                       index: 1
                       txid: '2733fcd7d55f5f7696e18f1eaaa5f9970cd88e063af4775e4139f1eb5482a856'
+            application/x-protobuf:
+              type: string
+              format: binary
+              description: XPubUnspentList
         '400':
           description: invalid xpub
 components:
@@ -913,6 +1055,7 @@ components:
         mempool:
           description: time transaction was received in mempool
           type: integer
+          format: int64
           example: 1548766186903
     XPubBalance:
       type: object
@@ -952,7 +1095,6 @@ components:
           $ref: '#/components/schemas/BlockRef'
         txid:
           type: string
-          format: hex
           example: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
     Balance:
       type: object
@@ -980,14 +1122,17 @@ components:
         utxo:
           description: number of unspent outputs
           type: integer
+          format: int64
           example: 0
         received:
           description: total received by this address
           type: integer
+          format: int64
           example: 4013201
         txs:
           description: count of transactions affecting this address
           type: integer
+          format: int64
           example: 2
     Unspent:
       type: object
@@ -1001,19 +1146,18 @@ components:
       properties:
         address:
           type: string
+          nullable: true
           example: 'qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
         block:
           $ref: '#/components/schemas/BlockRef'
         txid:
           type: string
-          format: hex
           example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         index:
           type: integer
           example: 0
         pkscript:
           type: string
-          format: hex
           example: '76a914151a5bd62929872630531213391c3e2952fa069c88ac'
         value:
           type: integer
@@ -1040,7 +1184,6 @@ components:
       properties:
         hash:
           type: string
-          format: hex
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         size:
           type: integer
@@ -1053,22 +1196,22 @@ components:
           example: true
         previous:
           type: string
-          format: hex
           example: '000000000000024005a247066be86876777cd84f5bbbc21ba02d32e7822c2fb9'
         time:
           type: integer
+          format: int64
           example: 1548766137
         version:
           type: integer
-          format: int32
+          format: int64
           example: 536870912
         bits:
           type: integer
-          format: int32
+          format: int64
           example: 437016577
         nonce:
           type: integer
-          format: int32
+          format: int64
           example: 12019207
         tx:
           type: array
@@ -1078,10 +1221,8 @@ components:
             - 'ce0b0d3ac21b91f24b5b0fc8f057071656496aa898fa7ee01f6b1f7d9b169a9a'
           items:
             type: string
-            format: hex
         merkle:
           type: string
-          format: hex
           example: '76999ce20135a02df2d7a7a78282fd748b8804b76a817a25ced05f1cf4f2d2a5'
         subsidy:
           type: integer
@@ -1118,22 +1259,21 @@ components:
           example: false
         txid:
           type: string
-          format: hex
           example: '5fb7685ebec529851d2b0c4dacc8e0ada028191e5279d68baf5a0d96e9e29577'
         output:
           type: integer
           example: 0
         sigscript:
           type: string
-          format: hex
           example: '483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006c'
         value:
           type: integer
+          format: int64
           nullable: true
           example: 4008203
         sequence:
           type: integer
-          format: int32
+          format: int64
           example: 4294967294
         address:
           type: string
@@ -1141,7 +1281,6 @@ components:
           example: 'bchtest:qzyrvsm6z4ucrhaq4zza3wylre7mavvldgr67jrxt4'
         pkscript:
           type: string
-          format: hex
           nullable: true
           example: '76a9148836437a157981dfa0a885d8b89f1e7dbeb19f6a88ac'
         witness:
@@ -1150,7 +1289,6 @@ components:
           example: []
           items:
             type: string
-            format: hex
     Spender:
       type: object
       required:
@@ -1159,7 +1297,6 @@ components:
       properties:
         txid:
           type: string
-          format: hex
           example: '5fb7685ebec529851d2b0c4dacc8e0ada028191e5279d68baf5a0d96e9e29577'
         input:
           type: integer
@@ -1178,7 +1315,6 @@ components:
           example: 'bchtest:qzy3e4pnrglcd3ump5ndqrwu5qv2j8szcv6extyerq'
         pkscript:
           type: string
-          format: hex
           example: '76a914891cd4331a3f86c79b0d26d00ddca018a91e02c388ac'
         value:
           type: integer
@@ -1201,19 +1337,21 @@ components:
         - outputs
         - block
         - deleted
+        - time
       properties:
         txid:
           type: string
-          format: hex
           example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         size:
           type: integer
           example: 245
         version:
           type: integer
+          format: int64
           example: 1
         locktime:
           type: integer
+          format: int64
           example: 0
         fee:
           type: integer
@@ -1253,6 +1391,10 @@ components:
         deleted:
           type: boolean
           example: false
+        time:
+          type: integer
+          format: int64
+          example: 1548767230
         rbf:
           type: boolean
           example: false
@@ -1275,7 +1417,6 @@ components:
           example: block
         id:
           type: string
-          format: hex
           description: block or transaction id
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
     Peer:
@@ -1295,12 +1436,10 @@ components:
           example: '34.253.51.235:18333'
         version:
           type: integer
-          format: int32
           example: 70015
         services:
-          type: integer
-          format: int64
-          example: 37
+          type: string
+          example: '0000000000000025'
         relay:
           type: boolean
           example: true
@@ -1324,7 +1463,6 @@ components:
             hash:
               type: string
               nullable: true
-              format: hex
               example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
             height:
               type: integer
@@ -1339,7 +1477,6 @@ components:
             hash:
               type: string
               nullable: true
-              format: hex
               example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
             height:
               type: integer
@@ -1360,4 +1497,4 @@ components:
           example: true
         version:
           type: string
-          example: 0.9.3
+          example: '0.12.0'

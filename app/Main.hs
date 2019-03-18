@@ -1,8 +1,8 @@
 {-# LANGUAGE ApplicativeDo     #-}
 {-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -12,9 +12,9 @@ import           Control.Exception          ()
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
-import           Data.Aeson                 as A
 import           Data.Bits
 import           Data.ByteString.Builder
+import qualified Data.ByteString.Lazy       as L
 import qualified Data.ByteString.Lazy.Char8 as C
 import           Data.Char
 import           Data.Function
@@ -22,6 +22,7 @@ import           Data.List
 import           Data.Maybe
 import           Data.Serialize             as Serialize
 import           Data.String.Conversions
+import qualified Data.Text.Lazy             as T
 import           Data.Version
 import           Database.RocksDB           as R
 import           Haskoin
@@ -74,25 +75,7 @@ instance Exception Except
 
 instance ScottyError Except where
     stringError = StringError
-    showError = cs . show
-
-instance ToJSON Except where
-    toJSON ThingNotFound = object ["error" .= String "not found"]
-    toJSON BadRequest = object ["error" .= String "bad request"]
-    toJSON ServerError = object ["error" .= String "you made me kill a unicorn"]
-    toJSON (StringError _) = object ["error" .= String "you made me kill a unicorn"]
-    toJSON (UserError s) = object ["error" .= s]
-
-data JsonEvent
-    = JsonEventTx TxHash
-    | JsonEventBlock BlockHash
-    deriving (Eq, Show)
-
-instance ToJSON JsonEvent where
-    toJSON (JsonEventTx tx_hash) =
-        object ["type" .= String "tx", "id" .= tx_hash]
-    toJSON (JsonEventBlock block_hash) =
-        object ["type" .= String "block", "id" .= block_hash]
+    showError = T.pack . show
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -151,15 +134,16 @@ peerReader s = do
     return (host, port)
 
 defHandler :: Monad m => Except -> ActionT Except m ()
-defHandler ServerError   = S.json ServerError
-defHandler ThingNotFound = status status404 >> S.json ThingNotFound
-defHandler BadRequest    = status status400 >> S.json BadRequest
-defHandler (UserError s) = status status400 >> S.json (UserError s)
-defHandler e             = status status400 >> S.json e
+defHandler ServerError     = S.text "server error"
+defHandler ThingNotFound   = status status404 >> S.text "not found"
+defHandler BadRequest      = status status400 >> S.text "bad request"
+defHandler (UserError s)   = status status400 >> S.text (T.pack s)
+defHandler (StringError s) = status status400 >> S.text (T.pack s)
 
-maybeJSON :: (Monad m, ToJSON a) => Maybe a -> ActionT Except m ()
-maybeJSON Nothing  = raise ThingNotFound
-maybeJSON (Just x) = S.json x
+maybeSerial :: (Monad m, JsonSerial a, ProtoSerial a) => Network -> Bool -- ^ protobuf
+            -> Maybe a -> ActionT Except m ()
+maybeSerial _ _ Nothing        = raise ThingNotFound
+maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
 
 myDirectory :: FilePath
 myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
@@ -221,91 +205,87 @@ runWeb conf st db pub = do
         S.get "/block/best" $ do
             cors
             n <- parse_no_tx
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s ->
-                    runMaybeT $ do
-                        let d = (db, defaultReadOptions {useSnapshot = Just s})
-                        bh <- MaybeT $ getBestBlock d
-                        b <- MaybeT $ getBlock d bh
-                        if n
-                            then return
-                                     b {blockDataTxs = take 1 (blockDataTxs b)}
-                            else return b
-            maybeJSON (blockDataToJSON net <$> res)
+                runMaybeT $ do
+                    let d = (db, defaultReadOptions)
+                    bh <- MaybeT $ getBestBlock d
+                    b <- MaybeT $ getBlock d bh
+                    if n
+                        then return b {blockDataTxs = take 1 (blockDataTxs b)}
+                        else return b
+            maybeSerial net proto res
         S.get "/block/:block" $ do
             cors
             block <- param "block"
             n <- parse_no_tx
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s ->
-                    runMaybeT $ do
-                        let d = (db, defaultReadOptions {useSnapshot = Just s})
-                        b <- MaybeT $ getBlock d block
-                        if n
-                            then return
-                                     b {blockDataTxs = take 1 (blockDataTxs b)}
-                            else return b
-            maybeJSON (blockDataToJSON net <$> res)
+                runMaybeT $ do
+                    let d = (db, defaultReadOptions)
+                    b <- MaybeT $ getBlock d block
+                    if n
+                        then return b {blockDataTxs = take 1 (blockDataTxs b)}
+                        else return b
+            maybeSerial net proto res
         S.get "/block/height/:height" $ do
             cors
             height <- param "height"
-            n <- parse_no_tx
+            no_tx <- parse_no_tx
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    bs <- getBlocksAtHeight d height
-                    fmap catMaybes . forM bs $ \bh ->
-                        runMaybeT $ do
-                            b <- MaybeT $ getBlock d bh
-                            return . blockDataToJSON net $
-                                if n
-                                    then b
-                                             { blockDataTxs =
-                                                   take 1 (blockDataTxs b)
-                                             }
-                                    else b
-            S.json res
+                do let d = (db, defaultReadOptions)
+                   bs <- getBlocksAtHeight d height
+                   fmap catMaybes . forM bs $ \bh ->
+                       runMaybeT $ do
+                           b <- MaybeT $ getBlock d bh
+                           return
+                               b
+                                   { blockDataTxs =
+                                         if no_tx
+                                             then take 1 (blockDataTxs b)
+                                             else blockDataTxs b
+                                   }
+            S.raw $ serialAny net proto res
         S.get "/block/heights" $ do
             cors
             heights <- param "heights"
-            n <- parse_no_tx
+            no_tx <- parse_no_tx
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    bs <- mapM (getBlocksAtHeight d) (nub heights)
-                    forM bs $ \hs ->
-                        fmap catMaybes . forM hs $ \bh ->
-                            runMaybeT $ do
-                                b <- MaybeT $ getBlock d bh
-                                return . blockDataToJSON net $
-                                    if n
-                                        then b
-                                                 { blockDataTxs =
-                                                       take 1 (blockDataTxs b)
-                                                 }
-                                        else b
-            S.json res
+                do let d = (db, defaultReadOptions)
+                   bs <- concat <$> mapM (getBlocksAtHeight d) (nub heights)
+                   fmap catMaybes . forM bs $ \bh ->
+                       runMaybeT $ do
+                           b <- MaybeT $ getBlock d bh
+                           return
+                               b
+                                   { blockDataTxs =
+                                         if no_tx
+                                             then take 1 (blockDataTxs b)
+                                             else blockDataTxs b
+                                   }
+            S.raw $ serialAny net proto res
         S.get "/blocks" $ do
             cors
             blocks <- param "blocks"
-            n <- parse_no_tx
+            no_tx <- parse_no_tx
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    fmap catMaybes . forM blocks $ \bh ->
-                        runMaybeT $ do
-                            b <- MaybeT $ getBlock d bh
-                            return . blockDataToJSON net $
-                                if n
-                                    then b
-                                             { blockDataTxs =
-                                                   take 1 (blockDataTxs b)
-                                             }
-                                    else b
-            S.json res
+                do let d = (db, defaultReadOptions)
+                   fmap catMaybes . forM blocks $ \bh ->
+                       runMaybeT $ do
+                           b <- MaybeT $ getBlock d bh
+                           return
+                               b
+                                   { blockDataTxs =
+                                         if no_tx
+                                             then take 1 (blockDataTxs b)
+                                             else blockDataTxs b
+                                   }
+            S.raw $ serialAny net proto res
         S.get "/mempool" $ do
             cors
-            setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
             mpu <-
                 case mbr of
@@ -314,237 +294,203 @@ runWeb conf st db pub = do
                         UserError "mempool transactions do not have height"
                     Just (MemRef t) -> return $ Just t
                     Nothing -> return Nothing
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
-                    getMempool
-                        (db, defaultReadOptions {useSnapshot = Just s})
-                        mpu .|
-                    mapC snd .|
-                    apply_limit mlimit .|
-                    jsonListConduit toEncoding .|
-                    streamConduit io >>
-                    liftIO flush'
+            proto <- setup_proto
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
+                    getMempool d mpu .| mapC snd .| apply_limit mlimit .|
+                    streamAny net proto io
+                liftIO flush'
         S.get "/transaction/:txid" $ do
             cors
             txid <- param "txid"
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    getTransaction d txid
-            let f = transactionToJSON net
-            maybeJSON $ fmap f res
+                do let d = (db, defaultReadOptions)
+                   getTransaction d txid
+            maybeSerial net proto res
         S.get "/transaction/:txid/hex" $ do
             cors
             txid <- param "txid"
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    getTransaction d txid
+                do let d = (db, defaultReadOptions)
+                   getTransaction d txid
             case res of
                 Nothing -> raise ThingNotFound
                 Just x ->
                     text . cs . encodeHex $ Serialize.encode (transactionData x)
+        S.get "/transaction/:txid/bin" $ do
+            cors
+            txid <- param "txid"
+            res <-
+                do let d = (db, defaultReadOptions)
+                   getTransaction d txid
+            case res of
+                Nothing -> raise ThingNotFound
+                Just x -> do
+                    S.setHeader "Content-Type" "application/octet-stream"
+                    S.raw $ Serialize.encodeLazy (transactionData x)
         S.get "/transaction/:txid/after/:height" $ do
             cors
             txid <- param "txid"
             height <- param "height"
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    cbAfterHeight d 10000 height txid
-            S.json $ object ["result" .= res]
+                do let d = (db, defaultReadOptions)
+                   cbAfterHeight d 10000 height txid
+            S.raw $ serialAny net proto res
         S.get "/transactions" $ do
             cors
             txids <- param "txids"
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    catMaybes <$> mapM (getTransaction d) (nub txids)
-            S.json $ map (transactionToJSON net) res
+                do let d = (db, defaultReadOptions)
+                   catMaybes <$> mapM (getTransaction d) (nub txids)
+            S.raw $ serialAny net proto res
         S.get "/transactions/hex" $ do
             cors
             txids <- param "txids"
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    catMaybes <$> mapM (getTransaction d) (nub txids)
+                do let d = (db, defaultReadOptions)
+                   catMaybes <$> mapM (getTransaction d) (nub txids)
             S.json $ map (encodeHex . Serialize.encode . transactionData) res
+        S.get "/transactions/bin" $ do
+            cors
+            txids <- param "txids"
+            res <-
+                do let d = (db, defaultReadOptions)
+                   catMaybes <$> mapM (getTransaction d) (nub txids)
+            S.setHeader "Content-Type" "application/octet-stream"
+            S.raw . L.concat $ map (Serialize.encodeLazy . transactionData) res
         S.get "/address/:address/transactions" $ do
             cors
             address <- parse_address
-            setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
-            liftIO $ print (mlimit, mbr)
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
-                    getAddressTxs
-                        (db, defaultReadOptions {useSnapshot = Just s})
-                        address
-                        mbr .|
-                    apply_limit mlimit .|
-                    jsonListConduit toEncoding .|
-                    streamConduit io >>
-                    liftIO flush'
+            proto <- setup_proto
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
+                    getAddressTxs d address mbr .| apply_limit mlimit .|
+                    streamAny net proto io
+                liftIO flush'
         S.get "/address/transactions" $ do
             cors
             addresses <- parse_addresses
-            setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
+            proto <- setup_proto
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
                     mergeSourcesBy
                         (flip compare `on` blockTxBlock)
-                        (map (\a ->
-                                  getAddressTxs
-                                      ( db
-                                      , defaultReadOptions
-                                            {useSnapshot = Just s})
-                                      a
-                                      mbr)
-                             addresses) .|
+                        (map (\a -> getAddressTxs d a mbr) addresses) .|
                     dedup .|
                     apply_limit mlimit .|
-                    jsonListConduit toEncoding .|
-                    streamConduit io >>
-                    liftIO flush'
+                    streamAny net proto io
+                liftIO flush'
         S.get "/address/:address/unspent" $ do
             cors
             address <- parse_address
-            setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
-                    getAddressUnspents
-                        (db, defaultReadOptions {useSnapshot = Just s})
-                        address
-                        mbr .|
-                    apply_limit mlimit .|
-                    jsonListConduit (unspentToEncoding net) .|
-                    streamConduit io >>
-                    liftIO flush'
+            proto <- setup_proto
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
+                    getAddressUnspents d address mbr .| apply_limit mlimit .|
+                    streamAny net proto io
+                liftIO flush'
         S.get "/address/unspent" $ do
             cors
             addresses <- parse_addresses
-            setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
+            proto <- setup_proto
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
                     mergeSourcesBy
                         (flip compare `on` unspentBlock)
-                        (map (\a ->
-                                  getAddressUnspents
-                                      ( db
-                                      , defaultReadOptions
-                                            {useSnapshot = Just s})
-                                      a
-                                      mbr)
-                             addresses) .|
+                        (map (\a -> getAddressUnspents d a mbr) addresses) .|
                     apply_limit mlimit .|
-                    jsonListConduit (unspentToEncoding net) .|
-                    streamConduit io >>
-                    liftIO flush'
+                    streamAny net proto io
+                liftIO flush'
         S.get "/address/:address/balance" $ do
             cors
             address <- parse_address
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    getBalance d address >>= \case
-                        Just b -> return b
-                        Nothing ->
-                            return
-                                Balance
-                                    { balanceAddress = address
-                                    , balanceAmount = 0
-                                    , balanceUnspentCount = 0
-                                    , balanceZero = 0
-                                    , balanceTxCount = 0
-                                    , balanceTotalReceived = 0
-                                    }
-            S.json $ balanceToJSON net res
+                do let d = (db, defaultReadOptions)
+                   getBalance d address >>= \case
+                       Just b -> return b
+                       Nothing ->
+                           return
+                               Balance
+                                   { balanceAddress = address
+                                   , balanceAmount = 0
+                                   , balanceUnspentCount = 0
+                                   , balanceZero = 0
+                                   , balanceTxCount = 0
+                                   , balanceTotalReceived = 0
+                                   }
+            S.raw $ serialAny net proto res
         S.get "/address/balances" $ do
             cors
             addresses <- parse_addresses
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                        f a Nothing =
-                            Balance
-                                { balanceAddress = a
-                                , balanceAmount = 0
-                                , balanceUnspentCount = 0
-                                , balanceZero = 0
-                                , balanceTxCount = 0
-                                , balanceTotalReceived = 0
-                                }
-                        f _ (Just b) = b
-                    mapM (\a -> f a <$> getBalance d a) addresses
-            S.json $ map (balanceToJSON net) res
+                do let d = (db, defaultReadOptions)
+                       f a Nothing =
+                           Balance
+                               { balanceAddress = a
+                               , balanceAmount = 0
+                               , balanceUnspentCount = 0
+                               , balanceZero = 0
+                               , balanceTxCount = 0
+                               , balanceTotalReceived = 0
+                               }
+                       f _ (Just b) = b
+                   mapM (\a -> f a <$> getBalance d a) addresses
+            S.raw $ serialAny net proto res
         S.get "/xpub/:xpub/balances" $ do
             cors
             xpub <- parse_xpub
+            proto <- setup_proto
             res <-
-                withSnapshot db $ \s -> do
-                    let d = (db, defaultReadOptions {useSnapshot = Just s})
-                    runResourceT $ xpubBals d xpub
-            S.json $ map (xPubBalToJSON net) res
+                do let d = (db, defaultReadOptions)
+                   xpubBals d xpub
+            S.raw $ serialAny net proto res
         S.get "/xpub/:xpub/transactions" $ do
             cors
             xpub <- parse_xpub
-            setHeader "Content-Type" "application/json"
             (mlimit, mbr) <- parse_limits
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
-                    xpubTxs
-                        (db, defaultReadOptions {useSnapshot = Just s})
-                        mbr
-                        xpub .|
-                    dedup .|
-                    apply_limit mlimit .|
-                    jsonListConduit toEncoding .|
-                    streamConduit io >>
-                    liftIO flush'
+            proto <- setup_proto
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
+                    xpubTxs d mbr xpub .| dedup .| apply_limit mlimit .|
+                    streamAny net proto io
+                liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
             cors
             xpub <- parse_xpub
-            setHeader "Content-Type" "application/json"
+            proto <- setup_proto
             (mlimit, mbr) <- parse_limits
-            stream $ \io flush' ->
-                withSnapshot db $ \s ->
-                    runResourceT . runConduit $
-                    xpubUnspent
-                        (db, defaultReadOptions {useSnapshot = Just s})
-                        mbr
-                        xpub .|
-                    apply_limit mlimit .|
-                    jsonListConduit (xPubUnspentToEncoding net) .|
-                    streamConduit io >>
-                    liftIO flush'
+            stream $ \io flush' -> do
+                let d = (db, defaultReadOptions)
+                runResourceT . runConduit $
+                    xpubUnspent d mbr xpub .| apply_limit mlimit .|
+                    streamAny net proto io
+                liftIO flush'
         S.post "/transactions" $ do
             cors
-            hex_tx <- C.filter (not . isSpace) <$> body
-            bin_tx <-
-                case decodeHex (cs hex_tx) of
-                    Nothing -> do
-                        status status400
-                        S.json (UserError "decode hex fail")
-                        finish
-                    Just x -> return x
+            b <- body
+            let bin = eitherToMaybe . Serialize.decode
+                hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
             tx <-
-                case Serialize.decode bin_tx of
-                    Left _ -> do
-                        status status400
-                        S.json (UserError "decode tx within hex fail")
-                        finish
-                    Right x -> return x
+                case hex b <|> bin (L.toStrict b) of
+                    Nothing -> raise (UserError "decode tx fail")
+                    Just x -> return x
             lift (publishTx pub st db tx) >>= \case
-                Right () -> S.json $ object ["txid" .= txHash tx]
+                Right () -> S.text (T.fromStrict (txHashToHex (txHash tx)))
                 Left e -> do
                     case e of
                         PubNoPeers -> status status500
@@ -552,31 +498,42 @@ runWeb conf st db pub = do
                         PubPeerDisconnected -> status status500
                         PubNotFound -> status status500
                         PubReject _ -> status status400
-                    S.json (UserError (show e))
+                    S.text (T.pack (show e))
                     finish
         S.get "/dbstats" $ do
             cors
             getProperty db Stats >>= text . cs . fromJust
         S.get "/events" $ do
             cors
-            setHeader "Content-Type" "application/x-json-stream"
+            proto <- setup_proto
             stream $ \io flush' ->
                 withSubscription pub $ \sub ->
                     forever $
-                    flush' >> receive sub >>= \case
-                        StoreBestBlock block_hash -> do
-                            let bs =
-                                    A.encode (JsonEventBlock block_hash) <> "\n"
-                            io (lazyByteString bs)
-                        StoreMempoolNew tx_hash -> do
-                            let bs = A.encode (JsonEventTx tx_hash) <> "\n"
-                            io (lazyByteString bs)
-                        _ -> return ()
+                    flush' >> receive sub >>= \se -> do
+                        let me =
+                                case se of
+                                    StoreBestBlock block_hash ->
+                                        Just (EventBlock block_hash)
+                                    StoreMempoolNew tx_hash ->
+                                        Just (EventTx tx_hash)
+                                    _ -> Nothing
+                        case me of
+                            Nothing -> return ()
+                            Just e -> do
+                                let bs =
+                                        serialAny net proto e <>
+                                        if proto
+                                            then mempty
+                                            else "\n"
+                                io (lazyByteString bs)
         S.get "/peers" $ do
             cors
-            getPeersInformation (storeManager st) >>= S.json
+            proto <- setup_proto
+            ps <- getPeersInformation (storeManager st)
+            S.raw $ serialAny net proto ps
         S.get "/health" $ do
             cors
+            proto <- setup_proto
             h <-
                 liftIO $
                 healthCheck
@@ -585,7 +542,7 @@ runWeb conf st db pub = do
                     (storeManager st)
                     (storeChain st)
             when (not (healthOK h) || not (healthSynced h)) $ status status503
-            S.json h
+            S.raw $ serialAny net proto h
         notFound $ raise ThingNotFound
   where
     parse_limits = do
@@ -642,10 +599,52 @@ runWeb conf st db pub = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
     cors = setHeader "Access-Control-Allow-Origin" "*"
+    setup_proto =
+        let p = do
+                setHeader "Content-Type" "application/x-protobuf"
+                return True
+            j = do
+                setHeader "Content-Type" "application/json"
+                return False
+         in S.header "accept" >>= \case
+                Nothing -> j
+                Just x ->
+                    if is_proto x
+                        then p
+                        else j
+    is_proto x =
+        let ts =
+                map
+                    (T.takeWhile (/= ';'))
+                    (T.splitOn "," (T.filter (not . isSpace) x))
+            ps =
+                [ "application/x-protobuf"
+                , "application/protobuf"
+                , "application/vnd.google.protobuf"
+                ]
+         in any (`elem` ps) ts
 
-jsonListConduit :: Monad m => (a -> Encoding) -> ConduitT a Builder m ()
-jsonListConduit f =
-    yield "[" >> mapC (fromEncoding . f) .| intersperseC "," >> yield "]"
+serialAny :: (JsonSerial a, ProtoSerial a) => Network -> Bool -- ^ protobuf
+          -> a -> L.ByteString
+serialAny net True  = protoSerial net
+serialAny net False = toLazyByteString . jsonSerial net
+
+streamAny ::
+       (JsonSerial i, ProtoSerial [i], MonadIO m)
+    => Network
+    -> Bool -- ^ protobuf
+    -> (Builder -> IO ())
+    -> ConduitT i o m ()
+streamAny net True io = protoConduit net .| mapC lazyByteString .| streamConduit io
+streamAny net False io = jsonListConduit net .| streamConduit io
+
+jsonListConduit :: (JsonSerial a, Monad m) => Network -> ConduitT a Builder m ()
+jsonListConduit net =
+    yield "[" >> mapC (jsonSerial net) .| intersperseC "," >> yield "]"
+
+protoConduit ::
+       (ProtoSerial [a], Monad m) => Network -> ConduitT a L.ByteString m ()
+protoConduit net = mapC (protoSerial net . (: []))
 
 streamConduit :: MonadIO m => (i -> IO ()) -> ConduitT i o m ()
 streamConduit io = mapM_C (liftIO . io)

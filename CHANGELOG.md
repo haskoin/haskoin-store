@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.12.0
+### Added
+- Support for binary serialization using Protocol Buffers.
+- New endpoints for binary raw transactions (not hex-encoded).
+
+### Changed
+- Services field now a hex string instead of a number to avoid overflowing signed 64-bit integer.
+- Flatten list of block data objects when responding to request for multiple block heights.
+- Errors now reported in plain text without container JSON object.
+- Transaction broadcasts are responded to with transaction id in plaintext hex (no JSON).
+- Remove database snapshots to improve performance.
+
 ## 0.11.2
 ### Changed
 - Fix duplicate mempool transaction announcements in event stream.

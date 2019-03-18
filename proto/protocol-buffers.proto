@@ -1,0 +1,178 @@
+message BlockRef {
+  message Mempool {
+    required uint64 mempool = 0;
+  }
+
+  message Block {
+    required uint32 height = 0;
+    required uint32 position = 1;
+  }
+
+  oneof block_ref {
+    Block block = 0;
+    Mempool mempool = 1;
+  }
+}
+
+message Balance {
+  required string address = 0;
+  required uint64 confirmed = 1;
+  required uint64 unconfirmed = 2;
+  required uint64 utxo = 3;
+  required uint64 received = 4;
+  required uint64 txs = 5;
+}
+
+message BalanceList {
+  repeated Balance balance = 0;
+}
+
+message Unspent {
+  required bytes txid = 0;
+  required uint32 index = 1;
+  required bytes pkscript = 2;
+  required uint64 value = 3;
+  required BlockRef block = 4;
+  optional string address = 5;
+}
+
+message UnspentList {
+  repeated Unspent unspent = 0;
+}
+
+message XPubBalance {
+  repeated uint32 path = 0 [packed=true];
+  required Balance balance = 1;
+}
+
+message XPubBalanceList {
+  repeated XPubBalance xpubbalance = 0;
+}
+
+message XPubUnspent {
+  repeated uint32 path = 0 [packed=true];
+  required Unspent unspent = 1;
+}
+
+message XPubUnspentList {
+  repeated XPubUnspent xpubunspent = 0;
+}
+
+message BlockTx {
+  required BlockRef block = 0;
+  required bytes txid = 1;
+}
+
+message BlockTxList {
+  repeated BlockTx blocktx = 0;
+}
+
+message BlockData {
+  required bytes hash = 0;
+  required uint32 size = 1;
+  required uint32 height = 2;
+  required bool mainchain = 3;
+  required bytes previous = 4;
+  required uint32 time  = 5;
+  required uint32 version = 6;
+  required uint32 bits = 7;
+  required uint32 nonce = 8;
+  repeated bytes tx = 9;
+  required bytes merkle = 10;
+  required uint64 fees = 11;
+  required uint64 outputs = 12;
+  required uint64 subsidy = 13;
+  required uint32 weight = 14;
+}
+
+message BlockDataList {
+  repeated BlockData blockdata = 0;
+}
+
+message Input {
+  required bool coinbase = 0;
+  required bytes txid = 1;
+  required uint32 output = 2;
+  required bytes sigscript = 3;
+  required uint32 sequence = 4;
+  repeated bytes witness = 5;
+  optional uint64 value = 6;
+  optional bytes pkscript = 7;
+  optional string address = 8;
+}
+
+message Spender {
+  required bytes txid = 0;
+  required uint32 input = 1;
+}
+
+message Output {
+  required bytes pkscript = 0;
+  required uint64 value = 1;
+  optional string address = 2;
+  optional Spender spender = 3;
+}
+
+message Transaction {
+  required bytes txid = 0;
+  required uint32 size = 1;
+  required uint32 version = 2;
+  required uint32 locktime = 3;
+  required BlockRef block = 4;
+  required bool deleted = 5;
+  required uint64 fee = 6;
+  required uint64 time = 7;
+  required bool rbf = 8;
+  repeated Input inputs = 9;
+  repeated Output outputs = 10;
+  optional uint32 weight = 11;
+}
+
+message TransactionList {
+  repeated Transaction transaction = 0;
+}
+
+message TxIdList {
+  repeated bytes txid = 0;
+}
+
+message Event {
+  enum Type {
+    TX = 0;
+    BLOCK = 1;
+  }
+  required Type type = 0;
+  required bytes id = 1;
+}
+
+message EventList {
+  repeated Event event = 0;
+}
+
+message Peer {
+  required string useragent = 0;
+  required string address = 1;
+  required uint32 version = 2;
+  required uint64 services = 3;
+  required bool relay = 4;
+}
+
+message PeerList {
+  repeated Peer peer = 0;
+}
+
+message HealthCheck {
+  required bool ok = 0;
+  required bool synced = 1;
+  required string version = 2;
+  required string net = 3;
+  optional uint32 peers = 4;
+  optional bytes headers_hash = 5;
+  optional uint32 headers_height = 6;
+  optional bytes blocks_hash = 7;
+  optional uint32 blocks_height = 8;
+}
+
+message TxAfterHeight {
+  optional bool result = 0;
+}

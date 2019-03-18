@@ -25,6 +25,10 @@ module Haskoin.Store
     , PreciseUnixTime(..)
     , HealthCheck(..)
     , PubExcept(..)
+    , Event(..)
+    , TxAfterHeight(..)
+    , JsonSerial(..)
+    , ProtoSerial(..)
     , withStore
     , store
     , getBestBlock
@@ -84,6 +88,7 @@ import           Haskoin.Node
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Messages
+import           Network.Haskoin.Store.Proto
 import           Network.Socket                 (SockAddr (..))
 import           NQE
 import           System.Random
@@ -364,10 +369,10 @@ cbAfterHeight ::
     -> Int -- ^ how many ancestors to test before giving up
     -> BlockHeight
     -> TxHash
-    -> m (Maybe Bool)
+    -> m TxAfterHeight
 cbAfterHeight i d h t
-    | d <= 0 = return Nothing
-    | otherwise = runMaybeT $ snd <$> tst d t
+    | d <= 0 = return $ TxAfterHeight Nothing
+    | otherwise = TxAfterHeight <$> runMaybeT (snd <$> tst d t)
   where
     tst e x
         | e <= 0 = MaybeT $ return Nothing

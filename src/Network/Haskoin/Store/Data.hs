@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 module Network.Haskoin.Store.Data where
@@ -11,6 +12,7 @@ import           Control.Monad.Trans.Maybe
 import           Data.Aeson                as A
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B
+import           Data.ByteString.Builder
 import           Data.ByteString.Short     (ShortByteString)
 import qualified Data.ByteString.Short     as B.Short
 import           Data.Hashable
@@ -110,6 +112,12 @@ instance ToJSON PreciseUnixTime where
     toJSON (PreciseUnixTime w) = toJSON w
     toEncoding (PreciseUnixTime w) = toEncoding w
 
+class JsonSerial a where
+    jsonSerial :: Network -> a -> Builder
+
+instance JsonSerial TxHash where
+    jsonSerial _ = fromEncoding . toEncoding
+
 -- | Reference to a block where a transaction is stored.
 data BlockRef
     = BlockRef { blockRefHeight :: !BlockHeight
@@ -157,9 +165,9 @@ instance ToJSON BlockRef where
 
 -- | Transaction in relation to an address.
 data BlockTx = BlockTx
-    { blockTxBlock   :: !BlockRef
+    { blockTxBlock :: !BlockRef
       -- ^ block information
-    , blockTxHash    :: !TxHash
+    , blockTxHash  :: !TxHash
       -- ^ transaction hash
     } deriving (Show, Eq, Ord, Generic, Serialize, Hashable)
 
@@ -173,6 +181,9 @@ blockTxPairs btx =
 instance ToJSON BlockTx where
     toJSON = object . blockTxPairs
     toEncoding = pairs . mconcat . blockTxPairs
+
+instance JsonSerial BlockTx where
+    jsonSerial _ = fromEncoding . toEncoding
 
 -- | Address balance information.
 data Balance = Balance
@@ -206,6 +217,12 @@ balanceToJSON net = object . balancePairs net
 
 balanceToEncoding :: Network -> Balance -> Encoding
 balanceToEncoding net = pairs . mconcat . balancePairs net
+
+instance JsonSerial Balance where
+    jsonSerial net = fromEncoding . balanceToEncoding net
+
+instance JsonSerial [Balance] where
+    jsonSerial net = fromEncoding . toEncoding . map (balanceToJSON net)
 
 -- | Unspent output.
 data Unspent = Unspent
@@ -247,6 +264,9 @@ unspentToJSON net = object . unspentPairs net
 
 unspentToEncoding :: Network -> Unspent -> Encoding
 unspentToEncoding net = pairs . mconcat . unspentPairs net
+
+instance JsonSerial Unspent where
+    jsonSerial net = fromEncoding . unspentToEncoding net
 
 -- | Database value for a block entry.
 data BlockData = BlockData
@@ -296,6 +316,12 @@ blockDataToJSON net = object . blockDataPairs net
 
 blockDataToEncoding :: Network -> BlockData -> Encoding
 blockDataToEncoding net = pairs . mconcat . blockDataPairs net
+
+instance JsonSerial BlockData where
+    jsonSerial net = fromEncoding . blockDataToEncoding net
+
+instance JsonSerial [BlockData] where
+    jsonSerial net = fromEncoding . toEncoding . map (blockDataToJSON net)
 
 -- | Input information.
 data Input
@@ -565,6 +591,12 @@ transactionToJSON net = object . transactionPairs net
 transactionToEncoding :: Network -> Transaction -> Encoding
 transactionToEncoding net = pairs . mconcat . transactionPairs net
 
+instance JsonSerial Transaction where
+    jsonSerial net = fromEncoding . transactionToEncoding net
+
+instance JsonSerial [Transaction] where
+    jsonSerial net = fromEncoding . toEncoding . map (transactionToJSON net)
+
 -- | Information about a connected peer.
 data PeerInformation
     = PeerInformation { peerUserAgent :: !ByteString
@@ -586,13 +618,19 @@ peerInformationPairs p =
     [ "useragent"   .= String (cs (peerUserAgent p))
     , "address"     .= String (cs (show (peerAddress p)))
     , "version"     .= peerVersion p
-    , "services"    .= peerServices p
+    , "services"    .= String (encodeHex (S.encode (peerServices p)))
     , "relay"       .= peerRelay p
     ]
 
 instance ToJSON PeerInformation where
     toJSON = object . peerInformationPairs
     toEncoding = pairs . mconcat . peerInformationPairs
+
+instance JsonSerial PeerInformation where
+    jsonSerial _ = fromEncoding . toEncoding
+
+instance JsonSerial [PeerInformation] where
+    jsonSerial _ = fromEncoding . toEncoding
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
@@ -612,6 +650,12 @@ xPubBalToJSON net = object . xPubBalPairs net
 
 xPubBalToEncoding :: Network -> XPubBal -> Encoding
 xPubBalToEncoding net = pairs . mconcat . xPubBalPairs net
+
+instance JsonSerial XPubBal where
+    jsonSerial net = fromEncoding . xPubBalToEncoding net
+
+instance JsonSerial [XPubBal] where
+    jsonSerial net = fromEncoding . toEncoding . map (xPubBalToJSON net)
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
@@ -633,6 +677,9 @@ xPubUnspentToJSON net = object . xPubUnspentPairs net
 
 xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
 xPubUnspentToEncoding net = pairs . mconcat . xPubUnspentPairs net
+
+instance JsonSerial XPubUnspent where
+    jsonSerial net = fromEncoding . xPubUnspentToEncoding net
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)
@@ -661,3 +708,28 @@ healthCheckPairs h =
 instance ToJSON HealthCheck where
     toJSON = object . healthCheckPairs
     toEncoding = pairs . mconcat . healthCheckPairs
+
+instance JsonSerial HealthCheck where
+    jsonSerial _ = fromEncoding . toEncoding
+
+data Event
+    = EventBlock BlockHash
+    | EventTx TxHash
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Event where
+    toJSON (EventTx h) = object ["type" .= String "tx", "id" .= h]
+    toJSON (EventBlock h) = object ["type" .= String "block", "id" .= h]
+
+instance JsonSerial Event where
+    jsonSerial _ = fromEncoding . toEncoding
+
+newtype TxAfterHeight = TxAfterHeight
+    { txAfterHeight :: Maybe Bool
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TxAfterHeight where
+  toJSON (TxAfterHeight b) = object ["result" .= b]
+
+instance JsonSerial TxAfterHeight where
+    jsonSerial _ = fromEncoding . toEncoding
