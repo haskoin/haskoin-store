@@ -37,6 +37,7 @@ paths:
               schema:
                 type: string
                 format: binary
+                description: HealthCheck
         '503':
           description: unavailable
           content:
@@ -895,9 +896,10 @@ paths:
                       position: 4
                     txid: '14288fc7465fa8c786fd19e31d163688ced5d66636e9f761b4e8e376f2421492'
             application/x-protobuf:
-              type: string
-              format: binary
-              description: BlockTxList
+              schema:
+                type: string
+                format: binary
+                description: BlockTxList
         '400':
           description: invalid xpub
   '/xpub/{xpub}/balances':
@@ -947,9 +949,10 @@ paths:
                       unconfirmed: 0
                       confirmed: 0
             application/x-protobuf:
-              type: string
-              format: binary
-              description: XPubBalanceList
+              schema:
+                type: string
+                format: binary
+                description: XPubBalanceList
         '400':
           description: invalid xpub
   '/xpub/{xpub}/unspent':
@@ -1020,9 +1023,10 @@ paths:
                       index: 1
                       txid: '2733fcd7d55f5f7696e18f1eaaa5f9970cd88e063af4775e4139f1eb5482a856'
             application/x-protobuf:
-              type: string
-              format: binary
-              description: XPubUnspentList
+              schema:
+                type: string
+                format: binary
+                description: XPubUnspentList
         '400':
           description: invalid xpub
 components:
