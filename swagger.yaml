@@ -186,7 +186,7 @@ paths:
               schema:
                 type: string
                 format: binary
-                description: TxIdList
+                description: BlockTxList
         '404':
           description: invalid address
   '/address/{address}/balance':
