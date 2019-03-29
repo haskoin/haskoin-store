@@ -7,8 +7,9 @@ import qualified Data.Typeable as Prelude'
 import qualified GHC.Generics as Prelude'
 import qualified Data.Data as Prelude'
 import qualified Text.ProtocolBuffers.Header as P'
+import qualified Network.Haskoin.Store.ProtocolBuffers.TxId as ProtocolBuffers (TxId)
 
-data TxIdList = TxIdList{txid :: !(P'.Seq P'.ByteString)}
+data TxIdList = TxIdList{txid :: !(P'.Seq ProtocolBuffers.TxId)}
                 deriving (Prelude'.Show, Prelude'.Eq, Prelude'.Ord, Prelude'.Typeable, Prelude'.Data, Prelude'.Generic)
 
 instance P'.Mergeable TxIdList where
@@ -24,14 +25,14 @@ instance P'.Wire TxIdList where
        11 -> P'.prependMessageSize calc'Size
        _ -> P'.wireSizeErr ft' self'
     where
-        calc'Size = (P'.wireSizeRep 1 12 x'1)
+        calc'Size = (P'.wireSizeRep 1 11 x'1)
   wirePutWithSize ft' self'@(TxIdList x'1)
    = case ft' of
        10 -> put'Fields
        11 -> put'FieldsSized
        _ -> P'.wirePutErr ft' self'
     where
-        put'Fields = P'.sequencePutWithSize [P'.wirePutRepWithSize 2 12 x'1]
+        put'Fields = P'.sequencePutWithSize [P'.wirePutRepWithSize 2 11 x'1]
         put'FieldsSized
          = let size' = Prelude'.fst (P'.runPutM put'Fields)
                put'Size
@@ -47,7 +48,7 @@ instance P'.Wire TxIdList where
     where
         update'Self wire'Tag old'Self
          = case wire'Tag of
-             2 -> Prelude'.fmap (\ !new'Field -> old'Self{txid = P'.append (txid old'Self) new'Field}) (P'.wireGet 12)
+             2 -> Prelude'.fmap (\ !new'Field -> old'Self{txid = P'.append (txid old'Self) new'Field}) (P'.wireGet 11)
              _ -> let (field'Number, wire'Type) = P'.splitWireTag wire'Tag in P'.unknown field'Number wire'Type old'Self
 
 instance P'.MessageAPI msg' (msg' -> TxIdList) TxIdList where
@@ -59,7 +60,7 @@ instance P'.ReflectDescriptor TxIdList where
   getMessageInfo _ = P'.GetMessageInfo (P'.fromDistinctAscList []) (P'.fromDistinctAscList [2])
   reflectDescriptorInfo _
    = Prelude'.read
-      "DescriptorInfo {descName = ProtoName {protobufName = FIName \".ProtocolBuffers.TxIdList\", haskellPrefix = [MName \"Network\",MName \"Haskoin\",MName \"Store\"], parentModule = [MName \"ProtocolBuffers\"], baseName = MName \"TxIdList\"}, descFilePath = [\"Network\",\"Haskoin\",\"Store\",\"ProtocolBuffers\",\"TxIdList.hs\"], isGroup = False, fields = fromList [FieldInfo {fieldName = ProtoFName {protobufName' = FIName \".ProtocolBuffers.TxIdList.txid\", haskellPrefix' = [MName \"Network\",MName \"Haskoin\",MName \"Store\"], parentModule' = [MName \"ProtocolBuffers\",MName \"TxIdList\"], baseName' = FName \"txid\", baseNamePrefix' = \"\"}, fieldNumber = FieldId {getFieldId = 0}, wireTag = WireTag {getWireTag = 2}, packedTag = Nothing, wireTagLength = 1, isPacked = False, isRequired = False, canRepeat = True, mightPack = False, typeCode = FieldType {getFieldType = 12}, typeName = Nothing, hsRawDefault = Nothing, hsDefault = Nothing}], descOneofs = fromList [], keys = fromList [], extRanges = [], knownKeys = fromList [], storeUnknown = False, lazyFields = False, makeLenses = False, jsonInstances = False}"
+      "DescriptorInfo {descName = ProtoName {protobufName = FIName \".ProtocolBuffers.TxIdList\", haskellPrefix = [MName \"Network\",MName \"Haskoin\",MName \"Store\"], parentModule = [MName \"ProtocolBuffers\"], baseName = MName \"TxIdList\"}, descFilePath = [\"Network\",\"Haskoin\",\"Store\",\"ProtocolBuffers\",\"TxIdList.hs\"], isGroup = False, fields = fromList [FieldInfo {fieldName = ProtoFName {protobufName' = FIName \".ProtocolBuffers.TxIdList.txid\", haskellPrefix' = [MName \"Network\",MName \"Haskoin\",MName \"Store\"], parentModule' = [MName \"ProtocolBuffers\",MName \"TxIdList\"], baseName' = FName \"txid\", baseNamePrefix' = \"\"}, fieldNumber = FieldId {getFieldId = 0}, wireTag = WireTag {getWireTag = 2}, packedTag = Nothing, wireTagLength = 1, isPacked = False, isRequired = False, canRepeat = True, mightPack = False, typeCode = FieldType {getFieldType = 11}, typeName = Just (ProtoName {protobufName = FIName \".ProtocolBuffers.TxId\", haskellPrefix = [MName \"Network\",MName \"Haskoin\",MName \"Store\"], parentModule = [MName \"ProtocolBuffers\"], baseName = MName \"TxId\"}), hsRawDefault = Nothing, hsDefault = Nothing}], descOneofs = fromList [], keys = fromList [], extRanges = [], knownKeys = fromList [], storeUnknown = False, lazyFields = False, makeLenses = False, jsonInstances = False}"
 
 instance P'.TextType TxIdList where
   tellT = P'.tellSubMessage

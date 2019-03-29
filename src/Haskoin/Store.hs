@@ -29,6 +29,8 @@ module Haskoin.Store
     , TxAfterHeight(..)
     , JsonSerial(..)
     , ProtoSerial(..)
+    , Except(..)
+    , TxId(..)
     , withStore
     , store
     , getBestBlock
@@ -74,7 +76,8 @@ module Haskoin.Store
     ) where
 
 import           Conduit
-import           Control.Monad.Except           as E
+import           Control.Monad
+import qualified Control.Monad.Except           as E
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
 import           Data.Foldable
@@ -269,9 +272,9 @@ publishTx pub st db tx =
         getTransaction d (txHash tx) >>= \case
             Just _ -> return $ Right ()
             Nothing ->
-                runExceptT $
+                E.runExceptT $
                 managerGetPeers (storeManager st) >>= \case
-                    [] -> throwError PubNoPeers
+                    [] -> E.throwError PubNoPeers
                     OnlinePeer {onlinePeerMailbox = p}:_ -> do
                         MTx tx `sendMessage` p
                         MMempool `sendMessage` p
@@ -281,15 +284,15 @@ publishTx pub st db tx =
     f p s = do
         n <- liftIO randomIO
         MPing (Ping n) `sendMessage` p
-        liftIO (timeout t (runExceptT (g p s n))) >>= \case
-            Nothing -> throwError PubTimeout
+        liftIO (timeout t (E.runExceptT (g p s n))) >>= \case
+            Nothing -> E.throwError PubTimeout
             Just e -> E.liftEither e
     g p s n =
         receive s >>= \case
             StoreTxReject p' h' c _
-                | p == p' && h' == txHash tx -> throwError $ PubReject c
+                | p == p' && h' == txHash tx -> E.throwError $ PubReject c
             StorePeerDisconnected p' _
-                | p == p' -> throwError PubPeerDisconnected
+                | p == p' -> E.throwError PubPeerDisconnected
             StoreMempoolNew h'
                 | h' == txHash tx -> return ()
             _ -> g p s n

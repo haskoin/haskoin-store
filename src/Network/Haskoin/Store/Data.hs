@@ -22,6 +22,7 @@ import           Data.IntMap.Strict        (IntMap)
 import           Data.Maybe
 import           Data.Serialize            as S
 import           Data.String.Conversions
+import qualified Data.Text.Lazy                 as T
 import           Data.Time.Clock.System
 import           Data.Word
 import           GHC.Generics
@@ -29,6 +30,7 @@ import           Haskoin
 import           Network.Socket            (SockAddr)
 import           Paths_haskoin_store       as P
 import           UnliftIO.Exception
+import qualified Web.Scotty.Trans          as Scotty
 
 type UnixTime = Int64
 
@@ -114,9 +116,11 @@ instance ToJSON PreciseUnixTime where
 
 class JsonSerial a where
     jsonSerial :: Network -> a -> Builder
+    jsonValue :: Network -> a -> Value
 
 instance JsonSerial TxHash where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
 
 -- | Reference to a block where a transaction is stored.
 data BlockRef
@@ -184,6 +188,7 @@ instance ToJSON BlockTx where
 
 instance JsonSerial BlockTx where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
 
 -- | Address balance information.
 data Balance = Balance
@@ -220,9 +225,11 @@ balanceToEncoding net = pairs . mconcat . balancePairs net
 
 instance JsonSerial Balance where
     jsonSerial net = fromEncoding . balanceToEncoding net
+    jsonValue = balanceToJSON
 
 instance JsonSerial [Balance] where
     jsonSerial net = fromEncoding . toEncoding . map (balanceToJSON net)
+    jsonValue net = toJSON . map (balanceToJSON net)
 
 -- | Unspent output.
 data Unspent = Unspent
@@ -267,6 +274,7 @@ unspentToEncoding net = pairs . mconcat . unspentPairs net
 
 instance JsonSerial Unspent where
     jsonSerial net = fromEncoding . unspentToEncoding net
+    jsonValue = unspentToJSON
 
 -- | Database value for a block entry.
 data BlockData = BlockData
@@ -319,9 +327,11 @@ blockDataToEncoding net = pairs . mconcat . blockDataPairs net
 
 instance JsonSerial BlockData where
     jsonSerial net = fromEncoding . blockDataToEncoding net
+    jsonValue = blockDataToJSON
 
 instance JsonSerial [BlockData] where
     jsonSerial net = fromEncoding . toEncoding . map (blockDataToJSON net)
+    jsonValue net = toJSON . map (blockDataToJSON net)
 
 -- | Input information.
 data Input
@@ -593,9 +603,11 @@ transactionToEncoding net = pairs . mconcat . transactionPairs net
 
 instance JsonSerial Transaction where
     jsonSerial net = fromEncoding . transactionToEncoding net
+    jsonValue = transactionToJSON
 
 instance JsonSerial [Transaction] where
     jsonSerial net = fromEncoding . toEncoding . map (transactionToJSON net)
+    jsonValue net = toJSON . map (transactionToJSON net)
 
 -- | Information about a connected peer.
 data PeerInformation
@@ -628,9 +640,11 @@ instance ToJSON PeerInformation where
 
 instance JsonSerial PeerInformation where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
 
 instance JsonSerial [PeerInformation] where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
@@ -653,9 +667,11 @@ xPubBalToEncoding net = pairs . mconcat . xPubBalPairs net
 
 instance JsonSerial XPubBal where
     jsonSerial net = fromEncoding . xPubBalToEncoding net
+    jsonValue = xPubBalToJSON
 
 instance JsonSerial [XPubBal] where
     jsonSerial net = fromEncoding . toEncoding . map (xPubBalToJSON net)
+    jsonValue net = toJSON . map (xPubBalToJSON net)
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
@@ -680,6 +696,7 @@ xPubUnspentToEncoding net = pairs . mconcat . xPubUnspentPairs net
 
 instance JsonSerial XPubUnspent where
     jsonSerial net = fromEncoding . xPubUnspentToEncoding net
+    jsonValue = xPubUnspentToJSON
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)
@@ -711,6 +728,7 @@ instance ToJSON HealthCheck where
 
 instance JsonSerial HealthCheck where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
 
 data Event
     = EventBlock BlockHash
@@ -718,11 +736,12 @@ data Event
     deriving (Show, Eq, Generic)
 
 instance ToJSON Event where
-    toJSON (EventTx h) = object ["type" .= String "tx", "id" .= h]
+    toJSON (EventTx h)    = object ["type" .= String "tx", "id" .= h]
     toJSON (EventBlock h) = object ["type" .= String "block", "id" .= h]
 
 instance JsonSerial Event where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
 
 newtype TxAfterHeight = TxAfterHeight
     { txAfterHeight :: Maybe Bool
@@ -733,3 +752,41 @@ instance ToJSON TxAfterHeight where
 
 instance JsonSerial TxAfterHeight where
     jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
+
+data Except
+    = ThingNotFound
+    | ServerError
+    | BadRequest
+    | UserError String
+    | StringError String
+    deriving Eq
+
+instance Show Except where
+    show ThingNotFound = "not found"
+    show ServerError = "you made me kill a unicorn"
+    show BadRequest = "bad request"
+    show (UserError s) = s
+    show (StringError _) = "you made me kill a unicorn"
+
+instance Exception Except
+
+instance Scotty.ScottyError Except where
+    stringError = StringError
+    showError = T.pack . show
+
+instance ToJSON Except where
+    toJSON e = object ["error" .= T.pack (show e)]
+
+instance JsonSerial Except where
+    jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON
+
+newtype TxId = TxId TxHash deriving (Show, Eq, Generic)
+
+instance ToJSON TxId where
+    toJSON h = object ["txid" .= h]
+
+instance JsonSerial TxId where
+    jsonSerial _ = fromEncoding . toEncoding
+    jsonValue _ = toJSON

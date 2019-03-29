@@ -9,6 +9,7 @@ import qualified Data.ByteString.Lazy.Char8                               as L8
 import qualified Data.ByteString.Short                                    as S
 import qualified Data.Sequence                                            as Seq
 import           Data.Serialize
+import qualified Data.Text                                                as T
 import qualified Data.Text.Encoding                                       as E
 import           Data.Version
 import           Haskoin
@@ -23,6 +24,7 @@ import qualified Network.Haskoin.Store.ProtocolBuffers.BlockRef.Block_ref as P.B
 import qualified Network.Haskoin.Store.ProtocolBuffers.BlockRef.Mempool   as P.BlockRef.Mempool
 import qualified Network.Haskoin.Store.ProtocolBuffers.BlockTx            as P.BlockTx
 import qualified Network.Haskoin.Store.ProtocolBuffers.BlockTxList        as P.BlockTxList
+import qualified Network.Haskoin.Store.ProtocolBuffers.Error              as P.Error
 import qualified Network.Haskoin.Store.ProtocolBuffers.Event              as P.Event
 import qualified Network.Haskoin.Store.ProtocolBuffers.Event.Type         as P.Event.Type
 import qualified Network.Haskoin.Store.ProtocolBuffers.EventList          as P.EventList
@@ -35,6 +37,7 @@ import qualified Network.Haskoin.Store.ProtocolBuffers.Spender            as P.S
 import qualified Network.Haskoin.Store.ProtocolBuffers.Transaction        as P.Transaction
 import qualified Network.Haskoin.Store.ProtocolBuffers.TransactionList    as P.TransactionList
 import qualified Network.Haskoin.Store.ProtocolBuffers.TxAfterHeight      as P.TxAfterHeight
+import qualified Network.Haskoin.Store.ProtocolBuffers.TxId               as P.TxId
 import qualified Network.Haskoin.Store.ProtocolBuffers.TxIdList           as P.TxIdList
 import qualified Network.Haskoin.Store.ProtocolBuffers.Unspent            as P.Unspent
 import qualified Network.Haskoin.Store.ProtocolBuffers.UnspentList        as P.UnspentList
@@ -115,7 +118,7 @@ protoBlockTx :: BlockTx -> P.BlockTx.BlockTx
 protoBlockTx BlockTx {blockTxBlock = b, blockTxHash = t} =
     P.BlockTx.BlockTx
         { P.BlockTx.block = protoBlockRef b
-        , P.BlockTx.txid = encodeLazy t
+        , P.BlockTx.txid = protoTxId t
         }
 
 instance ProtoSerial BlockTx where
@@ -138,7 +141,7 @@ protoUnspent net Unspent { unspentBlock = b
                          , unspentScript = s
                          } =
     P.Unspent.Unspent
-        { P.Unspent.txid = encodeLazy t
+        { P.Unspent.txid = protoTxId t
         , P.Unspent.index = i
         , P.Unspent.pkscript = L.fromStrict (S.fromShort s)
         , P.Unspent.value = v
@@ -207,7 +210,7 @@ protoInput _ Coinbase { inputPoint = OutPoint { outPointHash = h
                       } =
     P.Input.Input
         { P.Input.coinbase = True
-        , P.Input.txid = encodeLazy h
+        , P.Input.txid = protoTxId h
         , P.Input.output = i
         , P.Input.sigscript = L.fromStrict s
         , P.Input.sequence = q
@@ -227,7 +230,7 @@ protoInput net Input { inputPoint = OutPoint { outPointHash = h
                      } =
     P.Input.Input
         { P.Input.coinbase = False
-        , P.Input.txid = encodeLazy h
+        , P.Input.txid = protoTxId h
         , P.Input.output = i
         , P.Input.sigscript = L.fromStrict s
         , P.Input.sequence = q
@@ -239,7 +242,7 @@ protoInput net Input { inputPoint = OutPoint { outPointHash = h
 
 protoSpender :: Spender -> P.Spender.Spender
 protoSpender Spender {spenderHash = h, spenderIndex = i} =
-    P.Spender.Spender {P.Spender.txid = encodeLazy h, P.Spender.input = i}
+    P.Spender.Spender {P.Spender.txid = protoTxId h, P.Spender.input = i}
 
 protoOutput :: Network -> Output -> P.Output.Output
 protoOutput net Output {outputAmount = v, outputScript = k, outputSpender = s} =
@@ -261,7 +264,7 @@ protoTransaction net tx@Transaction { transactionBlock = b
                                     , transactionTime = t
                                     } =
     P.Transaction.Transaction
-        { P.Transaction.txid = encodeLazy (txHash (transactionData tx))
+        { P.Transaction.txid = protoTxId (txHash (transactionData tx))
         , P.Transaction.size =
               fromIntegral (B.length (encode (transactionData tx)))
         , P.Transaction.version = v
@@ -300,12 +303,15 @@ protoTransactionList net ts =
 instance ProtoSerial [Transaction] where
     protoSerial net = messagePut . protoTransactionList net
 
-protoTxIdList :: Network -> [TxHash] -> P.TxIdList.TxIdList
-protoTxIdList _ ts =
-    P.TxIdList.TxIdList {P.TxIdList.txid = Seq.fromList (map encodeLazy ts)}
+protoTxId :: TxHash -> P.TxId.TxId
+protoTxId t = P.TxId.TxId {P.TxId.txid = encodeLazy t}
+
+protoTxIdList :: [TxHash] -> P.TxIdList.TxIdList
+protoTxIdList ts =
+    P.TxIdList.TxIdList {P.TxIdList.txid = Seq.fromList (map protoTxId ts)}
 
 instance ProtoSerial [TxHash] where
-    protoSerial net = messagePut . protoTxIdList net
+    protoSerial _ = messagePut . protoTxIdList
 
 protoPeer :: PeerInformation -> P.Peer.Peer
 protoPeer PeerInformation { peerUserAgent = u
@@ -420,3 +426,12 @@ protoTxAfterHeight (TxAfterHeight b) = P.TxAfterHeight.TxAfterHeight b
 
 instance ProtoSerial TxAfterHeight where
     protoSerial _ = messagePut . protoTxAfterHeight
+
+protoExcept :: Except -> P.Error.Error
+protoExcept = P.Error.Error . Utf8 . L.fromStrict . E.encodeUtf8 . T.pack . show
+
+instance ProtoSerial Except where
+    protoSerial _ = messagePut . protoExcept
+
+instance ProtoSerial TxId where
+    protoSerial _ (TxId h) = messagePut (protoTxId h)

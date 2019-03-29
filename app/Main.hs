@@ -63,20 +63,6 @@ instance Parsable TxHash where
     parseParam =
         maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
 
-data Except
-    = ThingNotFound
-    | ServerError
-    | BadRequest
-    | UserError String
-    | StringError String
-    deriving (Show, Eq)
-
-instance Exception Except
-
-instance ScottyError Except where
-    stringError = StringError
-    showError = T.pack . show
-
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
 
@@ -133,12 +119,16 @@ peerReader s = do
             _ -> Left "Peer information could not be parsed"
     return (host, port)
 
-defHandler :: Monad m => Except -> ActionT Except m ()
-defHandler ServerError     = S.text "server error"
-defHandler ThingNotFound   = status status404 >> S.text "not found"
-defHandler BadRequest      = status status400 >> S.text "bad request"
-defHandler (UserError s)   = status status400 >> S.text (T.pack s)
-defHandler (StringError s) = status status400 >> S.text (T.pack s)
+defHandler :: Monad m => Network -> Except -> ActionT Except m ()
+defHandler net e = do
+    proto <- setupProto
+    case e of
+        ThingNotFound -> status status404
+        BadRequest -> status status400
+        UserError _ -> status status400
+        StringError _ -> status status400
+        ServerError -> status status500
+    S.raw $ serialAny net proto e
 
 maybeSerial :: (Monad m, JsonSerial a, ProtoSerial a) => Network -> Bool -- ^ protobuf
             -> Maybe a -> ActionT Except m ()
@@ -201,11 +191,11 @@ runWeb ::
 runWeb conf st db pub = do
     l <- askLoggerIO
     scottyT (configPort conf) (runner l) $ do
-        defaultHandler defHandler
+        defaultHandler (defHandler net)
         S.get "/block/best" $ do
             cors
             n <- parse_no_tx
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 runMaybeT $ do
                     let d = (db, defaultReadOptions)
@@ -219,7 +209,7 @@ runWeb conf st db pub = do
             cors
             block <- param "block"
             n <- parse_no_tx
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 runMaybeT $ do
                     let d = (db, defaultReadOptions)
@@ -232,7 +222,7 @@ runWeb conf st db pub = do
             cors
             height <- param "height"
             no_tx <- parse_no_tx
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    bs <- getBlocksAtHeight d height
@@ -251,7 +241,7 @@ runWeb conf st db pub = do
             cors
             heights <- param "heights"
             no_tx <- parse_no_tx
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    bs <- concat <$> mapM (getBlocksAtHeight d) (nub heights)
@@ -270,7 +260,7 @@ runWeb conf st db pub = do
             cors
             blocks <- param "blocks"
             no_tx <- parse_no_tx
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    fmap catMaybes . forM blocks $ \bh ->
@@ -294,7 +284,7 @@ runWeb conf st db pub = do
                         UserError "mempool transactions do not have height"
                     Just (MemRef t) -> return $ Just t
                     Nothing -> return Nothing
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
                 runResourceT . runConduit $
@@ -304,7 +294,7 @@ runWeb conf st db pub = do
         S.get "/transaction/:txid" $ do
             cors
             txid <- param "txid"
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    getTransaction d txid
@@ -334,7 +324,7 @@ runWeb conf st db pub = do
             cors
             txid <- param "txid"
             height <- param "height"
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    cbAfterHeight d 10000 height txid
@@ -342,7 +332,7 @@ runWeb conf st db pub = do
         S.get "/transactions" $ do
             cors
             txids <- param "txids"
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    catMaybes <$> mapM (getTransaction d) (nub txids)
@@ -366,7 +356,7 @@ runWeb conf st db pub = do
             cors
             address <- parse_address
             (mlimit, mbr) <- parse_limits
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
                 runResourceT . runConduit $
@@ -377,7 +367,7 @@ runWeb conf st db pub = do
             cors
             addresses <- parse_addresses
             (mlimit, mbr) <- parse_limits
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
                 runResourceT . runConduit $
@@ -392,7 +382,7 @@ runWeb conf st db pub = do
             cors
             address <- parse_address
             (mlimit, mbr) <- parse_limits
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
                 runResourceT . runConduit $
@@ -403,7 +393,7 @@ runWeb conf st db pub = do
             cors
             addresses <- parse_addresses
             (mlimit, mbr) <- parse_limits
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
                 runResourceT . runConduit $
@@ -416,7 +406,7 @@ runWeb conf st db pub = do
         S.get "/address/:address/balance" $ do
             cors
             address <- parse_address
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    getBalance d address >>= \case
@@ -435,7 +425,7 @@ runWeb conf st db pub = do
         S.get "/address/balances" $ do
             cors
             addresses <- parse_addresses
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                        f a Nothing =
@@ -453,7 +443,7 @@ runWeb conf st db pub = do
         S.get "/xpub/:xpub/balances" $ do
             cors
             xpub <- parse_xpub
-            proto <- setup_proto
+            proto <- setupProto
             res <-
                 do let d = (db, defaultReadOptions)
                    xpubBals d xpub
@@ -462,7 +452,7 @@ runWeb conf st db pub = do
             cors
             xpub <- parse_xpub
             (mlimit, mbr) <- parse_limits
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
                 runResourceT . runConduit $
@@ -472,7 +462,7 @@ runWeb conf st db pub = do
         S.get "/xpub/:xpub/unspent" $ do
             cors
             xpub <- parse_xpub
-            proto <- setup_proto
+            proto <- setupProto
             (mlimit, mbr) <- parse_limits
             stream $ \io flush' -> do
                 let d = (db, defaultReadOptions)
@@ -482,30 +472,31 @@ runWeb conf st db pub = do
                 liftIO flush'
         S.post "/transactions" $ do
             cors
+            proto <- setupProto
             b <- body
             let bin = eitherToMaybe . Serialize.decode
                 hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
             tx <-
                 case hex b <|> bin (L.toStrict b) of
                     Nothing -> raise (UserError "decode tx fail")
-                    Just x -> return x
+                    Just x  -> return x
             lift (publishTx pub st db tx) >>= \case
-                Right () -> S.text (T.fromStrict (txHashToHex (txHash tx)))
+                Right () -> S.raw $ serialAny net proto (TxId (txHash tx))
                 Left e -> do
                     case e of
-                        PubNoPeers -> status status500
-                        PubTimeout -> status status500
+                        PubNoPeers          -> status status500
+                        PubTimeout          -> status status500
                         PubPeerDisconnected -> status status500
-                        PubNotFound -> status status500
-                        PubReject _ -> status status400
-                    S.text (T.pack (show e))
+                        PubNotFound         -> status status500
+                        PubReject _         -> status status400
+                    S.raw $ serialAny net proto (UserError (show e))
                     finish
         S.get "/dbstats" $ do
             cors
             getProperty db Stats >>= text . cs . fromJust
         S.get "/events" $ do
             cors
-            proto <- setup_proto
+            proto <- setupProto
             stream $ \io flush' ->
                 withSubscription pub $ \sub ->
                     forever $
@@ -528,12 +519,12 @@ runWeb conf st db pub = do
                                 io (lazyByteString bs)
         S.get "/peers" $ do
             cors
-            proto <- setup_proto
+            proto <- setupProto
             ps <- getPeersInformation (storeManager st)
             S.raw $ serialAny net proto ps
         S.get "/health" $ do
             cors
-            proto <- setup_proto
+            proto <- setupProto
             h <-
                 liftIO $
                 healthCheck
@@ -560,7 +551,7 @@ runWeb conf st db pub = do
             _ -> return ()
         mbr <- Just <$> b <|> Just <$> m <|> return Nothing
         return (mlimit, mbr)
-    apply_limit Nothing = mapC id
+    apply_limit Nothing  = mapC id
     apply_limit (Just l) = takeC l
     dedup =
         let dd Nothing =
@@ -582,7 +573,7 @@ runWeb conf st db pub = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a -> return a
+            Just a  -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
@@ -592,37 +583,13 @@ runWeb conf st db pub = do
         t <- param "xpub"
         case xPubImport net t of
             Nothing -> next
-            Just x -> return x
+            Just x  -> return x
     net = configNetwork conf
     parse_no_tx = param "notx" `rescue` const (return False)
     runner f l = do
         u <- askUnliftIO
         unliftIO u (runLoggingT l f)
     cors = setHeader "Access-Control-Allow-Origin" "*"
-    setup_proto =
-        let p = do
-                setHeader "Content-Type" "application/x-protobuf"
-                return True
-            j = do
-                setHeader "Content-Type" "application/json"
-                return False
-         in S.header "accept" >>= \case
-                Nothing -> j
-                Just x ->
-                    if is_proto x
-                        then p
-                        else j
-    is_proto x =
-        let ts =
-                map
-                    (T.takeWhile (/= ';'))
-                    (T.splitOn "," (T.filter (not . isSpace) x))
-            ps =
-                [ "application/x-protobuf"
-                , "application/protobuf"
-                , "application/vnd.google.protobuf"
-                ]
-         in any (`elem` ps) ts
 
 serialAny :: (JsonSerial a, ProtoSerial a) => Network -> Bool -- ^ protobuf
           -> a -> L.ByteString
@@ -648,3 +615,30 @@ protoConduit net = mapC (protoSerial net . (: []))
 
 streamConduit :: MonadIO m => (i -> IO ()) -> ConduitT i o m ()
 streamConduit io = mapM_C (liftIO . io)
+
+setupProto :: Monad m => ActionT Except m Bool
+setupProto =
+    let p = do
+            setHeader "Content-Type" "application/x-protobuf"
+            return True
+        j = do
+            setHeader "Content-Type" "application/json"
+            return False
+     in S.header "accept" >>= \case
+            Nothing -> j
+            Just x ->
+                if is_proto x
+                    then p
+                    else j
+  where
+    is_proto x =
+        let ts =
+                map
+                    (T.takeWhile (/= ';'))
+                    (T.splitOn "," (T.filter (not . isSpace) x))
+            ps =
+                [ "application/x-protobuf"
+                , "application/protobuf"
+                , "application/vnd.google.protobuf"
+                ]
+         in any (`elem` ps) ts
