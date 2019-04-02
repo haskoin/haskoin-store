@@ -238,12 +238,16 @@ processTxs p hs =
                         t <- getTxData (db, defaultReadOptions) h
                         guard (isNothing t)
                         return (getTxHash h)
-            $(logDebugS) "Block" $
-                "Requesting " <> fromString (show (length xs)) <>
-                " new transactions"
-            net <- blockConfNet <$> asks myConfig
-            let inv = if getSegWit net then InvWitnessTx else InvTx
-            MGetData (GetData (map (InvVector inv) xs)) `sendMessage` p
+            unless (null xs) $ do
+                $(logDebugS) "Block" $
+                    "Requesting " <> fromString (show (length xs)) <>
+                    " new transactions"
+                net <- blockConfNet <$> asks myConfig
+                let inv =
+                        if getSegWit net
+                            then InvWitnessTx
+                            else InvTx
+                MGetData (GetData (map (InvVector inv) xs)) `sendMessage` p
 
 checkTime :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
 checkTime =
