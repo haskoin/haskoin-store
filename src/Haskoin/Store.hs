@@ -73,26 +73,32 @@ module Haskoin.Store
     , cbAfterHeight
     , healthCheck
     , mergeSourcesBy
+    , withBlockDB
+    , withBlockSTM
+    , withBalanceSTM
+    , withUnspentSTM
     ) where
 
 import           Conduit
 import           Control.Monad
-import qualified Control.Monad.Except           as E
+import qualified Control.Monad.Except                as E
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
 import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize                 (decode)
-import           Database.RocksDB               as R
+import           Data.Serialize                      (decode)
+import           Database.RocksDB                    as R
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Store.Data.RocksDB
+import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Messages
 import           Network.Haskoin.Store.Proto
-import           Network.Socket                 (SockAddr (..))
+import           Network.Socket                      (SockAddr (..))
 import           NQE
 import           System.Random
 import           UnliftIO
@@ -227,18 +233,17 @@ storeDispatch _ pub (PeerEvent (PeerMessage p (MReject r))) =
 storeDispatch _ _ (PeerEvent _) = return ()
 
 healthCheck ::
-       (MonadUnliftIO m, StoreRead r m)
+       (MonadUnliftIO m, StoreRead m)
     => Network
-    -> r
     -> Manager
     -> Chain
     -> m HealthCheck
-healthCheck net i mgr ch = do
+healthCheck net mgr ch = do
     n <- timeout (5 * 1000 * 1000) $ chainGetBest ch
     b <-
         runMaybeT $ do
-            h <- MaybeT $ getBestBlock i
-            MaybeT $ getBlock i h
+            h <- MaybeT getBestBlock
+            MaybeT $ getBlock h
     p <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
     let k = isNothing n || isNothing b || maybe False (not . null) p
         s =
@@ -267,9 +272,9 @@ publishTx ::
     -> Tx
     -> m (Either PubExcept ())
 publishTx pub st db tx =
-    withSubscription pub $ \s -> do
-        let d = (db, defaultReadOptions)
-        getTransaction d (txHash tx) >>= \case
+    withSubscription pub $ \s ->
+        withBlockDB defaultReadOptions db $
+        getTransaction (txHash tx) >>= \case
             Just _ -> return $ Right ()
             Nothing ->
                 E.runExceptT $
@@ -317,17 +322,16 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-xpubBals :: (Monad m, BalanceRead i m) => i -> XPubKey -> m [XPubBal]
-xpubBals i xpub = (<>) <$> go 0 0 <*> go 1 0
+xpubBals :: (Monad m, BalanceRead m) => XPubKey -> m [XPubBal]
+xpubBals xpub = (<>) <$> go 0 0 <*> go 1 0
   where
-    g = getBalance i
     go m n = do
         xs <- catMaybes <$> mapM (uncurry b) (as m n)
         case xs of
             [] -> return []
             _  -> (xs <>) <$> go m (n + 20)
     b a p =
-        g a >>= \case
+        getBalance a >>= \case
             Nothing -> return Nothing
             Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
     as m n =
@@ -336,29 +340,27 @@ xpubBals i xpub = (<>) <$> go 0 0 <*> go 1 0
             (take 20 (deriveAddrs (pubSubKey xpub m) n))
 
 xpubTxs ::
-       (Monad m, BalanceRead i m, StoreStream i m)
-    => i
-    -> Maybe BlockRef
+       (Monad m, BalanceRead m, StoreStream m)
+    => Maybe BlockRef
     -> XPubKey
     -> ConduitT () BlockTx m ()
-xpubTxs i mbr xpub = do
-    bals <- lift $ xpubBals i xpub
+xpubTxs mbr xpub = do
+    bals <- lift $ xpubBals xpub
     xs <-
         forM bals $ \XPubBal {xPubBal = b} ->
-            return $ getAddressTxs i (balanceAddress b) mbr
+            return $ getAddressTxs (balanceAddress b) mbr
     mergeSourcesBy (flip compare `on` blockTxBlock) xs
 
 xpubUnspent ::
-       (Monad m, StoreStream i m, BalanceRead i m, StoreRead i m)
-    => i
-    -> Maybe BlockRef
+       (Monad m, StoreStream m, BalanceRead m, StoreRead m)
+    => Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
-xpubUnspent i mbr xpub = do
-    bals <- lift $ xpubBals i xpub
+xpubUnspent mbr xpub = do
+    bals <- lift $ xpubBals xpub
     xs <-
         forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
-            return $ getAddressUnspents i (balanceAddress b) mbr .| mapC (f p)
+            return $ getAddressUnspents (balanceAddress b) mbr .| mapC (f p)
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
@@ -367,13 +369,12 @@ xpubUnspent i mbr xpub = do
 -- specified height. Returns 'Nothing' if answer cannot be computed before
 -- hitting limits.
 cbAfterHeight ::
-       (Monad m, StoreRead i m)
-    => i
-    -> Int -- ^ how many ancestors to test before giving up
+       (Monad m, StoreRead m)
+    => Int -- ^ how many ancestors to test before giving up
     -> BlockHeight
     -> TxHash
     -> m TxAfterHeight
-cbAfterHeight i d h t
+cbAfterHeight d h t
     | d <= 0 = return $ TxAfterHeight Nothing
     | otherwise = TxAfterHeight <$> runMaybeT (snd <$> tst d t)
   where
@@ -381,7 +382,7 @@ cbAfterHeight i d h t
         | e <= 0 = MaybeT $ return Nothing
         | otherwise = do
             let e' = e - 1
-            tx <- MaybeT $ getTransaction i x
+            tx <- MaybeT $ getTransaction x
             if any isCoinbase (transactionInputs tx)
                 then return (e', blockRefHeight (transactionBlock tx) > h)
                 else case transactionBlock tx of

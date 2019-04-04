@@ -198,9 +198,10 @@ runWeb conf st db pub = do
             proto <- setupProto
             res <-
                 runMaybeT $ do
-                    let d = (db, defaultReadOptions)
-                    bh <- MaybeT $ getBestBlock d
-                    b <- MaybeT $ getBlock d bh
+                    bh <-
+                        MaybeT $ withBlockDB defaultReadOptions db getBestBlock
+                    b <-
+                        MaybeT . withBlockDB defaultReadOptions db $ getBlock bh
                     if n
                         then return b {blockDataTxs = take 1 (blockDataTxs b)}
                         else return b
@@ -212,8 +213,9 @@ runWeb conf st db pub = do
             proto <- setupProto
             res <-
                 runMaybeT $ do
-                    let d = (db, defaultReadOptions)
-                    b <- MaybeT $ getBlock d block
+                    b <-
+                        MaybeT . withBlockDB defaultReadOptions db $
+                        getBlock block
                     if n
                         then return b {blockDataTxs = take 1 (blockDataTxs b)}
                         else return b
@@ -224,11 +226,14 @@ runWeb conf st db pub = do
             no_tx <- parse_no_tx
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                   bs <- getBlocksAtHeight d height
+                do bs <-
+                       withBlockDB defaultReadOptions db $
+                       getBlocksAtHeight height
                    fmap catMaybes . forM bs $ \bh ->
                        runMaybeT $ do
-                           b <- MaybeT $ getBlock d bh
+                           b <-
+                               MaybeT . withBlockDB defaultReadOptions db $
+                               getBlock bh
                            return
                                b
                                    { blockDataTxs =
@@ -243,18 +248,18 @@ runWeb conf st db pub = do
             no_tx <- parse_no_tx
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                   bs <- concat <$> mapM (getBlocksAtHeight d) (nub heights)
-                   fmap catMaybes . forM bs $ \bh ->
-                       runMaybeT $ do
-                           b <- MaybeT $ getBlock d bh
-                           return
-                               b
-                                   { blockDataTxs =
-                                         if no_tx
-                                             then take 1 (blockDataTxs b)
-                                             else blockDataTxs b
-                                   }
+                withBlockDB defaultReadOptions db $ do
+                    bs <- concat <$> mapM getBlocksAtHeight (nub heights)
+                    fmap catMaybes . forM bs $ \bh ->
+                        runMaybeT $ do
+                            b <- MaybeT $ getBlock bh
+                            return
+                                b
+                                    { blockDataTxs =
+                                          if no_tx
+                                              then take 1 (blockDataTxs b)
+                                              else blockDataTxs b
+                                    }
             S.raw $ serialAny net proto res
         S.get "/blocks" $ do
             cors
@@ -262,17 +267,17 @@ runWeb conf st db pub = do
             no_tx <- parse_no_tx
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                   fmap catMaybes . forM blocks $ \bh ->
-                       runMaybeT $ do
-                           b <- MaybeT $ getBlock d bh
-                           return
-                               b
-                                   { blockDataTxs =
-                                         if no_tx
-                                             then take 1 (blockDataTxs b)
-                                             else blockDataTxs b
-                                   }
+                withBlockDB defaultReadOptions db $
+                fmap catMaybes . forM blocks $ \bh ->
+                    runMaybeT $ do
+                        b <- MaybeT $ getBlock bh
+                        return
+                            b
+                                { blockDataTxs =
+                                      if no_tx
+                                          then take 1 (blockDataTxs b)
+                                          else blockDataTxs b
+                                }
             S.raw $ serialAny net proto res
         S.get "/mempool" $ do
             cors
@@ -285,26 +290,22 @@ runWeb conf st db pub = do
                     Just (MemRef t) -> return $ Just t
                     Nothing -> return Nothing
             proto <- setupProto
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    getMempool d mpu .| mapC snd .| apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        getMempool mpu .| mapC snd .| apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/transaction/:txid" $ do
             cors
             txid <- param "txid"
             proto <- setupProto
-            res <-
-                do let d = (db, defaultReadOptions)
-                   getTransaction d txid
+            res <- withBlockDB defaultReadOptions db $ getTransaction txid
             maybeSerial net proto res
         S.get "/transaction/:txid/hex" $ do
             cors
             txid <- param "txid"
-            res <-
-                do let d = (db, defaultReadOptions)
-                   getTransaction d txid
+            res <- withBlockDB defaultReadOptions db $ getTransaction txid
             case res of
                 Nothing -> raise ThingNotFound
                 Just x ->
@@ -312,9 +313,7 @@ runWeb conf st db pub = do
         S.get "/transaction/:txid/bin" $ do
             cors
             txid <- param "txid"
-            res <-
-                do let d = (db, defaultReadOptions)
-                   getTransaction d txid
+            res <- withBlockDB defaultReadOptions db $ getTransaction txid
             case res of
                 Nothing -> raise ThingNotFound
                 Just x -> do
@@ -326,30 +325,30 @@ runWeb conf st db pub = do
             height <- param "height"
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                   cbAfterHeight d 10000 height txid
+                withBlockDB defaultReadOptions db $
+                cbAfterHeight 10000 height txid
             S.raw $ serialAny net proto res
         S.get "/transactions" $ do
             cors
             txids <- param "txids"
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                   catMaybes <$> mapM (getTransaction d) (nub txids)
+                withBlockDB defaultReadOptions db $
+                catMaybes <$> mapM getTransaction (nub txids)
             S.raw $ serialAny net proto res
         S.get "/transactions/hex" $ do
             cors
             txids <- param "txids"
             res <-
-                do let d = (db, defaultReadOptions)
-                   catMaybes <$> mapM (getTransaction d) (nub txids)
+                withBlockDB defaultReadOptions db $
+                catMaybes <$> mapM getTransaction (nub txids)
             S.json $ map (encodeHex . Serialize.encode . transactionData) res
         S.get "/transactions/bin" $ do
             cors
             txids <- param "txids"
             res <-
-                do let d = (db, defaultReadOptions)
-                   catMaybes <$> mapM (getTransaction d) (nub txids)
+                withBlockDB defaultReadOptions db $
+                catMaybes <$> mapM getTransaction (nub txids)
             S.setHeader "Content-Type" "application/octet-stream"
             S.raw . L.concat $ map (Serialize.encodeLazy . transactionData) res
         S.get "/address/:address/transactions" $ do
@@ -357,119 +356,117 @@ runWeb conf st db pub = do
             address <- parse_address
             (mlimit, mbr) <- parse_limits
             proto <- setupProto
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    getAddressTxs d address mbr .| apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        getAddressTxs address mbr .| apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/address/transactions" $ do
             cors
             addresses <- parse_addresses
             (mlimit, mbr) <- parse_limits
             proto <- setupProto
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    mergeSourcesBy
-                        (flip compare `on` blockTxBlock)
-                        (map (\a -> getAddressTxs d a mbr) addresses) .|
-                    dedup .|
-                    apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        mergeSourcesBy
+                            (flip compare `on` blockTxBlock)
+                            (map (\a -> getAddressTxs a mbr) addresses) .|
+                        dedup .|
+                        apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/address/:address/unspent" $ do
             cors
             address <- parse_address
             (mlimit, mbr) <- parse_limits
             proto <- setupProto
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    getAddressUnspents d address mbr .| apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        getAddressUnspents address mbr .| apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/address/unspent" $ do
             cors
             addresses <- parse_addresses
             (mlimit, mbr) <- parse_limits
             proto <- setupProto
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    mergeSourcesBy
-                        (flip compare `on` unspentBlock)
-                        (map (\a -> getAddressUnspents d a mbr) addresses) .|
-                    apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        mergeSourcesBy
+                            (flip compare `on` unspentBlock)
+                            (map (`getAddressUnspents` mbr) addresses) .|
+                        apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/address/:address/balance" $ do
             cors
             address <- parse_address
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                   getBalance d address >>= \case
-                       Just b -> return b
-                       Nothing ->
-                           return
-                               Balance
-                                   { balanceAddress = address
-                                   , balanceAmount = 0
-                                   , balanceUnspentCount = 0
-                                   , balanceZero = 0
-                                   , balanceTxCount = 0
-                                   , balanceTotalReceived = 0
-                                   }
+                withBlockDB defaultReadOptions db $
+                getBalance address >>= \case
+                    Just b -> return b
+                    Nothing ->
+                        return
+                            Balance
+                                { balanceAddress = address
+                                , balanceAmount = 0
+                                , balanceUnspentCount = 0
+                                , balanceZero = 0
+                                , balanceTxCount = 0
+                                , balanceTotalReceived = 0
+                                }
             S.raw $ serialAny net proto res
         S.get "/address/balances" $ do
             cors
             addresses <- parse_addresses
             proto <- setupProto
             res <-
-                do let d = (db, defaultReadOptions)
-                       f a Nothing =
-                           Balance
-                               { balanceAddress = a
-                               , balanceAmount = 0
-                               , balanceUnspentCount = 0
-                               , balanceZero = 0
-                               , balanceTxCount = 0
-                               , balanceTotalReceived = 0
-                               }
-                       f _ (Just b) = b
-                   mapM (\a -> f a <$> getBalance d a) addresses
+                withBlockDB defaultReadOptions db $ do
+                    let f a Nothing =
+                            Balance
+                                { balanceAddress = a
+                                , balanceAmount = 0
+                                , balanceUnspentCount = 0
+                                , balanceZero = 0
+                                , balanceTxCount = 0
+                                , balanceTotalReceived = 0
+                                }
+                        f _ (Just b) = b
+                    mapM (\a -> f a <$> getBalance a) addresses
             S.raw $ serialAny net proto res
         S.get "/xpub/:xpub/balances" $ do
             cors
             xpub <- parse_xpub
             proto <- setupProto
-            res <-
-                do let d = (db, defaultReadOptions)
-                   xpubBals d xpub
+            res <- withBlockDB defaultReadOptions db $ xpubBals xpub
             S.raw $ serialAny net proto res
         S.get "/xpub/:xpub/transactions" $ do
             cors
             xpub <- parse_xpub
             (mlimit, mbr) <- parse_limits
             proto <- setupProto
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    xpubTxs d mbr xpub .| dedup .| apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        xpubTxs mbr xpub .| dedup .| apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
             cors
             xpub <- parse_xpub
             proto <- setupProto
             (mlimit, mbr) <- parse_limits
-            stream $ \io flush' -> do
-                let d = (db, defaultReadOptions)
-                runResourceT . runConduit $
-                    xpubUnspent d mbr xpub .| apply_limit mlimit .|
-                    streamAny net proto io
-                liftIO flush'
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        xpubUnspent mbr xpub .| apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
         S.post "/transactions" $ do
             cors
             proto <- setupProto
@@ -479,16 +476,16 @@ runWeb conf st db pub = do
             tx <-
                 case hex b <|> bin (L.toStrict b) of
                     Nothing -> raise (UserError "decode tx fail")
-                    Just x  -> return x
+                    Just x -> return x
             lift (publishTx pub st db tx) >>= \case
                 Right () -> S.raw $ serialAny net proto (TxId (txHash tx))
                 Left e -> do
                     case e of
-                        PubNoPeers          -> status status500
-                        PubTimeout          -> status status500
+                        PubNoPeers -> status status500
+                        PubTimeout -> status status500
                         PubPeerDisconnected -> status status500
-                        PubNotFound         -> status status500
-                        PubReject _         -> status status400
+                        PubNotFound -> status status500
+                        PubReject _ -> status status400
                     S.raw $ serialAny net proto (UserError (show e))
                     finish
         S.get "/dbstats" $ do
@@ -526,12 +523,8 @@ runWeb conf st db pub = do
             cors
             proto <- setupProto
             h <-
-                liftIO $
-                healthCheck
-                    net
-                    (db, defaultReadOptions)
-                    (storeManager st)
-                    (storeChain st)
+                liftIO . withBlockDB defaultReadOptions db $
+                healthCheck net (storeManager st) (storeChain st)
             when (not (healthOK h) || not (healthSynced h)) $ status status503
             S.raw $ serialAny net proto h
         notFound $ raise ThingNotFound
@@ -551,7 +544,7 @@ runWeb conf st db pub = do
             _ -> return ()
         mbr <- Just <$> b <|> Just <$> m <|> return Nothing
         return (mlimit, mbr)
-    apply_limit Nothing  = mapC id
+    apply_limit Nothing = mapC id
     apply_limit (Just l) = takeC l
     dedup =
         let dd Nothing =
@@ -573,7 +566,7 @@ runWeb conf st db pub = do
         address <- param "address"
         case stringToAddr net address of
             Nothing -> next
-            Just a  -> return a
+            Just a -> return a
     parse_addresses = do
         addresses <- param "addresses"
         let as = mapMaybe (stringToAddr net) addresses
@@ -583,7 +576,7 @@ runWeb conf st db pub = do
         t <- param "xpub"
         case xPubImport net t of
             Nothing -> next
-            Just x  -> return x
+            Just x -> return x
     net = configNetwork conf
     parse_no_tx = param "notx" `rescue` const (return False)
     runner f l = do

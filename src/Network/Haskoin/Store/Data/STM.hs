@@ -1,13 +1,12 @@
-{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TupleSections         #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-module Network.Haskoin.Store.Data.HashMap where
+module Network.Haskoin.Store.Data.STM where
 
 import           Conduit
 import           Control.Monad
+import           Control.Monad.Reader                (ReaderT)
+import qualified Control.Monad.Reader                as R
 import qualified Data.ByteString.Short               as B.Short
 import           Data.Function
 import           Data.HashMap.Strict                 (HashMap)
@@ -21,8 +20,20 @@ import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
+type BlockSTM = ReaderT (TVar HashMapDB) STM
+type UnspentSTM = ReaderT (TVar UnspentMap) STM
+type BalanceSTM = ReaderT (TVar BalanceMap) STM
 type UnspentMap = HashMap TxHash (IntMap Unspent)
 type BalanceMap = (HashMap Address Balance, [Address])
+
+withBlockSTM :: TVar HashMapDB -> ReaderT (TVar HashMapDB) STM a -> STM a
+withBlockSTM = flip R.runReaderT
+
+withUnspentSTM :: TVar UnspentMap -> ReaderT (TVar UnspentMap) STM a -> STM a
+withUnspentSTM = flip R.runReaderT
+
+withBalanceSTM :: TVar BalanceMap -> ReaderT (TVar BalanceMap) STM a -> STM a
+withBalanceSTM = flip R.runReaderT
 
 data HashMapDB = HashMapDB
     { hBest :: !(Maybe BlockHash)
@@ -61,25 +72,25 @@ getBestBlockH :: HashMapDB -> Maybe BlockHash
 getBestBlockH = hBest
 
 getBlocksAtHeightH ::
-       HashMapDB -> BlockHeight -> [BlockHash]
-getBlocksAtHeightH db h = M.lookupDefault [] h (hHeight db)
+       BlockHeight -> HashMapDB -> [BlockHash]
+getBlocksAtHeightH h = M.lookupDefault [] h . hHeight
 
-getBlockH :: HashMapDB -> BlockHash -> Maybe BlockData
-getBlockH db h = M.lookup h (hBlock db)
+getBlockH :: BlockHash -> HashMapDB -> Maybe BlockData
+getBlockH h = M.lookup h . hBlock
 
-getTxDataH :: HashMapDB -> TxHash -> Maybe TxData
-getTxDataH db t = M.lookup t (hTx db)
+getTxDataH :: TxHash -> HashMapDB -> Maybe TxData
+getTxDataH t = M.lookup t . hTx
 
-getSpenderH :: HashMapDB -> OutPoint -> Maybe (Maybe Spender)
-getSpenderH db op = do
+getSpenderH :: OutPoint -> HashMapDB -> Maybe (Maybe Spender)
+getSpenderH op db = do
     m <- M.lookup (outPointHash op) (hSpender db)
     I.lookup (fromIntegral (outPointIndex op)) m
 
-getSpendersH :: HashMapDB -> TxHash -> IntMap (Maybe Spender)
-getSpendersH db t = M.lookupDefault I.empty t (hSpender db)
+getSpendersH :: TxHash -> HashMapDB -> IntMap (Maybe Spender)
+getSpendersH t = M.lookupDefault I.empty t . hSpender
 
-getBalanceH :: HashMapDB -> Address -> Maybe Balance
-getBalanceH db a = f <$> M.lookup a (hBalance db)
+getBalanceH :: Address -> HashMapDB -> Maybe Balance
+getBalanceH a = fmap f . M.lookup a . hBalance
   where
     f b =
         Balance
@@ -93,10 +104,10 @@ getBalanceH db a = f <$> M.lookup a (hBalance db)
 
 getMempoolH ::
        Monad m
-    => HashMapDB
-    -> Maybe PreciseUnixTime
+    => Maybe PreciseUnixTime
+    -> HashMapDB
     -> ConduitT () (PreciseUnixTime, TxHash) m ()
-getMempoolH db mpu =
+getMempoolH mpu db =
     let f ts =
             case mpu of
                 Nothing -> False
@@ -107,8 +118,8 @@ getMempoolH db mpu =
             hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
 
-getAddressTxsH :: HashMapDB -> Address -> Maybe BlockRef -> [BlockTx]
-getAddressTxsH db a mbr =
+getAddressTxsH :: Address -> Maybe BlockRef -> HashMapDB -> [BlockTx]
+getAddressTxsH a mbr db =
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty a (hAddrTx db)
@@ -125,8 +136,8 @@ getAddressTxsH db a mbr =
             Just br -> b > br
 
 getAddressUnspentsH ::
-       HashMapDB -> Address -> Maybe BlockRef -> [Unspent]
-getAddressUnspentsH db a mbr =
+       Address -> Maybe BlockRef -> HashMapDB -> [Unspent]
+getAddressUnspentsH a mbr db =
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty a (hAddrOut db)
@@ -253,8 +264,8 @@ deleteMempoolTxH h u db =
     let s = M.singleton u (M.singleton h False)
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
-getUnspentH :: HashMapDB -> OutPoint -> Maybe (Maybe Unspent)
-getUnspentH db op = do
+getUnspentH :: OutPoint -> HashMapDB -> Maybe (Maybe Unspent)
+getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
     I.lookup (fromIntegral (outPointIndex op)) m
 
@@ -282,150 +293,112 @@ delUnspentH op db =
                   (hUnspent db)
         }
 
-instance Applicative m => StoreRead HashMapDB m where
-    isInitialized = pure . isInitializedH
-    getBestBlock = pure . getBestBlockH
-    getBlocksAtHeight db = pure . getBlocksAtHeightH db
-    getBlock db = pure . getBlockH db
-    getTxData db = pure . getTxDataH db
-    getSpenders db = pure . I.map fromJust . I.filter isJust . getSpendersH db
-    getSpender db = pure . join . getSpenderH db
+instance StoreRead BlockSTM where
+    isInitialized = fmap isInitializedH . lift . readTVar =<< R.ask
+    getBestBlock = fmap getBestBlockH . lift . readTVar =<< R.ask
+    getBlocksAtHeight h =
+        fmap (getBlocksAtHeightH h) . lift . readTVar =<< R.ask
+    getBlock b = fmap (getBlockH b) . lift . readTVar =<< R.ask
+    getTxData t = fmap (getTxDataH t) . lift . readTVar =<< R.ask
+    getSpender t = fmap (join . getSpenderH t) . lift . readTVar =<< R.ask
+    getSpenders t =
+        fmap (I.map fromJust . I.filter isJust . getSpendersH t) .
+        lift . readTVar =<<
+        R.ask
 
-instance Applicative m => BalanceRead HashMapDB m where
-    getBalance db = pure . getBalanceH db
+instance BalanceRead BlockSTM where
+    getBalance a = fmap (getBalanceH a) . lift . readTVar =<< R.ask
 
-instance Applicative m => UnspentRead HashMapDB m where
-    getUnspent db = pure . join . getUnspentH db
+instance UnspentRead BlockSTM where
+    getUnspent op = fmap (join . getUnspentH op) . lift . readTVar =<< R.ask
 
-instance Monad m => StoreStream HashMapDB m where
-    getMempool = getMempoolH
-    getAddressUnspents db a = yieldMany . getAddressUnspentsH db a
-    getAddressTxs db a = yieldMany . getAddressTxsH db a
+instance BalanceWrite BlockSTM where
+    setBalance b = lift . (`modifyTVar` setBalanceH b) =<< R.ask
+    pruneBalance = return ()
 
-instance MonadIO m => StoreRead (TVar HashMapDB) m where
-    isInitialized v = readTVarIO v >>= isInitialized
-    getBestBlock v = readTVarIO v >>= getBestBlock
-    getBlocksAtHeight v h = readTVarIO v >>= \db -> getBlocksAtHeight db h
-    getBlock v b = readTVarIO v >>= \db -> getBlock db b
-    getTxData v t = readTVarIO v >>= \db -> getTxData db t
-    getSpender v t = readTVarIO v >>= \db -> getSpender db t
-    getSpenders v t = readTVarIO v >>= \db -> getSpenders db t
+instance StoreStream BlockSTM where
+    getMempool m = getMempoolH m =<< lift . lift . readTVar =<< lift R.ask
+    getAddressTxs a m =
+        yieldMany . getAddressTxsH a m =<< lift . lift . readTVar =<< lift R.ask
+    getAddressUnspents a m =
+        yieldMany . getAddressUnspentsH a m =<<
+        lift . lift . readTVar =<< lift R.ask
 
-instance MonadIO m => BalanceRead (TVar HashMapDB) m where
-    getBalance v a =
-        readTVarIO v >>= \db -> getBalance db a
+instance StoreWrite BlockSTM where
+    setInit = lift . (`modifyTVar` setInitH) =<< R.ask
+    setBest h = lift . (`modifyTVar` setBestH h) =<< R.ask
+    insertBlock b = lift . (`modifyTVar` insertBlockH b) =<< R.ask
+    insertAtHeight h g = lift . (`modifyTVar` insertAtHeightH h g) =<< R.ask
+    insertTx t = lift . (`modifyTVar` insertTxH t) =<< R.ask
+    insertSpender p s = lift . (`modifyTVar` insertSpenderH p s) =<< R.ask
+    deleteSpender p = lift . (`modifyTVar` deleteSpenderH p) =<< R.ask
+    insertAddrTx a t = lift . (`modifyTVar` insertAddrTxH a t) =<< R.ask
+    removeAddrTx a t = lift . (`modifyTVar` removeAddrTxH a t) =<< R.ask
+    insertAddrUnspent a u =
+        lift . (`modifyTVar` insertAddrUnspentH a u) =<< R.ask
+    removeAddrUnspent a u =
+        lift . (`modifyTVar` removeAddrUnspentH a u) =<< R.ask
+    insertMempoolTx h t = lift . (`modifyTVar` insertMempoolTxH h t) =<< R.ask
+    deleteMempoolTx h t = lift . (`modifyTVar` deleteMempoolTxH h t) =<< R.ask
 
-instance MonadIO m => UnspentRead (TVar HashMapDB) m where
-    getUnspent v op = readTVarIO v >>= \db -> getUnspent db op
+instance UnspentWrite BlockSTM where
+    addUnspent h = lift . (`modifyTVar` addUnspentH h) =<< R.ask
+    delUnspent p = lift . (`modifyTVar` delUnspentH p) =<< R.ask
+    pruneUnspent = return ()
 
-instance MonadIO m => BalanceWrite (TVar HashMapDB) m where
-    setBalance v b = atomically $ modifyTVar v (setBalanceH b)
+instance UnspentRead UnspentSTM where
+    getUnspent op = do
+        um <- lift . readTVar =<< R.ask
+        return $ do
+            m <- M.lookup (outPointHash op) um
+            I.lookup (fromIntegral (outPointIndex op)) m
 
-instance MonadIO m => StoreStream (TVar HashMapDB) m where
-    getMempool v m = readTVarIO v >>= \db -> getMempool db m
-    getAddressTxs v a m = readTVarIO v >>= \db -> getAddressTxs db a m
-    getAddressUnspents v a m = readTVarIO v >>= \db -> getAddressUnspents db a m
-
-instance StoreWrite ((HashMapDB -> HashMapDB) -> m ()) m where
-    setInit f = f setInitH
-    setBest f = f . setBestH
-    insertBlock f = f . insertBlockH
-    insertAtHeight f h = f . insertAtHeightH h
-    insertTx f = f . insertTxH
-    insertSpender f p = f . insertSpenderH p
-    deleteSpender f = f . deleteSpenderH
-    insertAddrTx f a = f . insertAddrTxH a
-    removeAddrTx f a = f . removeAddrTxH a
-    insertAddrUnspent f a = f . insertAddrUnspentH a
-    removeAddrUnspent f a = f . removeAddrUnspentH a
-    insertMempoolTx f h = f . insertMempoolTxH h
-    deleteMempoolTx f h = f . deleteMempoolTxH h
-
-instance Applicative m => UnspentWrite ((HashMapDB -> HashMapDB) -> m ()) m where
-    addUnspent f = f . addUnspentH
-    delUnspent f = f . delUnspentH
-
-instance MonadIO m => StoreWrite (TVar HashMapDB) m where
-    setInit v = atomically $ setInit (modifyTVar v)
-    setBest v = atomically . setBest (modifyTVar v)
-    insertBlock v = atomically . insertBlock (modifyTVar v)
-    insertAtHeight v h = atomically . insertAtHeight (modifyTVar v) h
-    insertTx v = atomically . insertTx (modifyTVar v)
-    insertSpender v p = atomically . insertSpender (modifyTVar v) p
-    deleteSpender v = atomically . deleteSpender (modifyTVar v)
-    insertAddrTx v a = atomically . insertAddrTx (modifyTVar v) a
-    removeAddrTx v a = atomically . removeAddrTx (modifyTVar v) a
-    insertAddrUnspent v a = atomically . insertAddrUnspent (modifyTVar v) a
-    removeAddrUnspent v a = atomically . removeAddrUnspent (modifyTVar v) a
-    insertMempoolTx v h = atomically . insertMempoolTx (modifyTVar v) h
-    deleteMempoolTx v h = atomically . deleteMempoolTx (modifyTVar v) h
-
-instance MonadIO m => UnspentWrite (TVar HashMapDB) m where
-    addUnspent v = atomically . addUnspent (modifyTVar v)
-    delUnspent v = atomically . delUnspent (modifyTVar v)
-
-instance Applicative m => UnspentRead UnspentMap m where
-    getUnspent um op = pure $ do
-        m <- M.lookup (outPointHash op) um
-        I.lookup (fromIntegral (outPointIndex op)) m
-
-instance MonadIO m => UnspentRead (TVar UnspentMap) m where
-    getUnspent v op = readTVarIO v >>= \um -> getUnspent um op
-
-instance Applicative m =>
-         UnspentWrite ((UnspentMap -> UnspentMap) -> m ()) m where
-    addUnspent f u =
-        f $
-        M.insertWith
-            (<>)
-            (outPointHash (unspentPoint u))
-            (I.singleton (fromIntegral (outPointIndex (unspentPoint u))) u)
-    delUnspent f op = f $ M.update g (outPointHash op)
+instance UnspentWrite UnspentSTM where
+    addUnspent u = do
+        v <- R.ask
+        lift . modifyTVar v $
+            M.insertWith
+                (<>)
+                (outPointHash (unspentPoint u))
+                (I.singleton (fromIntegral (outPointIndex (unspentPoint u))) u)
+    delUnspent op = lift . (`modifyTVar` M.update g (outPointHash op)) =<< R.ask
       where
         g m =
             let n = I.delete (fromIntegral (outPointIndex op)) m
              in if I.null n
                     then Nothing
                     else Just n
-    pruneUnspent f =
-        f $ \um ->
-            if M.size um > 2000 * 1000
+    pruneUnspent = do
+        v <- R.ask
+        lift . modifyTVar v $ \um ->
+            if M.size um > 2 ^ (21 :: Int)
                 then let g is = unspentBlock (head (I.elems is))
                          ls =
                              sortBy
                                  (compare `on` (g . snd))
                                  (filter (not . I.null . snd) (M.toList um))
-                      in M.fromList (drop (1000 * 1000) ls)
+                      in M.fromList (drop (2 ^ (20 :: Int)) ls)
                 else um
 
-instance MonadIO m => UnspentWrite (TVar UnspentMap) m where
-    addUnspent v = atomically . addUnspent (modifyTVar v)
-    delUnspent v = atomically . delUnspent (modifyTVar v)
-    pruneUnspent = atomically . pruneUnspent . modifyTVar
+instance BalanceRead BalanceSTM where
+    getBalance a = do
+        b <- fmap fst $ lift . readTVar =<< R.ask
+        return $ M.lookup a b
 
-instance Applicative m => BalanceRead BalanceMap m where
-    getBalance m a = pure $ M.lookup a (fst m)
-
-instance Applicative m =>
-         BalanceWrite ((BalanceMap -> BalanceMap) -> m ()) m where
-    setBalance f b =
-        f $ \(m, s) ->
+instance BalanceWrite BalanceSTM where
+    setBalance b = do
+        v <- R.ask
+        lift . modifyTVar v $ \(m, s) ->
             let m' = M.insert (balanceAddress b) b m
                 s' = balanceAddress b : s
              in (m', s')
-    pruneBalance f =
-        f $ \(m, s) ->
-            if length s > 2000 * 1000
-                then let s' = take (1000 * 1000) s
+    pruneBalance = do
+        v <- R.ask
+        lift . modifyTVar v $ \(m, s) ->
+            if length s > 2 ^ (21 :: Int)
+                then let s' = take (2 ^ (20 :: Int)) s
                          m' = M.fromList (mapMaybe (g m) s')
                       in (m', s')
                 else (m, s)
       where
         g m a = (a, ) <$> M.lookup a m
-
-instance MonadIO m => BalanceWrite (TVar BalanceMap) m where
-    setBalance v = atomically . setBalance (modifyTVar v)
-    pruneBalance = atomically . pruneBalance . modifyTVar
-
-instance MonadIO m => BalanceRead (TVar BalanceMap) m where
-    getBalance v a = readTVarIO v >>= \m -> getBalance m a

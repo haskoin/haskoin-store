@@ -9,6 +9,7 @@ module Network.Haskoin.Store.Block
       ( blockStore
       ) where
 
+import           Control.Arrow
 import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
@@ -21,8 +22,9 @@ import           Database.RocksDB
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Data
-import           Network.Haskoin.Store.Data.HashMap
 import           Network.Haskoin.Store.Data.ImportDB
+import           Network.Haskoin.Store.Data.RocksDB
+import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Logic
 import           Network.Haskoin.Store.Messages
 import           NQE
@@ -90,46 +92,48 @@ blockStore cfg inbox = do
         withAsync (pingMe (inboxToMailbox inbox)) $ \_ ->
             forever $ receive inbox >>= processBlockMessage
 
-isSynced :: (MonadReader BlockRead m, MonadUnliftIO m) => m Bool
+isSynced :: (MonadUnliftIO m) => ReaderT BlockRead m Bool
 isSynced = do
-    db <- blockConfDB <$> asks myConfig
-    getBestBlock (db, defaultReadOptions) >>= \case
-        Nothing -> throwIO Uninitialized
-        Just bb -> do
-            ch <- blockConfChain <$> asks myConfig
-            chainGetBest ch >>= \cb -> return (headerHash (nodeHeader cb) == bb)
+    (db, ch) <- (blockConfDB &&& blockConfChain) <$> asks myConfig
+    withBlockDB defaultReadOptions db $
+        getBestBlock >>= \case
+            Nothing -> throwIO Uninitialized
+            Just bb ->
+                chainGetBest ch >>= \cb ->
+                    return (headerHash (nodeHeader cb) == bb)
 
 mempool ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => Peer -> m ()
+       (MonadUnliftIO m, MonadLoggerIO m) => Peer -> ReaderT BlockRead m ()
 mempool p = MMempool `sendMessage` p
 
-pruneCache :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
+pruneCache :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 pruneCache = do
     um <- asks myUnspent
     bm <- asks myBalances
-    u <- readTVarIO um
-    b <- readTVarIO bm
-    $(logDebugS) "Block" $
-        "Unspent output cache pre-prune tx count: " <>
-        fromString (show (M.size u))
-    $(logDebugS) "Block" $
-        "Address cache pre-prune count: " <> fromString (show (M.size (fst b)))
-    pruneUnspent um
-    pruneBalance bm
-    u' <- readTVarIO um
-    b' <- readTVarIO bm
-    $(logDebugS) "Block" $
-        "Unspent output cache post-prune tx count: " <>
-        fromString (show (M.size u'))
-    $(logDebugS) "Block" $
-        "Address cache post-prune count: " <>
-        fromString (show (M.size (fst b')))
+    do u <- readTVarIO um
+       b <- readTVarIO bm
+       $(logDebugS) "Block" $
+           "Unspent output cache pre-prune tx count: " <>
+           fromString (show (M.size u))
+       $(logDebugS) "Block" $
+           "Address cache pre-prune count: " <>
+           fromString (show (M.size (fst b)))
+    atomically $
+        withUnspentSTM um pruneUnspent >> withBalanceSTM bm pruneBalance
+    do u <- readTVarIO um
+       b <- readTVarIO bm
+       $(logDebugS) "Block" $
+           "Unspent output cache post-prune tx count: " <>
+           fromString (show (M.size u))
+       $(logDebugS) "Block" $
+           "Address cache post-prune count: " <>
+           fromString (show (M.size (fst b)))
 
 processBlock ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
+       (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
     -> Block
-    -> m ()
+    -> ReaderT BlockRead m ()
 processBlock p b = do
     $(logDebugS) "Block" ("Processing incoming block " <> hex)
     void . runMaybeT $ do
@@ -162,16 +166,16 @@ processBlock p b = do
   where
     hex = blockHashToHex (headerHash (blockHeader b))
     upr =
-        asks myPeer >>= \box ->
-            readTVarIO box >>= \case
-                Nothing -> throwIO SyncingPeerExpected
-                Just s@Syncing {syncingHead = h} ->
-                    if nodeHeader h == blockHeader b
-                        then resetPeer
-                        else do
-                            now <- systemSeconds <$> liftIO getSystemTime
-                            atomically . writeTVar box $
-                                Just s {syncingTime = now}
+        asks myPeer >>= readTVarIO >>= \case
+            Nothing -> throwIO SyncingPeerExpected
+            Just s@Syncing {syncingHead = h} ->
+                if nodeHeader h == blockHeader b
+                    then resetPeer
+                    else do
+                        now <- systemSeconds <$> liftIO getSystemTime
+                        asks myPeer >>=
+                            atomically .
+                            (`writeTVar` Just s {syncingTime = now})
     iss =
         asks myPeer >>= readTVarIO >>= \case
             Just Syncing {syncingPeer = p'} -> return $ p == p'
@@ -188,29 +192,28 @@ processBlock p b = do
             Just n -> return n
 
 processNoBlocks ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
+       (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
     -> [BlockHash]
-    -> m ()
+    -> ReaderT BlockRead m ()
 processNoBlocks p _bs = do
     $(logErrorS) "Block" "Killing peer that could not find blocks"
     killPeer (PeerMisbehaving "Sent notfound message with block hashes") p
 
 processTx ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
+       (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
     -> Tx
-    -> m ()
+    -> ReaderT BlockRead m ()
 processTx _p tx =
     isSynced >>= \x ->
         when x $ do
             $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
             now <- preciseUnixTime <$> liftIO getSystemTime
-            net <- blockConfNet <$> asks myConfig
-            db <- blockConfDB <$> asks myConfig
+            (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
             um <- asks myUnspent
             bm <- asks myBalances
-            runExceptT (runImportDB db um bm $ \i -> newMempoolTx net i tx now) >>= \case
+            runExceptT (runImportDB db um bm $ newMempoolTx net tx now) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -221,10 +224,10 @@ processTx _p tx =
                 Right False -> return ()
 
 processTxs ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
+       (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
     -> [TxHash]
-    -> m ()
+    -> ReaderT BlockRead m ()
 processTxs p hs =
     isSynced >>= \x ->
         when x $ do
@@ -235,7 +238,7 @@ processTxs p hs =
             xs <-
                 fmap catMaybes . forM hs $ \h ->
                     runMaybeT $ do
-                        t <- getTxData (db, defaultReadOptions) h
+                        t <- withBlockDB defaultReadOptions db $ getTxData h
                         guard (isNothing t)
                         return (getTxHash h)
             unless (null xs) $ do
@@ -249,7 +252,7 @@ processTxs p hs =
                             else InvTx
                 MGetData (GetData (map (InvVector inv) xs)) `sendMessage` p
 
-checkTime :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
+checkTime :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 checkTime =
     asks myPeer >>= readTVarIO >>= \case
         Nothing -> return ()
@@ -260,9 +263,9 @@ checkTime =
                 killPeer PeerTimeout p
 
 processDisconnect ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
+       (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
-    -> m ()
+    -> ReaderT BlockRead m ()
 processDisconnect p =
     asks myPeer >>= readTVarIO >>= \case
         Nothing -> return ()
@@ -274,10 +277,10 @@ processDisconnect p =
             | otherwise -> return ()
 
 purgeMempool ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
+       (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 purgeMempool = $(logErrorS) "Block" "Mempool purging not implemented"
 
-syncMe :: (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m) => m ()
+syncMe :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 syncMe =
     void . runMaybeT $ do
         rev
@@ -316,7 +319,7 @@ syncMe =
     dbn = do
         db <- blockConfDB <$> asks myConfig
         bb <-
-            getBestBlock (db, defaultReadOptions) >>= \case
+            withBlockDB defaultReadOptions db getBestBlock >>= \case
                 Nothing -> do
                     $(logErrorS) "Block" "Best block not in database"
                     throwIO Uninitialized
@@ -377,7 +380,7 @@ syncMe =
                 um <- asks myUnspent
                 bm <- asks myBalances
                 net <- blockConfNet <$> asks myConfig
-                runExceptT (runImportDB db um bm $ \i -> revertBlock net i d) >>= \case
+                runExceptT (runImportDB db um bm $ revertBlock net d) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>
@@ -385,13 +388,13 @@ syncMe =
                         throwIO e
                     Right () -> rev
 
-resetPeer :: (MonadReader BlockRead m, MonadLoggerIO m) => m ()
+resetPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
 resetPeer = do
     $(logDebugS) "Block" "Resetting syncing peer..."
     box <- asks myPeer
     atomically $ writeTVar box Nothing
 
-setPeer :: (MonadReader BlockRead m, MonadIO m) => Peer -> BlockNode -> m ()
+setPeer :: (MonadIO m, MonadReader BlockRead m) => Peer -> BlockNode -> m ()
 setPeer p b = do
     box <- asks myPeer
     now <- systemSeconds <$> liftIO getSystemTime
@@ -399,9 +402,9 @@ setPeer p b = do
         Just Syncing {syncingPeer = p, syncingHead = b, syncingTime = now}
 
 processBlockMessage ::
-       (MonadReader BlockRead m, MonadUnliftIO m, MonadLoggerIO m)
+       (MonadUnliftIO m, MonadLoggerIO m)
     => BlockMessage
-    -> m ()
+    -> ReaderT BlockRead m ()
 processBlockMessage (BlockNewBest bn) = do
     $(logDebugS) "Block" $
         "New best block header " <> fromString (show (nodeHeight bn)) <> ": " <>

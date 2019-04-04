@@ -69,4 +69,3 @@ tests:
     dependencies:
       - hspec
       - haskoin-store
-      - mtl

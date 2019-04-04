@@ -37,63 +37,57 @@ type UnixTime = Int64
 newtype InitException = IncorrectVersion Word32
     deriving (Show, Read, Eq, Ord, Exception)
 
-class Applicative m => UnspentWrite u m where
-    addUnspent :: u -> Unspent -> m ()
-    delUnspent :: u -> OutPoint -> m ()
-    pruneUnspent :: u -> m ()
-    pruneUnspent _ = pure ()
+class UnspentWrite m where
+    addUnspent :: Unspent -> m ()
+    delUnspent :: OutPoint -> m ()
+    pruneUnspent :: m ()
 
-class UnspentRead u m where
-    getUnspent :: u -> OutPoint -> m (Maybe Unspent)
+class UnspentRead m where
+    getUnspent :: OutPoint -> m (Maybe Unspent)
 
-class Applicative m => BalanceWrite b m where
-    setBalance :: b -> Balance -> m ()
-    pruneBalance :: b -> m ()
-    pruneBalance _ = pure ()
+class BalanceWrite m where
+    setBalance :: Balance -> m ()
+    pruneBalance :: m ()
 
-class BalanceRead b m where
-    getBalance :: b -> Address -> m (Maybe Balance)
+class BalanceRead m where
+    getBalance :: Address -> m (Maybe Balance)
 
-class StoreRead r m where
-    isInitialized :: r -> m (Either InitException Bool)
-    getBestBlock :: r -> m (Maybe BlockHash)
-    getBlocksAtHeight :: r -> BlockHeight -> m [BlockHash]
-    getBlock :: r -> BlockHash -> m (Maybe BlockData)
-    getTxData :: r -> TxHash -> m (Maybe TxData)
-    getSpenders :: r -> TxHash -> m (IntMap Spender)
-    getSpender :: r -> OutPoint -> m (Maybe Spender)
+class StoreRead m where
+    isInitialized :: m (Either InitException Bool)
+    getBestBlock :: m (Maybe BlockHash)
+    getBlocksAtHeight :: BlockHeight -> m [BlockHash]
+    getBlock :: BlockHash -> m (Maybe BlockData)
+    getTxData :: TxHash -> m (Maybe TxData)
+    getSpenders :: TxHash -> m (IntMap Spender)
+    getSpender :: OutPoint -> m (Maybe Spender)
 
 getTransaction ::
-       (Monad m, StoreRead r m) => r -> TxHash -> m (Maybe Transaction)
-getTransaction r h = runMaybeT $ do
-    d <- MaybeT $ getTxData r h
-    sm <- lift $ getSpenders r h
+       (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
+getTransaction h = runMaybeT $ do
+    d <- MaybeT $ getTxData h
+    sm <- lift $ getSpenders h
     return $ toTransaction d sm
 
-class StoreStream r m where
+class StoreStream m where
     getMempool ::
-           r
-        -> Maybe PreciseUnixTime
-        -> ConduitT () (PreciseUnixTime, TxHash) m ()
-    getAddressUnspents ::
-           r -> Address -> Maybe BlockRef -> ConduitT () Unspent m ()
-    getAddressTxs ::
-           r -> Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
+           Maybe PreciseUnixTime -> ConduitT () (PreciseUnixTime, TxHash) m ()
+    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT () Unspent m ()
+    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
 
-class StoreWrite w m where
-    setInit :: w -> m ()
-    setBest :: w -> BlockHash -> m ()
-    insertBlock :: w -> BlockData -> m ()
-    insertAtHeight :: w -> BlockHash -> BlockHeight -> m ()
-    insertTx :: w -> TxData -> m ()
-    insertSpender :: w -> OutPoint -> Spender -> m ()
-    deleteSpender :: w -> OutPoint -> m ()
-    insertAddrTx :: w -> Address -> BlockTx -> m ()
-    removeAddrTx :: w -> Address -> BlockTx -> m ()
-    insertAddrUnspent :: w -> Address -> Unspent -> m ()
-    removeAddrUnspent :: w -> Address -> Unspent -> m ()
-    insertMempoolTx :: w -> TxHash -> PreciseUnixTime -> m ()
-    deleteMempoolTx :: w -> TxHash -> PreciseUnixTime -> m ()
+class StoreWrite m where
+    setInit :: m ()
+    setBest :: BlockHash -> m ()
+    insertBlock :: BlockData -> m ()
+    insertAtHeight :: BlockHash -> BlockHeight -> m ()
+    insertTx :: TxData -> m ()
+    insertSpender :: OutPoint -> Spender -> m ()
+    deleteSpender :: OutPoint -> m ()
+    insertAddrTx :: Address -> BlockTx -> m ()
+    removeAddrTx :: Address -> BlockTx -> m ()
+    insertAddrUnspent :: Address -> Unspent -> m ()
+    removeAddrUnspent :: Address -> Unspent -> m ()
+    insertMempoolTx :: TxHash -> PreciseUnixTime -> m ()
+    deleteMempoolTx :: TxHash -> PreciseUnixTime -> m ()
 
 -- | Unix time with nanosecond precision for mempool transactions.
 newtype PreciseUnixTime = PreciseUnixTime Word64
