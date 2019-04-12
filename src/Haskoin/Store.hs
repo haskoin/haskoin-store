@@ -28,7 +28,7 @@ module Haskoin.Store
     , Event(..)
     , TxAfterHeight(..)
     , JsonSerial(..)
-    , ProtoSerial(..)
+    , BinSerial(..)
     , Except(..)
     , TxId(..)
     , withStore
@@ -54,22 +54,6 @@ module Haskoin.Store
     , transactionData
     , isCoinbase
     , confirmed
-    , blockDataToJSON
-    , blockDataToEncoding
-    , transactionToJSON
-    , transactionToEncoding
-    , outputToJSON
-    , outputToEncoding
-    , inputToJSON
-    , inputToEncoding
-    , unspentToJSON
-    , unspentToEncoding
-    , balanceToJSON
-    , balanceToEncoding
-    , xPubBalToJSON
-    , xPubBalToEncoding
-    , xPubUnspentToJSON
-    , xPubUnspentToEncoding
     , cbAfterHeight
     , healthCheck
     , mergeSourcesBy
@@ -97,7 +81,6 @@ import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.RocksDB
 import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Messages
-import           Network.Haskoin.Store.Proto
 import           Network.Socket                      (SockAddr (..))
 import           NQE
 import           System.Random

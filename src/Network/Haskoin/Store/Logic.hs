@@ -18,13 +18,14 @@ import           Data.List
 import           Data.Maybe
 import           Data.Serialize
 import           Data.String
+import           Data.Text                           (Text)
 import           Data.Word
 import           Database.RocksDB
 import           Haskoin
 import           Network.Haskoin.Block.Headers       (computeSubsidy)
 import           Network.Haskoin.Store.Data
-import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Data.ImportDB
+import           Network.Haskoin.Store.Data.STM
 import           UnliftIO
 
 data ImportException
@@ -393,14 +394,14 @@ importTx net br tt tx = do
                             | txDataRBF t -> return True
                             | otherwise -> return False
     mkcb ip w =
-        Coinbase
+        StoreCoinbase
             { inputPoint = prevOutput ip
             , inputSequence = txInSequence ip
             , inputSigScript = scriptInput ip
             , inputWitness = w
             }
     mkin u ip w =
-        Input
+        StoreInput
             { inputPoint = prevOutput ip
             , inputSequence = txInSequence ip
             , inputSigScript = scriptInput ip
@@ -409,7 +410,7 @@ importTx net br tt tx = do
             , inputWitness = w
             }
     mkout o =
-        Output
+        StoreOutput
             { outputAmount = outValue o
             , outputScript = scriptOutput o
             , outputSpender = Nothing
@@ -605,7 +606,7 @@ insertDeletedMempoolTx tx now@(PreciseUnixTime w) = do
                             | txDataRBF t -> return True
                             | otherwise -> return False
     mkin u ip wit =
-        Input
+        StoreInput
             { inputPoint = prevOutput ip
             , inputSequence = txInSequence ip
             , inputSigScript = scriptInput ip
@@ -614,7 +615,7 @@ insertDeletedMempoolTx tx now@(PreciseUnixTime w) = do
             , inputWitness = wit
             }
     mkout o =
-        Output
+        StoreOutput
             { outputAmount = outValue o
             , outputScript = scriptOutput o
             , outputSpender = Nothing
@@ -720,7 +721,7 @@ getTxOutput ::
        (MonadError ImportException m, MonadLogger m)
     => Word32
     -> Transaction
-    -> m Output
+    -> m StoreOutput
 getTxOutput i tx = do
     unless (fromIntegral i < length (transactionOutputs tx)) $ do
         $(logErrorS) "BlockLogic" $
@@ -840,8 +841,7 @@ reduceBalance ::
 reduceBalance net c t a v =
     getBalance a >>= \case
         Nothing -> do
-            $(logErrorS) "BlockLogic" $
-                "Balance not found: " <> addrToString net a
+            $(logErrorS) "BlockLogic" $ "Balance not found: " <> addrText net a
             throwError (BalanceNotFound a)
         Just b -> do
             when
@@ -855,7 +855,7 @@ reduceBalance net c t a v =
                          then "confirmed "
                          else "unconfirmed ") <>
                     "balance: " <>
-                    addrToString net a
+                    addrText net a
                 throwError $
                     if c
                         then InsufficientBalance a
@@ -952,3 +952,6 @@ txDataAddresses t =
     nub . rights $
     map (scriptToAddressBS . prevScript) (I.elems (txDataPrevs t)) <>
     map (scriptToAddressBS . scriptOutput) (txOut (txData t))
+
+addrText :: Network -> Address -> Text
+addrText net a = fromMaybe "[unreprestable]" $ addrToString net a

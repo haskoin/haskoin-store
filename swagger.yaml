@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: '0.13.0'
+  version: '0.14.0'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -33,11 +33,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthCheck'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: HealthCheck
         '503':
           description: unavailable
           content:
@@ -55,12 +54,11 @@ paths:
                 net: bchtest
                 ok: false
                 synced: false
-                version: '0.13.0'
-            application/x-protobuf:
+                version: '0.14.0'
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: HealthCheck
   '/address/{address}/transactions':
     get:
       tags:
@@ -117,11 +115,10 @@ paths:
                     block:
                       height: 1283391
                       position: 1
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockTx
         '404':
           description: invalid address
   '/address/transactions':
@@ -183,11 +180,10 @@ paths:
                     block:
                       height: 1283391
                       position: 1
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockTxList
         '404':
           description: invalid address
   '/address/{address}/balance':
@@ -210,11 +206,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Balance'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: Balance
         '404':
           description: invalid address
   '/address/balances':
@@ -242,11 +237,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Balance'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BalanceList
         '404':
           description: invalid address
   '/address/{address}/unspent':
@@ -296,11 +290,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Unspent'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: UnspentList
         '404':
           description: invalid address
   '/address/unspent':
@@ -353,11 +346,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Unspent'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: UnspentList
         '404':
           description: invalid address
   '/block/best':
@@ -380,11 +372,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlockData'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockData
   '/block/{block}':
     get:
       tags:
@@ -411,11 +402,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlockData'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockData
         '404':
           description: block not found
   '/blocks':
@@ -449,11 +439,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockDataList
         '404':
           description: block not found
   '/block/height/{height}':
@@ -484,11 +473,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockDataList
         '404':
           description: block not found
   '/block/heights':
@@ -523,11 +511,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockDataList
         '404':
           description: block not found
   '/transaction/{txid}':
@@ -549,11 +536,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Transaction'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: Transaction
         '404':
           description: transaction not found
   '/transaction/{txid}/hex':
@@ -598,7 +584,6 @@ paths:
               schema:
                 type: string
                 format: binary
-                description: bitcoin tx message serialization
   '/transaction/{txid}/after/{height}':
     get:
       tags:
@@ -633,11 +618,10 @@ paths:
                     type: boolean
                     nullable: true
                     example: true
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: TxAfterHeight
   '/transactions':
     get:
       tags:
@@ -662,11 +646,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Transaction'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: TransactionList
         '404':
           description: transaction not found
     post:
@@ -684,7 +667,6 @@ paths:
             schema:
               type: string
               format: binary
-              description: bitcoin tx message serialization
       responses:
         '200':
           description: success
@@ -694,10 +676,9 @@ paths:
                 $ref: '#/components/schemas/TxId'
                 example:
                   txid: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
-            application/x-protobuf:
+            application/octet-stream:
               type: string
               format: binary
-              description: TxId
         '400':
           description: invalid transaction
         '500':
@@ -752,7 +733,6 @@ paths:
               schema:
                 type: string
                 format: binary
-                description: concatenated using bitcoin tx message serialization
         '404':
           description: transaction not found
   '/mempool':
@@ -788,11 +768,10 @@ paths:
                   - 'eed4160b9919901e7f55a93d5e9f1add5c7e56c930276532673105844c233b3f'
                   - 'cdb3793bb6c2669e01da5e8751d8975766c81fbce7bd9d7d08414b84448d3129'
                   - '870d7515f9ab782f7b84d3bf15d40e801b835d4abc5389f522d29e5ace223de9'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: TxIdList
   '/events':
     get:
       tags:
@@ -806,11 +785,10 @@ paths:
             application/x-json-stream:
               schema:
                 $ref: '#/components/schemas/Event'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: EventList
   '/peers':
     get:
       tags:
@@ -836,11 +814,10 @@ paths:
                     version: 70015
                     services: '0000000000000025'
                     relay: true
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: TxList
   '/xpub/{xpub}/transactions':
     get:
       tags:
@@ -900,11 +877,10 @@ paths:
                       height: 765798
                       position: 4
                     txid: '14288fc7465fa8c786fd19e31d163688ced5d66636e9f761b4e8e376f2421492'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: BlockTxList
         '400':
           description: invalid xpub
   '/xpub/{xpub}/balances':
@@ -953,11 +929,10 @@ paths:
                       txs: 2
                       unconfirmed: 0
                       confirmed: 0
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: XPubBalanceList
         '400':
           description: invalid xpub
   '/xpub/{xpub}/unspent':
@@ -1027,11 +1002,10 @@ paths:
                         position: 12
                       index: 1
                       txid: '2733fcd7d55f5f7696e18f1eaaa5f9970cd88e063af4775e4139f1eb5482a856'
-            application/x-protobuf:
+            application/octet-stream:
               schema:
                 type: string
                 format: binary
-                description: XPubUnspentList
         '400':
           description: invalid xpub
 components:
@@ -1506,7 +1480,7 @@ components:
           example: true
         version:
           type: string
-          example: '0.13.0'
+          example: '0.14.0'
     Error:
       type: object
       required:

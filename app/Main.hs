@@ -12,6 +12,8 @@ import           Control.Exception          ()
 import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
+import           Data.Aeson.Encoding        (encodingToLazyByteString,
+                                             fromEncoding)
 import           Data.Bits
 import           Data.ByteString.Builder
 import qualified Data.ByteString.Lazy       as L
@@ -121,16 +123,16 @@ peerReader s = do
 
 defHandler :: Monad m => Network -> Except -> ActionT Except m ()
 defHandler net e = do
-    proto <- setupProto
+    proto <- setupBin
     case e of
         ThingNotFound -> status status404
-        BadRequest -> status status400
-        UserError _ -> status status400
+        BadRequest    -> status status400
+        UserError _   -> status status400
         StringError _ -> status status400
-        ServerError -> status status500
+        ServerError   -> status status500
     S.raw $ serialAny net proto e
 
-maybeSerial :: (Monad m, JsonSerial a, ProtoSerial a) => Network -> Bool -- ^ protobuf
+maybeSerial :: (Monad m, JsonSerial a, BinSerial a) => Network -> Bool -- ^ protobuf
             -> Maybe a -> ActionT Except m ()
 maybeSerial _ _ Nothing        = raise ThingNotFound
 maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
@@ -195,7 +197,7 @@ runWeb conf st db pub = do
         S.get "/block/best" $ do
             cors
             n <- parse_no_tx
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 runMaybeT $ do
                     bh <-
@@ -210,7 +212,7 @@ runWeb conf st db pub = do
             cors
             block <- param "block"
             n <- parse_no_tx
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 runMaybeT $ do
                     b <-
@@ -224,7 +226,7 @@ runWeb conf st db pub = do
             cors
             height <- param "height"
             no_tx <- parse_no_tx
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 do bs <-
                        withBlockDB defaultReadOptions db $
@@ -246,7 +248,7 @@ runWeb conf st db pub = do
             cors
             heights <- param "heights"
             no_tx <- parse_no_tx
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 withBlockDB defaultReadOptions db $ do
                     bs <- concat <$> mapM getBlocksAtHeight (nub heights)
@@ -265,7 +267,7 @@ runWeb conf st db pub = do
             cors
             blocks <- param "blocks"
             no_tx <- parse_no_tx
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 withBlockDB defaultReadOptions db $
                 fmap catMaybes . forM blocks $ \bh ->
@@ -289,7 +291,7 @@ runWeb conf st db pub = do
                         UserError "mempool transactions do not have height"
                     Just (MemRef t) -> return $ Just t
                     Nothing -> return Nothing
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
@@ -299,7 +301,7 @@ runWeb conf st db pub = do
         S.get "/transaction/:txid" $ do
             cors
             txid <- param "txid"
-            proto <- setupProto
+            proto <- setupBin
             res <- withBlockDB defaultReadOptions db $ getTransaction txid
             maybeSerial net proto res
         S.get "/transaction/:txid/hex" $ do
@@ -323,7 +325,7 @@ runWeb conf st db pub = do
             cors
             txid <- param "txid"
             height <- param "height"
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 withBlockDB defaultReadOptions db $
                 cbAfterHeight 10000 height txid
@@ -331,7 +333,7 @@ runWeb conf st db pub = do
         S.get "/transactions" $ do
             cors
             txids <- param "txids"
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 withBlockDB defaultReadOptions db $
                 catMaybes <$> mapM getTransaction (nub txids)
@@ -355,7 +357,7 @@ runWeb conf st db pub = do
             cors
             address <- parse_address
             (mlimit, mbr) <- parse_limits
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
@@ -366,13 +368,13 @@ runWeb conf st db pub = do
             cors
             addresses <- parse_addresses
             (mlimit, mbr) <- parse_limits
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
                         mergeSourcesBy
                             (flip compare `on` blockTxBlock)
-                            (map (\a -> getAddressTxs a mbr) addresses) .|
+                            (map (`getAddressTxs` mbr) addresses) .|
                         dedup .|
                         apply_limit mlimit .|
                         streamAny net proto io
@@ -381,7 +383,7 @@ runWeb conf st db pub = do
             cors
             address <- parse_address
             (mlimit, mbr) <- parse_limits
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
@@ -392,7 +394,7 @@ runWeb conf st db pub = do
             cors
             addresses <- parse_addresses
             (mlimit, mbr) <- parse_limits
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
@@ -405,7 +407,7 @@ runWeb conf st db pub = do
         S.get "/address/:address/balance" $ do
             cors
             address <- parse_address
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 withBlockDB defaultReadOptions db $
                 getBalance address >>= \case
@@ -424,7 +426,7 @@ runWeb conf st db pub = do
         S.get "/address/balances" $ do
             cors
             addresses <- parse_addresses
-            proto <- setupProto
+            proto <- setupBin
             res <-
                 withBlockDB defaultReadOptions db $ do
                     let f a Nothing =
@@ -442,14 +444,14 @@ runWeb conf st db pub = do
         S.get "/xpub/:xpub/balances" $ do
             cors
             xpub <- parse_xpub
-            proto <- setupProto
+            proto <- setupBin
             res <- withBlockDB defaultReadOptions db $ xpubBals xpub
             S.raw $ serialAny net proto res
         S.get "/xpub/:xpub/transactions" $ do
             cors
             xpub <- parse_xpub
             (mlimit, mbr) <- parse_limits
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
@@ -459,7 +461,7 @@ runWeb conf st db pub = do
         S.get "/xpub/:xpub/unspent" $ do
             cors
             xpub <- parse_xpub
-            proto <- setupProto
+            proto <- setupBin
             (mlimit, mbr) <- parse_limits
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
@@ -469,7 +471,7 @@ runWeb conf st db pub = do
                     liftIO flush'
         S.post "/transactions" $ do
             cors
-            proto <- setupProto
+            proto <- setupBin
             b <- body
             let bin = eitherToMaybe . Serialize.decode
                 hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
@@ -493,7 +495,7 @@ runWeb conf st db pub = do
             getProperty db Stats >>= text . cs . fromJust
         S.get "/events" $ do
             cors
-            proto <- setupProto
+            proto <- setupBin
             stream $ \io flush' ->
                 withSubscription pub $ \sub ->
                     forever $
@@ -516,12 +518,12 @@ runWeb conf st db pub = do
                                 io (lazyByteString bs)
         S.get "/peers" $ do
             cors
-            proto <- setupProto
+            proto <- setupBin
             ps <- getPeersInformation (storeManager st)
             S.raw $ serialAny net proto ps
         S.get "/health" $ do
             cors
-            proto <- setupProto
+            proto <- setupBin
             h <-
                 liftIO . withBlockDB defaultReadOptions db $
                 healthCheck net (storeManager st) (storeChain st)
@@ -584,35 +586,38 @@ runWeb conf st db pub = do
         unliftIO u (runLoggingT l f)
     cors = setHeader "Access-Control-Allow-Origin" "*"
 
-serialAny :: (JsonSerial a, ProtoSerial a) => Network -> Bool -- ^ protobuf
-          -> a -> L.ByteString
-serialAny net True  = protoSerial net
-serialAny net False = toLazyByteString . jsonSerial net
+serialAny ::
+       (JsonSerial a, BinSerial a)
+    => Network
+    -> Bool -- ^ binary
+    -> a
+    -> L.ByteString
+serialAny net True  = runPutLazy . binSerial net
+serialAny net False = encodingToLazyByteString . jsonSerial net
 
 streamAny ::
-       (JsonSerial i, ProtoSerial [i], MonadIO m)
+       (JsonSerial i, BinSerial i, MonadIO m)
     => Network
     -> Bool -- ^ protobuf
     -> (Builder -> IO ())
     -> ConduitT i o m ()
-streamAny net True io = protoConduit net .| mapC lazyByteString .| streamConduit io
+streamAny net True io = binConduit net .| mapC lazyByteString .| streamConduit io
 streamAny net False io = jsonListConduit net .| streamConduit io
 
 jsonListConduit :: (JsonSerial a, Monad m) => Network -> ConduitT a Builder m ()
 jsonListConduit net =
-    yield "[" >> mapC (jsonSerial net) .| intersperseC "," >> yield "]"
+    yield "[" >> mapC (fromEncoding . jsonSerial net) .| intersperseC "," >> yield "]"
 
-protoConduit ::
-       (ProtoSerial [a], Monad m) => Network -> ConduitT a L.ByteString m ()
-protoConduit net = mapC (protoSerial net . (: []))
+binConduit :: (BinSerial i, Monad m) => Network -> ConduitT i L.ByteString m ()
+binConduit net = mapC (runPutLazy . binSerial net)
 
 streamConduit :: MonadIO m => (i -> IO ()) -> ConduitT i o m ()
 streamConduit io = mapM_C (liftIO . io)
 
-setupProto :: Monad m => ActionT Except m Bool
-setupProto =
+setupBin :: Monad m => ActionT Except m Bool
+setupBin =
     let p = do
-            setHeader "Content-Type" "application/x-protobuf"
+            setHeader "Content-Type" "application/octet-stream"
             return True
         j = do
             setHeader "Content-Type" "application/json"
@@ -620,18 +625,13 @@ setupProto =
      in S.header "accept" >>= \case
             Nothing -> j
             Just x ->
-                if is_proto x
+                if is_binary x
                     then p
                     else j
   where
-    is_proto x =
+    is_binary x =
         let ts =
                 map
                     (T.takeWhile (/= ';'))
                     (T.splitOn "," (T.filter (not . isSpace) x))
-            ps =
-                [ "application/x-protobuf"
-                , "application/protobuf"
-                , "application/vnd.google.protobuf"
-                ]
-         in any (`elem` ps) ts
+         in elem "application/octet-stream" ts
