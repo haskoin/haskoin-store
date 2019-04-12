@@ -5,5 +5,5 @@ nix:
     - secp256k1
     - zlib
 extra-deps:
-  - haskoin-node-0.9.8
+  - haskoin-node-0.9.9
   - haskoin-core-0.9.0
