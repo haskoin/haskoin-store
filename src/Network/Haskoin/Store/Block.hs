@@ -17,6 +17,7 @@ import           Control.Monad.Trans.Maybe
 import qualified Data.HashMap.Strict                 as M
 import           Data.Maybe
 import           Data.String
+import           Data.String.Conversions
 import           Data.Time.Clock.System
 import           Database.RocksDB
 import           Haskoin
@@ -78,10 +79,8 @@ blockStore cfg inbox = do
             }
   where
     ini = do
-        db <- blockConfDB <$> asks myConfig
-        net <- blockConfNet <$> asks myConfig
-        um <- asks myUnspent
-        bm <- asks myBalances
+        (db, net) <- (blockConfDB &&& blockConfNet) <$> asks myConfig
+        (um, bm) <- asks (myUnspent &&& myBalances)
         runExceptT (initDB net db um bm) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
@@ -89,8 +88,9 @@ blockStore cfg inbox = do
                 throwIO e
             Right () -> $(logInfoS) "Block" "Initialization complete"
     run =
-        withAsync (pingMe (inboxToMailbox inbox)) $ \_ ->
-            forever $ receive inbox >>= processBlockMessage
+        withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
+            $(logDebugS) "Block" "Awaiting message..."
+            receive inbox >>= processBlockMessage
 
 isSynced :: (MonadUnliftIO m) => ReaderT BlockRead m Bool
 isSynced = do
@@ -135,7 +135,7 @@ processBlock ::
     -> Block
     -> ReaderT BlockRead m ()
 processBlock p b = do
-    $(logDebugS) "Block" ("Processing incoming block " <> hex)
+    $(logDebugS) "Block" ("Processing incoming block: " <> hex)
     void . runMaybeT $ do
         iss >>= \x ->
             unless x $ do
@@ -197,8 +197,10 @@ processNoBlocks ::
     -> [BlockHash]
     -> ReaderT BlockRead m ()
 processNoBlocks p _bs = do
-    $(logErrorS) "Block" "Killing peer that could not find blocks"
-    killPeer (PeerMisbehaving "Sent notfound message with block hashes") p
+    $(logErrorS) "Block" "We do not like peers that cannot find them blocks"
+    killPeer
+        (PeerMisbehaving "We do not like peers that cannot find them blocks")
+        p
 
 processTx ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -206,8 +208,11 @@ processTx ::
     -> Tx
     -> ReaderT BlockRead m ()
 processTx _p tx =
-    isSynced >>= \x ->
-        when x $ do
+    isSynced >>= \case
+        False ->
+            $(logDebugS) "Block" $
+            "Ignoring incoming tx (not synced yet): " <> txHashToHex (txHash tx)
+        True -> do
             $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
             now <- preciseUnixTime <$> liftIO getSystemTime
             (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
@@ -220,8 +225,12 @@ processTx _p tx =
                     fromString (show e)
                 Right True -> do
                     l <- blockConfListener <$> asks myConfig
+                    $(logDebugS) "Block" $
+                        "Received mempool tx: " <> txHashToHex (txHash tx)
                     atomically $ l (StoreMempoolNew (txHash tx))
-                Right False -> return ()
+                Right False ->
+                    $(logDebugS) "Block" $
+                    "Received invalid mempool tx: " <> txHashToHex (txHash tx)
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -229,8 +238,10 @@ processTxs ::
     -> [TxHash]
     -> ReaderT BlockRead m ()
 processTxs p hs =
-    isSynced >>= \x ->
-        when x $ do
+    isSynced >>= \case
+        False ->
+            $(logDebugS) "Block" "Ignoring incoming tx inv (not synced yet)"
+        True -> do
             db <- blockConfDB <$> asks myConfig
             $(logDebugS) "Block" $
                 "Received " <> fromString (show (length hs)) <>
@@ -255,12 +266,14 @@ processTxs p hs =
 checkTime :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 checkTime =
     asks myPeer >>= readTVarIO >>= \case
-        Nothing -> return ()
+        Nothing -> $(logDebugS) "Block" "Peer timeout check: no syncing peer"
         Just Syncing {syncingTime = t, syncingPeer = p} -> do
             n <- systemSeconds <$> liftIO getSystemTime
-            when (n > t + 60) $ do
-                $(logErrorS) "Block" "Peer timeout"
-                killPeer PeerTimeout p
+            if n > t + 60
+                then do
+                    $(logErrorS) "Block" "Peer timeout"
+                    killPeer PeerTimeout p
+                else $(logDebugS) "Block" "Peer timeout not reached"
 
 processDisconnect ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -268,13 +281,14 @@ processDisconnect ::
     -> ReaderT BlockRead m ()
 processDisconnect p =
     asks myPeer >>= readTVarIO >>= \case
-        Nothing -> return ()
+        Nothing ->
+            $(logDebugS) "Block" "Ignoring peer disconnection notification"
         Just Syncing {syncingPeer = p'}
             | p == p' -> do
                 $(logErrorS) "Block" "Syncing peer disconnected"
                 resetPeer
                 syncMe
-            | otherwise -> return ()
+            | otherwise -> $(logDebugS) "Block" "Non-syncing peer disconnected"
 
 purgeMempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
@@ -292,10 +306,15 @@ syncMe =
                         "Not syncing blocks as no peers available"
                     mzero
                 Just p -> return p
+        $(logDebugS) "Block" "Syncing blocks against network peer"
         b <- mbn
         d <- dbn
         c <- cbn
-        when (end b d c) mzero
+        when (end b d c) $ do
+            $(logDebugS) "Block" $
+                "Already requested up to block height: " <>
+                cs (show (nodeHeight b))
+            mzero
         ns <- bls c b
         setPeer p (last ns)
         net <- blockConfNet <$> asks myConfig
@@ -421,7 +440,8 @@ processBlockMessage (BlockTxAvailable p ts) = processTxs p ts
 processBlockMessage BlockPing = checkTime
 processBlockMessage PurgeMempool = purgeMempool
 
-pingMe :: MonadIO m => Mailbox BlockMessage -> m ()
+pingMe :: MonadLoggerIO m => Mailbox BlockMessage -> m ()
 pingMe mbox = forever $ do
     threadDelay =<< liftIO (randomRIO (5 * 1000 * 1000, 10 * 1000 * 1000))
+    $(logDebugS) "Block" "Pinging block"
     BlockPing `send` mbox
