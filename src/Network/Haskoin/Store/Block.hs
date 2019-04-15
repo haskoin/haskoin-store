@@ -230,7 +230,7 @@ processTx _p tx =
                     atomically $ l (StoreMempoolNew (txHash tx))
                 Right False ->
                     $(logDebugS) "Block" $
-                    "Received invalid mempool tx: " <> txHashToHex (txHash tx)
+                    "Not importing mempool tx: " <> txHashToHex (txHash tx)
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
