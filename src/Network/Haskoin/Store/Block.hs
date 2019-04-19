@@ -92,15 +92,26 @@ blockStore cfg inbox = do
             $(logDebugS) "Block" "Awaiting message..."
             receive inbox >>= processBlockMessage
 
-isSynced :: (MonadUnliftIO m) => ReaderT BlockRead m Bool
+isSynced :: (MonadLoggerIO m, MonadUnliftIO m) => ReaderT BlockRead m Bool
 isSynced = do
     (db, ch) <- (blockConfDB &&& blockConfChain) <$> asks myConfig
+    $(logDebugS) "Block" "Testing if synced with header chain..."
     withBlockDB defaultReadOptions db $
         getBestBlock >>= \case
-            Nothing -> throwIO Uninitialized
-            Just bb ->
-                chainGetBest ch >>= \cb ->
-                    return (headerHash (nodeHeader cb) == bb)
+            Nothing -> do
+                $(logErrorS) "Block" "Block database uninitialized"
+                throwIO Uninitialized
+            Just bb -> do
+                $(logDebugS) "Block" $ "Best block: " <> blockHashToHex bb
+                chainGetBest ch >>= \cb -> do
+                    $(logDebugS) "Block" $
+                        "Best chain block " <>
+                        blockHashToHex (headerHash (nodeHeader cb)) <>
+                        " at height " <>
+                        cs (show (nodeHeight cb))
+                    let s = headerHash (nodeHeader cb) == bb
+                    $(logDebugS) "Block" $ "Synced: " <> cs (show s)
+                    return s
 
 mempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => Peer -> ReaderT BlockRead m ()
