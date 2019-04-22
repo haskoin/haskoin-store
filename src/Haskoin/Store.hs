@@ -121,8 +121,7 @@ withStore ::
 withStore cfg f = do
     mgri <- newInbox
     chi <- newInbox
-    withProcess (store cfg mgri chi) $ \(Process a b) -> do
-        link a
+    withProcess (store cfg mgri chi) $ \(Process _ b) ->
         f
             Store
                 { storeManager = inboxToMailbox mgri
