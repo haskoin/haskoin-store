@@ -318,7 +318,7 @@ instance BinSerial Unspent where
         binSerial net b
         put p
         putWord64be v
-        put s
+        put $ B.Short.fromShort s
 
 -- | Database value for a block entry.
 data BlockData = BlockData

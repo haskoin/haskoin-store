@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: '0.14.0'
+  version: '0.14.2'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -54,7 +54,7 @@ paths:
                 net: bchtest
                 ok: false
                 synced: false
-                version: '0.14.0'
+                version: '0.1.2'
             application/octet-stream:
               schema:
                 type: string
@@ -1480,7 +1480,7 @@ components:
           example: true
         version:
           type: string
-          example: '0.14.0'
+          example: '0.1.2'
     Error:
       type: object
       required:
