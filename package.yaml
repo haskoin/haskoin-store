@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.14.2
+version: 0.14.3
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
@@ -55,7 +55,6 @@ executables:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
-      - -O2
     dependencies:
       - haskoin-store
       - directory
