@@ -256,7 +256,7 @@ processTxs p hs =
             db <- blockConfDB <$> asks myConfig
             $(logDebugS) "Block" $
                 "Received " <> fromString (show (length hs)) <>
-                " tranasaction inventory"
+                " transaction inventory"
             xs <-
                 fmap catMaybes . forM hs $ \h ->
                     runMaybeT $ do

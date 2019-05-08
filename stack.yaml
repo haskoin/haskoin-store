@@ -1,15 +1,10 @@
-resolver: lts-12.26
+resolver: lts-13.20
 nix:
   packages:
+    - perl
     - rocksdb
     - secp256k1
     - zlib
 extra-deps:
   - haskoin-node-0.9.10
   - haskoin-core-0.9.0
-  - murmur3-1.0.3@sha256:e6c97f0b43a7882c4509d1993c347f0dc540e03b90014da63623f1054bb4d2c8
-  - nqe-0.6.1@sha256:53cfe4e8b5bdc8d5df2d4ae038a359bc6baeace3e54f10afd2645a45d67d1c96
-  - rocksdb-haskell-1.0.1@sha256:3a437ec1cedea56e02ae85a8e37539151c5295cb228117e46aa90767f1072d61
-  - rocksdb-query-0.2.0@sha256:c6f920186d8e7b08c2884ebe8e56b66dac2700f5c16f8b173eef972a74c46d19
-  - secp256k1-haskell-0.1.4@sha256:6eaf6a0909293be49e7de1c9b2a9ad1cc7eed8f3d2829ea23dc4771d81bcef57
-
