@@ -928,7 +928,7 @@ instance BinSerial Except where
 newtype TxId = TxId TxHash deriving (Show, Eq, Generic)
 
 instance ToJSON TxId where
-    toJSON h = object ["txid" .= h]
+    toJSON (TxId h) = object ["txid" .= h]
 
 instance JsonSerial TxId where
     jsonSerial _ = toEncoding

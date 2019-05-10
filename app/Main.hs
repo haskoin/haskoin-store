@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 import           Conduit
 import           Control.Arrow
@@ -479,8 +480,11 @@ runWeb conf st db pub = do
                 case hex b <|> bin (L.toStrict b) of
                     Nothing -> raise (UserError "decode tx fail")
                     Just x -> return x
-            lift (publishTx pub st db tx) >>= \case
-                Right () -> S.raw $ serialAny net proto (TxId (txHash tx))
+            lift (publishTx net pub st db tx) >>= \case
+                Right () -> do
+                    S.raw $ serialAny net proto (TxId (txHash tx))
+                    lift $ $(logDebugS) "Main" $
+                        "Success publishing tx " <> txHashToHex (txHash tx)
                 Left e -> do
                     case e of
                         PubNoPeers -> status status500
@@ -489,6 +493,10 @@ runWeb conf st db pub = do
                         PubNotFound -> status status500
                         PubReject _ -> status status400
                     S.raw $ serialAny net proto (UserError (show e))
+                    lift $ $(logErrorS) "Main" $
+                        "Error publishing tx " <> txHashToHex (txHash tx) <>
+                        ": " <>
+                        cs (show e)
                     finish
         S.get "/dbstats" $ do
             cors

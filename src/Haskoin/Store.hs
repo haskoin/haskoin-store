@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE TemplateHaskell       #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -65,15 +66,16 @@ module Haskoin.Store
 
 import           Conduit
 import           Control.Monad
-import qualified Control.Monad.Except                as E
+import qualified Control.Monad.Except               as E
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
 import           Data.Foldable
 import           Data.Function
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize                      (decode)
-import           Database.RocksDB                    as R
+import           Data.Serialize                     (decode)
+import qualified Data.Text                          as T
+import           Database.RocksDB                   as R
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
@@ -81,7 +83,7 @@ import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.RocksDB
 import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Messages
-import           Network.Socket                      (SockAddr (..))
+import           Network.Socket                     (SockAddr (..))
 import           NQE
 import           System.Random
 import           UnliftIO
@@ -248,33 +250,68 @@ healthCheck net mgr ch = do
 -- | Publish a new transaction to the network.
 publishTx ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => Publisher StoreEvent
+    => Network
+    -> Publisher StoreEvent
     -> Store
     -> DB
     -> Tx
     -> m (Either PubExcept ())
-publishTx pub st db tx =
-    withSubscription pub $ \s ->
+publishTx net pub st db tx = do
+    $(logDebugS) "PubTx" $
+        "Preparing to publish tx: " <> txHashToHex (txHash tx)
+    e <- withSubscription pub $ \s ->
         withBlockDB defaultReadOptions db $
         getTransaction (txHash tx) >>= \case
-            Just _ -> return $ Right ()
+            Just _ -> do
+                $(logErrorS) "PubTx" $
+                    "Tx already in DB: " <> txHashToHex (txHash tx)
+                return $ Right ()
             Nothing ->
-                E.runExceptT $
-                managerGetPeers (storeManager st) >>= \case
-                    [] -> E.throwError PubNoPeers
-                    OnlinePeer {onlinePeerMailbox = p}:_ -> do
-                        MTx tx `sendMessage` p
-                        MMempool `sendMessage` p
-                        f p s
+                E.runExceptT $ do
+                    $(logDebugS) "PubTx" $ "Getting peers from manager..."
+                    managerGetPeers (storeManager st) >>= \case
+                        [] -> do
+                            $(logErrorS) "PubTx" $ "No peers connected."
+                            E.throwError PubNoPeers
+                        OnlinePeer { onlinePeerMailbox = p
+                                   , onlinePeerAddress = a
+                                   }:_ -> do
+                            $(logDebugS) "PubTx" $
+                                "Sending tx " <> txHashToHex (txHash tx) <>
+                                " to peer " <>
+                                T.pack (show a)
+                            MTx tx `sendMessage` p
+                            let t =
+                                    if getSegWit net
+                                        then InvWitnessTx
+                                        else InvTx
+                            sendMessage
+                                (MGetData
+                                     (GetData
+                                          [InvVector t (getTxHash (txHash tx))]))
+                                p
+                            f p s
+    $(logDebugS) "PubTx" $ "Finished for tx: " <> txHashToHex (txHash tx)
+    return e
   where
     t = 15 * 1000 * 1000
     f p s = do
-        n <- liftIO randomIO
-        MPing (Ping n) `sendMessage` p
-        liftIO (timeout t (E.runExceptT (g p s n))) >>= \case
-            Nothing -> E.throwError PubTimeout
-            Just e -> E.liftEither e
-    g p s n =
+        $(logDebugS) "PubTx" $
+            "Waiting for peer to relay tx " <> txHashToHex (txHash tx)
+        liftIO (timeout t (E.runExceptT (g p s))) >>= \case
+            Nothing -> do
+                $(logErrorS) "PubTx" $
+                    "Peer did not relay tx " <> txHashToHex (txHash tx)
+                E.throwError PubTimeout
+            Just (Left e) -> do
+                $(logErrorS) "PubTx" $
+                    "Error publishing tx " <> txHashToHex (txHash tx) <>
+                    T.pack (show e)
+                E.throwError e
+            Just (Right ()) -> do
+                $(logDebugS) "PubTx" $
+                    "Success publishing tx " <> txHashToHex (txHash tx)
+    g p s =
         receive s >>= \case
             StoreTxReject p' h' c _
                 | p == p' && h' == txHash tx -> E.throwError $ PubReject c
@@ -282,7 +319,7 @@ publishTx pub st db tx =
                 | p == p' -> E.throwError PubPeerDisconnected
             StoreMempoolNew h'
                 | h' == txHash tx -> return ()
-            _ -> g p s n
+            _ -> g p s
 
 -- | Obtain information about connected peers from peer manager process.
 getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
