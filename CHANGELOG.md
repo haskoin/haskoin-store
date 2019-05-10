@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 - Transaction publishing no longer requests mempool.
+- Fixed serialization for `TxId` freezing the entire program by infinitely recursing.
 
 ## 0.14.6
 ### Changed
