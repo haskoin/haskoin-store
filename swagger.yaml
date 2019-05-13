@@ -1300,9 +1300,12 @@ components:
             unconfirmed:
               type: integer
         paths:
-          type: array
-          items:
-            type: integer
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: integer
+            example: [1, 10]
         txs:
           type: array
           items:
