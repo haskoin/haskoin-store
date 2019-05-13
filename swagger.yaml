@@ -1305,10 +1305,10 @@ components:
             type: array
             items:
               type: integer
-          example:
-            'bchtest:qrmaylmr0t7ad0sg80nwdfw2ft5ysn3hccvhk5rp89': [1, 8]
-            'bchtest:qrta9zrumx2x9xlkj3ecxurpkv0zspv9xy7tlreccv': [1, 9]
-            'bchtest:qquvk7vrffk7m76x24tnr572mjpykghhg5fjptsjs6': [1, 10]
+            example:
+              'bchtest:qrmaylmr0t7ad0sg80nwdfw2ft5ysn3hccvhk5rp89': [1, 8]
+              'bchtest:qrta9zrumx2x9xlkj3ecxurpkv0zspv9xy7tlreccv': [1, 9]
+              'bchtest:qquvk7vrffk7m76x24tnr572mjpykghhg5fjptsjs6': [1, 10]
         txs:
           type: array
           items:
