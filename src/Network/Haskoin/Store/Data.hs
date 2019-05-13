@@ -132,7 +132,7 @@ instance BinSerial Address where
     binSerial net a =
         case addrToString net a of
             Nothing -> put B.empty
-            Just x -> put $ T.encodeUtf8 x
+            Just x  -> put $ T.encodeUtf8 x
 
 class BinSerial a where
     binSerial :: Network -> Putter a
@@ -482,7 +482,7 @@ instance BinSerial StoreInput where
         put $
             case i of
                 StoreCoinbase {} -> True
-                StoreInput {} -> False
+                StoreInput {}    -> False
         put $ inputPoint i
         putWord32be $ inputSequence i
         put $ inputSigScript i
@@ -494,14 +494,14 @@ instance BinSerial StoreInput where
                         eitherToMaybe (scriptToAddressBS s)
         case a of
             Nothing -> put B.empty
-            Just x -> binSerial net x
+            Just x  -> binSerial net x
         putWord64be $
             case i of
-                StoreCoinbase {} -> 0
+                StoreCoinbase {}             -> 0
                 StoreInput {inputAmount = v} -> v
         put $
             case i of
-                StoreCoinbase {} -> B.empty
+                StoreCoinbase {}               -> B.empty
                 StoreInput {inputPkScript = s} -> s
 
 -- | Information about input spending output.
@@ -999,3 +999,9 @@ instance JsonSerial TxId where
 
 instance BinSerial TxId where
     binSerial _ (TxId th) = put th
+
+data StartFrom
+    = StartBlock !Word32 !Word32
+    | StartMem !PreciseUnixTime
+    | StartOffset !Word32
+    deriving (Show, Eq, Generic)

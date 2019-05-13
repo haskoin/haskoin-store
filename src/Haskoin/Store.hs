@@ -33,6 +33,7 @@ module Haskoin.Store
     , BinSerial(..)
     , Except(..)
     , TxId(..)
+    , StartFrom(..)
     , withStore
     , store
     , getBestBlock
@@ -46,12 +47,22 @@ module Haskoin.Store
     , toTransaction
     , getBalance
     , getMempool
+    , getMempoolLimit
     , getAddressUnspents
+    , getAddressUnspentsLimit
+    , getAddressesUnspentsLimit
     , getAddressTxs
+    , getAddressTxsFull
+    , getAddressTxsLimit
+    , getAddressesTxsFull
+    , getAddressesTxsLimit
     , getPeersInformation
     , xpubTxs
+    , xpubTxsLimit
+    , xpubTxsFull
     , xpubBals
     , xpubUnspent
+    , xpubUnspentLimit
     , xpubSummary
     , publishTx
     , transactionData
@@ -78,6 +89,7 @@ import           Data.List
 import           Data.Maybe
 import           Data.Serialize                     (decode)
 import qualified Data.Text                          as T
+import           Data.Word                          (Word32)
 import           Database.RocksDB                   as R
 import           Haskoin
 import           Haskoin.Node
@@ -366,11 +378,29 @@ xpubTxs ::
     => Maybe BlockRef
     -> [XPubBal]
     -> ConduitT () BlockTx m ()
-xpubTxs mbr bals = do
+xpubTxs m bs = do
     xs <-
-        forM bals $ \XPubBal {xPubBal = b} ->
-            return $ getAddressTxs (balanceAddress b) mbr
-    mergeSourcesBy (flip compare `on` blockTxBlock) xs
+        forM bs $ \XPubBal {xPubBal = b} ->
+            return $ getAddressTxs (balanceAddress b) m
+    mergeSourcesBy (flip compare `on` blockTxBlock) xs .| dedup
+
+xpubTxsLimit ::
+       (Monad m, BalanceRead m, StoreStream m)
+    => Word32
+    -> StartFrom
+    -> [XPubBal]
+    -> ConduitT () BlockTx m ()
+xpubTxsLimit l s bs = do
+    xpubTxs (mbr s) bs .| dropC (offset s) .| takeC (fromIntegral l)
+
+xpubTxsFull ::
+       (Monad m, BalanceRead m, StoreStream m, StoreRead m)
+    => Word32
+    -> StartFrom
+    -> [XPubBal]
+    -> ConduitT () Transaction m ()
+xpubTxsFull l s bs =
+    xpubTxsLimit l s bs .| concatMapMC (getTransaction . blockTxHash)
 
 xpubUnspent ::
        (Monad m, StoreStream m, BalanceRead m, StoreRead m)
@@ -386,19 +416,27 @@ xpubUnspent mbr xpub = do
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
+xpubUnspentLimit ::
+       (Monad m, StoreStream m, BalanceRead m, StoreRead m)
+    => Word32
+    -> StartFrom
+    -> XPubKey
+    -> ConduitT () XPubUnspent m ()
+xpubUnspentLimit l s x =
+    xpubUnspent (mbr s) x .| dropC (offset s) .| takeC (fromIntegral l)
+
 xpubSummary ::
        (Monad m, StoreStream m, BalanceRead m, StoreRead m)
-    => Maybe Int
-    -> Maybe BlockRef
+    => Word32
+    -> StartFrom
     -> XPubKey
     -> m XPubSummary
-xpubSummary mlimit mbr xpub = do
-    bals <- xpubBals xpub
+xpubSummary l s x = do
+    bs <- xpubBals x
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
-        pm = H.fromList $ map f bals
-        c = xpubTxs mbr bals .| concatMapMC (getTransaction . blockTxHash)
-    txs <- runConduit $ c .| maybe (mapC id) takeC mlimit .| sinkList
+        pm = H.fromList $ map f bs
+    txs <- runConduit $ xpubTxsFull l s bs .| sinkList
     let as =
             nub
                 [ a
@@ -419,9 +457,9 @@ xpubSummary mlimit mbr xpub = do
     return
         XPubSummary
             { xPubSummaryReceived =
-                  sum (map (balanceTotalReceived . xPubBal) bals)
-            , xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bals)
-            , xPubSummaryZero = sum (map (balanceZero . xPubBal) bals)
+                  sum (map (balanceTotalReceived . xPubBal) bs)
+            , xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
+            , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
             , xPubSummaryPaths = ps
             , xPubSummaryTxs = txs
             }
@@ -483,3 +521,111 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
                     Nothing -> sources1
                     Just b  -> (b, src2) : sources1
         go sources2
+
+getMempoolLimit ::
+       (Monad m, StoreStream m)
+    => Word32
+    -> StartFrom
+    -> ConduitT () TxHash m ()
+getMempoolLimit _ StartBlock {} = return ()
+getMempoolLimit l (StartMem u) =
+    getMempool (Just u) .| mapC snd .| takeC (fromIntegral l)
+getMempoolLimit l (StartOffset o) =
+    getMempool Nothing .| mapC snd .| dropC (fromIntegral o) .|
+    takeC (fromIntegral l)
+
+getAddressTxsLimit ::
+       (Monad m, StoreStream m)
+    => Word32
+    -> StartFrom
+    -> Address
+    -> ConduitT () BlockTx m ()
+getAddressTxsLimit l s a =
+    getAddressTxs a (mbr s) .| dropC (offset s) .| takeC (fromIntegral l)
+
+getAddressTxsFull ::
+       (Monad m, StoreStream m, StoreRead m)
+    => Word32
+    -> StartFrom
+    -> Address
+    -> ConduitT () Transaction m ()
+getAddressTxsFull l s a =
+    getAddressTxsLimit l s a .| concatMapMC (getTransaction . blockTxHash)
+
+getAddressesTxsLimit ::
+       (Monad m, StoreStream m)
+    => Word32
+    -> StartFrom
+    -> [Address]
+    -> ConduitT () BlockTx m ()
+getAddressesTxsLimit l s as =
+    mergeSourcesBy
+        (flip compare `on` blockTxBlock)
+        (map (`getAddressTxs` mbr s) as) .|
+    dedup .|
+    dropC (offset s) .|
+    takeC (fromIntegral l)
+
+getAddressesTxsFull ::
+       (Monad m, StoreStream m, StoreRead m)
+    => Word32
+    -> StartFrom
+    -> [Address]
+    -> ConduitT () Transaction m ()
+getAddressesTxsFull l s as =
+    mergeSourcesBy
+        (flip compare `on` blockTxBlock)
+        (map (`getAddressTxs` mbr s) as) .|
+    dedup .|
+    dropC (offset s) .|
+    takeC (fromIntegral l) .|
+    concatMapMC (getTransaction . blockTxHash)
+
+getAddressUnspentsLimit ::
+       (Monad m, StoreStream m)
+    => Word32
+    -> StartFrom
+    -> Address
+    -> ConduitT () Unspent m ()
+getAddressUnspentsLimit l s a =
+    getAddressUnspents a (mbr s) .| dropC (offset s) .| takeC (fromIntegral l)
+
+getAddressesUnspentsLimit ::
+       (Monad m, StoreStream m)
+    => Word32
+    -> StartFrom
+    -> [Address]
+    -> ConduitT () Unspent m ()
+getAddressesUnspentsLimit l s as =
+    mergeSourcesBy
+        (flip compare `on` unspentBlock)
+        (map (`getAddressUnspents` mbr s) as) .|
+    dropC (offset s) .|
+    takeC (fromIntegral l)
+
+offset :: StartFrom -> Int
+offset (StartOffset o) = fromIntegral o
+offset _               = 0
+
+mbr :: StartFrom -> Maybe BlockRef
+mbr (StartBlock h p) = Just (BlockRef h p)
+mbr (StartMem t)     = Just (MemRef t)
+mbr (StartOffset _)  = Nothing
+
+dedup :: (Eq i, Monad m) => ConduitT i i m ()
+dedup =
+    let dd Nothing =
+            await >>= \case
+                Just x -> do
+                    yield x
+                    dd (Just x)
+                Nothing -> return ()
+        dd (Just x) =
+            await >>= \case
+                Just y
+                    | x == y -> dd (Just x)
+                    | otherwise -> do
+                        yield y
+                        dd (Just y)
+                Nothing -> return ()
+      in dd Nothing

@@ -97,6 +97,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -159,6 +165,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -215,6 +227,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: Success
@@ -280,6 +298,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: Success
@@ -390,6 +414,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -446,6 +476,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -784,8 +820,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/TxId'
             application/octet-stream:
-              type: string
-              format: binary
+              schema:
+                type: string
+                format: binary
         '400':
           description: invalid transaction
         '500':
@@ -861,6 +898,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -962,6 +1005,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -1012,6 +1061,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -1064,6 +1119,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success
@@ -1181,6 +1242,12 @@ paths:
             type: integer
             format: int64
           description: top Unix time in milliseconds to return entries from mempool
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: how many elements to skip at the beginning when net specifying height or time
       responses:
         '200':
           description: success

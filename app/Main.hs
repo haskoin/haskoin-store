@@ -284,20 +284,11 @@ runWeb conf st db pub = do
             S.raw $ serialAny net proto res
         S.get "/mempool" $ do
             cors
-            (mlimit, mbr) <- parse_limits
-            mpu <-
-                case mbr of
-                    Just BlockRef {} ->
-                        raise $
-                        UserError "mempool transactions do not have height"
-                    Just (MemRef t) -> return $ Just t
-                    Nothing -> return Nothing
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
-                    runConduit $
-                        getMempool mpu .| mapC snd .| apply_limit mlimit .|
-                        streamAny net proto io
+                    runConduit $ getMempoolLimit l s .| streamAny net proto io
                     liftIO flush'
         S.get "/transaction/:txid" $ do
             cors
@@ -356,81 +347,63 @@ runWeb conf st db pub = do
             S.raw . L.concat $ map (Serialize.encodeLazy . transactionData) res
         S.get "/address/:address/transactions" $ do
             cors
-            address <- parse_address
-            (mlimit, mbr) <- parse_limits
+            a <- parse_address
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        getAddressTxs address mbr .| apply_limit mlimit .|
-                        streamAny net proto io
+                        getAddressTxsLimit l s a .| streamAny net proto io
                     liftIO flush'
         S.get "/address/:address/transactions/full" $ do
             cors
-            address <- parse_address
-            (mlimit, mbr) <- parse_limits
+            a <- parse_address
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        getAddressTxs address mbr .| apply_limit mlimit .|
-                        concatMapMC (getTransaction . blockTxHash) .|
-                        streamAny net proto io
+                        getAddressTxsFull l s a .| streamAny net proto io
                     liftIO flush'
         S.get "/address/transactions" $ do
             cors
-            addresses <- parse_addresses
-            (mlimit, mbr) <- parse_limits
+            as <- parse_addresses
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        mergeSourcesBy
-                            (flip compare `on` blockTxBlock)
-                            (map (`getAddressTxs` mbr) addresses) .|
-                        dedup .|
-                        apply_limit mlimit .|
-                        streamAny net proto io
+                        getAddressesTxsLimit l s as .| streamAny net proto io
                     liftIO flush'
         S.get "/address/transactions/full" $ do
             cors
-            addresses <- parse_addresses
-            (mlimit, mbr) <- parse_limits
+            as <- parse_addresses
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        mergeSourcesBy
-                            (flip compare `on` blockTxBlock)
-                            (map (`getAddressTxs` mbr) addresses) .|
-                        dedup .|
-                        apply_limit mlimit .|
-                        concatMapMC (getTransaction . blockTxHash) .|
-                        streamAny net proto io
+                        getAddressesTxsFull l s as .| streamAny net proto io
                     liftIO flush'
         S.get "/address/:address/unspent" $ do
             cors
-            address <- parse_address
-            (mlimit, mbr) <- parse_limits
+            a <- parse_address
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        getAddressUnspents address mbr .| apply_limit mlimit .|
-                        streamAny net proto io
+                        getAddressUnspentsLimit l s a .| streamAny net proto io
                     liftIO flush'
         S.get "/address/unspent" $ do
             cors
-            addresses <- parse_addresses
-            (mlimit, mbr) <- parse_limits
+            as <- parse_addresses
+            (l, s) <- parse_limits
             proto <- setupBin
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        mergeSourcesBy
-                            (flip compare `on` unspentBlock)
-                            (map (`getAddressUnspents` mbr) addresses) .|
-                        apply_limit mlimit .|
+                        getAddressesUnspentsLimit l s as .|
                         streamAny net proto io
                     liftIO flush'
         S.get "/address/:address/balance" $ do
@@ -478,48 +451,42 @@ runWeb conf st db pub = do
             S.raw $ serialAny net proto res
         S.get "/xpub/:xpub/transactions" $ do
             cors
-            xpub <- parse_xpub
-            (mlimit, mbr) <- parse_limits
+            x <- parse_xpub
+            (l, s) <- parse_limits
             proto <- setupBin
-            bals <- withBlockDB defaultReadOptions db $ xpubBals xpub
+            bs <- withBlockDB defaultReadOptions db $ xpubBals x
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
-                    runConduit $
-                        xpubTxs mbr bals .| dedup .| apply_limit mlimit .|
-                        streamAny net proto io
+                    runConduit $ xpubTxsLimit l s bs .| streamAny net proto io
                     liftIO flush'
         S.get "/xpub/:xpub/transactions/full" $ do
             cors
             xpub <- parse_xpub
-            (mlimit, mbr) <- parse_limits
+            (l, s) <- parse_limits
             proto <- setupBin
-            bals <- withBlockDB defaultReadOptions db $ xpubBals xpub
+            bs <- withBlockDB defaultReadOptions db $ xpubBals xpub
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
-                    runConduit $
-                        xpubTxs mbr bals .| dedup .| apply_limit mlimit .|
-                        concatMapMC (getTransaction . blockTxHash) .|
-                        streamAny net proto io
+                    runConduit $ xpubTxsFull l s bs .| streamAny net proto io
                     liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
             cors
-            xpub <- parse_xpub
+            x <- parse_xpub
             proto <- setupBin
-            (mlimit, mbr) <- parse_limits
+            (l, s) <- parse_limits
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        xpubUnspent mbr xpub .| apply_limit mlimit .|
-                        streamAny net proto io
+                        xpubUnspentLimit l s x .| streamAny net proto io
                     liftIO flush'
         S.get "/xpub/:xpub" $ do
             cors
-            xpub <- parse_xpub
-            (mlimit, mbr) <- parse_limits
+            x <- parse_xpub
+            (l, s) <- parse_limits
             proto <- setupBin
             res <-
                 lift . runResourceT $
-                withBlockDB defaultReadOptions db $ xpubSummary mlimit mbr xpub
+                withBlockDB defaultReadOptions db $ xpubSummary l s x
             S.raw $ serialAny net proto res
         S.post "/transactions" $ do
             cors
@@ -596,35 +563,16 @@ runWeb conf st db pub = do
         let b = do
                 height <- param "height"
                 pos <- param "pos" `rescue` const (return maxBound)
-                return $ BlockRef height pos
+                return $ StartBlock height pos
             m = do
                 time <- param "time"
-                return $ MemRef (PreciseUnixTime time)
-        mlimit <- fmap Just (param "limit") `rescue` const (return Nothing)
-        case mlimit of
-            Just l
-                | l < 0 -> raise $ UserError "limit cannot be negative"
-            _ -> return ()
-        mbr <- Just <$> b <|> Just <$> m <|> return Nothing
-        return (mlimit, mbr)
-    apply_limit Nothing = mapC id
-    apply_limit (Just l) = takeC l
-    dedup =
-        let dd Nothing =
-                await >>= \case
-                    Just x -> do
-                        yield x
-                        dd (Just x)
-                    Nothing -> return ()
-            dd (Just x) =
-                await >>= \case
-                    Just y
-                        | x == y -> dd (Just x)
-                        | otherwise -> do
-                            yield y
-                            dd (Just y)
-                    Nothing -> return ()
-         in dd Nothing
+                return $ StartMem (PreciseUnixTime time)
+            o = do
+                o <- param "offset" `rescue` const (return 0)
+                return $ StartOffset o
+        l <- param "limit" `rescue` const (return maxBound)
+        s <- b <|> m <|> o
+        return (l, s)
     parse_address = do
         address <- param "address"
         case stringToAddr net address of

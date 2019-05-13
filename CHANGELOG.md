@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Endpoint for xpub summaries.
 - Endpoints for full transactions.
+- Ability to filter by offset/limit.
 
 ## 0.14.7
 ### Added
