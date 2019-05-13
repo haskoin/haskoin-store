@@ -1279,6 +1279,34 @@ components:
           example: [1, 10]
         unspent:
           $ref: '#/components/schemas/Unspent'
+    XPubSummary:
+      type: object
+      required:
+        - balance
+        - paths
+        - txs
+      properties:
+        balance:
+          type: object
+          required:
+            - received
+            - confirmed
+            - unconfirmed
+          properties:
+            recived:
+              type: integer
+            confirmed:
+              type: integer
+            unconfirmed:
+              type: integer
+        paths:
+          type: array
+          items:
+            type: integer
+        txs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
     BlockTx:
       type: object
       required:
