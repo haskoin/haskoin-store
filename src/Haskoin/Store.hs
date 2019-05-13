@@ -391,7 +391,7 @@ xpubTxsLimit ::
     -> [XPubBal]
     -> ConduitT () BlockTx m ()
 xpubTxsLimit l s bs = do
-    xpubTxs (mbr s) bs .| offset s .| limit l
+    xpubTxs (mbr s) bs .| (offset s >> limit l)
 
 xpubTxsFull ::
        (Monad m, BalanceRead m, StoreStream m, StoreRead m)
@@ -423,7 +423,7 @@ xpubUnspentLimit ::
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
 xpubUnspentLimit l s x =
-    xpubUnspent (mbr s) x .| offset s .| limit l
+    xpubUnspent (mbr s) x .| (offset s >> limit l)
 
 xpubSummary ::
        (Monad m, StoreStream m, BalanceRead m, StoreRead m)
@@ -531,7 +531,7 @@ getMempoolLimit _ StartBlock {} = return ()
 getMempoolLimit l (StartMem t) =
     getMempool (Just t) .| mapC snd .| limit l
 getMempoolLimit l s =
-    getMempool Nothing .| mapC snd .| offset s .| limit l
+    getMempool Nothing .| mapC snd .| (offset s >> limit l)
 
 getAddressTxsLimit ::
        (Monad m, StoreStream m)
@@ -540,7 +540,7 @@ getAddressTxsLimit ::
     -> Address
     -> ConduitT () BlockTx m ()
 getAddressTxsLimit l s a =
-    getAddressTxs a (mbr s) .| offset s .| limit l
+    getAddressTxs a (mbr s) .| (offset s >> limit l)
 
 getAddressTxsFull ::
        (Monad m, StoreStream m, StoreRead m)
@@ -562,8 +562,7 @@ getAddressesTxsLimit l s as =
         (flip compare `on` blockTxBlock)
         (map (`getAddressTxs` mbr s) as) .|
     dedup .|
-    offset s .|
-    limit l
+    (offset s >> limit l)
 
 getAddressesTxsFull ::
        (Monad m, StoreStream m, StoreRead m)
@@ -576,8 +575,7 @@ getAddressesTxsFull l s as =
         (flip compare `on` blockTxBlock)
         (map (`getAddressTxs` mbr s) as) .|
     dedup .|
-    offset s .|
-    limit l .|
+    (offset s >> limit l) .|
     concatMapMC (getTransaction . blockTxHash)
 
 getAddressUnspentsLimit ::
@@ -587,7 +585,7 @@ getAddressUnspentsLimit ::
     -> Address
     -> ConduitT () Unspent m ()
 getAddressUnspentsLimit l s a =
-    getAddressUnspents a (mbr s) .| offset s .| limit l
+    getAddressUnspents a (mbr s) .| (offset s >> limit l)
 
 getAddressesUnspentsLimit ::
        (Monad m, StoreStream m)
@@ -599,12 +597,11 @@ getAddressesUnspentsLimit l s as =
     mergeSourcesBy
         (flip compare `on` unspentBlock)
         (map (`getAddressUnspents` mbr s) as) .|
-    offset s .|
-    limit l
+    (offset s >> limit l)
 
 offset :: Monad m => StartFrom -> ConduitT i i m ()
 offset (StartOffset o) = dropC (fromIntegral o)
-offset _               = mapC id
+offset _               = return ()
 
 limit :: Monad m => Maybe Word32 -> ConduitT i i m ()
 limit Nothing  = mapC id
