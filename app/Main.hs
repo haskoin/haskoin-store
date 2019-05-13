@@ -570,7 +570,7 @@ runWeb conf st db pub = do
             o = do
                 o <- param "offset" `rescue` const (return 0)
                 return $ StartOffset o
-        l <- param "limit" `rescue` const (return maxBound)
+        l <- (Just <$> param "limit") `rescue` const (return Nothing)
         s <- b <|> m <|> o
         return (l, s)
     parse_address = do

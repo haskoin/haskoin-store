@@ -386,16 +386,16 @@ xpubTxs m bs = do
 
 xpubTxsLimit ::
        (Monad m, BalanceRead m, StoreStream m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> [XPubBal]
     -> ConduitT () BlockTx m ()
 xpubTxsLimit l s bs = do
-    xpubTxs (mbr s) bs .| dropC (offset s) .| takeC (fromIntegral l)
+    xpubTxs (mbr s) bs .| offset s .| limit l
 
 xpubTxsFull ::
        (Monad m, BalanceRead m, StoreStream m, StoreRead m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> [XPubBal]
     -> ConduitT () Transaction m ()
@@ -418,16 +418,16 @@ xpubUnspent mbr xpub = do
 
 xpubUnspentLimit ::
        (Monad m, StoreStream m, BalanceRead m, StoreRead m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
 xpubUnspentLimit l s x =
-    xpubUnspent (mbr s) x .| dropC (offset s) .| takeC (fromIntegral l)
+    xpubUnspent (mbr s) x .| offset s .| limit l
 
 xpubSummary ::
        (Monad m, StoreStream m, BalanceRead m, StoreRead m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> XPubKey
     -> m XPubSummary
@@ -524,28 +524,27 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
 
 getMempoolLimit ::
        (Monad m, StoreStream m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> ConduitT () TxHash m ()
 getMempoolLimit _ StartBlock {} = return ()
-getMempoolLimit l (StartMem u) =
-    getMempool (Just u) .| mapC snd .| takeC (fromIntegral l)
-getMempoolLimit l (StartOffset o) =
-    getMempool Nothing .| mapC snd .| dropC (fromIntegral o) .|
-    takeC (fromIntegral l)
+getMempoolLimit l (StartMem t) =
+    getMempool (Just t) .| mapC snd .| limit l
+getMempoolLimit l s =
+    getMempool Nothing .| mapC snd .| offset s .| limit l
 
 getAddressTxsLimit ::
        (Monad m, StoreStream m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> Address
     -> ConduitT () BlockTx m ()
 getAddressTxsLimit l s a =
-    getAddressTxs a (mbr s) .| dropC (offset s) .| takeC (fromIntegral l)
+    getAddressTxs a (mbr s) .| offset s .| limit l
 
 getAddressTxsFull ::
        (Monad m, StoreStream m, StoreRead m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> Address
     -> ConduitT () Transaction m ()
@@ -554,7 +553,7 @@ getAddressTxsFull l s a =
 
 getAddressesTxsLimit ::
        (Monad m, StoreStream m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> [Address]
     -> ConduitT () BlockTx m ()
@@ -563,12 +562,12 @@ getAddressesTxsLimit l s as =
         (flip compare `on` blockTxBlock)
         (map (`getAddressTxs` mbr s) as) .|
     dedup .|
-    dropC (offset s) .|
-    takeC (fromIntegral l)
+    offset s .|
+    limit l
 
 getAddressesTxsFull ::
        (Monad m, StoreStream m, StoreRead m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> [Address]
     -> ConduitT () Transaction m ()
@@ -577,22 +576,22 @@ getAddressesTxsFull l s as =
         (flip compare `on` blockTxBlock)
         (map (`getAddressTxs` mbr s) as) .|
     dedup .|
-    dropC (offset s) .|
-    takeC (fromIntegral l) .|
+    offset s .|
+    limit l .|
     concatMapMC (getTransaction . blockTxHash)
 
 getAddressUnspentsLimit ::
        (Monad m, StoreStream m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> Address
     -> ConduitT () Unspent m ()
 getAddressUnspentsLimit l s a =
-    getAddressUnspents a (mbr s) .| dropC (offset s) .| takeC (fromIntegral l)
+    getAddressUnspents a (mbr s) .| offset s .| limit l
 
 getAddressesUnspentsLimit ::
        (Monad m, StoreStream m)
-    => Word32
+    => Maybe Word32
     -> StartFrom
     -> [Address]
     -> ConduitT () Unspent m ()
@@ -600,12 +599,16 @@ getAddressesUnspentsLimit l s as =
     mergeSourcesBy
         (flip compare `on` unspentBlock)
         (map (`getAddressUnspents` mbr s) as) .|
-    dropC (offset s) .|
-    takeC (fromIntegral l)
+    offset s .|
+    limit l
 
-offset :: StartFrom -> Int
-offset (StartOffset o) = fromIntegral o
-offset _               = 0
+offset :: Monad m => StartFrom -> ConduitT i i m ()
+offset (StartOffset o) = dropC (fromIntegral o)
+offset _               = mapC id
+
+limit :: Monad m => Maybe Word32 -> ConduitT i i m ()
+limit Nothing  = mapC id
+limit (Just n) = takeC (fromIntegral n)
 
 mbr :: StartFrom -> Maybe BlockRef
 mbr (StartBlock h p) = Just (BlockRef h p)
