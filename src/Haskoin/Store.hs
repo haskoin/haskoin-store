@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TupleSections         #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -51,6 +52,7 @@ module Haskoin.Store
     , xpubTxs
     , xpubBals
     , xpubUnspent
+    , xpubSummary
     , publishTx
     , transactionData
     , isCoinbase
@@ -71,6 +73,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans.Maybe
 import           Data.Foldable
 import           Data.Function
+import qualified Data.HashMap.Strict                as H
 import           Data.List
 import           Data.Maybe
 import           Data.Serialize                     (decode)
@@ -361,10 +364,9 @@ xpubBals xpub = (<>) <$> go 0 0 <*> go 1 0
 xpubTxs ::
        (Monad m, BalanceRead m, StoreStream m)
     => Maybe BlockRef
-    -> XPubKey
+    -> [XPubBal]
     -> ConduitT () BlockTx m ()
-xpubTxs mbr xpub = do
-    bals <- lift $ xpubBals xpub
+xpubTxs mbr bals = do
     xs <-
         forM bals $ \XPubBal {xPubBal = b} ->
             return $ getAddressTxs (balanceAddress b) mbr
@@ -383,6 +385,46 @@ xpubUnspent mbr xpub = do
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
+
+xpubSummary ::
+       (Monad m, StoreStream m, BalanceRead m, StoreRead m)
+    => Maybe Int
+    -> Maybe BlockRef
+    -> XPubKey
+    -> m XPubSummary
+xpubSummary mlimit mbr xpub = do
+    bals <- xpubBals xpub
+    let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
+            (a, p)
+        pm = H.fromList $ map f bals
+        c = xpubTxs mbr bals .| concatMapMC (getTransaction . blockTxHash)
+    txs <- runConduit $ c .| maybe (mapC id) takeC mlimit .| sinkList
+    let as =
+            nub
+                [ a
+                | t <- txs
+                , let is = transactionInputs t
+                , let os = transactionOutputs t
+                , let ais =
+                          mapMaybe
+                              (eitherToMaybe . scriptToAddressBS . inputPkScript)
+                              is
+                , let aos =
+                          mapMaybe
+                              (eitherToMaybe . scriptToAddressBS . outputScript)
+                              os
+                , a <- ais ++ aos
+                ]
+        ps = H.fromList $ mapMaybe (\a -> (a, ) <$> H.lookup a pm) as
+    return
+        XPubSummary
+            { xPubSummaryReceived =
+                  sum (map (balanceTotalReceived . xPubBal) bals)
+            , xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bals)
+            , xPubSummaryZero = sum (map (balanceZero . xPubBal) bals)
+            , xPubSummaryPaths = ps
+            , xPubSummaryTxs = txs
+            }
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
 -- specified height. Returns 'Nothing' if answer cannot be computed before

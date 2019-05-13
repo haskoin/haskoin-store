@@ -5,7 +5,7 @@ servers:
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 info:
-  version: '0.14.7'
+  version: '0.14.8'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -121,6 +121,59 @@ paths:
                 format: binary
         '404':
           description: invalid address
+  '/address/{address}/transactions/full':
+    get:
+      tags:
+        - address
+      summary: get transactions for an address
+      operationId: getAddressTxsFull
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: maximum number of entries to return
+        - name: height
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top height in the blockchain
+        - name: pos
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top transaction position in the block at height specified
+        - name: time
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: top Unix time in milliseconds to return entries from mempool
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: invalid address
   '/address/transactions':
     get:
       tags:
@@ -180,6 +233,62 @@ paths:
                     block:
                       height: 1283391
                       position: 1
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: invalid address
+  '/address/transactions/full':
+    get:
+      tags:
+        - address
+      summary: get transactions for multiple addresses
+      operationId: getMultipleAddressTxsFull
+      parameters:
+        - name: addresses
+          in: query
+          explode: false
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: maximum number of entries to return
+        - name: height
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top height in the blockchain
+        - name: pos
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top transaction position in the block at height specified
+        - name: time
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: top Unix time in milliseconds to return entries from mempool
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
             application/octet-stream:
               schema:
                 type: string
@@ -818,6 +927,108 @@ paths:
               schema:
                 type: string
                 format: binary
+  '/xpub/{xpub}':
+    get:
+      tags:
+        - address
+      operationId: getXPubSummary
+      parameters:
+        - name: xpub
+          in: path
+          required: true
+          schema:
+            type: string
+            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: maximum number of transactions to return
+        - name: height
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top height in the blockchain
+        - name: pos
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top transaction position in the block at height specified
+        - name: time
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: top Unix time in milliseconds to return entries from mempool
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/XPubSummary'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: invalid xpub
+  '/xpub/{xpub}/transactions/full':
+    get:
+      tags:
+        - address
+      operationId: getXPubTransactionsFull
+      parameters:
+        - name: xpub
+          in: path
+          required: true
+          schema:
+            type: string
+            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: maximum number of entries to return
+        - name: height
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top height in the blockchain
+        - name: pos
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: top transaction position in the block at height specified
+        - name: time
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: top Unix time in milliseconds to return entries from mempool
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: invalid xpub
   '/xpub/{xpub}/transactions':
     get:
       tags:

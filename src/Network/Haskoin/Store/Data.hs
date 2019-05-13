@@ -7,6 +7,7 @@ module Network.Haskoin.Store.Data where
 
 import           Conduit
 import           Control.Applicative
+import           Control.Arrow             (first)
 import           Control.Monad
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson                as A
@@ -16,6 +17,8 @@ import qualified Data.ByteString           as B
 import           Data.ByteString.Short     (ShortByteString)
 import qualified Data.ByteString.Short     as B.Short
 import           Data.Hashable
+import           Data.HashMap.Strict       (HashMap)
+import qualified Data.HashMap.Strict       as H
 import           Data.Int
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
@@ -124,6 +127,12 @@ instance JsonSerial TxHash where
 
 instance BinSerial TxHash where
     binSerial _ = put
+
+instance BinSerial Address where
+    binSerial net a =
+        case addrToString net a of
+            Nothing -> put B.empty
+            Just x -> put $ T.encodeUtf8 x
 
 class BinSerial a where
     binSerial :: Network -> Putter a
@@ -257,7 +266,7 @@ instance BinSerial Balance where
                           , balanceTxCount = c
                           , balanceTotalReceived = t
                           } = do
-        put $ T.encodeUtf8 <$> (addrToString net a)
+        binSerial net a
         putWord64be v
         putWord64be z
         putWord64be u
@@ -473,24 +482,26 @@ instance BinSerial StoreInput where
         put $
             case i of
                 StoreCoinbase {} -> True
-                StoreInput {}    -> False
+                StoreInput {} -> False
         put $ inputPoint i
         putWord32be $ inputSequence i
         put $ inputSigScript i
         put $ inputWitness i
-        put $
-            case i of
-                StoreCoinbase {} -> Nothing
-                StoreInput {inputPkScript = s} ->
-                    fmap T.encodeUtf8 <$> addrToString net =<<
-                    eitherToMaybe (scriptToAddressBS s)
+        let a =
+                case i of
+                    StoreCoinbase {} -> Nothing
+                    StoreInput {inputPkScript = s} ->
+                        eitherToMaybe (scriptToAddressBS s)
+        case a of
+            Nothing -> put B.empty
+            Just x -> binSerial net x
         putWord64be $
             case i of
-                StoreCoinbase {}             -> 0
+                StoreCoinbase {} -> 0
                 StoreInput {inputAmount = v} -> v
         put $
             case i of
-                StoreCoinbase {}               -> B.empty
+                StoreCoinbase {} -> B.empty
                 StoreInput {inputPkScript = s} -> s
 
 -- | Information about input spending output.
@@ -811,6 +822,58 @@ instance BinSerial XPubUnspent where
     binSerial net XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} = do
         put p
         binSerial net u
+
+data XPubSummary =
+    XPubSummary
+        { xPubSummaryReceived  :: !Word64
+        , xPubSummaryConfirmed :: !Word64
+        , xPubSummaryZero      :: !Word64
+        , xPubSummaryPaths     :: !(HashMap Address [KeyIndex])
+        , xPubSummaryTxs       :: ![Transaction]
+        }
+    deriving (Eq, Show, Generic)
+
+xPubSummaryPairs :: A.KeyValue kv => Network -> XPubSummary -> [kv]
+xPubSummaryPairs net XPubSummary { xPubSummaryReceived = r
+                                 , xPubSummaryConfirmed = c
+                                 , xPubSummaryZero = z
+                                 , xPubSummaryPaths = ps
+                                 , xPubSummaryTxs = ts
+                                 } =
+    [ "balance" .=
+      object ["received" .= r, "confirmed" .= c, "unconfirmed" .= z]
+    , "paths" .= object (mapMaybe (uncurry f) (H.toList ps))
+    , "txs" .= map (transactionToJSON net) ts
+    ]
+  where
+    f a p = (.= p) <$> addrToString net a
+
+xPubSummaryToJSON :: Network -> XPubSummary -> Value
+xPubSummaryToJSON net = object . xPubSummaryPairs net
+
+xPubSummaryToEncoding :: Network -> XPubSummary -> Encoding
+xPubSummaryToEncoding net = pairs . mconcat . xPubSummaryPairs net
+
+instance JsonSerial XPubSummary where
+    jsonSerial = xPubSummaryToEncoding
+    jsonValue = xPubSummaryToJSON
+
+instance BinSerial XPubSummary where
+    binSerial net XPubSummary { xPubSummaryReceived = r
+                              , xPubSummaryConfirmed = c
+                              , xPubSummaryZero = z
+                              , xPubSummaryPaths = ps
+                              , xPubSummaryTxs = ts
+                              } = do
+        put r
+        put c
+        put z
+        putWord64be (fromIntegral $ H.size ps)
+        forM_ (H.toList ps) $ \(a, p) -> do
+            binSerial net a
+            put p
+        putWord64be (fromIntegral $ length ts)
+        forM_ ts $ binSerial net
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)

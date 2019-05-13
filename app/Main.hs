@@ -365,6 +365,18 @@ runWeb conf st db pub = do
                         getAddressTxs address mbr .| apply_limit mlimit .|
                         streamAny net proto io
                     liftIO flush'
+        S.get "/address/:address/transactions/full" $ do
+            cors
+            address <- parse_address
+            (mlimit, mbr) <- parse_limits
+            proto <- setupBin
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        getAddressTxs address mbr .| apply_limit mlimit .|
+                        concatMapMC (getTransaction . blockTxHash) .|
+                        streamAny net proto io
+                    liftIO flush'
         S.get "/address/transactions" $ do
             cors
             addresses <- parse_addresses
@@ -378,6 +390,22 @@ runWeb conf st db pub = do
                             (map (`getAddressTxs` mbr) addresses) .|
                         dedup .|
                         apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
+        S.get "/address/transactions/full" $ do
+            cors
+            addresses <- parse_addresses
+            (mlimit, mbr) <- parse_limits
+            proto <- setupBin
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        mergeSourcesBy
+                            (flip compare `on` blockTxBlock)
+                            (map (`getAddressTxs` mbr) addresses) .|
+                        dedup .|
+                        apply_limit mlimit .|
+                        concatMapMC (getTransaction . blockTxHash) .|
                         streamAny net proto io
                     liftIO flush'
         S.get "/address/:address/unspent" $ do
@@ -453,10 +481,24 @@ runWeb conf st db pub = do
             xpub <- parse_xpub
             (mlimit, mbr) <- parse_limits
             proto <- setupBin
+            bals <- withBlockDB defaultReadOptions db $ xpubBals xpub
             stream $ \io flush' ->
                 runResourceT . withBlockDB defaultReadOptions db $ do
                     runConduit $
-                        xpubTxs mbr xpub .| dedup .| apply_limit mlimit .|
+                        xpubTxs mbr bals .| dedup .| apply_limit mlimit .|
+                        streamAny net proto io
+                    liftIO flush'
+        S.get "/xpub/:xpub/transactions/full" $ do
+            cors
+            xpub <- parse_xpub
+            (mlimit, mbr) <- parse_limits
+            proto <- setupBin
+            bals <- withBlockDB defaultReadOptions db $ xpubBals xpub
+            stream $ \io flush' ->
+                runResourceT . withBlockDB defaultReadOptions db $ do
+                    runConduit $
+                        xpubTxs mbr bals .| dedup .| apply_limit mlimit .|
+                        concatMapMC (getTransaction . blockTxHash) .|
                         streamAny net proto io
                     liftIO flush'
         S.get "/xpub/:xpub/unspent" $ do
@@ -470,6 +512,15 @@ runWeb conf st db pub = do
                         xpubUnspent mbr xpub .| apply_limit mlimit .|
                         streamAny net proto io
                     liftIO flush'
+        S.get "/xpub/:xpub" $ do
+            cors
+            xpub <- parse_xpub
+            (mlimit, mbr) <- parse_limits
+            proto <- setupBin
+            res <-
+                lift . runResourceT $
+                withBlockDB defaultReadOptions db $ xpubSummary mlimit mbr xpub
+            S.raw $ serialAny net proto res
         S.post "/transactions" $ do
             cors
             proto <- setupBin
@@ -483,7 +534,8 @@ runWeb conf st db pub = do
             lift (publishTx net pub st db tx) >>= \case
                 Right () -> do
                     S.raw $ serialAny net proto (TxId (txHash tx))
-                    lift $ $(logDebugS) "Main" $
+                    lift $
+                        $(logDebugS) "Main" $
                         "Success publishing tx " <> txHashToHex (txHash tx)
                 Left e -> do
                     case e of
@@ -493,7 +545,8 @@ runWeb conf st db pub = do
                         PubNotFound -> status status500
                         PubReject _ -> status status400
                     S.raw $ serialAny net proto (UserError (show e))
-                    lift $ $(logErrorS) "Main" $
+                    lift $
+                        $(logErrorS) "Main" $
                         "Error publishing tx " <> txHashToHex (txHash tx) <>
                         ": " <>
                         cs (show e)
