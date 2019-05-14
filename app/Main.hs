@@ -566,7 +566,7 @@ runWeb conf st db pub = do
                 return $ StartBlock height pos
             m = do
                 time <- param "time"
-                return $ StartMem (PreciseUnixTime time)
+                return $ StartMem time
             o = do
                 o <- param "offset" `rescue` const (return 0)
                 return $ StartOffset o

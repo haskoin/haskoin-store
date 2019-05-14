@@ -141,7 +141,7 @@ addrOutOps = concat . concatMap (uncurry f) . M.toList
         deleteOp AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p}
 
 mempoolOps ::
-       HashMap PreciseUnixTime (HashMap TxHash Bool) -> [BatchOp]
+       HashMap UnixTime (HashMap TxHash Bool) -> [BatchOp]
 mempoolOps = concatMap (uncurry f) . M.toList
   where
     f u = map (uncurry (g u)) . M.toList
@@ -211,11 +211,11 @@ removeAddrUnspentI :: MonadIO m => Address -> Unspent -> ImportDB -> m ()
 removeAddrUnspentI a u ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ removeAddrUnspent a u
 
-insertMempoolTxI :: MonadIO m => TxHash -> PreciseUnixTime -> ImportDB -> m ()
+insertMempoolTxI :: MonadIO m => TxHash -> UnixTime -> ImportDB -> m ()
 insertMempoolTxI t p ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ insertMempoolTx t p
 
-deleteMempoolTxI :: MonadIO m => TxHash -> PreciseUnixTime -> ImportDB -> m ()
+deleteMempoolTxI :: MonadIO m => TxHash -> UnixTime -> ImportDB -> m ()
 deleteMempoolTxI t p ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ deleteMempoolTx t p
 

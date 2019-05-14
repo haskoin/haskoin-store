@@ -160,7 +160,7 @@ processBlock p b = do
         net <- blockConfNet <$> asks myConfig
         um <- asks myUnspent
         bm <- asks myBalances
-        runExceptT (newBlock net db um bm b n) >>= \case
+        runExceptT (runImportDB db um bm $ importBlock net b n) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
@@ -183,7 +183,7 @@ processBlock p b = do
                 if nodeHeader h == blockHeader b
                     then resetPeer
                     else do
-                        now <- systemSeconds <$> liftIO getSystemTime
+                        now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
                         asks myPeer >>=
                             atomically .
                             (`writeTVar` Just s {syncingTime = now})
@@ -225,7 +225,7 @@ processTx _p tx =
             "Ignoring incoming tx (not synced yet): " <> txHashToHex (txHash tx)
         True -> do
             $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
-            now <- preciseUnixTime <$> liftIO getSystemTime
+            now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
             um <- asks myUnspent
             bm <- asks myBalances
@@ -279,7 +279,7 @@ checkTime =
     asks myPeer >>= readTVarIO >>= \case
         Nothing -> $(logDebugS) "Block" "Peer timeout check: no syncing peer"
         Just Syncing {syncingTime = t, syncingPeer = p} -> do
-            n <- systemSeconds <$> liftIO getSystemTime
+            n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             if n > t + 60
                 then do
                     $(logErrorS) "Block" "Peer timeout"
@@ -427,7 +427,7 @@ resetPeer = do
 setPeer :: (MonadIO m, MonadReader BlockRead m) => Peer -> BlockNode -> m ()
 setPeer p b = do
     box <- asks myPeer
-    now <- systemSeconds <$> liftIO getSystemTime
+    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     atomically . writeTVar box $
         Just Syncing {syncingPeer = p, syncingHead = b, syncingTime = now}
 

@@ -45,7 +45,7 @@ data HashMapDB = HashMapDB
     , hBalance :: !(HashMap Address BalVal)
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
-    , hMempool :: !(HashMap PreciseUnixTime (HashMap TxHash Bool))
+    , hMempool :: !(HashMap UnixTime (HashMap TxHash Bool))
     , hInit :: !Bool
     } deriving (Eq, Show)
 
@@ -104,9 +104,9 @@ getBalanceH a = fmap f . M.lookup a . hBalance
 
 getMempoolH ::
        Monad m
-    => Maybe PreciseUnixTime
+    => Maybe UnixTime
     -> HashMapDB
-    -> ConduitT () (PreciseUnixTime, TxHash) m ()
+    -> ConduitT () (UnixTime, TxHash) m ()
 getMempoolH mpu db =
     let f ts =
             case mpu of
@@ -254,12 +254,12 @@ removeAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-insertMempoolTxH :: TxHash -> PreciseUnixTime -> HashMapDB -> HashMapDB
+insertMempoolTxH :: TxHash -> UnixTime -> HashMapDB -> HashMapDB
 insertMempoolTxH h u db =
     let s = M.singleton u (M.singleton h True)
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
-deleteMempoolTxH :: TxHash -> PreciseUnixTime -> HashMapDB -> HashMapDB
+deleteMempoolTxH :: TxHash -> UnixTime -> HashMapDB -> HashMapDB
 deleteMempoolTxH h u db =
     let s = M.singleton u (M.singleton h False)
      in db {hMempool = M.unionWith M.union s (hMempool db)}

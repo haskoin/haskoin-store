@@ -186,9 +186,9 @@ instance R.KeyValue UnspentKey UnspentVal
 
 -- | Mempool transaction database key.
 data MemKey
-    = MemKey { memTime :: !PreciseUnixTime
+    = MemKey { memTime :: !UnixTime
              , memKey  :: !TxHash }
-    | MemKeyT { memTime :: !PreciseUnixTime }
+    | MemKeyT { memTime :: !UnixTime }
     | MemKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
@@ -196,16 +196,16 @@ instance Serialize MemKey where
     -- 0x07 · TxHash
     put (MemKey t h) = do
         putWord8 0x07
-        put t
+        putUnixTime t
         put h
     put (MemKeyT t) = do
         putWord8 0x07
-        put t
+        putUnixTime t
     -- 0x07
     put MemKeyS = putWord8 0x07
     get = do
         guard . (== 0x07) =<< getWord8
-        MemKey <$> get <*> get
+        MemKey <$> getUnixTime <*> get
 
 instance R.Key MemKey
 instance R.KeyValue MemKey ()

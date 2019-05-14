@@ -18,6 +18,7 @@ import           Data.List
 import           Data.Maybe
 import           Data.Serialize
 import           Data.String
+import           Data.String.Conversions             (cs)
 import           Data.Text                           (Text)
 import           Data.Word
 import           Database.RocksDB
@@ -88,9 +89,9 @@ newMempoolTx ::
        )
     => Network
     -> Tx
-    -> PreciseUnixTime
+    -> UnixTime
     -> m Bool
-newMempoolTx net tx now@(PreciseUnixTime w) = do
+newMempoolTx net tx w = do
     $(logInfoS) "BlockLogic" $
         "Adding transaction to mempool: " <> txHashToHex (txHash tx)
     getTxData (txHash tx) >>= \case
@@ -119,7 +120,7 @@ newMempoolTx net tx now@(PreciseUnixTime w) = do
         let ds = map spenderHash (mapMaybe outputSpender us)
         if null ds
             then do
-                importTx net (MemRef now) (w `div` 1000) tx
+                importTx net (MemRef w) w tx
                 return True
             else g ds
     g ds = do
@@ -136,26 +137,15 @@ newMempoolTx net tx now@(PreciseUnixTime w) = do
         $(logWarnS) "BlockLogic" $
             "Replacting RBF transaction with: " <> txHashToHex (txHash tx)
         forM_ ds (deleteTx net True)
-        importTx net (MemRef now) (w `div` 1000) tx
+        importTx net (MemRef w) w tx
         return True
     n = do
         $(logWarnS) "BlockLogic" $
             "Inserting transaction with deleted flag: " <>
             txHashToHex (txHash tx)
-        insertDeletedMempoolTx tx now
+        insertDeletedMempoolTx tx w
         return False
     isrbf th = transactionRBF <$> getImportTx th
-
-newBlock ::
-       (MonadError ImportException m, MonadIO m, MonadLogger m)
-    => Network
-    -> DB
-    -> TVar UnspentMap
-    -> TVar BalanceMap
-    -> Block
-    -> BlockNode
-    -> m ()
-newBlock net db um bm b n = runImportDB db um bm $ importBlock net b n
 
 revertBlock ::
        ( MonadError ImportException m
@@ -244,22 +234,30 @@ importBlock net b n = do
     insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
     zipWithM_
-        (\x t ->
-             importTx
-                 net
-                 (br x)
-                 (fromIntegral (blockTimestamp (nodeHeader n)))
-                 t)
+        (\x t -> import_or_confirm (br x) t)
         [0 ..]
         (sortTxs (blockTxns b))
   where
+    import_or_confirm b tx =
+        getTxData (txHash tx) >>= \case
+            Just t
+                | not (txDataDeleted t) -> confirmTx net t b tx
+            _ ->
+                importTx net b (fromIntegral (blockTimestamp (nodeHeader n))) tx
     subsidy = computeSubsidy net
     cb_out_val = sum (map outValue (txOut (head (blockTxns b))))
     ts_out_val = sum (map (sum . map outValue . txOut) (tail (blockTxns b)))
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
-    w = let s = B.length (encode b {blockTxns = map (\t -> t {txWitness = []}) (blockTxns b)})
+    w =
+        let s =
+                B.length
+                    (encode
+                         b
+                             { blockTxns =
+                                   map (\t -> t {txWitness = []}) (blockTxns b)
+                             })
             x = B.length (encode b)
-        in s * 3 + x
+         in s * 3 + x
 
 sortTxs :: [Tx] -> [Tx]
 sortTxs [] = []
@@ -307,75 +305,35 @@ importTx net br tt tx = do
             "Insufficient funds: " <> txHashToHex (txHash tx)
         throwError (InsufficientFunds th)
     zipWithM_ (spendOutput net br (txHash tx)) [0 ..] us
-    if | iscb || not (null us) ->
-           do zipWithM_
-                  (newOutput br . OutPoint (txHash tx))
-                  [0 ..]
-                  (txOut tx)
-              rbf <- getrbf
-              let t =
-                      Transaction
-                          { transactionBlock = br
-                          , transactionVersion = txVersion tx
-                          , transactionLockTime = txLockTime tx
-                          , transactionInputs =
-                                if iscb
-                                    then zipWith mkcb (txIn tx) ws
-                                    else zipWith3 mkin us (txIn tx) ws
-                          , transactionOutputs = map mkout (txOut tx)
-                          , transactionDeleted = False
-                          , transactionRBF = rbf
-                          , transactionTime = tt
-                          }
-              let (d, _) = fromTransaction t
-              insertTx d
-              updateAddressCounts (txAddresses t) (+1)
-              unless (confirmed br) $
-                  insertMempoolTx (txHash tx) (memRefTime br)
-       | null us && confirmed br -> confirmTx net br tx
-       | otherwise ->
-           do $(logErrorS) "BlockLogic" $
-                  "Invalid operation required for transaction: " <>
-                  txHashToHex (txHash tx)
-              throwError (TxInvalidOp (txHash tx))
+    zipWithM_ (newOutput br . OutPoint (txHash tx)) [0 ..] (txOut tx)
+    rbf <- getrbf
+    let t =
+            Transaction
+                { transactionBlock = br
+                , transactionVersion = txVersion tx
+                , transactionLockTime = txLockTime tx
+                , transactionInputs =
+                      if iscb
+                          then zipWith mkcb (txIn tx) ws
+                          else zipWith3 mkin us (txIn tx) ws
+                , transactionOutputs = map mkout (txOut tx)
+                , transactionDeleted = False
+                , transactionRBF = rbf
+                , transactionTime = tt
+                }
+    let (d, _) = fromTransaction t
+    insertTx d
+    updateAddressCounts (txAddresses t) (+ 1)
+    unless (confirmed br) $ insertMempoolTx (txHash tx) (memRefTime br)
   where
     uns op =
         getUnspent op >>= \case
-            Nothing
-                | confirmed br -> do
-                    $(logWarnS) "BlockLogic" $
-                        "Could not find unspent output: " <>
-                        txHashToHex (outPointHash op) <>
-                        " " <>
-                        fromString (show (outPointIndex op))
-                    getSpender op >>= \case
-                        Nothing -> do
-                            $(logErrorS) "BlockLogic" $
-                                "Could not find output: " <>
-                                txHashToHex (outPointHash op) <>
-                                " " <>
-                                fromString (show (outPointIndex op))
-                            throwError (OrphanTx (txHash tx))
-                        Just s
-                            | spenderHash s == txHash tx -> return Nothing
-                            | otherwise -> do
-                                $(logWarnS) "BlockLogic" $
-                                    "Deleting conflicting transaction: " <>
-                                    txHashToHex (spenderHash s)
-                                deleteTx net True (spenderHash s)
-                                getUnspent op >>= \case
-                                    Nothing -> do
-                                        $(logErrorS) "BlockLogic" $
-                                            "Transaction double-spend detected: " <>
-                                            txHashToHex (txHash tx)
-                                        throwError (TxDoubleSpend (txHash tx))
-                                    Just u -> return $ Just u
-                | otherwise -> do
-                    $(logErrorS) "BlockLogic" $
-                        "No unspent output: " <> txHashToHex (outPointHash op) <>
-                        " " <>
-                        fromString (show (outPointIndex op))
-                    throwError (NoUnspent op)
+            Nothing -> do
+                $(logErrorS) "BlockLogic" $
+                    "No unspent output: " <> txHashToHex (outPointHash op) <>
+                    " " <>
+                    fromString (show (outPointIndex op))
+                throwError (NoUnspent op)
             Just u -> return $ Just u
     th = txHash tx
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
@@ -427,82 +385,94 @@ confirmTx ::
        , MonadLogger m
        )
     => Network
+    -> TxData
     -> BlockRef
     -> Tx
     -> m ()
-confirmTx net br tx =
-    getTxData (txHash tx) >>= \case
-        Nothing -> do
-            $(logErrorS) "BlockLogic" $
-                "Transaction not found: " <> txHashToHex (txHash tx)
-            throwError (TxNotFound (txHash tx))
-        Just t -> do
-            forM_ (txDataPrevs t) $ \p ->
-                case scriptToAddressBS (prevScript p) of
-                    Left _ -> return ()
-                    Right a -> do
-                        removeAddrTx
-                            a
-                            BlockTx
-                                { blockTxBlock = txDataBlock t
-                                , blockTxHash = txHash tx
-                                }
-                        insertAddrTx
-                            a
-                            BlockTx
-                                { blockTxBlock = br
-                                , blockTxHash = txHash tx
-                                }
-            forM_ (zip [0 ..] (txOut tx)) $ \(n, o) -> do
-                let op = OutPoint (txHash tx) n
-                s <- getSpender (OutPoint (txHash tx) n)
+confirmTx net t br tx = do
+    $(logDebugS) "BlockLogic" $
+        "Confirming tx " <> txHashToHex (txHash tx) <> " previously on " <>
+        cs (show (txDataBlock t)) <>
+        " and now on " <>
+        cs (show br)
+    forM_ (txDataPrevs t) $ \p ->
+        case scriptToAddressBS (prevScript p) of
+            Left _ -> return ()
+            Right a -> do
+                $(logDebugS) "BlockLogic" $
+                    "Removing tx " <> txHashToHex (txHash tx) <>
+                    " from address " <>
+                    fromMaybe "???" (addrToString net a) <>
+                    " on " <>
+                    cs (show (txDataBlock t))
+                removeAddrTx
+                    a
+                    BlockTx
+                        {blockTxBlock = txDataBlock t, blockTxHash = txHash tx}
+                $(logDebugS) "BlockLogic" $ "Inserting tx " <>
+                    txHashToHex (txHash tx) <>
+                    " for address " <>
+                    fromMaybe "???" (addrToString net a) <>
+                    " on " <>
+                    cs (show br)
+                insertAddrTx
+                    a
+                    BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
+    forM_ (zip [0 ..] (txOut tx)) $ \(n, o) -> do
+        let op = OutPoint (txHash tx) n
+        s <- getSpender (OutPoint (txHash tx) n)
+        when (isNothing s) $ do
+            delUnspent op
+            addUnspent
+                Unspent
+                    { unspentBlock = br
+                    , unspentPoint = op
+                    , unspentAmount = outValue o
+                    , unspentScript = B.Short.toShort (scriptOutput o)
+                    }
+        case scriptToAddressBS (scriptOutput o) of
+            Left _ -> return ()
+            Right a -> do
+                $(logDebugS) "BlockLogic" $
+                    "Removing tx " <> txHashToHex (txHash tx) <>
+                    " from address " <>
+                    fromMaybe "???" (addrToString net a) <>
+                    " on " <>
+                    cs (show (txDataBlock t))
+                removeAddrTx
+                    a
+                    BlockTx
+                        {blockTxBlock = txDataBlock t, blockTxHash = txHash tx}
+                $(logDebugS) "BlockLogic" $ "Inserting tx " <>
+                    txHashToHex (txHash tx) <>
+                    " for address " <>
+                    fromMaybe "???" (addrToString net a) <>
+                    " on " <>
+                    cs (show br)
+                insertAddrTx
+                    a
+                    BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
                 when (isNothing s) $ do
-                    delUnspent op
-                    addUnspent
+                    removeAddrUnspent
+                        a
+                        Unspent
+                            { unspentBlock = txDataBlock t
+                            , unspentPoint = op
+                            , unspentAmount = outValue o
+                            , unspentScript = B.Short.toShort (scriptOutput o)
+                            }
+                    insertAddrUnspent
+                        a
                         Unspent
                             { unspentBlock = br
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
                             }
-                case scriptToAddressBS (scriptOutput o) of
-                    Left _ -> return ()
-                    Right a -> do
-                        removeAddrTx
-                            a
-                            BlockTx
-                                { blockTxBlock = txDataBlock t
-                                , blockTxHash = txHash tx
-                                }
-                        insertAddrTx
-                            a
-                            BlockTx
-                                { blockTxBlock = br
-                                , blockTxHash = txHash tx
-                                }
-                        when (isNothing s) $ do
-                            removeAddrUnspent
-                                a
-                                Unspent
-                                    { unspentBlock = txDataBlock t
-                                    , unspentPoint = op
-                                    , unspentAmount = outValue o
-                                    , unspentScript =
-                                          B.Short.toShort (scriptOutput o)
-                                    }
-                            insertAddrUnspent
-                                a
-                                Unspent
-                                    { unspentBlock = br
-                                    , unspentPoint = op
-                                    , unspentAmount = outValue o
-                                    , unspentScript =
-                                          B.Short.toShort (scriptOutput o)
-                                    }
-                            reduceBalance net False False a (outValue o)
-                            increaseBalance True False a (outValue o)
-            insertTx t {txDataBlock = br}
-            deleteMempoolTx (txHash tx) (memRefTime (txDataBlock t))
+                    reduceBalance net False False a (outValue o)
+                    increaseBalance True False a (outValue o)
+    insertTx t {txDataBlock = br}
+    deleteMempoolTx (txHash tx) (memRefTime (txDataBlock t))
 
 getRecursiveTx ::
        (Monad m, StoreRead m, MonadLogger m) => TxHash -> m [Transaction]
@@ -567,9 +537,9 @@ insertDeletedMempoolTx ::
        , MonadLogger m
        )
     => Tx
-    -> PreciseUnixTime
+    -> UnixTime
     -> m ()
-insertDeletedMempoolTx tx now@(PreciseUnixTime w) = do
+insertDeletedMempoolTx tx w = do
     us <-
         forM (txIn tx) $ \TxIn {prevOutput = op} ->
             getImportTx (outPointHash op) >>= getTxOutput (outPointIndex op)
@@ -577,14 +547,14 @@ insertDeletedMempoolTx tx now@(PreciseUnixTime w) = do
     let (d, _) =
             fromTransaction
                 Transaction
-                    { transactionBlock = MemRef now
+                    { transactionBlock = MemRef w
                     , transactionVersion = txVersion tx
                     , transactionLockTime = txLockTime tx
                     , transactionInputs = zipWith3 mkin us (txIn tx) ws
                     , transactionOutputs = map mkout (txOut tx)
                     , transactionDeleted = True
                     , transactionRBF = rbf
-                    , transactionTime = w `div` 1000
+                    , transactionTime = w
                     }
     $(logWarnS) "BlockLogic" $
         "Inserting deleted mempool transaction: " <> txHashToHex (txHash tx)

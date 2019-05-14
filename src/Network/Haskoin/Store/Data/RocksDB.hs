@@ -21,7 +21,7 @@ import           UnliftIO
 type BlockDB = (ReadOptions, DB)
 
 dataVersion :: Word32
-dataVersion = 14
+dataVersion = 15
 
 withBlockDB :: ReadOptions -> DB -> ReaderT BlockDB m a -> m a
 withBlockDB opts db f = R.runReaderT f (opts, db)
@@ -87,10 +87,10 @@ getBalanceDB a opts db = fmap f <$> retrieve db opts (BalKey a)
 
 getMempoolDB ::
        (MonadIO m, MonadResource m)
-    => Maybe PreciseUnixTime
+    => Maybe UnixTime
     -> ReadOptions
     -> DB
-    -> ConduitT () (PreciseUnixTime, TxHash) m ()
+    -> ConduitT () (UnixTime, TxHash) m ()
 getMempoolDB mpu opts db = x .| mapC (uncurry f)
   where
     x =

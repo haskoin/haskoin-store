@@ -28,7 +28,6 @@ import           Data.String.Conversions
 import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as T
 import qualified Data.Text.Lazy            as T.Lazy
-import           Data.Time.Clock.System
 import           Data.Word
 import           GHC.Generics
 import           Haskoin                   as H
@@ -37,7 +36,8 @@ import           Paths_haskoin_store       as P
 import           UnliftIO.Exception
 import qualified Web.Scotty.Trans          as Scotty
 
-type UnixTime = Int64
+type UnixTime = Word64
+type BlockPos = Word32
 
 newtype InitException = IncorrectVersion Word32
     deriving (Show, Read, Eq, Ord, Exception)
@@ -74,8 +74,7 @@ getTransaction h = runMaybeT $ do
     return $ toTransaction d sm
 
 class StoreStream m where
-    getMempool ::
-           Maybe PreciseUnixTime -> ConduitT () (PreciseUnixTime, TxHash) m ()
+    getMempool :: Maybe UnixTime -> ConduitT () (UnixTime, TxHash) m ()
     getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT () Unspent m ()
     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
 
@@ -91,27 +90,12 @@ class StoreWrite m where
     removeAddrTx :: Address -> BlockTx -> m ()
     insertAddrUnspent :: Address -> Unspent -> m ()
     removeAddrUnspent :: Address -> Unspent -> m ()
-    insertMempoolTx :: TxHash -> PreciseUnixTime -> m ()
-    deleteMempoolTx :: TxHash -> PreciseUnixTime -> m ()
-
--- | Unix time with nanosecond precision for mempool transactions.
-newtype PreciseUnixTime = PreciseUnixTime Word64
-    deriving (Show, Eq, Read, Generic, Ord, Hashable)
+    insertMempoolTx :: TxHash -> UnixTime -> m ()
+    deleteMempoolTx :: TxHash -> UnixTime -> m ()
 
 -- | Serialize such that ordering is inverted.
-instance Serialize PreciseUnixTime where
-    put (PreciseUnixTime w) = putWord64be $ maxBound - w
-    get = PreciseUnixTime . (maxBound -) <$> getWord64be
-
-preciseUnixTime :: SystemTime -> PreciseUnixTime
-preciseUnixTime s =
-    PreciseUnixTime . fromIntegral $
-    (systemSeconds s * 1000) +
-    (fromIntegral (systemNanoseconds s) `div` (1000 * 1000))
-
-instance ToJSON PreciseUnixTime where
-    toJSON (PreciseUnixTime w) = toJSON w
-    toEncoding (PreciseUnixTime w) = toEncoding w
+putUnixTime w = putWord64be $ maxBound - w
+getUnixTime = (maxBound -) <$> getWord64be
 
 class JsonSerial a where
     jsonSerial :: Network -> a -> Encoding
@@ -147,14 +131,14 @@ data BlockRef
                , blockRefPos    :: !Word32
       -- ^ position of transaction within the block
                 }
-    | MemRef { memRefTime :: !PreciseUnixTime }
+    | MemRef { memRefTime :: !UnixTime }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 -- | Serialized entities will sort in reverse order.
 instance Serialize BlockRef where
     put MemRef {memRefTime = t} = do
         putWord8 0x00
-        put t
+        putUnixTime t
     put BlockRef {blockRefHeight = h, blockRefPos = p} = do
         putWord8 0x01
         putWord32be (maxBound - h)
@@ -163,7 +147,7 @@ instance Serialize BlockRef where
       where
         getmemref = do
             guard . (== 0x00) =<< getWord8
-            MemRef . PreciseUnixTime <$> get
+            MemRef <$> getUnixTime
         getblockref = do
             guard . (== 0x01) =<< getWord8
             h <- (maxBound -) <$> getWord32be
@@ -175,7 +159,7 @@ instance BinSerial BlockRef where
         putWord8 0x00
         putWord32be h
         putWord32be p
-    binSerial _ MemRef {memRefTime = PreciseUnixTime t} = do
+    binSerial _ MemRef {memRefTime = t} = do
         putWord8 0x01
         putWord64be t
 
@@ -1010,7 +994,7 @@ instance BinSerial TxId where
     binSerial _ (TxId th) = put th
 
 data StartFrom
-    = StartBlock !Word32 !Word32
-    | StartMem !PreciseUnixTime
+    = StartBlock !BlockHeight !BlockPos
+    | StartMem !UnixTime
     | StartOffset !Word32
     deriving (Show, Eq, Generic)

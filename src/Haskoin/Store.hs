@@ -24,7 +24,6 @@ module Haskoin.Store
     , XPubUnspent(..)
     , Balance(..)
     , PeerInformation(..)
-    , PreciseUnixTime(..)
     , HealthCheck(..)
     , PubExcept(..)
     , Event(..)
@@ -34,6 +33,8 @@ module Haskoin.Store
     , Except(..)
     , TxId(..)
     , StartFrom(..)
+    , UnixTime
+    , BlockPos
     , withStore
     , store
     , getBestBlock

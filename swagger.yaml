@@ -9,7 +9,7 @@ servers:
 
 
 info:
-  version: '0.14.9'
+  version: '0.15.0'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -1107,7 +1107,7 @@ components:
           description: time transaction was received in mempool
           type: integer
           format: int64
-          example: 1548766186903
+          example: 1548766187
 
     XPubBalance:
       type: object
