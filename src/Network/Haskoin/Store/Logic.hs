@@ -233,17 +233,14 @@ importBlock net b n = do
             }
     insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
-    zipWithM_
-        (\x t -> import_or_confirm (br x) t)
-        [0 ..]
-        (sortTxs (blockTxns b))
+    zipWithM_ import_or_confirm [0 ..] (sortTxs (blockTxns b))
   where
-    import_or_confirm b tx =
+    import_or_confirm x tx =
         getTxData (txHash tx) >>= \case
             Just t
-                | not (txDataDeleted t) -> confirmTx net t b tx
+                | x > 0 && not (txDataDeleted t) -> confirmTx net t (br x) tx
             _ ->
-                importTx net b (fromIntegral (blockTimestamp (nodeHeader n))) tx
+                importTx net (br x) (fromIntegral (blockTimestamp (nodeHeader n))) tx
     subsidy = computeSubsidy net
     cb_out_val = sum (map outValue (txOut (head (blockTxns b))))
     ts_out_val = sum (map (sum . map outValue . txOut) (tail (blockTxns b)))
