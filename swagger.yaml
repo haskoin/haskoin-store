@@ -1,9 +1,13 @@
 openapi: '3.0.0'
+
+
 servers:
   - url: 'https://btc.haskoin.com/api/'
   - url: 'https://bch.haskoin.com/api/'
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
+
+
 info:
   version: '0.14.8'
   title: Blockchain API
@@ -14,11 +18,15 @@ info:
   license:
     name: Unlicense
     url: http://unlicense.org/
+
+
 tags:
   - name: address
   - name: transaction
   - name: block
   - name: network
+  
+  
 paths:
   '/health':
     get:
@@ -59,6 +67,7 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/address/{address}/transactions':
     get:
       tags:
@@ -66,43 +75,12 @@ paths:
       summary: get transactions for an address
       operationId: getAddressTxs
       parameters:
-        - name: address
-          in: path
-          required: true
-          schema:
-            type: string
-            example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/addressParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -127,6 +105,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                
   '/address/{address}/transactions/full':
     get:
       tags:
@@ -134,43 +121,12 @@ paths:
       summary: get transactions for an address
       operationId: getAddressTxsFull
       parameters:
-        - name: address
-          in: path
-          required: true
-          schema:
-            type: string
-            example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/addressParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -186,6 +142,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/address/transactions':
     get:
       tags:
@@ -193,46 +158,12 @@ paths:
       summary: get transactions for multiple addresses
       operationId: getMultipleAddressTxs
       parameters:
-        - name: addresses
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/addressesParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: Success
@@ -257,6 +188,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/address/transactions/full':
     get:
       tags:
@@ -264,46 +204,12 @@ paths:
       summary: get transactions for multiple addresses
       operationId: getMultipleAddressTxsFull
       parameters:
-        - name: addresses
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/addressesParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: Success
@@ -319,6 +225,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/address/{address}/balance':
     get:
       tags:
@@ -326,12 +241,7 @@ paths:
       operationId: getBalance
       summary: get balance for an address
       parameters:
-        - name: address
-          in: path
-          required: true
-          schema:
-            type: string
-            example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+        - $ref: '#/components/parameters/addressParam'
       responses:
         '200':
           description: success
@@ -345,6 +255,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/address/balances':
     get:
       tags:
@@ -352,15 +271,7 @@ paths:
       summary: get balances for multiple addresses
       operationId: getMultipleAddressBalances
       parameters:
-        - name: addresses
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+        - $ref: '#/components/parameters/addressesParam'
       responses:
         '200':
           description: success
@@ -376,6 +287,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/address/{address}/unspent':
     get:
       tags:
@@ -383,43 +303,12 @@ paths:
       summary: get unspent outputs for an address
       operationId: getAddressUnspent
       parameters:
-        - name: address
-          in: path
-          required: true
-          schema:
-            type: string
-            example: 'qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/addressParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -435,6 +324,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/address/unspent':
     get:
       tags:
@@ -442,46 +340,12 @@ paths:
       summary: get unspent outputs for multiple addresses
       operationId: getMultipleAddressUnspent
       parameters:
-        - name: addresses
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: 'qq235k7k9y5cwf3s2vfpxwgu8c5497sxnsdnxv6upc'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/addressesParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -497,6 +361,15 @@ paths:
                 format: binary
         '404':
           description: invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/block/best':
     get:
       tags:
@@ -504,12 +377,7 @@ paths:
       summary: get best block in chain
       operationId: GetBlockHead
       parameters:
-        - name: notx
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: do not include block transactions (only coinbase)
+        - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
           description: success
@@ -521,6 +389,7 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/block/{block}':
     get:
       tags:
@@ -528,18 +397,8 @@ paths:
       operationId: getBlock
       summary: get block by hash
       parameters:
-        - name: block
-          in: path
-          required: true
-          schema:
-            type: string
-            example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
-        - name: notx
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: do not include block transactions (only coinbase)
+        - $ref: '#/components/parameters/notxParam'
+        - $ref: '#/components/parameters/blockParam'
       responses:
         '200':
           description: success
@@ -553,6 +412,15 @@ paths:
                 format: binary
         '404':
           description: block not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/blocks':
     get:
       tags:
@@ -560,21 +428,8 @@ paths:
       operationId: getBlocks
       summary: get multiple blocks by hash
       parameters:
-        - name: blocks
-          in: path
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
-        - name: notx
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: do not include block transactions (only coinbase)
+        - $ref: '#/components/parameters/notxParam'
+        - $ref: '#/components/parameters/blocksParam'
       responses:
         '200':
           description: success
@@ -590,6 +445,15 @@ paths:
                 format: binary
         '404':
           description: block not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/block/height/{height}':
     get:
       tags:
@@ -597,18 +461,8 @@ paths:
       operationId: getBlocksAtHeight
       summary: get block hashes at specified height
       parameters:
-        - name: height
-          in: path
-          required: true
-          schema:
-            type: integer
-            example: 1283393
-        - name: notx
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: do not include block transactions (only coinbase)
+        - $ref: '#/components/parameters/blockHeightParam'
+        - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
           description: success
@@ -624,6 +478,15 @@ paths:
                 format: binary
         '404':
           description: block not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/block/heights':
     get:
       tags:
@@ -641,12 +504,8 @@ paths:
               - 1283393
             items:
               type: integer
-        - name: notx
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: do not include block transactions (only coinbase)
+        - $ref: '#/components/parameters/blockHeightsParam'
+        - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
           description: success
@@ -662,18 +521,22 @@ paths:
                 format: binary
         '404':
           description: block not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/transaction/{txid}':
     get:
       tags:
         - transaction
       operationId: getTransaction
       parameters:
-        - name: txid
-          in: path
-          required: true
-          schema:
-            type: string
-            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+        - $ref: '#/components/parameters/txidParam'
       responses:
         '200':
           description: success
@@ -687,18 +550,22 @@ paths:
                 format: binary
         '404':
           description: transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/transaction/{txid}/hex':
     get:
       tags:
         - transaction
       operationId: getHexTransaction
       parameters:
-        - name: txid
-          in: path
-          required: true
-          schema:
-            type: string
-            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+        - $ref: '#/components/parameters/txidParam'
       responses:
         '200':
           description: success
@@ -709,18 +576,22 @@ paths:
                 example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
         '404':
           description: transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/transaction/{txid}/bin':
     get:
       tags:
         - transaction
       operationId: getBinTransaction
       parameters:
-        - name: txid
-          in: path
-          required: true
-          schema:
-            type: string
-            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+        - $ref: '#/components/parameters/txidParam'
       responses:
         '200':
           description: success
@@ -729,6 +600,7 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/transaction/{txid}/after/{height}':
     get:
       tags:
@@ -736,18 +608,8 @@ paths:
       operationId: cbAfterHeight
       summary: find out if transaction has a coinbase ancestor past height
       parameters:
-        - name: txid
-          in: path
-          required: true
-          schema:
-            type: string
-            example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
-        - name: height
-          in: path
-          required: true
-          schema:
-            type: integer
-            example: 200000
+        - $ref: '#/components/parameters/txidParam'
+        - $ref: '#/components/parameters/blockHeightParam'
       responses:
         '200':
           description: success
@@ -767,21 +629,14 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/transactions':
     get:
       tags:
         - transaction
       operationId: getTransactions
       parameters:
-        - name: txids
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+        - $ref: '#/components/parameters/txidsParam'
       responses:
         '200':
           description: success
@@ -797,6 +652,15 @@ paths:
                 format: binary
         '404':
           description: transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
     post:
       tags:
         - transaction
@@ -825,23 +689,33 @@ paths:
                 format: binary
         '400':
           description: invalid transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
         '500':
           description: server or network error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/transactions/hex':
     get:
       tags:
         - transaction
       operationId: getHexTransactions
       parameters:
-        - name: txids
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+        - $ref: '#/components/parameters/txidsParam'
       responses:
         '200':
           description: success
@@ -854,21 +728,22 @@ paths:
                   example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
         '404':
           description: transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/transactions/bin':
     get:
       tags:
         - transaction
       operationId: getBinTransactions
       parameters:
-        - name: txids
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            items:
-              type: string
-              example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+        - $ref: '#/components/parameters/txidsParam'
       responses:
         '200':
           description: success
@@ -879,31 +754,24 @@ paths:
                 format: binary
         '404':
           description: transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/mempool':
     get:
       tags:
         - transaction
       operationId: getMempool
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -922,6 +790,7 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/events':
     get:
       tags:
@@ -939,6 +808,7 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/peers':
     get:
       tags:
@@ -968,49 +838,19 @@ paths:
               schema:
                 type: string
                 format: binary
+                
   '/xpub/{xpub}':
     get:
       tags:
         - address
       operationId: getXPubSummary
       parameters:
-        - name: xpub
-          in: path
-          required: true
-          schema:
-            type: string
-            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of transactions to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -1024,49 +864,27 @@ paths:
                 format: binary
         '400':
           description: invalid xpub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/xpub/{xpub}/transactions/full':
     get:
       tags:
         - address
       operationId: getXPubTransactionsFull
       parameters:
-        - name: xpub
-          in: path
-          required: true
-          schema:
-            type: string
-            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -1082,49 +900,27 @@ paths:
                 format: binary
         '400':
           description: invalid xpub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/xpub/{xpub}/transactions':
     get:
       tags:
         - address
       operationId: getXPubTransactions
       parameters:
-        - name: xpub
-          in: path
-          required: true
-          schema:
-            type: string
-            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -1153,18 +949,22 @@ paths:
                 format: binary
         '400':
           description: invalid xpub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/xpub/{xpub}/balances':
     get:
       tags:
         - address
       operationId: getXPubBalances
       parameters:
-        - name: xpub
-          in: path
-          required: true
-          schema:
-            type: string
-            example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+        - $ref: '#/components/parameters/xpubParam'
       responses:
         '200':
           description: success
@@ -1205,49 +1005,27 @@ paths:
                 format: binary
         '400':
           description: invalid xpub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/xpub/{xpub}/unspent':
     get:
       tags:
         - address
       operationId: getXPubUnspent
       parameters:
-        - name: xpub
-          in: path
-          required: true
-          schema:
-            type: string
-            example: tpubD8XsNAGEy3PzdR7jnDntK2DWYkzGeCkwyPWkA8ktYqFJFGRUEg5T1RrQqFWgZdLxLiZDzdYn1Hq2oqJnjix1yZk2qsJAivKAt43irDWaaUA
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: maximum number of entries to return
-        - name: height
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top height in the blockchain
-        - name: pos
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: top transaction position in the block at height specified
-        - name: time
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: top Unix time in milliseconds to return entries from mempool
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-          description: how many elements to skip at the beginning when net specifying height or time
+        - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/posParam'
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: success
@@ -1284,14 +1062,27 @@ paths:
                 format: binary
         '400':
           description: invalid xpub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                
+                
+                
 components:
   schemas:
+  
     BlockRef:
       oneOf:
         - $ref: '#/components/schemas/Block'
         - $ref: '#/components/schemas/Mempool'
       example:
         mempool: 1548766186903
+
     Block:
       type: object
       required:
@@ -1306,6 +1097,7 @@ components:
           description: position of transaction within block
           type: integer
           example: 2
+
     Mempool:
       type: object
       required:
@@ -1316,6 +1108,7 @@ components:
           type: integer
           format: int64
           example: 1548766186903
+
     XPubBalance:
       type: object
       required:
@@ -1330,6 +1123,7 @@ components:
           example: [1, 10]
         balance:
           $ref: '#/components/schemas/Balance'
+
     XPubUnspent:
       type: object
       required:
@@ -1344,6 +1138,7 @@ components:
           example: [1, 10]
         unspent:
           $ref: '#/components/schemas/Unspent'
+
     XPubSummary:
       type: object
       required:
@@ -1378,6 +1173,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Transaction'
+
     BlockTx:
       type: object
       required:
@@ -1389,6 +1185,7 @@ components:
         txid:
           type: string
           example: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
+
     Balance:
       type: object
       required:
@@ -1427,6 +1224,7 @@ components:
           type: integer
           format: int64
           example: 2
+
     Unspent:
       type: object
       required:
@@ -1457,6 +1255,7 @@ components:
           format: int64
           description: output value in satoshi
           example: 4005704
+
     BlockData:
       type: object
       required:
@@ -1535,6 +1334,7 @@ components:
         weight:
           type: integer
           description: block weight for segwit networks
+
     Input:
       type: object
       required:
@@ -1582,6 +1382,7 @@ components:
           example: []
           items:
             type: string
+
     Spender:
       type: object
       required:
@@ -1594,6 +1395,7 @@ components:
         input:
           type: integer
           example: 0
+
     Output:
       type: object
       required:
@@ -1618,6 +1420,7 @@ components:
           example: true
         spender:
           $ref: '#/components/schemas/Spender'
+
     Transaction:
       type: object
       required:
@@ -1696,6 +1499,7 @@ components:
           type: integer
           example: 980
           description: transaction weight for segwit networks
+
     Event:
       type: object
       required:
@@ -1712,6 +1516,7 @@ components:
           type: string
           description: block or transaction id
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
+
     Peer:
       type: object
       required:
@@ -1736,6 +1541,7 @@ components:
         relay:
           type: boolean
           example: true
+
     HealthCheck:
       type: object
       required:
@@ -1806,3 +1612,139 @@ components:
         txid:
           type: string
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
+
+  parameters:
+
+    addressParam:
+      name: address
+      in: path
+      required: true
+      schema:
+        type: string
+        example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+
+    addressesParam:
+      name: addresses
+      in: query
+      explode: false
+      required: true
+      schema:
+        type: array
+        items:
+          type: string
+          example: 'qrr724dvaz5kdhujv52urdrwv0hy4jxpusgspun650'
+
+    limitParam:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: maximum number of entries to return
+
+    heightParam:
+      name: height
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: highest block to return objects from (not to be used with offset or time parameters)
+
+    posParam:
+      name: pos
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: highest transaction position at block specified by height parameter to return objects from (must specify height)
+
+    timeParam:
+      name: time
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+      description: highest unix timestamp from where to start returning mempool objects (not compatible with height/pos or offset parameters)
+
+    offsetParam:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: skip this many objects (not to be used with height/pos or time parameters)
+
+    notxParam:
+      name: notx
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: do not include block transactions (only coinbase)
+
+    blockParam:
+      name: block
+      in: path
+      required: true
+      schema:
+        type: string
+      example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
+
+    blocksParam:
+      name: blocks
+      in: path
+      explode: false
+      required: true
+      schema:
+        type: array
+        items:
+          type: string
+          example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
+
+    blockHeightParam:
+      name: height
+      in: path
+      required: true
+      schema:
+        type: integer
+        example: 1283393
+
+    blockHeightsParam:
+      name: heights
+      in: query
+      explode: false
+      required: true
+      schema:
+        type: array
+        example:
+          - 1283393
+        items:
+          type: integer
+
+    txidParam:
+      name: txid
+      in: path
+      required: true
+      schema:
+        type: string
+        example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+
+    txidsParam:
+      name: txids
+      in: query
+      explode: false
+      required: true
+      schema:
+        type: array
+        items:
+          type: string
+          example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
+
+    xpubParam:
+      name: xpub
+      in: path
+      required: true
+      schema:
+        type: string
+        example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
