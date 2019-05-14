@@ -454,6 +454,8 @@ xpubSummary l s x = do
                 , a <- ais ++ aos
                 ]
         ps = H.fromList $ mapMaybe (\a -> (a, ) <$> H.lookup a pm) as
+        ex = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 0]
+        ch = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 1]
     return
         XPubSummary
             { xPubSummaryReceived =
@@ -462,6 +464,8 @@ xpubSummary l s x = do
             , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
             , xPubSummaryPaths = ps
             , xPubSummaryTxs = txs
+            , xPubChangeIndex = ch
+            , xPubExternalIndex = ex
             }
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the

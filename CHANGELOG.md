@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.14.9
+### Added
+- Last external/change index information to `XPubSummary` object.
+
 ## 0.14.8
 ### Added
 - Endpoint for xpub summaries.

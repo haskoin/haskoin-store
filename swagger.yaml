@@ -9,7 +9,7 @@ servers:
 
 
 info:
-  version: '0.14.8'
+  version: '0.14.9'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -1143,6 +1143,7 @@ components:
       type: object
       required:
         - balance
+        - indices
         - paths
         - txs
       properties:
@@ -1158,6 +1159,16 @@ components:
             confirmed:
               type: integer
             unconfirmed:
+              type: integer
+        indices:
+          type: object
+          required:
+            - external
+            - change
+          properties:
+            external:
+              type: integer
+            change:
               type: integer
         paths:
           type: object

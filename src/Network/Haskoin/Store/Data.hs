@@ -828,6 +828,8 @@ data XPubSummary =
         { xPubSummaryReceived  :: !Word64
         , xPubSummaryConfirmed :: !Word64
         , xPubSummaryZero      :: !Word64
+        , xPubExternalIndex    :: !Word32
+        , xPubChangeIndex      :: !Word32
         , xPubSummaryPaths     :: !(HashMap Address [KeyIndex])
         , xPubSummaryTxs       :: ![Transaction]
         }
@@ -839,9 +841,12 @@ xPubSummaryPairs net XPubSummary { xPubSummaryReceived = r
                                  , xPubSummaryZero = z
                                  , xPubSummaryPaths = ps
                                  , xPubSummaryTxs = ts
+                                 , xPubExternalIndex = ext
+                                 , xPubChangeIndex = ch
                                  } =
     [ "balance" .=
       object ["received" .= r, "confirmed" .= c, "unconfirmed" .= z]
+    , "indices" .= object ["change" .= ch, "external" .= ext]
     , "paths" .= object (mapMaybe (uncurry f) (H.toList ps))
     , "txs" .= map (transactionToJSON net) ts
     ]
@@ -862,12 +867,16 @@ instance BinSerial XPubSummary where
     binSerial net XPubSummary { xPubSummaryReceived = r
                               , xPubSummaryConfirmed = c
                               , xPubSummaryZero = z
+                              , xPubExternalIndex = ext
+                              , xPubChangeIndex = ch
                               , xPubSummaryPaths = ps
                               , xPubSummaryTxs = ts
                               } = do
         put r
         put c
         put z
+        put ext
+        put ch
         putWord64be (fromIntegral $ H.size ps)
         forM_ (H.toList ps) $ \(a, p) -> do
             binSerial net a
