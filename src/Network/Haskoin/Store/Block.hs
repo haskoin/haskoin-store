@@ -163,6 +163,11 @@ processBlock p b = do
         runExceptT (runImportDB db um bm $ importBlock net b n) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
+                $(logInfoS) "Block" $
+                    "Best block indexed: " <>
+                    blockHashToHex (headerHash (blockHeader b)) <>
+                    " at height " <>
+                    cs (show (nodeHeight n))
                 atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
                 lift $ isSynced >>= \x -> when x (mempool p)
                 when (nodeHeight n `mod` 1000 == 0) (lift pruneCache)
@@ -183,7 +188,9 @@ processBlock p b = do
                 if nodeHeader h == blockHeader b
                     then resetPeer
                     else do
-                        now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+                        now <-
+                            fromIntegral . systemSeconds <$>
+                            liftIO getSystemTime
                         asks myPeer >>=
                             atomically .
                             (`writeTVar` Just s {syncingTime = now})
@@ -448,11 +455,11 @@ processBlockMessage (BlockReceived p b) = processBlock p b
 processBlockMessage (BlockNotFound p bs) = processNoBlocks p bs
 processBlockMessage (BlockTxReceived p tx) = processTx p tx
 processBlockMessage (BlockTxAvailable p ts) = processTxs p ts
-processBlockMessage BlockPing = checkTime
+processBlockMessage (BlockPing r) = checkTime >> atomically (r ())
 processBlockMessage PurgeMempool = purgeMempool
 
 pingMe :: MonadLoggerIO m => Mailbox BlockMessage -> m ()
 pingMe mbox = forever $ do
     threadDelay =<< liftIO (randomRIO (5 * 1000 * 1000, 10 * 1000 * 1000))
-    $(logDebugS) "Block" "Pinging block"
-    BlockPing `send` mbox
+    $(logDebugS) "BlockTimer" "Pinging block"
+    BlockPing `query` mbox

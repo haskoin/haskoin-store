@@ -76,7 +76,7 @@ data BlockMessage
     | BlockTxAvailable !Peer
                        ![TxHash]
       -- ^ peer has transactions available
-    | BlockPing
+    | BlockPing !(Listen ())
       -- ^ internal housekeeping ping
     | PurgeMempool
       -- ^ purge mempool transactions
