@@ -63,6 +63,7 @@ class StoreRead m where
     getBlocksAtHeight :: BlockHeight -> m [BlockHash]
     getBlock :: BlockHash -> m (Maybe BlockData)
     getTxData :: TxHash -> m (Maybe TxData)
+    getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
 
@@ -75,6 +76,7 @@ getTransaction h = runMaybeT $ do
 
 class StoreStream m where
     getMempool :: Maybe UnixTime -> ConduitT () (UnixTime, TxHash) m ()
+    getOrphans :: ConduitT () (UnixTime, Tx) m ()
     getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT () Unspent m ()
     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
 
@@ -92,6 +94,8 @@ class StoreWrite m where
     removeAddrUnspent :: Address -> Unspent -> m ()
     insertMempoolTx :: TxHash -> UnixTime -> m ()
     deleteMempoolTx :: TxHash -> UnixTime -> m ()
+    insertOrphanTx :: Tx -> UnixTime -> m ()
+    deleteOrphanTx :: TxHash -> m ()
 
 -- | Serialize such that ordering is inverted.
 putUnixTime w = putWord64be $ maxBound - w

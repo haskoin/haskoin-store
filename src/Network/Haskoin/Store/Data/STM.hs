@@ -1,5 +1,5 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE TupleSections         #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TupleSections     #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Network.Haskoin.Store.Data.STM where
 
@@ -46,6 +46,7 @@ data HashMapDB = HashMapDB
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
     , hMempool :: !(HashMap UnixTime (HashMap TxHash Bool))
+    , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
     , hInit :: !Bool
     } deriving (Eq, Show)
 
@@ -62,6 +63,7 @@ emptyHashMapDB =
         , hAddrTx = M.empty
         , hAddrOut = M.empty
         , hMempool = M.empty
+        , hOrphans = M.empty
         , hInit = False
         }
 
@@ -117,6 +119,12 @@ getMempoolH mpu db =
             sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
             hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
+
+getOrphansH :: Monad m => HashMapDB -> ConduitT () (UnixTime, Tx) m ()
+getOrphansH = yieldMany . catMaybes . M.elems . hOrphans
+
+getOrphanTxH :: TxHash -> HashMapDB -> Maybe (Maybe (UnixTime, Tx))
+getOrphanTxH h = M.lookup h . hOrphans
 
 getAddressTxsH :: Address -> Maybe BlockRef -> HashMapDB -> [BlockTx]
 getAddressTxsH a mbr db =
@@ -264,6 +272,13 @@ deleteMempoolTxH h u db =
     let s = M.singleton u (M.singleton h False)
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
+insertOrphanTxH :: Tx -> UnixTime -> HashMapDB -> HashMapDB
+insertOrphanTxH tx u db =
+    db {hOrphans = M.insert (txHash tx) (Just (u, tx)) (hOrphans db)}
+
+deleteOrphanTxH :: TxHash -> HashMapDB -> HashMapDB
+deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
+
 getUnspentH :: OutPoint -> HashMapDB -> Maybe (Maybe Unspent)
 getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
@@ -305,6 +320,7 @@ instance StoreRead BlockSTM where
         fmap (I.map fromJust . I.filter isJust . getSpendersH t) .
         lift . readTVar =<<
         R.ask
+    getOrphanTx h = fmap (join . getOrphanTxH h) . lift . readTVar =<< R.ask
 
 instance BalanceRead BlockSTM where
     getBalance a = fmap (getBalanceH a) . lift . readTVar =<< R.ask
@@ -318,6 +334,7 @@ instance BalanceWrite BlockSTM where
 
 instance StoreStream BlockSTM where
     getMempool m = getMempoolH m =<< lift . lift . readTVar =<< lift R.ask
+    getOrphans = getOrphansH =<< lift . lift . readTVar =<< lift R.ask
     getAddressTxs a m =
         yieldMany . getAddressTxsH a m =<< lift . lift . readTVar =<< lift R.ask
     getAddressUnspents a m =
@@ -340,6 +357,8 @@ instance StoreWrite BlockSTM where
         lift . (`modifyTVar` removeAddrUnspentH a u) =<< R.ask
     insertMempoolTx h t = lift . (`modifyTVar` insertMempoolTxH h t) =<< R.ask
     deleteMempoolTx h t = lift . (`modifyTVar` deleteMempoolTxH h t) =<< R.ask
+    deleteOrphanTx h = lift . (`modifyTVar` deleteOrphanTxH h) =<< R.ask
+    insertOrphanTx t u = lift . (`modifyTVar` insertOrphanTxH t u) =<< R.ask
 
 instance UnspentWrite BlockSTM where
     addUnspent h = lift . (`modifyTVar` addUnspentH h) =<< R.ask

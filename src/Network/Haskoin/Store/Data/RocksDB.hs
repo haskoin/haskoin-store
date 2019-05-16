@@ -1,6 +1,6 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Network.Haskoin.Store.Data.RocksDB where
 
@@ -100,6 +100,17 @@ getMempoolDB mpu opts db = x .| mapC (uncurry f)
     f (MemKey u t) () = (u, t)
     f _ _             = undefined
 
+getOrphansDB ::
+       (MonadIO m, MonadResource m)
+    => ReadOptions
+    -> DB
+    -> ConduitT () (UnixTime, Tx) m ()
+getOrphansDB opts db = matching db opts OrphanKeyS .| mapC snd
+
+getOrphanTxDB ::
+       MonadIO m => TxHash -> ReadOptions -> DB -> m (Maybe (UnixTime, Tx))
+getOrphanTxDB h opts db = retrieve db opts (OrphanKey h)
+
 getAddressTxsDB ::
        (MonadIO m, MonadResource m)
     => Address
@@ -162,10 +173,12 @@ instance MonadIO m => StoreRead (ReaderT BlockDB m) where
     getTxData t = R.ask >>= uncurry (getTxDataDB t)
     getSpenders p = R.ask >>= uncurry (getSpendersDB p)
     getSpender p = R.ask >>= uncurry (getSpenderDB p)
+    getOrphanTx h = R.ask >>= uncurry (getOrphanTxDB h)
 
 instance (MonadIO m, MonadResource m) =>
          StoreStream (ReaderT BlockDB m) where
     getMempool p = lift R.ask >>= uncurry (getMempoolDB p)
+    getOrphans = lift R.ask >>= uncurry getOrphansDB
     getAddressTxs a b = R.ask >>= uncurry (getAddressTxsDB a b)
     getAddressUnspents a b = R.ask >>= uncurry (getAddressUnspentsDB a b)
 

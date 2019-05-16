@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 module Network.Haskoin.Store.Data.ImportDB where
 
 import           Conduit
@@ -65,6 +65,7 @@ hashMapOps db =
     addrTxOps (hAddrTx db) <>
     addrOutOps (hAddrOut db) <>
     mempoolOps (hMempool db) <>
+    orphanOps (hOrphans db) <>
     unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
@@ -148,6 +149,12 @@ mempoolOps = concatMap (uncurry f) . M.toList
     g u t True  = insertOp (MemKey u t) ()
     g u t False = deleteOp (MemKey u t)
 
+orphanOps :: HashMap TxHash (Maybe (UnixTime, Tx)) -> [BatchOp]
+orphanOps = map (uncurry f) . M.toList
+  where
+    f h (Just x) = insertOp (OrphanKey h) x
+    f h Nothing = deleteOp (OrphanKey h)
+
 unspentOps :: HashMap TxHash (IntMap (Maybe Unspent)) -> [BatchOp]
 unspentOps = concatMap (uncurry f) . M.toList
   where
@@ -219,6 +226,14 @@ deleteMempoolTxI :: MonadIO m => TxHash -> UnixTime -> ImportDB -> m ()
 deleteMempoolTxI t p ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ deleteMempoolTx t p
 
+insertOrphanTxI :: MonadIO m => Tx -> UnixTime -> ImportDB -> m ()
+insertOrphanTxI t p ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ insertOrphanTx t p
+
+deleteOrphanTxI :: MonadIO m => TxHash -> ImportDB -> m ()
+deleteOrphanTxI t ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ deleteOrphanTx t
+
 getBestBlockI :: MonadIO m => ImportDB -> m (Maybe BlockHash)
 getBestBlockI ImportDB {importHashMap = hm, importRocksDB = db} =
     runMaybeT $ MaybeT f <|> MaybeT g
@@ -246,6 +261,13 @@ getTxDataI th ImportDB {importRocksDB = db, importHashMap = hm} =
   where
     f = atomically . withBlockSTM hm $ getTxData th
     g = uncurry withBlockDB db $ getTxData th
+
+getOrphanTxI :: MonadIO m => TxHash -> ImportDB -> m (Maybe (UnixTime, Tx))
+getOrphanTxI h ImportDB {importRocksDB = db, importHashMap = hm} =
+    fmap join . runMaybeT $ MaybeT f <|> MaybeT g
+  where
+    f = getOrphanTxH h <$> readTVarIO hm
+    g = Just <$> uncurry withBlockDB db (getOrphanTx h)
 
 getSpenderI :: MonadIO m => OutPoint -> ImportDB -> m (Maybe Spender)
 getSpenderI op ImportDB {importRocksDB = db, importHashMap = hm} =
@@ -311,6 +333,7 @@ instance (MonadIO m) => StoreRead (ReaderT ImportDB m) where
     getTxData t = R.ask >>= getTxDataI t
     getSpender p = R.ask >>= getSpenderI p
     getSpenders t = R.ask >>= getSpendersI t
+    getOrphanTx h = R.ask >>= getOrphanTxI h
 
 instance (MonadIO m) => StoreWrite (ReaderT ImportDB m) where
     setInit = R.ask >>= setInitI
@@ -326,6 +349,8 @@ instance (MonadIO m) => StoreWrite (ReaderT ImportDB m) where
     removeAddrUnspent a u = R.ask >>= removeAddrUnspentI a u
     insertMempoolTx t p = R.ask >>= insertMempoolTxI t p
     deleteMempoolTx t p = R.ask >>= deleteMempoolTxI t p
+    insertOrphanTx t p = R.ask >>= insertOrphanTxI t p
+    deleteOrphanTx t = R.ask >>= deleteOrphanTxI t
 
 instance (MonadIO m) => UnspentRead (ReaderT ImportDB m) where
     getUnspent a = R.ask >>= getUnspentI a

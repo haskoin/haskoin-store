@@ -193,11 +193,12 @@ data MemKey
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize MemKey where
-    -- 0x07 · TxHash
+    -- 0x07 · UnixTime · TxHash
     put (MemKey t h) = do
         putWord8 0x07
         putUnixTime t
         put h
+    -- 0x07 · UnixTime
     put (MemKeyT t) = do
         putWord8 0x07
         putUnixTime t
@@ -209,6 +210,29 @@ instance Serialize MemKey where
 
 instance R.Key MemKey
 instance R.KeyValue MemKey ()
+
+-- | Orphan pool transaction database key.
+data OrphanKey
+    = OrphanKey
+          { orphanKey  :: !TxHash
+          }
+    | OrphanKeyS
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+
+instance Serialize OrphanKey
+    -- 0x08 · TxHash
+                     where
+    put (OrphanKey h) = do
+        putWord8 0x08
+        put h
+    -- 0x08
+    put OrphanKeyS = putWord8 0x08
+    get = do
+        guard . (== 0x08) =<< getWord8
+        OrphanKey <$> get
+
+instance R.Key OrphanKey
+instance R.KeyValue OrphanKey (UnixTime, Tx)
 
 -- | Block entry database key.
 newtype BlockKey = BlockKey
