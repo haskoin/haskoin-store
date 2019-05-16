@@ -242,12 +242,8 @@ importBlock net b n = do
         getTxData (txHash tx) >>= \case
             Just t
                 | x > 0 && not (txDataDeleted t) -> do
-                    $(logDebugS) "Block" $
-                        "Confirming transaction: " <> txHashToHex (txHash tx)
                     confirmTx net t (br x) tx
             _ -> do
-                $(logDebugS) "Block" $
-                    "Importing block transaction: " <> txHashToHex (txHash tx)
                 importTx
                     net
                     (br x)
