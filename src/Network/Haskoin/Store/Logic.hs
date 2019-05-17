@@ -179,7 +179,7 @@ revertBlock net bh = do
                                 blockHashToHex h
                             throwError (BlockNotBest bh)
     txs <- mapM (fmap transactionData . getImportTx) (blockDataTxs bd)
-    mapM_ (deleteTx net False . txHash) (reverse (sortTxs txs))
+    mapM_ (deleteTx net False . txHash . snd) (reverse (sortTxs txs))
     setBest (prevBlock (blockDataHeader bd))
     insertBlock bd {blockDataMainChain = False}
 
@@ -234,7 +234,7 @@ importBlock net b n = do
     insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
     $(logDebugS) "Block" $ "Importing or confirming block transactions..."
-    zipWithM_ import_or_confirm [0 ..] (sortTxs (blockTxns b))
+    mapM_ (uncurry import_or_confirm) (sortTxs (blockTxns b))
     $(logDebugS) "Block" $
         "Done importing block entries for block " <> cs (show (nodeHeight n))
   where
@@ -264,14 +264,18 @@ importBlock net b n = do
             x = B.length (encode b)
          in s * 3 + x
 
-sortTxs :: [Tx] -> [Tx]
-sortTxs [] = []
-sortTxs txs = is <> sortTxs ds
+sortTxs :: [Tx] -> [(Word32, Tx)]
+sortTxs txs = go $ zip [0 ..] txs
   where
-    (is, ds) =
-        partition
-            (all ((`notElem` map txHash txs) . outPointHash . prevOutput) . txIn)
-            txs
+    go [] = []
+    go ts =
+        let (is, ds) =
+                partition
+                    (all ((`notElem` map (txHash . snd) ts) .
+                          outPointHash . prevOutput) .
+                     txIn . snd)
+                    ts
+         in is <> go ds
 
 importTx ::
        ( MonadError ImportException m
