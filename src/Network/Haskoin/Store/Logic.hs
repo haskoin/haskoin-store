@@ -310,7 +310,7 @@ importTx net br tt tx = do
             "Insufficient funds: " <> txHashToHex (txHash tx)
         throwError (InsufficientFunds th)
     zipWithM_ (spendOutput net br (txHash tx)) [0 ..] us
-    zipWithM_ (newOutput br . OutPoint (txHash tx)) [0 ..] (txOut tx)
+    zipWithM_ (newOutput net br . OutPoint (txHash tx)) [0 ..] (txOut tx)
     rbf <- getrbf
     let t =
             Transaction
@@ -529,7 +529,7 @@ deleteTx net mo h = do
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
             delOutput net (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
-        mapM_ unspendOutput ps
+        mapM_ (unspendOutput net) ps
         unless (confirmed (txDataBlock t)) $
             deleteMempoolTx h (memRefTime (txDataBlock t))
         insertTx t {txDataDeleted = True}
@@ -606,11 +606,12 @@ newOutput ::
        , BalanceWrite m
        , MonadLogger m
        )
-    => BlockRef
+    => Network
+    -> BlockRef
     -> OutPoint
     -> TxOut
     -> m ()
-newOutput br op to = do
+newOutput net br op to = do
     addUnspent u
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
@@ -759,9 +760,10 @@ unspendOutput ::
        , BalanceWrite m
        , MonadLogger m
        )
-    => OutPoint
+    => Network
+    -> OutPoint
     -> m ()
-unspendOutput op = do
+unspendOutput net op = do
     t <- getImportTx (outPointHash op)
     o <- getTxOutput (outPointIndex op) t
     s <-
@@ -830,7 +832,7 @@ reduceBalance net c t a v = do
                     " (needs: " <>
                     cs (show v) <>
                     ", has: " <>
-                    show (amnt b) ")"
+                    cs (show (amnt b)) <> ")"
                 throwError $
                     if c
                         then InsufficientBalance a
@@ -884,7 +886,8 @@ increaseBalance ::
     -> m ()
 increaseBalance net c t a v = do
     $(logDebugS) "BlockLogic" $
-        "Increasing " <> conf <> " balance for address " <> addrText a <> " by " <>
+        "Increasing " <> conf <> " balance for address " <> addrText net a <>
+        " by " <>
         cs (show v)
     b <-
         getBalance a >>= \case
