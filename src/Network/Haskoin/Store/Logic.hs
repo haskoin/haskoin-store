@@ -236,13 +236,13 @@ importBlock net b n = do
     $(logDebugS) "Block" $ "Importing or confirming block transactions..."
     mapM_ (uncurry import_or_confirm) (sortTxs (blockTxns b))
     $(logDebugS) "Block" $
-        "Done importing block entries for block " <> cs (show (nodeHeight n))
+        "Done importing transactions for block " <>
+        blockHashToHex (headerHash (nodeHeader n))
   where
     import_or_confirm x tx =
         getTxData (txHash tx) >>= \case
             Just t
-                | x > 0 && not (txDataDeleted t) -> do
-                    confirmTx net t (br x) tx
+                | x > 0 && not (txDataDeleted t) -> do confirmTx net t (br x) tx
             _ -> do
                 importTx
                     net
@@ -293,8 +293,6 @@ importTx ::
     -> Tx
     -> m ()
 importTx net br tt tx = do
-    $(logDebugS) "BlockLogic" $
-        "Importing transaction " <> txHashToHex (txHash tx)
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
         $(logErrorS) "BlockLogic" $
             "Transaction spends same output twice: " <> txHashToHex (txHash tx)
@@ -418,31 +416,14 @@ confirmTx ::
     -> Tx
     -> m ()
 confirmTx net t br tx = do
-    $(logDebugS) "BlockLogic" $
-        "Confirming tx " <> txHashToHex (txHash tx) <> " previously on " <>
-        cs (show (txDataBlock t)) <>
-        " and now on " <>
-        cs (show br)
     forM_ (txDataPrevs t) $ \p ->
         case scriptToAddressBS (prevScript p) of
             Left _ -> return ()
             Right a -> do
-                $(logDebugS) "BlockLogic" $
-                    "Removing tx " <> txHashToHex (txHash tx) <>
-                    " from address " <>
-                    fromMaybe "???" (addrToString net a) <>
-                    " on " <>
-                    cs (show (txDataBlock t))
                 removeAddrTx
                     a
                     BlockTx
                         {blockTxBlock = txDataBlock t, blockTxHash = txHash tx}
-                $(logDebugS) "BlockLogic" $ "Inserting tx " <>
-                    txHashToHex (txHash tx) <>
-                    " for address " <>
-                    fromMaybe "???" (addrToString net a) <>
-                    " on " <>
-                    cs (show br)
                 insertAddrTx
                     a
                     BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
@@ -461,22 +442,10 @@ confirmTx net t br tx = do
         case scriptToAddressBS (scriptOutput o) of
             Left _ -> return ()
             Right a -> do
-                $(logDebugS) "BlockLogic" $
-                    "Removing tx " <> txHashToHex (txHash tx) <>
-                    " from address " <>
-                    fromMaybe "???" (addrToString net a) <>
-                    " on " <>
-                    cs (show (txDataBlock t))
                 removeAddrTx
                     a
                     BlockTx
                         {blockTxBlock = txDataBlock t, blockTxHash = txHash tx}
-                $(logDebugS) "BlockLogic" $ "Inserting tx " <>
-                    txHashToHex (txHash tx) <>
-                    " for address " <>
-                    fromMaybe "???" (addrToString net a) <>
-                    " on " <>
-                    cs (show br)
                 insertAddrTx
                     a
                     BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
@@ -840,9 +809,6 @@ reduceBalance ::
     -> Word64
     -> m ()
 reduceBalance net c t a v = do
-    $(logDebugS) "BlockLogic" $
-        "Reducing " <> conf <> " balance for address " <> addr <> " by " <>
-        cs (show v)
     getBalance a >>= \case
         Nothing -> do
             $(logErrorS) "BlockLogic" $
@@ -907,11 +873,7 @@ increaseBalance ::
     -> Address
     -> Word64
     -> m ()
-increaseBalance net c t a v = do
-    $(logDebugS) "BlockLogic" $
-        "Increasing " <> conf <> " balance for address " <> addrText net a <>
-        " by " <>
-        cs (show v)
+increaseBalance _net c t a v = do
     b <-
         getBalance a >>= \case
             Nothing ->
