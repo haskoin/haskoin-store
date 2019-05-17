@@ -5,8 +5,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## 0.15.2
+### Added
+- Internal data types to support orphan transactions.
+
 ### Changed
 - Do not spam block actor with pings.
+- Fix balance/unspent cache not reverting when importing fails.
+- Fix transaction sorting algorithm not including transaction position information.
 
 ## 0.15.1
 ### Changed
