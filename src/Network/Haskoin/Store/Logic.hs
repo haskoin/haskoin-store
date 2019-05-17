@@ -475,7 +475,7 @@ confirmTx net t br tx = do
                             , unspentScript = B.Short.toShort (scriptOutput o)
                             }
                     reduceBalance net False False a (outValue o)
-                    increaseBalance True False a (outValue o)
+                    increaseBalance net True False a (outValue o)
     insertTx t {txDataBlock = br}
     deleteMempoolTx (txHash tx) (memRefTime (txDataBlock t))
 
@@ -622,7 +622,7 @@ newOutput br op to = do
                     { blockTxHash = outPointHash op
                     , blockTxBlock = br
                     }
-            increaseBalance (confirmed br) True a (outValue to)
+            increaseBalance net (confirmed br) True a (outValue to)
   where
     u =
         Unspent
@@ -794,6 +794,7 @@ unspendOutput op = do
                     , blockTxBlock = transactionBlock x
                     }
             increaseBalance
+                net
                 (confirmed (unspentBlock u))
                 False
                 a
@@ -813,33 +814,23 @@ reduceBalance ::
     -> Address
     -> Word64
     -> m ()
-reduceBalance net c t a v =
+reduceBalance net c t a v = do
+    $(logDebugS) "BlockLogic" $
+        "Reducing " <> conf <> " balance for address " <> addr <> " by " <>
+        cs (show v)
     getBalance a >>= \case
         Nothing -> do
-            $(logErrorS) "BlockLogic" $ "Balance not found: " <> addrText net a
+            $(logErrorS) "BlockLogic" $
+                "Balance not found for address " <> addrText net a
             throwError (BalanceNotFound a)
         Just b -> do
-            when
-                (v >
-                 if c
-                     then balanceAmount b
-                     else balanceZero b) $ do
+            when (v > amnt b) $ do
                 $(logErrorS) "BlockLogic" $
-                    "Insufficient " <>
-                    (if c
-                         then "confirmed "
-                         else "unconfirmed ") <>
-                    "balance: " <>
-                    addrText net a <>
-                    " (need: " <>
+                    "Insufficient " <> conf <> " balance: " <> addrText net a <>
+                    " (needs: " <>
                     cs (show v) <>
-                    ", ha: " <>
-                    cs
-                        (show
-                             (if c
-                                  then balanceAmount b
-                                  else balanceZero b)) <>
-                    ")"
+                    ", has: " <>
+                    show (amnt b) ")"
                 throwError $
                     if c
                         then InsufficientBalance a
@@ -863,6 +854,19 @@ reduceBalance net c t a v =
                               then v
                               else 0
                     }
+  where
+    amnt =
+        if c
+            then balanceAmount
+            else balanceZero
+    conf =
+        if c
+            then "confirmed"
+            else "unconfirmed"
+    addr =
+        case addrToString net a of
+            Nothing -> "???"
+            Just x -> x
 
 increaseBalance ::
        ( MonadError ImportException m
@@ -872,12 +876,16 @@ increaseBalance ::
        , BalanceWrite m
        , MonadLogger m
        )
-    => Bool -- ^ add confirmed output
+    => Network
+    -> Bool -- ^ add confirmed output
     -> Bool -- ^ increase total received
     -> Address
     -> Word64
     -> m ()
-increaseBalance c t a v = do
+increaseBalance net c t a v = do
+    $(logDebugS) "BlockLogic" $
+        "Increasing " <> conf <> " balance for address " <> addrText a <> " by " <>
+        cs (show v)
     b <-
         getBalance a >>= \case
             Nothing ->
@@ -910,6 +918,11 @@ increaseBalance c t a v = do
                       then v
                       else 0
             }
+  where
+    conf =
+        if c
+            then "confirmed"
+            else "unconfirmed"
 
 updateAddressCounts ::
        (MonadError ImportException m, BalanceWrite m, BalanceRead m)
@@ -938,4 +951,4 @@ txDataAddresses t =
     map (scriptToAddressBS . scriptOutput) (txOut (txData t))
 
 addrText :: Network -> Address -> Text
-addrText net a = fromMaybe "[unreprestable]" $ addrToString net a
+addrText net a = fromMaybe "???" $ addrToString net a
