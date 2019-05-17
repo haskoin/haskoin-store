@@ -41,17 +41,22 @@ runImportDB ::
     -> m a
 runImportDB db um bm f = do
     hm <- newTVarIO emptyHashMapDB
+    um' <- atomically $ readTVar um >>= newTVar
+    bm' <- atomically $ readTVar bm >>= newTVar
     x <-
         R.runReaderT
             f
             ImportDB
                 { importRocksDB = (defaultReadOptions, db)
                 , importHashMap = hm
-                , importUnspentMap = um
-                , importBalanceMap = bm
+                , importUnspentMap = um'
+                , importBalanceMap = bm'
                 }
     ops <- hashMapOps <$> readTVarIO hm
     writeBatch db ops
+    atomically $ do
+        readTVar um' >>= writeTVar um
+        readTVar bm' >>= writeTVar bm
     return x
 
 hashMapOps :: HashMapDB -> [BatchOp]

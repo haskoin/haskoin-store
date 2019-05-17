@@ -293,6 +293,8 @@ importTx ::
     -> Tx
     -> m ()
 importTx net br tt tx = do
+    $(logDebugS) "BlockLogic" $
+        "Importing transaction " <> txHashToHex (txHash tx)
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
         $(logErrorS) "BlockLogic" $
             "Transaction spends same output twice: " <> txHashToHex (txHash tx)
@@ -303,7 +305,6 @@ importTx net br tt tx = do
             txHashToHex (txHash tx)
         throwError (UnconfirmedCoinbase (txHash tx))
     us <-
-        fromMaybe [] . sequence <$>
         if iscb
             then return []
             else forM (txIn tx) $ \TxIn {prevOutput = op} -> uns op
@@ -337,13 +338,31 @@ importTx net br tt tx = do
   where
     uns op =
         getUnspent op >>= \case
+            Just u -> return u
             Nothing -> do
-                $(logErrorS) "BlockLogic" $
+                $(logWarnS) "BlockLogic" $
                     "No unspent output: " <> txHashToHex (outPointHash op) <>
                     " " <>
                     fromString (show (outPointIndex op))
-                throwError (NoUnspent op)
-            Just u -> return $ Just u
+                getSpender op >>= \case
+                    Nothing -> do
+                        $(logErrorS) "BlockLogic" $
+                            "No spent or unspent output: " <>
+                            txHashToHex (outPointHash op) <>
+                            " " <>
+                            fromString (show (outPointIndex op))
+                        throwError (NoUnspent op)
+                    Just Spender {spenderHash = s} -> do
+                        deleteTx net True s
+                        getUnspent op >>= \case
+                            Nothing -> do
+                                $(logErrorS) "BlockLogic" $
+                                    "Could not unspend output: " <>
+                                    txHashToHex (outPointHash op) <>
+                                    " " <>
+                                    fromString (show (outPointIndex op))
+                                throwError (NoUnspent op)
+                            Just u -> return u
     th = txHash tx
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
     ws = map Just (txWitness tx) <> repeat Nothing
