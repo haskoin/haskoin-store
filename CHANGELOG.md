@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Do not spam block actor with pings.
 - Fix balance/unspent cache not reverting when importing fails.
 - Fix transaction sorting algorithm not including transaction position information.
+- Fix conflicting mempool transaction preventing block from importing.
 
 ## 0.15.1
 ### Changed
