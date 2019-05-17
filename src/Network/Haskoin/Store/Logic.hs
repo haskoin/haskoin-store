@@ -830,7 +830,16 @@ reduceBalance net c t a v =
                          then "confirmed "
                          else "unconfirmed ") <>
                     "balance: " <>
-                    addrText net a
+                    addrText net a <>
+                    " (need: " <>
+                    cs (show v) <>
+                    ", ha: " <>
+                    cs
+                        (show
+                             (if c
+                                  then balanceAmount b
+                                  else balanceZero b)) <>
+                    ")"
                 throwError $
                     if c
                         then InsufficientBalance a
