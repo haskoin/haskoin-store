@@ -387,17 +387,7 @@ instance UnspentWrite UnspentSTM where
              in if I.null n
                     then Nothing
                     else Just n
-    pruneUnspent = do
-        v <- R.ask
-        lift . modifyTVar v $ \um ->
-            if M.size um > 2 ^ (21 :: Int)
-                then let g is = unspentBlock (head (I.elems is))
-                         ls =
-                             sortBy
-                                 (compare `on` (g . snd))
-                                 (filter (not . I.null . snd) (M.toList um))
-                      in M.fromList (drop (2 ^ (20 :: Int)) ls)
-                else um
+    pruneUnspent = return ()
 
 instance BalanceRead BalanceSTM where
     getBalance a = do
@@ -411,13 +401,4 @@ instance BalanceWrite BalanceSTM where
             let m' = M.insert (balanceAddress b) b m
                 s' = balanceAddress b : s
              in (m', s')
-    pruneBalance = do
-        v <- R.ask
-        lift . modifyTVar v $ \(m, s) ->
-            if length s > 2 ^ (21 :: Int)
-                then let s' = take (2 ^ (20 :: Int)) s
-                         m' = M.fromList (mapMaybe (g m) s')
-                      in (m', s')
-                else (m, s)
-      where
-        g m a = (a, ) <$> M.lookup a m
+    pruneBalance = return ()

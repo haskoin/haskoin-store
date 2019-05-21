@@ -182,8 +182,8 @@ instance (MonadIO m, MonadResource m) =>
     getAddressTxs a b = R.ask >>= uncurry (getAddressTxsDB a b)
     getAddressUnspents a b = R.ask >>= uncurry (getAddressUnspentsDB a b)
 
-instance (MonadIO m) => BalanceRead (ReaderT BlockDB m) where
+instance MonadIO m => BalanceRead (ReaderT BlockDB m) where
     getBalance a = R.ask >>= uncurry (getBalanceDB a)
 
-instance (MonadIO m) => UnspentRead (ReaderT BlockDB m) where
+instance MonadIO m => UnspentRead (ReaderT BlockDB m) where
     getUnspent p = R.ask >>= uncurry (getUnspentDB p)

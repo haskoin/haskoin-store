@@ -25,6 +25,7 @@ import           Database.RocksDB                    as R
 import           Database.RocksDB.Query              as R
 import           Haskoin
 import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Store.Data.Cached
 import           Network.Haskoin.Store.Data.KeyValue
 import           Network.Haskoin.Store.Data.RocksDB
 import           Network.Haskoin.Store.Data.STM
@@ -36,6 +37,13 @@ data ImportDB = ImportDB
     , importUnspentMap :: !(TVar UnspentMap)
     , importBalanceMap :: !(TVar BalanceMap)
     }
+
+importToCached :: ImportDB -> CachedDB
+importToCached ImportDB { importRocksDB = db
+                        , importUnspentMap = um
+                        , importBalanceMap = bm
+                        } =
+    CachedDB {cachedDB = db, cachedUnspentMap = um, cachedBalanceMap = bm}
 
 runImportDB ::
        (MonadLoggerIO m, Show e)
@@ -189,8 +197,7 @@ unspentOps = concatMap (uncurry f) . M.toList
     g h i Nothing = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
-isInitializedI ImportDB {importRocksDB = db} =
-    uncurry withBlockDB db isInitialized
+isInitializedI = isInitializedC . importToCached
 
 setInitI :: MonadIO m => ImportDB -> m ()
 setInitI ImportDB {importRocksDB = (_, db), importHashMap = hm} = do
@@ -451,7 +458,7 @@ instance MonadUnliftIO m => StoreStream (ReaderT ImportDB m) where
     getAddressUnspents a x = R.ask >>= getAddressUnspentsI a x
     getAddressTxs a x = R.ask >>= getAddressTxsI a x
 
-instance (MonadIO m) => StoreRead (ReaderT ImportDB m) where
+instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     isInitialized = R.ask >>= isInitializedI
     getBestBlock = R.ask >>= getBestBlockI
     getBlocksAtHeight h = R.ask >>= getBlocksAtHeightI h
@@ -461,7 +468,7 @@ instance (MonadIO m) => StoreRead (ReaderT ImportDB m) where
     getSpenders t = R.ask >>= getSpendersI t
     getOrphanTx h = R.ask >>= getOrphanTxI h
 
-instance (MonadIO m) => StoreWrite (ReaderT ImportDB m) where
+instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setInit = R.ask >>= setInitI
     setBest h = R.ask >>= setBestI h
     insertBlock b = R.ask >>= insertBlockI b
@@ -478,17 +485,17 @@ instance (MonadIO m) => StoreWrite (ReaderT ImportDB m) where
     insertOrphanTx t p = R.ask >>= insertOrphanTxI t p
     deleteOrphanTx t = R.ask >>= deleteOrphanTxI t
 
-instance (MonadIO m) => UnspentRead (ReaderT ImportDB m) where
+instance MonadIO m => UnspentRead (ReaderT ImportDB m) where
     getUnspent a = R.ask >>= getUnspentI a
 
-instance (MonadIO m) => UnspentWrite (ReaderT ImportDB m) where
+instance MonadIO m => UnspentWrite (ReaderT ImportDB m) where
     addUnspent u = R.ask >>= addUnspentI u
     delUnspent p = R.ask >>= delUnspentI p
     pruneUnspent = return ()
 
-instance (MonadIO m) => BalanceRead (ReaderT ImportDB m) where
+instance MonadIO m => BalanceRead (ReaderT ImportDB m) where
     getBalance a = R.ask >>= getBalanceI a
 
-instance (MonadIO m) => BalanceWrite (ReaderT ImportDB m) where
+instance MonadIO m => BalanceWrite (ReaderT ImportDB m) where
     setBalance b = R.ask >>= setBalanceI b
     pruneBalance = return ()
