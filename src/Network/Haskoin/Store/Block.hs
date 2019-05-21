@@ -9,6 +9,7 @@ module Network.Haskoin.Store.Block
       ( blockStore
       ) where
 
+import           Conduit
 import           Control.Arrow
 import           Control.Monad.Except
 import           Control.Monad.Logger
@@ -81,7 +82,7 @@ blockStore cfg inbox = do
     ini = do
         (db, net) <- (blockConfDB &&& blockConfNet) <$> asks myConfig
         (um, bm) <- asks (myUnspent &&& myBalances)
-        runExceptT (initDB net db um bm) >>= \case
+        runImportDB db um bm (initDB net) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -160,7 +161,7 @@ processBlock p b = do
         net <- blockConfNet <$> asks myConfig
         um <- asks myUnspent
         bm <- asks myBalances
-        runExceptT (runImportDB db um bm $ importBlock net b n) >>= \case
+        (runImportDB db um bm (importBlock net b n)) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 $(logInfoS) "Block" $
@@ -236,7 +237,7 @@ processTx _p tx =
             (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
             um <- asks myUnspent
             bm <- asks myBalances
-            runExceptT (runImportDB db um bm $ newMempoolTx net tx now) >>= \case
+            runImportDB db um bm (newMempoolTx net tx now) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -249,6 +250,29 @@ processTx _p tx =
                 Right False ->
                     $(logDebugS) "Block" $
                     "Not importing mempool tx: " <> txHashToHex (txHash tx)
+
+processOrphans :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
+processOrphans =
+    isSynced >>= \case
+        False -> $(logDebugS) "Block" "Not importing orphans as not yet in sync"
+        True -> do
+            now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+            db <- asks (blockConfDB . myConfig)
+            um <- asks myUnspent
+            bm <- asks myBalances
+            net <- asks (blockConfNet . myConfig)
+            e <-
+                runImportDB db um bm $ do
+                    pruneOrphans now
+                    importOrphans net now
+            case e of
+                Left e ->
+                    $(logErrorS) "Block" $
+                    "Error importing orphan transactions: " <> cs (show e)
+                Right () ->
+                    $(logDebugS)
+                        "Block"
+                        "Finished processing orphan transactions"
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -417,7 +441,7 @@ syncMe =
                 um <- asks myUnspent
                 bm <- asks myBalances
                 net <- blockConfNet <$> asks myConfig
-                runExceptT (runImportDB db um bm $ revertBlock net d) >>= \case
+                runImportDB db um bm (revertBlock net d) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>
@@ -455,7 +479,8 @@ processBlockMessage (BlockReceived p b) = processBlock p b
 processBlockMessage (BlockNotFound p bs) = processNoBlocks p bs
 processBlockMessage (BlockTxReceived p tx) = processTx p tx
 processBlockMessage (BlockTxAvailable p ts) = processTxs p ts
-processBlockMessage (BlockPing r) = checkTime >> atomically (r ())
+processBlockMessage (BlockPing r) =
+    processOrphans >> checkTime >> atomically (r ())
 processBlockMessage PurgeMempool = purgeMempool
 
 pingMe :: MonadLoggerIO m => Mailbox BlockMessage -> m ()
