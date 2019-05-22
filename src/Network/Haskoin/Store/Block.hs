@@ -54,8 +54,6 @@ data BlockRead = BlockRead
     { mySelf     :: !BlockStore
     , myConfig   :: !BlockConfig
     , myPeer     :: !(TVar (Maybe Syncing))
-    , myUnspent  :: !(TVar UnspentMap)
-    , myBalances :: !(TVar BalanceMap)
     }
 
 -- | Run block store process.
@@ -67,22 +65,18 @@ blockStore ::
 blockStore cfg inbox = do
     $(logInfoS) "Block" "Initializing block store..."
     pb <- newTVarIO Nothing
-    um <- newTVarIO M.empty
-    bm <- newTVarIO (M.empty, [])
     runReaderT
         (ini >> run)
         BlockRead
             { mySelf = inboxToMailbox inbox
             , myConfig = cfg
             , myPeer = pb
-            , myUnspent = um
-            , myBalances = bm
             }
   where
     ini = do
         (db, net) <- (blockConfDB &&& blockConfNet) <$> asks myConfig
-        (um, bm) <- asks (myUnspent &&& myBalances)
-        runImportDB db um bm (initDB net) >>= \case
+        cache <- asks (blockConfCache . myConfig)
+        runImportDB db cache (initDB net) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -120,8 +114,7 @@ mempool p = MMempool `sendMessage` p
 
 pruneCache :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 pruneCache = do
-    um <- asks myUnspent
-    bm <- asks myBalances
+    (um, bm) <- asks (blockConfCache . myConfig)
     do u <- readTVarIO um
        b <- readTVarIO bm
        $(logDebugS) "Block" $
@@ -159,9 +152,8 @@ processBlock p b = do
         n <- cbn
         upr
         net <- blockConfNet <$> asks myConfig
-        um <- asks myUnspent
-        bm <- asks myBalances
-        (runImportDB db um bm (importBlock net b n)) >>= \case
+        cache <- asks (blockConfCache . myConfig)
+        (runImportDB db cache (importBlock net b n)) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 $(logInfoS) "Block" $
@@ -235,9 +227,8 @@ processTx _p tx =
             $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
-            um <- asks myUnspent
-            bm <- asks myBalances
-            runImportDB db um bm (newMempoolTx net tx now) >>= \case
+            cache <- asks (blockConfCache . myConfig)
+            runImportDB db cache (newMempoolTx net tx now) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -258,11 +249,10 @@ processOrphans =
         True -> do
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             db <- asks (blockConfDB . myConfig)
-            um <- asks myUnspent
-            bm <- asks myBalances
+            cache <- asks (blockConfCache . myConfig)
             net <- asks (blockConfNet . myConfig)
             e <-
-                runImportDB db um bm $ do
+                runImportDB db cache $ do
                     pruneOrphans now
                     importOrphans net now
             case e of
@@ -438,10 +428,9 @@ syncMe =
                     " as it is not in main chain..."
                 resetPeer
                 db <- blockConfDB <$> asks myConfig
-                um <- asks myUnspent
-                bm <- asks myBalances
+                cache <- asks (blockConfCache . myConfig)
                 net <- blockConfNet <$> asks myConfig
-                runImportDB db um bm (revertBlock net d) >>= \case
+                runImportDB db cache (revertBlock net d) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>

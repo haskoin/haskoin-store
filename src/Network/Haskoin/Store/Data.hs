@@ -33,8 +33,17 @@ import           GHC.Generics
 import           Haskoin                   as H
 import           Network.Socket            (SockAddr)
 import           Paths_haskoin_store       as P
+import           UnliftIO
 import           UnliftIO.Exception
 import qualified Web.Scotty.Trans          as Scotty
+
+-- | UTXO cache.
+type UnspentMap = HashMap TxHash (IntMap Unspent)
+
+-- | Address balance cache.
+type BalanceMap = (HashMap Address Balance, [Address])
+
+type Cache = (TVar UnspentMap, TVar BalanceMap)
 
 type UnixTime = Word64
 type BlockPos = Word32
@@ -66,6 +75,13 @@ class StoreRead m where
     getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
+
+newCache :: MonadIO m => m Cache
+newCache =
+    atomically $ do
+        um <- newTVar H.empty
+        bm <- newTVar (H.empty, [])
+        return (um, bm)
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)

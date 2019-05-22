@@ -18,13 +18,12 @@ import           Data.Maybe
 import           Haskoin
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
+import           Network.Haskoin.Store.Messages
 import           UnliftIO
 
 type BlockSTM = ReaderT (TVar HashMapDB) STM
 type UnspentSTM = ReaderT (TVar UnspentMap) STM
 type BalanceSTM = ReaderT (TVar BalanceMap) STM
-type UnspentMap = HashMap TxHash (IntMap Unspent)
-type BalanceMap = (HashMap Address Balance, [Address])
 
 withBlockSTM :: TVar HashMapDB -> ReaderT (TVar HashMapDB) STM a -> STM a
 withBlockSTM = flip R.runReaderT

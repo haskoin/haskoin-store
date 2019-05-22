@@ -4,13 +4,17 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Network.Haskoin.Store.Messages where
 
-import           Data.ByteString  (ByteString)
+import           Data.ByteString            (ByteString)
 import           Data.Word
-import           Database.RocksDB (DB)
+import           Database.RocksDB           (DB)
 import           Haskoin
 import           Haskoin.Node
+import           Network.Haskoin.Store.Data
 import           Network.Socket
 import           NQE
+import           UnliftIO.Exception
+import           UnliftIO.STM               (TVar)
+
 
 -- | Mailbox for block store.
 type BlockStore = Mailbox BlockMessage
@@ -26,55 +30,56 @@ data Store = Store
     }
 
 -- | Configuration for a 'Store'.
-data StoreConfig = StoreConfig
-    { storeConfMaxPeers  :: !Int
+data StoreConfig =
+    StoreConfig
+        { storeConfMaxPeers  :: !Int
       -- ^ max peers to connect to
-    , storeConfInitPeers :: ![HostPort]
+        , storeConfInitPeers :: ![HostPort]
       -- ^ static set of peers to connect to
-    , storeConfDiscover  :: !Bool
+        , storeConfDiscover  :: !Bool
       -- ^ discover new peers?
-    , storeConfDB        :: !DB
+        , storeConfDB        :: !DB
       -- ^ RocksDB database handler
-    , storeConfNetwork   :: !Network
+        , storeConfNetwork   :: !Network
       -- ^ network constants
-    , storeConfListen    :: !(Listen StoreEvent)
-    }
+        , storeConfListen    :: !(Listen StoreEvent)
+      -- ^ listen to store events
+        , storeConfCache     :: !(TVar UnspentMap, TVar BalanceMap)
+      -- ^ cache UTXO and address balances
+        }
 
 -- | Configuration for a block store.
-data BlockConfig = BlockConfig
-    { blockConfManager  :: !Manager
+data BlockConfig =
+    BlockConfig
+        { blockConfManager  :: !Manager
       -- ^ peer manager from running node
-    , blockConfChain    :: !Chain
+        , blockConfChain    :: !Chain
       -- ^ chain from a running node
-    , blockConfListener :: !(Listen StoreEvent)
+        , blockConfListener :: !(Listen StoreEvent)
       -- ^ listener for store events
-    , blockConfDB       :: !DB
+        , blockConfDB       :: !DB
       -- ^ RocksDB database handle
-    , blockConfNet      :: !Network
+        , blockConfNet      :: !Network
       -- ^ network constants
-    }
+        , blockConfCache    :: !Cache
+      -- ^ cache UTXO and address balances
+        }
 
 -- | Messages that a 'BlockStore' can accept.
 data BlockMessage
     = BlockNewBest !BlockNode
       -- ^ new block header in chain
-    | BlockPeerConnect !Peer
-                       !SockAddr
+    | BlockPeerConnect !Peer !SockAddr
       -- ^ new peer connected
-    | BlockPeerDisconnect !Peer
-                          !SockAddr
+    | BlockPeerDisconnect !Peer !SockAddr
       -- ^ peer disconnected
-    | BlockReceived !Peer
-                    !Block
+    | BlockReceived !Peer !Block
       -- ^ new block received from a peer
-    | BlockNotFound !Peer
-                    ![BlockHash]
+    | BlockNotFound !Peer ![BlockHash]
       -- ^ block not found
-    | BlockTxReceived !Peer
-                      !Tx
+    | BlockTxReceived !Peer !Tx
       -- ^ transaction received from peer
-    | BlockTxAvailable !Peer
-                       ![TxHash]
+    | BlockTxAvailable !Peer ![TxHash]
       -- ^ peer has transactions available
     | BlockPing !(Listen ())
       -- ^ internal housekeeping ping
@@ -104,3 +109,30 @@ data StoreEvent
                     !RejectCode
                     !ByteString
       -- ^ peer rejected transaction
+
+data PubExcept
+    = PubNoPeers
+    | PubReject RejectCode
+    | PubTimeout
+    | PubNotFound
+    | PubPeerDisconnected
+    deriving Eq
+
+instance Show PubExcept where
+    show PubNoPeers = "no peers"
+    show (PubReject c) =
+        "rejected: " <>
+        case c of
+            RejectMalformed       -> "malformed"
+            RejectInvalid         -> "invalid"
+            RejectObsolete        -> "obsolete"
+            RejectDuplicate       -> "duplicate"
+            RejectNonStandard     -> "not standard"
+            RejectDust            -> "dust"
+            RejectInsufficientFee -> "insufficient fee"
+            RejectCheckpoint      -> "checkpoint"
+    show PubTimeout = "timeout"
+    show PubNotFound = "not found"
+    show PubPeerDisconnected = "peer disconnected"
+
+instance Exception PubExcept

@@ -1,9 +1,5 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell   #-}
-{-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Store.Data.Cached where
 
 import           Conduit
@@ -28,30 +24,23 @@ import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
 import           Network.Haskoin.Store.Data.RocksDB
 import           Network.Haskoin.Store.Data.STM
+import           NQE                                 (query)
 import           UnliftIO
 
 data CachedDB =
     CachedDB
-        { cachedDB :: !(ReadOptions, DB)
-        , cachedUnspentMap :: !(TVar UnspentMap)
-        , cachedBalanceMap :: !(TVar BalanceMap)
+        { cachedDB    :: !(ReadOptions, DB)
+        , cachedCache :: !Cache
         }
 
 withCachedDB ::
        ReadOptions
     -> DB
-    -> TVar UnspentMap
-    -> TVar BalanceMap
+    -> Cache
     -> ReaderT CachedDB m a
     -> m a
-withCachedDB opts db um bm f =
-    R.runReaderT
-        f
-        CachedDB
-            { cachedDB = (opts, db)
-            , cachedUnspentMap = um
-            , cachedBalanceMap = bm
-            }
+withCachedDB opts db cache f =
+    R.runReaderT f CachedDB {cachedDB = (opts, db), cachedCache = cache}
 
 isInitializedC :: MonadIO m => CachedDB -> m (Either InitException Bool)
 isInitializedC CachedDB {cachedDB = db} = uncurry withBlockDB db isInitialized
@@ -80,18 +69,39 @@ getSpendersC :: MonadIO m => TxHash -> CachedDB -> m (IntMap Spender)
 getSpendersC t CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpenders t)
 
 getBalanceC :: MonadIO m => Address -> CachedDB -> m (Maybe Balance)
-getBalanceC a CachedDB {cachedDB = db, cachedBalanceMap = bm} =
+getBalanceC a CachedDB {cachedDB = db, cachedCache = (_, bm)} =
     runMaybeT $ cachemap <|> database
   where
     cachemap = MaybeT . atomically $ withBalanceSTM bm (getBalance a)
-    database = MaybeT . uncurry withBlockDB db $ getBalance a
+    database =
+        MaybeT $
+        uncurry withBlockDB db (getBalance a) >>= \case
+            Just b -> ucache b
+            Nothing -> return Nothing
+    ucache b =
+        atomically . withBalanceSTM bm $
+        getBalance a >>= \case
+            Nothing -> setBalance b >> return (Just b)
+            Just b' -> return $ Just b'
+
+setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
+setBalanceC b CachedDB {cachedCache = (_, bm)} =
+    atomically $ withBalanceSTM bm (setBalance b)
 
 getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
-getUnspentC op CachedDB {cachedDB = db, cachedUnspentMap = um} =
+getUnspentC op CachedDB {cachedDB = db, cachedCache = (um, _)} =
     runMaybeT $ cachemap <|> database
   where
     cachemap = MaybeT . atomically $ withUnspentSTM um (getUnspent op)
     database = MaybeT $ uncurry withBlockDB db (getUnspent op)
+
+addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
+addUnspentC u CachedDB {cachedCache = (um, _)} =
+    atomically $ withUnspentSTM um (addUnspent u)
+
+delUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
+delUnspentC op CachedDB {cachedCache = (um, _)} =
+    atomically $ withUnspentSTM um (delUnspent op)
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)
@@ -146,3 +156,12 @@ instance MonadIO m => UnspentRead (ReaderT CachedDB m) where
 
 instance MonadIO m => BalanceRead (ReaderT CachedDB m) where
     getBalance a = R.ask >>= getBalanceC a
+
+instance MonadIO m => UnspentWrite (ReaderT CachedDB m) where
+    addUnspent u = R.ask >>= addUnspentC u
+    delUnspent p = R.ask >>= delUnspentC p
+    pruneUnspent = return ()
+
+instance MonadIO m => BalanceWrite (ReaderT CachedDB m) where
+    setBalance b = R.ask >>= setBalanceC b
+    pruneBalance = return ()

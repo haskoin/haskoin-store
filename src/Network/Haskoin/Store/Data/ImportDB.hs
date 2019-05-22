@@ -32,38 +32,33 @@ import           Network.Haskoin.Store.Data.STM
 import           UnliftIO
 
 data ImportDB = ImportDB
-    { importRocksDB    :: !(ReadOptions, DB)
-    , importHashMap    :: !(TVar HashMapDB)
-    , importUnspentMap :: !(TVar UnspentMap)
-    , importBalanceMap :: !(TVar BalanceMap)
+    { importRocksDB :: !(ReadOptions, DB)
+    , importHashMap :: !(TVar HashMapDB)
+    , importCache   :: !Cache
     }
 
 importToCached :: ImportDB -> CachedDB
-importToCached ImportDB { importRocksDB = db
-                        , importUnspentMap = um
-                        , importBalanceMap = bm
-                        } =
-    CachedDB {cachedDB = db, cachedUnspentMap = um, cachedBalanceMap = bm}
+importToCached ImportDB {importRocksDB = db, importCache = cache} =
+    CachedDB {cachedDB = db, cachedCache = cache}
 
 runImportDB ::
        (MonadLoggerIO m, Show e)
     => DB
-    -> TVar UnspentMap
-    -> TVar BalanceMap
+    -> Cache
     -> ReaderT ImportDB m (Either e a)
     -> m (Either e a)
-runImportDB db um bm f = do
+runImportDB db (um, bm) f = do
     hm <- newTVarIO emptyHashMapDB
-    um' <- atomically $ readTVar um >>= newTVar
-    bm' <- atomically $ readTVar bm >>= newTVar
+    (um', bm') <-
+        atomically $
+        (,) <$> (readTVar um >>= newTVar) <*> (readTVar bm >>= newTVar)
     x <-
         R.runReaderT
             f
             ImportDB
                 { importRocksDB = (defaultReadOptions, db)
                 , importHashMap = hm
-                , importUnspentMap = um'
-                , importBalanceMap = bm'
+                , importCache = (um', bm')
                 }
     case x of
         Right y -> do
@@ -310,7 +305,7 @@ getSpendersI t ImportDB {importRocksDB = db, importHashMap = hm} = do
 getBalanceI :: MonadIO m => Address -> ImportDB -> m (Maybe Balance)
 getBalanceI a ImportDB { importRocksDB = db
                        , importHashMap = hm
-                       , importBalanceMap = bm
+                       , importCache = (_, bm)
                        } =
     runMaybeT $
     MaybeT (atomically . runMaybeT $ cachemap <|> hashmap) <|> database
@@ -320,7 +315,7 @@ getBalanceI a ImportDB { importRocksDB = db
     database = MaybeT . uncurry withBlockDB db $ getBalance a
 
 setBalanceI :: MonadIO m => Balance -> ImportDB -> m ()
-setBalanceI b ImportDB {importHashMap = hm, importBalanceMap = bm} =
+setBalanceI b ImportDB {importHashMap = hm, importCache = (_, bm)} =
     atomically $ do
         withBlockSTM hm $ setBalance b
         withBalanceSTM bm $ setBalance b
@@ -328,7 +323,7 @@ setBalanceI b ImportDB {importHashMap = hm, importBalanceMap = bm} =
 getUnspentI :: MonadIO m => OutPoint -> ImportDB -> m (Maybe Unspent)
 getUnspentI op ImportDB { importRocksDB = db
                         , importHashMap = hm
-                        , importUnspentMap = um
+                        , importCache = (um, _)
                         } = do
     u <-
         atomically . runMaybeT $ do
@@ -340,13 +335,13 @@ getUnspentI op ImportDB { importRocksDB = db
         Just x  -> return x
 
 addUnspentI :: MonadIO m => Unspent -> ImportDB -> m ()
-addUnspentI u ImportDB {importHashMap = hm, importUnspentMap = um} =
+addUnspentI u ImportDB {importHashMap = hm, importCache = (um, _)} =
     atomically $ do
         withBlockSTM hm $ addUnspent u
         withUnspentSTM um $ addUnspent u
 
 delUnspentI :: MonadIO m => OutPoint -> ImportDB -> m ()
-delUnspentI p ImportDB {importHashMap = hm, importUnspentMap = um} =
+delUnspentI p ImportDB {importHashMap = hm, importCache = (um, _)} =
     atomically $ do
         withUnspentSTM um $ delUnspent p
         withBlockSTM hm $ delUnspent p

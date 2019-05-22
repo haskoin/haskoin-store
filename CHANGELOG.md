@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.15.3
 ### Added
 - Support for orphan transactions.
+- Full address balance cache.
 
 ### Changed
 - Less use of the `ExceptT` monad transformer and more explicit use of `Either`.

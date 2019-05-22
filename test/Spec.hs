@@ -71,6 +71,7 @@ withTestStore ::
 withTestStore net t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w -> do
         x <- newInbox
+        c <- newCache
         runNoLoggingT $ do
             db <-
                 open
@@ -88,6 +89,7 @@ withTestStore net t f =
                         , storeConfDB = db
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` x)
+                        , storeConfCache = c
                         }
             withStore cfg $ \Store {..} ->
                 lift $
