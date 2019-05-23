@@ -10,10 +10,8 @@ import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString.Short               as B.Short
-import           Data.HashMap.Strict                 (HashMap)
-import qualified Data.HashMap.Strict                 as M
+import qualified Data.HashTable.IO                   as H
 import           Data.IntMap.Strict                  (IntMap)
-import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions             (cs)
@@ -35,21 +33,16 @@ data CachedDB =
 
 newCache :: MonadUnliftIO m => ReadOptions -> DB -> m Cache
 newCache opts db = do
-    um <- newTVarIO M.empty
-    bm <- newTVarIO M.empty
+    bm <- liftIO H.new
+    um <- liftIO H.new
+    let cache = Cache {cacheBalance = bm, cacheUnspent = um}
     runResourceT . withBlockDB opts db $ do
-        runConduit $ getAddressBalances .| mapMC (bal bm) .| sinkNull
-        runConduit $ getUnspents .| mapMC (uns um) .| sinkNull
-    return (um, bm)
+        runConduit $ getAddressBalances .| mapMC (bal cache) .| sinkNull
+        runConduit $ getUnspents .| mapMC (uns cache) .| sinkNull
+    return cache
   where
-    bal bm = atomically . withBalanceSTM bm . setBalance
-    uns um = atomically . withUnspentSTM um . addUnspent
-
-cacheSize :: Cache -> STM (Int, Int)
-cacheSize (um, bm) = do
-    us <- M.size <$> readTVar um
-    bs <- M.size <$> readTVar bm
-    return (us, bs)
+    bal cache = withCachedDB opts db cache . setBalance
+    uns cache = withCachedDB opts db cache . addUnspent
 
 withCachedDB ::
        ReadOptions
@@ -87,28 +80,37 @@ getSpendersC :: MonadIO m => TxHash -> CachedDB -> m (IntMap Spender)
 getSpendersC t CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpenders t)
 
 getBalanceC :: MonadIO m => Address -> CachedDB -> m (Maybe Balance)
-getBalanceC a CachedDB {cachedCache = (_, bm)} =
-    atomically $ withBalanceSTM bm (getBalance a)
+getBalanceC a CachedDB {cachedCache = Cache {cacheBalance = bm}} =
+    liftIO (H.lookup bm (encodeShort a)) >>= \case
+        Just b -> return . Just $ balValToBalance a (decodeShort b)
+        Nothing -> return Nothing
 
 setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
-setBalanceC b CachedDB {cachedCache = (_, bm)} =
-    atomically $ withBalanceSTM bm (setBalance b)
+setBalanceC bal CachedDB {cachedCache = Cache {cacheBalance = bm}} =
+    liftIO $ H.insert bm (encodeShort a) (encodeShort b)
+  where
+    (a, b) = balanceToBalVal bal
 
 getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
-getUnspentC op CachedDB {cachedDB = db, cachedCache = (um, _)} =
-    atomically $ withUnspentSTM um (getUnspent op)
+getUnspentC op CachedDB {cachedDB = db, cachedCache = Cache {cacheUnspent = um}} =
+    liftIO (H.lookup um (encodeShort op)) >>= \case
+        Just u -> return . Just $ unspentValToUnspent op (decodeShort u)
+        Nothing -> return Nothing
+
 
 getUnspentsC :: (MonadResource m, MonadIO m) => CachedDB -> ConduitT () Unspent m ()
 getUnspentsC CachedDB {cachedDB = db} = do
     uncurry getUnspentsDB db
 
 addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
-addUnspentC u CachedDB {cachedCache = (um, _)} =
-    atomically $ withUnspentSTM um (addUnspent u)
+addUnspentC u CachedDB {cachedCache = Cache {cacheUnspent = um}} =
+    liftIO $ H.insert um (encodeShort a) (encodeShort b)
+  where
+    (a, b) = unspentToUnspentVal u
 
 delUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
-delUnspentC op CachedDB {cachedCache = (um, _)} =
-    atomically $ withUnspentSTM um (delUnspent op)
+delUnspentC op CachedDB {cachedCache = Cache {cacheUnspent = um}} =
+    liftIO $ H.delete um (encodeShort op)
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)

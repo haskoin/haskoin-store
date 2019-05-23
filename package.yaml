@@ -22,6 +22,7 @@ dependencies:
   - conduit
   - data-default
   - hashable
+  - hashtables
   - haskoin-core
   - haskoin-node
   - http-types

@@ -44,7 +44,7 @@ data StoreConfig =
       -- ^ network constants
         , storeConfListen    :: !(Listen StoreEvent)
       -- ^ listen to store events
-        , storeConfCache     :: !(TVar UnspentMap, TVar BalanceMap)
+        , storeConfCache     :: !Cache
       -- ^ cache UTXO and address balances
         }
 

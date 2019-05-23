@@ -141,9 +141,7 @@ main =
                     }
         $(logInfoS) "Main" "Populating cache..."
         cache <- newCache defaultReadOptions db
-        (us, bs) <- atomically $ cacheSize cache
-        $(logInfoS) "Main" $ "Addresses: " <> cs (show bs)
-        $(logInfoS) "Main" $ "UTXO: " <> cs (show us)
+        $(logInfoS) "Main" "Finished populating cache"
         withPublisher $ \pub -> do
             let scfg =
                     StoreConfig

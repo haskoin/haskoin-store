@@ -40,7 +40,6 @@ module Haskoin.Store
     , Cache
     , WebConfig(..)
     , newCache
-    , cacheSize
     , withStore
     , runWeb
     , store
@@ -81,9 +80,7 @@ module Haskoin.Store
     , mergeSourcesBy
     , withBlockDB
     , withBlockSTM
-    , withBalanceSTM
     , withCachedDB
-    , withUnspentSTM
     ) where
 
 import           Conduit

@@ -22,17 +22,9 @@ import           Network.Haskoin.Store.Messages
 import           UnliftIO
 
 type BlockSTM = ReaderT (TVar HashMapDB) STM
-type UnspentSTM = ReaderT (TVar UnspentMap) STM
-type BalanceSTM = ReaderT (TVar BalanceMap) STM
 
 withBlockSTM :: TVar HashMapDB -> ReaderT (TVar HashMapDB) STM a -> STM a
 withBlockSTM = flip R.runReaderT
-
-withUnspentSTM :: TVar UnspentMap -> ReaderT (TVar UnspentMap) STM a -> STM a
-withUnspentSTM = flip R.runReaderT
-
-withBalanceSTM :: TVar BalanceMap -> ReaderT (TVar BalanceMap) STM a -> STM a
-withBalanceSTM = flip R.runReaderT
 
 data HashMapDB = HashMapDB
     { hBest :: !(Maybe BlockHash)
@@ -362,30 +354,3 @@ instance StoreWrite BlockSTM where
 instance UnspentWrite BlockSTM where
     addUnspent h = lift . (`modifyTVar` addUnspentH h) =<< R.ask
     delUnspent p = lift . (`modifyTVar` delUnspentH p) =<< R.ask
-
-instance UnspentRead UnspentSTM where
-    getUnspent op = do
-        um <- lift . readTVar =<< R.ask
-        return $
-            unspentValToUnspent op . decodeShort <$>
-            M.lookup (encodeShort op) um
-
-instance UnspentWrite UnspentSTM where
-    addUnspent u = do
-        v <- R.ask
-        let (p, x) = unspentToUnspentVal u
-        lift . modifyTVar v $ M.insert (encodeShort p) (encodeShort x)
-    delUnspent op = lift . (`modifyTVar` M.delete (encodeShort op)) =<< R.ask
-
-instance BalanceRead BalanceSTM where
-    getBalance a = do
-        b <- lift . readTVar =<< R.ask
-        let bs = M.lookup (encodeShort a) b
-        return $ balValToBalance a . decodeShort <$> bs
-
-instance BalanceWrite BalanceSTM where
-    setBalance bal = do
-        v <- R.ask
-        lift . modifyTVar v $ M.insert (encodeShort a) (encodeShort b)
-      where
-        (a, b) = balanceToBalVal bal

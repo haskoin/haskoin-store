@@ -16,6 +16,7 @@ import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString.Short               as B.Short
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
+import qualified Data.HashTable.IO                   as H
 import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.List
@@ -170,35 +171,33 @@ unspentOps = concatMap (uncurry f) . M.toList
   where
     f h = map (uncurry (g h)) . I.toList
     g h i (Just u) = insertOp (UnspentKey (OutPoint h (fromIntegral i))) u
-    g h i Nothing = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
+    g h i Nothing  = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
 
 updateCache :: MonadIO m => TVar HashMapDB -> Cache -> m ()
-updateCache ht (ut, bt) = do
+updateCache ht Cache {cacheUnspent = um, cacheBalance = bm} = do
     HashMapDB {hUnspent = u, hBalance = b} <- readTVarIO ht
-    um <- readTVarIO ut
-    bm <- readTVarIO bt
-    let um' = updateUnspentCache u um
-        bm' = updateBalanceCache b bm
-    atomically $ do
-        writeTVar ut um'
-        writeTVar bt bm'
+    updateUnspentCache u um
+    updateBalanceCache b bm
 
 updateUnspentCache ::
-       HashMap TxHash (IntMap (Maybe UnspentVal)) -> UnspentMap -> UnspentMap
+       MonadIO m
+    => HashMap TxHash (IntMap (Maybe UnspentVal))
+    -> UnspentMap
+    -> m ()
 updateUnspentCache hm um =
-    foldl' (flip ($)) um (concatMap (uncurry f) (M.toList hm))
+    liftIO $ mapM_ (uncurry f) (M.toList hm)
   where
-    f h = map (uncurry (g h)) . I.toList
+    f h = mapM_ (uncurry (g h)) . I.toList
     g h i (Just u) =
-        M.insert (encodeShort (OutPoint h (fromIntegral i))) (encodeShort u)
-    g h i Nothing = M.delete (encodeShort (OutPoint h (fromIntegral i)))
+        H.insert um (encodeShort (OutPoint h (fromIntegral i))) (encodeShort u)
+    g h i Nothing =
+        H.delete um (encodeShort (OutPoint h (fromIntegral i)))
 
-updateBalanceCache ::
-       HashMap Address BalVal -> BalanceMap -> BalanceMap
+updateBalanceCache :: MonadIO m => HashMap Address BalVal -> BalanceMap -> m ()
 updateBalanceCache hm bm =
-    foldl' (flip ($)) bm (map (uncurry f) (M.toList hm))
+    liftIO $ mapM_ (uncurry f) (M.toList hm)
   where
-    f a b = M.insert (encodeShort a) (encodeShort b)
+    f a b = H.insert bm (encodeShort a) (encodeShort b)
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
 isInitializedI = isInitializedC . importToCached
@@ -312,22 +311,27 @@ getSpendersI t ImportDB {importRocksDB = db, importHashMap = hm} = do
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
 getBalanceI :: MonadIO m => Address -> ImportDB -> m (Maybe Balance)
-getBalanceI a ImportDB {importCache = (_, bm), importHashMap = hm} =
-    atomically (runMaybeT (MaybeT hashmap <|> MaybeT cached))
+getBalanceI a ImportDB { importRocksDB = db
+                       , importCache = cache
+                       , importHashMap = hm
+                       } = runMaybeT (MaybeT hashmap <|> MaybeT cached)
   where
-    hashmap = withBlockSTM hm (getBalance a)
-    cached = withBalanceSTM bm (getBalance a)
+    hashmap = atomically $ withBlockSTM hm (getBalance a)
+    cached = uncurry withCachedDB db cache (getBalance a)
 
 setBalanceI :: MonadIO m => Balance -> ImportDB -> m ()
 setBalanceI b ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ setBalance b
 
 getUnspentI :: MonadIO m => OutPoint -> ImportDB -> m (Maybe Unspent)
-getUnspentI op ImportDB {importCache = (um, _), importHashMap = hm} =
-    join <$> atomically (runMaybeT (MaybeT hashmap <|> MaybeT cached))
+getUnspentI op ImportDB { importRocksDB = db
+                        , importCache = cache
+                        , importHashMap = hm
+                        } =
+    join <$> runMaybeT (MaybeT hashmap <|> MaybeT cached)
   where
-    hashmap = getUnspentH op <$> readTVar hm
-    cached = Just <$> withUnspentSTM um (getUnspent op)
+    hashmap = atomically $ getUnspentH op <$> readTVar hm
+    cached = Just <$> uncurry withCachedDB db cache (getUnspent op)
 
 addUnspentI :: MonadIO m => Unspent -> ImportDB -> m ()
 addUnspentI u ImportDB {importHashMap = hm} =

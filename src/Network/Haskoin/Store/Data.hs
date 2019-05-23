@@ -19,7 +19,8 @@ import qualified Data.ByteString.Short     as B.Short
 import           Data.Default
 import           Data.Hashable
 import           Data.HashMap.Strict       (HashMap)
-import qualified Data.HashMap.Strict       as H
+import qualified Data.HashMap.Strict       as M
+import qualified Data.HashTable.IO         as H
 import           Data.Int
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
@@ -43,16 +44,22 @@ encodeShort = B.Short.toShort . S.encode
 
 decodeShort :: Serialize a => ShortByteString -> a
 decodeShort bs = case S.decode (B.Short.fromShort bs) of
-    Left e -> error e
+    Left e  -> error e
     Right a -> a
 
+type HashTable k v = H.BasicHashTable k v
+
 -- | UTXO cache.
-type UnspentMap = HashMap ShortByteString ShortByteString
+type UnspentMap = HashTable ShortByteString ShortByteString
 
 -- | Address balance cache.
-type BalanceMap = HashMap ShortByteString ShortByteString
+type BalanceMap = HashTable ShortByteString ShortByteString
 
-type Cache = (TVar UnspentMap, TVar BalanceMap)
+data Cache =
+    Cache
+        { cacheUnspent :: !UnspentMap
+        , cacheBalance :: !BalanceMap
+        }
 
 type UnixTime = Word64
 type BlockPos = Word32
@@ -853,7 +860,7 @@ xPubSummaryPairs net XPubSummary { xPubSummaryReceived = r
     [ "balance" .=
       object ["received" .= r, "confirmed" .= c, "unconfirmed" .= z]
     , "indices" .= object ["change" .= ch, "external" .= ext]
-    , "paths" .= object (mapMaybe (uncurry f) (H.toList ps))
+    , "paths" .= object (mapMaybe (uncurry f) (M.toList ps))
     , "txs" .= map (transactionToJSON net) ts
     ]
   where
@@ -883,8 +890,8 @@ instance BinSerial XPubSummary where
         put z
         put ext
         put ch
-        putWord64be (fromIntegral $ H.size ps)
-        forM_ (H.toList ps) $ \(a, p) -> do
+        putWord64be (fromIntegral $ M.size ps)
+        forM_ (M.toList ps) $ \(a, p) -> do
             binSerial net a
             put p
         putWord64be (fromIntegral $ length ts)
