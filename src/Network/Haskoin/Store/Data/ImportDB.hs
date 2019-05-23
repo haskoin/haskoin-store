@@ -303,16 +303,8 @@ getSpendersI t ImportDB {importRocksDB = db, importHashMap = hm} = do
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
 getBalanceI :: MonadIO m => Address -> ImportDB -> m (Maybe Balance)
-getBalanceI a ImportDB { importRocksDB = db
-                       , importHashMap = hm
-                       , importCache = (_, bm)
-                       } =
-    runMaybeT $
-    MaybeT (atomically . runMaybeT $ cachemap <|> hashmap) <|> database
-  where
-    cachemap = MaybeT . withBalanceSTM bm $ getBalance a
-    hashmap = MaybeT . withBlockSTM hm $ getBalance a
-    database = MaybeT . uncurry withBlockDB db $ getBalance a
+getBalanceI a ImportDB {importCache = (_, bm)} =
+    atomically $ withBalanceSTM bm $ getBalance a
 
 setBalanceI :: MonadIO m => Balance -> ImportDB -> m ()
 setBalanceI b ImportDB {importHashMap = hm, importCache = (_, bm)} =
@@ -321,18 +313,8 @@ setBalanceI b ImportDB {importHashMap = hm, importCache = (_, bm)} =
         withBalanceSTM bm $ setBalance b
 
 getUnspentI :: MonadIO m => OutPoint -> ImportDB -> m (Maybe Unspent)
-getUnspentI op ImportDB { importRocksDB = db
-                        , importHashMap = hm
-                        , importCache = (um, _)
-                        } = do
-    u <-
-        atomically . runMaybeT $ do
-            let x = withUnspentSTM um (getUnspent op)
-                y = getUnspentH op <$> readTVar hm
-            Just <$> MaybeT x <|> MaybeT y
-    case u of
-        Nothing -> uncurry withBlockDB db $ getUnspent op
-        Just x  -> return x
+getUnspentI op ImportDB {importCache = (um, _)} = do
+    atomically $ withUnspentSTM um (getUnspent op)
 
 addUnspentI :: MonadIO m => Unspent -> ImportDB -> m ()
 addUnspentI u ImportDB {importHashMap = hm, importCache = (um, _)} =
@@ -378,6 +360,12 @@ getOrphansI ImportDB {importHashMap = hm, importRocksDB = db} = do
         fmap M.fromList . runResourceT . uncurry withBlockDB db . runConduit $
         getOrphans .| mapC (\(u, tx) -> (txHash tx, Just (u, tx))) .| sinkList
     yieldMany . catMaybes . M.elems $ M.union hmap dmap
+
+getAddressBalancesI :: MonadUnliftIO m => ImportDB -> ConduitT () Balance m ()
+getAddressBalancesI = getAddressBalancesC . importToCached
+
+getUnspentsI :: MonadUnliftIO m => ImportDB -> ConduitT () Unspent m ()
+getUnspentsI = getUnspentsC . importToCached
 
 getAddressUnspentsI ::
        MonadUnliftIO m
@@ -452,6 +440,8 @@ instance MonadUnliftIO m => StoreStream (ReaderT ImportDB m) where
     getOrphans = R.ask >>= getOrphansI
     getAddressUnspents a x = R.ask >>= getAddressUnspentsI a x
     getAddressTxs a x = R.ask >>= getAddressTxsI a x
+    getAddressBalances = R.ask >>= getAddressBalancesI
+    getUnspents = R.ask >>= getUnspentsI
 
 instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     isInitialized = R.ask >>= isInitializedI
@@ -486,11 +476,9 @@ instance MonadIO m => UnspentRead (ReaderT ImportDB m) where
 instance MonadIO m => UnspentWrite (ReaderT ImportDB m) where
     addUnspent u = R.ask >>= addUnspentI u
     delUnspent p = R.ask >>= delUnspentI p
-    pruneUnspent = return ()
 
 instance MonadIO m => BalanceRead (ReaderT ImportDB m) where
     getBalance a = R.ask >>= getBalanceI a
 
 instance MonadIO m => BalanceWrite (ReaderT ImportDB m) where
     setBalance b = R.ask >>= setBalanceI b
-    pruneBalance = return ()

@@ -69,10 +69,9 @@ main = do
 withTestStore ::
        MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
 withTestStore net t f =
-    withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w -> do
-        x <- newInbox
-        c <- newCache
+    withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
         runNoLoggingT $ do
+            x <- newInbox
             db <-
                 open
                     w
@@ -81,6 +80,7 @@ withTestStore net t f =
                         , errorIfExists = True
                         , compression = SnappyCompression
                         }
+            c <- newCache defaultReadOptions db
             let cfg =
                     StoreConfig
                         { storeConfMaxPeers = 20

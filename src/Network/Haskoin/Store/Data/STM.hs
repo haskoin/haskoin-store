@@ -91,17 +91,7 @@ getSpendersH :: TxHash -> HashMapDB -> IntMap (Maybe Spender)
 getSpendersH t = M.lookupDefault I.empty t . hSpender
 
 getBalanceH :: Address -> HashMapDB -> Maybe Balance
-getBalanceH a = fmap f . M.lookup a . hBalance
-  where
-    f b =
-        Balance
-            { balanceAddress = a
-            , balanceAmount = balValAmount b
-            , balanceZero = balValZero b
-            , balanceUnspentCount = balValUnspentCount b
-            , balanceTxCount = balValTxCount b
-            , balanceTotalReceived = balValTotalReceived b
-            }
+getBalanceH a = fmap (balValToBalance a) . M.lookup a . hBalance
 
 getMempoolH ::
        Monad m
@@ -125,6 +115,10 @@ getOrphansH = yieldMany . catMaybes . M.elems . hOrphans
 getOrphanTxH :: TxHash -> HashMapDB -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
 
+getUnspentsH :: Monad m => HashMapDB -> ConduitT () Unspent m ()
+getUnspentsH HashMapDB {hUnspent = u} =
+    yieldMany . catMaybes $ concatMap I.elems (M.elems u)
+
 getAddressTxsH :: Address -> Maybe BlockRef -> HashMapDB -> [BlockTx]
 getAddressTxsH a mbr db =
     dropWhile h .
@@ -141,6 +135,10 @@ getAddressTxsH a mbr db =
         case mbr of
             Nothing -> False
             Just br -> b > br
+
+getAddressBalancesH :: Monad m => HashMapDB -> ConduitT () Balance m ()
+getAddressBalancesH HashMapDB {hBalance = bm} =
+    yieldMany (M.toList bm) .| mapC (uncurry balValToBalance)
 
 getAddressUnspentsH ::
        Address -> Maybe BlockRef -> HashMapDB -> [Unspent]
@@ -205,16 +203,9 @@ deleteSpenderH op db =
         }
 
 setBalanceH :: Balance -> HashMapDB -> HashMapDB
-setBalanceH b db = db {hBalance = M.insert (balanceAddress b) x (hBalance db)}
+setBalanceH bal db = db {hBalance = M.insert a b (hBalance db)}
   where
-    x =
-                BalVal
-                    { balValAmount = balanceAmount b
-                    , balValZero = balanceZero b
-                    , balValUnspentCount = balanceUnspentCount b
-                    , balValTxCount = balanceTxCount b
-                    , balValTotalReceived = balanceTotalReceived b
-                    }
+    (a, b) = balanceToBalVal bal
 
 insertAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
 insertAddrTxH a btx db =
@@ -329,7 +320,6 @@ instance UnspentRead BlockSTM where
 
 instance BalanceWrite BlockSTM where
     setBalance b = lift . (`modifyTVar` setBalanceH b) =<< R.ask
-    pruneBalance = return ()
 
 instance StoreStream BlockSTM where
     getMempool m = getMempoolH m =<< lift . lift . readTVar =<< lift R.ask
@@ -339,6 +329,9 @@ instance StoreStream BlockSTM where
     getAddressUnspents a m =
         yieldMany . getAddressUnspentsH a m =<<
         lift . lift . readTVar =<< lift R.ask
+    getAddressBalances =
+        getAddressBalancesH =<< lift . lift . readTVar =<< lift R.ask
+    getUnspents = getUnspentsH =<< lift . lift . readTVar =<< lift R.ask
 
 instance StoreWrite BlockSTM where
     setInit = lift . (`modifyTVar` setInitH) =<< R.ask
@@ -362,7 +355,6 @@ instance StoreWrite BlockSTM where
 instance UnspentWrite BlockSTM where
     addUnspent h = lift . (`modifyTVar` addUnspentH h) =<< R.ask
     delUnspent p = lift . (`modifyTVar` delUnspentH p) =<< R.ask
-    pruneUnspent = return ()
 
 instance UnspentRead UnspentSTM where
     getUnspent op = do
@@ -386,18 +378,15 @@ instance UnspentWrite UnspentSTM where
              in if I.null n
                     then Nothing
                     else Just n
-    pruneUnspent = return ()
 
 instance BalanceRead BalanceSTM where
     getBalance a = do
-        b <- fmap fst $ lift . readTVar =<< R.ask
-        return $ M.lookup a b
+        b <- lift . readTVar =<< R.ask
+        return $ balValToBalance a <$> M.lookup a b
 
 instance BalanceWrite BalanceSTM where
-    setBalance b = do
+    setBalance bal = do
         v <- R.ask
-        lift . modifyTVar v $ \(m, s) ->
-            let m' = M.insert (balanceAddress b) b m
-                s' = balanceAddress b : s
-             in (m', s')
-    pruneBalance = return ()
+        lift . modifyTVar v $ M.insert a b
+      where
+        (a, b) = balanceToBalVal bal

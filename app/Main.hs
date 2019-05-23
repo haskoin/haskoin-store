@@ -139,7 +139,7 @@ main =
                     , maxOpenFiles = -1
                     , writeBufferSize = 2 `shift` 30
                     }
-        cache <- newCache
+        cache <- newCache defaultReadOptions db
         withPublisher $ \pub -> do
             let scfg =
                     StoreConfig

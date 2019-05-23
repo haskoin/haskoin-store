@@ -16,6 +16,7 @@ import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B
 import           Data.ByteString.Short     (ShortByteString)
 import qualified Data.ByteString.Short     as B.Short
+import           Data.Default
 import           Data.Hashable
 import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as H
@@ -41,7 +42,7 @@ import qualified Web.Scotty.Trans          as Scotty
 type UnspentMap = HashMap TxHash (IntMap Unspent)
 
 -- | Address balance cache.
-type BalanceMap = (HashMap Address Balance, [Address])
+type BalanceMap = HashMap Address BalVal
 
 type Cache = (TVar UnspentMap, TVar BalanceMap)
 
@@ -54,14 +55,12 @@ newtype InitException = IncorrectVersion Word32
 class UnspentWrite m where
     addUnspent :: Unspent -> m ()
     delUnspent :: OutPoint -> m ()
-    pruneUnspent :: m ()
 
 class UnspentRead m where
     getUnspent :: OutPoint -> m (Maybe Unspent)
 
 class BalanceWrite m where
     setBalance :: Balance -> m ()
-    pruneBalance :: m ()
 
 class BalanceRead m where
     getBalance :: Address -> m (Maybe Balance)
@@ -76,13 +75,6 @@ class StoreRead m where
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
 
-newCache :: MonadIO m => m Cache
-newCache =
-    atomically $ do
-        um <- newTVar H.empty
-        bm <- newTVar (H.empty, [])
-        return (um, bm)
-
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
 getTransaction h = runMaybeT $ do
@@ -95,6 +87,8 @@ class StoreStream m where
     getOrphans :: ConduitT () (UnixTime, Tx) m ()
     getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT () Unspent m ()
     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
+    getAddressBalances :: ConduitT () Balance m ()
+    getUnspents :: ConduitT () Unspent m ()
 
 class StoreWrite m where
     setInit :: m ()
@@ -1018,3 +1012,55 @@ data StartFrom
     | StartMem !UnixTime
     | StartOffset !Word32
     deriving (Show, Eq, Generic)
+
+data BalVal = BalVal
+    { balValAmount        :: !Word64
+    , balValZero          :: !Word64
+    , balValUnspentCount  :: !Word64
+    , balValTxCount       :: !Word64
+    , balValTotalReceived :: !Word64
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
+
+balValToBalance :: Address -> BalVal -> Balance
+balValToBalance a BalVal { balValAmount = v
+                         , balValZero = z
+                         , balValUnspentCount = u
+                         , balValTxCount = t
+                         , balValTotalReceived = r
+                         } =
+    Balance
+        { balanceAddress = a
+        , balanceAmount = v
+        , balanceZero = z
+        , balanceUnspentCount = u
+        , balanceTxCount = t
+        , balanceTotalReceived = r
+        }
+
+balanceToBalVal :: Balance -> (Address, BalVal)
+balanceToBalVal Balance { balanceAddress = a
+                        , balanceAmount = v
+                        , balanceZero = z
+                        , balanceUnspentCount = u
+                        , balanceTxCount = t
+                        , balanceTotalReceived = r
+                        } =
+    ( a
+    , BalVal
+          { balValAmount = v
+          , balValZero = z
+          , balValUnspentCount = u
+          , balValTxCount = t
+          , balValTotalReceived = r
+          })
+
+-- | Default balance for an address.
+instance Default BalVal where
+    def =
+        BalVal
+            { balValAmount = 0
+            , balValZero = 0
+            , balValUnspentCount = 0
+            , balValTxCount = 0
+            , balValTotalReceived = 0
+            }

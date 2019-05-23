@@ -583,6 +583,8 @@ instance StoreStream WebM where
     getOrphans = transPipe lift getOrphans
     getAddressUnspents a = transPipe lift . getAddressUnspents a
     getAddressTxs a = transPipe lift . getAddressTxs a
+    getAddressBalances = transPipe lift getAddressBalances
+    getUnspents = transPipe lift getUnspents
 
 instance StoreRead WebM where
     isInitialized = lift isInitialized
@@ -603,11 +605,9 @@ instance BalanceRead WebM where
 instance UnspentWrite WebM where
     addUnspent = lift . addUnspent
     delUnspent = lift . delUnspent
-    pruneUnspent = lift pruneUnspent
 
 instance BalanceWrite WebM where
     setBalance = lift . setBalance
-    pruneBalance = lift pruneBalance
 
 healthCheck ::
        (MonadUnliftIO m, StoreRead m)

@@ -1,4 +1,4 @@
-resolver: lts-13.20
+resolver: lts-13.22
 nix:
   packages:
     - perl

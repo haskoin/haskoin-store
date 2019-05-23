@@ -112,28 +112,6 @@ mempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => Peer -> ReaderT BlockRead m ()
 mempool p = MMempool `sendMessage` p
 
-pruneCache :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
-pruneCache = do
-    (um, bm) <- asks (blockConfCache . myConfig)
-    do u <- readTVarIO um
-       b <- readTVarIO bm
-       $(logDebugS) "Block" $
-           "Unspent output cache pre-prune tx count: " <>
-           fromString (show (M.size u))
-       $(logDebugS) "Block" $
-           "Address cache pre-prune count: " <>
-           fromString (show (M.size (fst b)))
-    atomically $
-        withUnspentSTM um pruneUnspent >> withBalanceSTM bm pruneBalance
-    do u <- readTVarIO um
-       b <- readTVarIO bm
-       $(logDebugS) "Block" $
-           "Unspent output cache post-prune tx count: " <>
-           fromString (show (M.size u))
-       $(logDebugS) "Block" $
-           "Address cache post-prune count: " <>
-           fromString (show (M.size (fst b)))
-
 processBlock ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
@@ -163,7 +141,6 @@ processBlock p b = do
                     cs (show (nodeHeight n))
                 atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
                 lift $ isSynced >>= \x -> when x (mempool p)
-                when (nodeHeight n `mod` 1000 == 0) (lift pruneCache)
             Left e -> do
                 $(logErrorS) "Block" $
                     "Error importing block " <>

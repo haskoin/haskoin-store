@@ -157,17 +157,22 @@ instance R.KeyValue SpenderKey Spender
 data UnspentKey
     = UnspentKey { unspentKey :: !OutPoint }
     | UnspentKeyS { unspentKeyS :: !TxHash }
+    | UnspentKeyB
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
-instance Serialize UnspentKey where
+instance Serialize UnspentKey
     -- 0x09 · TxHash · Index
+                             where
     put UnspentKey {unspentKey = OutPoint {outPointHash = h, outPointIndex = i}} = do
         putWord8 0x09
         put h
         put i
+    -- 0x09 · TxHash
     put UnspentKeyS {unspentKeyS = t} = do
         putWord8 0x09
         put t
+    -- 0x09
+    put UnspentKeyB = putWord8 0x09
     get = do
         guard . (== 0x09) =<< getWord8
         h <- get
@@ -269,8 +274,11 @@ instance R.Key HeightKey
 instance R.KeyValue HeightKey [BlockHash]
 
 -- | Address balance database key.
-newtype BalKey
-    = BalKey { balanceKey :: Address }
+data BalKey
+    = BalKey
+          { balanceKey :: !Address
+          }
+    | BalKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BalKey where
@@ -278,36 +286,13 @@ instance Serialize BalKey where
     put BalKey {balanceKey = a} = do
         putWord8 0x04
         put a
+    -- 0x04
+    put BalKeyS = putWord8 0x04
     get = do
         guard . (== 0x04) =<< getWord8
         BalKey <$> get
 
 instance R.Key BalKey
-
--- | Address balance database value.
-data BalVal = BalVal
-    { balValAmount        :: !Word64
-      -- ^ balance in satoshi
-    , balValZero          :: !Word64
-      -- ^ unconfirmed balance in satoshi
-    , balValUnspentCount  :: !Word64
-      -- ^ number of unspent outputs
-    , balValTxCount       :: !Word64
-      -- ^ number of transactions
-    , balValTotalReceived :: !Word64
-      -- ^ total amount received by this address
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
-
--- | Default balance for an address.
-instance Default BalVal where
-    def =
-        BalVal
-            { balValAmount = 0
-            , balValZero = 0
-            , balValUnspentCount = 0
-            , balValTxCount = 0
-            , balValTotalReceived = 0
-            }
 
 instance R.KeyValue BalKey BalVal
 

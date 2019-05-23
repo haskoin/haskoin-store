@@ -68,22 +68,8 @@ getSpendersDB th opts db =
     f _ _               = undefined
 
 getBalanceDB :: MonadIO m => Address -> ReadOptions -> DB -> m (Maybe Balance)
-getBalanceDB a opts db = fmap f <$> retrieve db opts (BalKey a)
-  where
-    f BalVal { balValAmount = v
-             , balValZero = z
-             , balValUnspentCount = c
-             , balValTxCount = t
-             , balValTotalReceived = r
-             } =
-        Balance
-            { balanceAddress = a
-            , balanceAmount = v
-            , balanceZero = z
-            , balanceUnspentCount = c
-            , balanceTxCount = t
-            , balanceTotalReceived = r
-            }
+getBalanceDB a opts db =
+    fmap (balValToBalance a) <$> retrieve db opts (BalKey a)
 
 getMempoolDB ::
        (MonadIO m, MonadResource m)
@@ -127,6 +113,23 @@ getAddressTxsDB a mbr opts db = x .| mapC (uncurry f)
     f AddrTxKey {addrTxKeyT = t} () = t
     f _ _                           = undefined
 
+getAddressBalancesDB ::
+       (MonadIO m, MonadResource m)
+    => ReadOptions
+    -> DB
+    -> ConduitT () Balance m ()
+getAddressBalancesDB opts db =
+    matching db opts BalKeyS .| mapC (\(BalKey a, b) -> balValToBalance a b)
+
+getUnspentsDB ::
+       (MonadIO m, MonadResource m)
+    => ReadOptions
+    -> DB
+    -> ConduitT () Unspent m ()
+getUnspentsDB opts db =
+    matching db opts UnspentKeyB .|
+    mapC (\(UnspentKey k, v) -> unspentFromDB k v)
+
 getAddressUnspentsDB ::
        (MonadIO m, MonadResource m)
     => Address
@@ -151,16 +154,21 @@ getAddressUnspentsDB a mbr opts db = x .| mapC (uncurry f)
             }
     f _ _ = undefined
 
+unspentFromDB :: OutPoint -> UnspentVal -> Unspent
+unspentFromDB p UnspentVal { unspentValBlock = b
+                           , unspentValAmount = v
+                           , unspentValScript = s
+                           } =
+    Unspent
+        { unspentBlock = b
+        , unspentAmount = v
+        , unspentPoint = p
+        , unspentScript = B.Short.toShort s
+        }
+
 getUnspentDB :: MonadIO m => OutPoint -> ReadOptions -> DB -> m (Maybe Unspent)
-getUnspentDB op opts db = fmap f <$> retrieve db opts (UnspentKey op)
-  where
-    f u =
-        Unspent
-            { unspentBlock = unspentValBlock u
-            , unspentPoint = op
-            , unspentAmount = unspentValAmount u
-            , unspentScript = B.Short.toShort (unspentValScript u)
-            }
+getUnspentDB op opts db =
+    fmap (unspentFromDB op) <$> retrieve db opts (UnspentKey op)
 
 setInitDB :: MonadIO m => DB -> m ()
 setInitDB db = insert db VersionKey dataVersion
@@ -181,6 +189,8 @@ instance (MonadIO m, MonadResource m) =>
     getOrphans = lift R.ask >>= uncurry getOrphansDB
     getAddressTxs a b = R.ask >>= uncurry (getAddressTxsDB a b)
     getAddressUnspents a b = R.ask >>= uncurry (getAddressUnspentsDB a b)
+    getAddressBalances = R.ask >>= uncurry getAddressBalancesDB
+    getUnspents = R.ask >>= uncurry getUnspentsDB
 
 instance MonadIO m => BalanceRead (ReaderT BlockDB m) where
     getBalance a = R.ask >>= uncurry (getBalanceDB a)

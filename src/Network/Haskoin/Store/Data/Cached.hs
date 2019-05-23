@@ -33,6 +33,18 @@ data CachedDB =
         , cachedCache :: !Cache
         }
 
+newCache :: (MonadUnliftIO m) => ReadOptions -> DB -> m Cache
+newCache opts db = do
+    um <- newTVarIO M.empty
+    bm <- newTVarIO M.empty
+    runResourceT . withBlockDB opts db $ do
+        runConduit $ getAddressBalances .| mapMC (bal bm) .| sinkNull
+        runConduit $ getUnspents .| mapMC (uns um) .| sinkNull
+    return (um, bm)
+  where
+    bal bm = atomically . withBalanceSTM bm . setBalance
+    uns um = atomically . withUnspentSTM um . addUnspent
+
 withCachedDB ::
        ReadOptions
     -> DB
@@ -69,20 +81,8 @@ getSpendersC :: MonadIO m => TxHash -> CachedDB -> m (IntMap Spender)
 getSpendersC t CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpenders t)
 
 getBalanceC :: MonadIO m => Address -> CachedDB -> m (Maybe Balance)
-getBalanceC a CachedDB {cachedDB = db, cachedCache = (_, bm)} =
-    runMaybeT $ cachemap <|> database
-  where
-    cachemap = MaybeT . atomically $ withBalanceSTM bm (getBalance a)
-    database =
-        MaybeT $
-        uncurry withBlockDB db (getBalance a) >>= \case
-            Just b -> ucache b
-            Nothing -> return Nothing
-    ucache b =
-        atomically . withBalanceSTM bm $
-        getBalance a >>= \case
-            Nothing -> setBalance b >> return (Just b)
-            Just b' -> return $ Just b'
+getBalanceC a CachedDB {cachedCache = (_, bm)} =
+    atomically $ withBalanceSTM bm (getBalance a)
 
 setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
 setBalanceC b CachedDB {cachedCache = (_, bm)} =
@@ -90,10 +90,12 @@ setBalanceC b CachedDB {cachedCache = (_, bm)} =
 
 getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
 getUnspentC op CachedDB {cachedDB = db, cachedCache = (um, _)} =
-    runMaybeT $ cachemap <|> database
-  where
-    cachemap = MaybeT . atomically $ withUnspentSTM um (getUnspent op)
-    database = MaybeT $ uncurry withBlockDB db (getUnspent op)
+    atomically $ withUnspentSTM um (getUnspent op)
+
+getUnspentsC :: MonadIO m => CachedDB -> ConduitT () Unspent m ()
+getUnspentsC CachedDB {cachedCache = (um, _)} = do
+    m <- readTVarIO um
+    yieldMany $ concatMap I.elems (M.elems m)
 
 addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
 addUnspentC u CachedDB {cachedCache = (um, _)} =
@@ -115,6 +117,14 @@ getOrphansC ::
     => CachedDB
     -> ConduitT () (UnixTime, Tx) m ()
 getOrphansC CachedDB {cachedDB = db} = uncurry getOrphansDB db
+
+getAddressBalancesC ::
+       MonadUnliftIO m
+    => CachedDB
+    -> ConduitT () Balance m ()
+getAddressBalancesC CachedDB {cachedCache = (_, bm)} =
+    readTVarIO bm >>= \m ->
+        yieldMany (M.toList m) .| mapC (uncurry balValToBalance)
 
 getAddressUnspentsC ::
        (MonadUnliftIO m, MonadResource m)
@@ -140,6 +150,8 @@ instance (MonadUnliftIO m, MonadResource m) =>
     getOrphans = R.ask >>= getOrphansC
     getAddressUnspents a x = R.ask >>= getAddressUnspentsC a x
     getAddressTxs a x = R.ask >>= getAddressTxsC a x
+    getAddressBalances = R.ask >>= getAddressBalancesC
+    getUnspents = R.ask >>= getUnspentsC
 
 instance MonadIO m => StoreRead (ReaderT CachedDB m) where
     isInitialized = R.ask >>= isInitializedC
@@ -160,8 +172,6 @@ instance MonadIO m => BalanceRead (ReaderT CachedDB m) where
 instance MonadIO m => UnspentWrite (ReaderT CachedDB m) where
     addUnspent u = R.ask >>= addUnspentC u
     delUnspent p = R.ask >>= delUnspentC p
-    pruneUnspent = return ()
 
 instance MonadIO m => BalanceWrite (ReaderT CachedDB m) where
     setBalance b = R.ask >>= setBalanceC b
-    pruneBalance = return ()
