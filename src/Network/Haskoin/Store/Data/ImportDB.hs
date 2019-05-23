@@ -70,6 +70,9 @@ runImportDB db (um, bm) f = do
             atomically $ do
                 readTVar um' >>= writeTVar um
                 readTVar bm' >>= writeTVar bm
+            $(logDebugS)
+                "ImportDB"
+                "Finished committing changes to database and cache"
             return x
         Left e -> do
             $(logErrorS) "ImportDB" $
