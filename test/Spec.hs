@@ -80,7 +80,6 @@ withTestStore net t f =
                         , errorIfExists = True
                         , compression = SnappyCompression
                         }
-            c <- newCache defaultReadOptions db
             let cfg =
                     StoreConfig
                         { storeConfMaxPeers = 20
@@ -89,7 +88,7 @@ withTestStore net t f =
                         , storeConfDB = db
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` x)
-                        , storeConfCache = c
+                        , storeConfCache = Nothing
                         }
             withStore cfg $ \Store {..} ->
                 lift $

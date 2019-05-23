@@ -50,6 +50,7 @@ data Config = Config
     , configDiscover :: !Bool
     , configPeers    :: ![(Host, Maybe Port)]
     , configVersion  :: !Bool
+    , configCache    :: !Bool
     }
 
 defPort :: Int
@@ -86,6 +87,9 @@ config = do
         many . option (eitherReader peerReader) $
         metavar "HOST" <> long "peer" <> short 'p' <>
         help "Network peer (as many as required)"
+    configCache <-
+        switch $
+        long "cache" <> short 'c' <> help "Enable caching"
     configVersion <-
         switch $ long "version" <> short 'v' <> help "Show version"
     return Config {..}
@@ -140,7 +144,10 @@ main =
                     , writeBufferSize = 2 `shift` 30
                     }
         $(logInfoS) "Main" "Populating cache..."
-        cache <- newCache defaultReadOptions db
+        cache <-
+            if configCache conf
+                then Just <$> newCache defaultReadOptions db
+                else return Nothing
         $(logInfoS) "Main" "Finished populating cache"
         withPublisher $ \pub -> do
             let scfg =

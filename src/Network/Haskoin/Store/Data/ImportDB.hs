@@ -35,7 +35,7 @@ import           UnliftIO
 data ImportDB = ImportDB
     { importRocksDB :: !(ReadOptions, DB)
     , importHashMap :: !(TVar HashMapDB)
-    , importCache   :: !Cache
+    , importCache   :: !(Maybe Cache)
     }
 
 importToCached :: ImportDB -> CachedDB
@@ -45,7 +45,7 @@ importToCached ImportDB {importRocksDB = db, importCache = cache} =
 runImportDB ::
        (MonadError e m, MonadLoggerIO m)
     => DB
-    -> Cache
+    -> Maybe Cache
     -> ReaderT ImportDB m a
     -> m a
 runImportDB db cache f = do
@@ -61,7 +61,9 @@ runImportDB db cache f = do
     ops <- hashMapOps <$> readTVarIO hm
     $(logDebugS) "ImportDB" "Committing changes to database and cache..."
     writeBatch db ops
-    updateCache hm cache
+    case cache of
+        Just ch -> updateCache hm ch
+        Nothing -> return ()
     $(logDebugS) "ImportDB" "Finished committing changes to database and cache"
     return x
 

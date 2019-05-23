@@ -51,7 +51,7 @@ data WebConfig =
         { webPort      :: !Int
         , webNetwork   :: !Network
         , webDB        :: !DB
-        , webCache     :: !Cache
+        , webCache     :: !(Maybe Cache)
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
         }
@@ -156,7 +156,7 @@ scottyBlocks net = do
                 return $ pruneTx n b
     protoSerial net proto res
 
-scottyMempool :: Network -> DB -> Cache -> WebM ()
+scottyMempool :: Network -> DB -> Maybe Cache -> WebM ()
 scottyMempool net db cache = do
     cors
     (l, s) <- parseLimits
@@ -217,7 +217,7 @@ scottyRawTransactions hex = do
             S.setHeader "Content-Type" "application/octet-stream"
             S.raw . L.concat $ map (Serialize.encodeLazy . transactionData) res
 
-scottyAddressTxs :: Network -> Bool -> DB -> Cache -> WebM ()
+scottyAddressTxs :: Network -> Bool -> DB -> Maybe Cache -> WebM ()
 scottyAddressTxs net full db cache = do
     cors
     a <- parseAddress net
@@ -231,7 +231,7 @@ scottyAddressTxs net full db cache = do
         | full = getAddressTxsFull l s a .| streamAny net proto io
         | otherwise = getAddressTxsLimit l s a .| streamAny net proto io
 
-scottyAddressesTxs :: Network -> Bool -> DB -> Cache -> WebM ()
+scottyAddressesTxs :: Network -> Bool -> DB -> Maybe Cache -> WebM ()
 scottyAddressesTxs net full db cache = do
     cors
     as <- parseAddresses net
@@ -245,7 +245,7 @@ scottyAddressesTxs net full db cache = do
         | full = getAddressesTxsFull l s as .| streamAny net proto io
         | otherwise = getAddressesTxsLimit l s as .| streamAny net proto io
 
-scottyAddressUnspent :: Network -> DB -> Cache -> WebM ()
+scottyAddressUnspent :: Network -> DB -> Maybe Cache -> WebM ()
 scottyAddressUnspent net db cache = do
     cors
     a <- parseAddress net
@@ -256,7 +256,7 @@ scottyAddressUnspent net db cache = do
             getAddressUnspentsLimit l s a .| streamAny net proto io
         liftIO flush'
 
-scottyAddressesUnspent :: Network -> DB -> Cache -> WebM ()
+scottyAddressesUnspent :: Network -> DB -> Maybe Cache -> WebM ()
 scottyAddressesUnspent net db cache = do
     cors
     as <- parseAddresses net
@@ -313,7 +313,7 @@ scottyXpubBalances net = do
     res <- xpubBals xpub
     protoSerial net proto res
 
-scottyXpubTxs :: Network -> Bool -> DB -> Cache -> WebM ()
+scottyXpubTxs :: Network -> Bool -> DB -> Maybe Cache -> WebM ()
 scottyXpubTxs net full db cache = do
     cors
     x <- parseXpub net
@@ -328,7 +328,7 @@ scottyXpubTxs net full db cache = do
         | full = xpubTxsFull l s bs .| streamAny net proto io
         | otherwise = xpubTxsLimit l s bs .| streamAny net proto io
 
-scottyXpubUnspents :: Network -> DB -> Cache -> WebM ()
+scottyXpubUnspents :: Network -> DB -> Maybe Cache -> WebM ()
 scottyXpubUnspents net db cache = do
     cors
     x <- parseXpub net
@@ -347,7 +347,8 @@ scottyXpubSummary net = do
     res <- xpubSummary l s x
     protoSerial net proto res
 
-scottyPostTx :: Network -> Store -> Publisher StoreEvent -> DB -> Cache -> WebM ()
+scottyPostTx ::
+       Network -> Store -> Publisher StoreEvent -> DB -> Maybe Cache -> WebM ()
 scottyPostTx net st pub db cache = do
     cors
     proto <- setupBin
@@ -381,7 +382,7 @@ scottyDbStats db = do
     cors
     getProperty db Stats >>= text . cs . fromJust
 
-scottyEvents :: Network -> Publisher StoreEvent -> DB -> Cache -> WebM ()
+scottyEvents :: Network -> Publisher StoreEvent -> DB -> Maybe Cache -> WebM ()
 scottyEvents net pub db cache = do
     cors
     proto <- setupBin
@@ -412,7 +413,7 @@ scottyPeers net st = do
     ps <- getPeersInformation (storeManager st)
     protoSerial net proto ps
 
-scottyHealth :: Network -> Store -> DB -> Cache -> WebM ()
+scottyHealth :: Network -> Store -> DB -> Maybe Cache -> WebM ()
 scottyHealth net st db cache = do
     cors
     proto <- setupBin
@@ -513,7 +514,7 @@ pruneTx True b  = b {blockDataTxs = take 1 (blockDataTxs b)}
 
 scottyRunner ::
        DB
-    -> Cache
+    -> Maybe Cache
     -> (Loc -> LogSource -> LogLevel -> LogStr -> IO ())
     -> ReaderT CachedDB (LoggingT (ResourceT IO)) a
     -> IO a
@@ -521,7 +522,7 @@ scottyRunner db cache l f =
     runResourceT $ runLoggingT (withCachedDB defaultReadOptions db cache f) l
 
 dbRunner ::
-       MonadUnliftIO m => DB -> Cache -> ReaderT CachedDB (ResourceT m) a -> m a
+       MonadUnliftIO m => DB -> Maybe Cache -> ReaderT CachedDB (ResourceT m) a -> m a
 dbRunner db cache = runResourceT . withCachedDB defaultReadOptions db cache
 
 cors :: Monad m => ActionT e m ()

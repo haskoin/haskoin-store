@@ -44,7 +44,7 @@ data StoreConfig =
       -- ^ network constants
         , storeConfListen    :: !(Listen StoreEvent)
       -- ^ listen to store events
-        , storeConfCache     :: !Cache
+        , storeConfCache     :: !(Maybe Cache)
       -- ^ cache UTXO and address balances
         }
 
@@ -61,7 +61,7 @@ data BlockConfig =
       -- ^ RocksDB database handle
         , blockConfNet      :: !Network
       -- ^ network constants
-        , blockConfCache    :: !Cache
+        , blockConfCache    :: !(Maybe Cache)
       -- ^ cache UTXO and address balances
         }
 

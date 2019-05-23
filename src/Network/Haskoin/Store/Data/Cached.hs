@@ -28,7 +28,7 @@ import           UnliftIO
 data CachedDB =
     CachedDB
         { cachedDB    :: !(ReadOptions, DB)
-        , cachedCache :: !Cache
+        , cachedCache :: !(Maybe Cache)
         }
 
 newCache :: MonadUnliftIO m => ReadOptions -> DB -> m Cache
@@ -41,13 +41,13 @@ newCache opts db = do
         runConduit $ getUnspents .| mapMC (uns cache) .| sinkNull
     return cache
   where
-    bal cache = withCachedDB opts db cache . setBalance
-    uns cache = withCachedDB opts db cache . addUnspent
+    bal cache = withCachedDB opts db (Just cache) . setBalance
+    uns cache = withCachedDB opts db (Just cache) . addUnspent
 
 withCachedDB ::
        ReadOptions
     -> DB
-    -> Cache
+    -> Maybe Cache
     -> ReaderT CachedDB m a
     -> m a
 withCachedDB opts db cache f =
@@ -80,37 +80,42 @@ getSpendersC :: MonadIO m => TxHash -> CachedDB -> m (IntMap Spender)
 getSpendersC t CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpenders t)
 
 getBalanceC :: MonadIO m => Address -> CachedDB -> m (Maybe Balance)
-getBalanceC a CachedDB {cachedCache = Cache {cacheBalance = bm}} =
+getBalanceC a CachedDB {cachedCache = Just (Cache {cacheBalance = bm})} =
     liftIO (H.lookup bm (encodeShort a)) >>= \case
         Just b -> return . Just $ balValToBalance a (decodeShort b)
         Nothing -> return Nothing
+getBalanceC a CachedDB {cachedDB = db} = uncurry withBlockDB db (getBalance a)
 
 setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
-setBalanceC bal CachedDB {cachedCache = Cache {cacheBalance = bm}} =
+setBalanceC bal CachedDB {cachedCache = Just (Cache {cacheBalance = bm})} =
     liftIO $ H.insert bm (encodeShort a) (encodeShort b)
   where
     (a, b) = balanceToBalVal bal
+setBalanceC _ CachedDB {cachedCache = Nothing} = return ()
 
 getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
-getUnspentC op CachedDB {cachedDB = db, cachedCache = Cache {cacheUnspent = um}} =
+getUnspentC op CachedDB {cachedDB = db, cachedCache = Just (Cache {cacheUnspent = um})} =
     liftIO (H.lookup um (encodeShort op)) >>= \case
         Just u -> return . Just $ unspentValToUnspent op (decodeShort u)
         Nothing -> return Nothing
-
+getUnspentC op CachedDB {cachedDB = db, cachedCache = Nothing} =
+    uncurry withBlockDB db $ getUnspent op
 
 getUnspentsC :: (MonadResource m, MonadIO m) => CachedDB -> ConduitT () Unspent m ()
 getUnspentsC CachedDB {cachedDB = db} = do
     uncurry getUnspentsDB db
 
 addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
-addUnspentC u CachedDB {cachedCache = Cache {cacheUnspent = um}} =
+addUnspentC u CachedDB {cachedCache = Just (Cache {cacheUnspent = um})} =
     liftIO $ H.insert um (encodeShort a) (encodeShort b)
   where
     (a, b) = unspentToUnspentVal u
+addUnspentC _ CachedDB {cachedCache = Nothing} = return ()
 
 delUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
-delUnspentC op CachedDB {cachedCache = Cache {cacheUnspent = um}} =
+delUnspentC op CachedDB {cachedCache = Just (Cache {cacheUnspent = um})} =
     liftIO $ H.delete um (encodeShort op)
+delUnspentC _ CachedDB {cachedCache = Nothing} = return ()
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)
