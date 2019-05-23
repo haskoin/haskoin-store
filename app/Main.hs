@@ -50,7 +50,7 @@ data Config = Config
     , configDiscover :: !Bool
     , configPeers    :: ![(Host, Maybe Port)]
     , configVersion  :: !Bool
-    , configCache    :: !Bool
+    , configCache    :: !FilePath
     }
 
 defPort :: Int
@@ -88,8 +88,9 @@ config = do
         metavar "HOST" <> long "peer" <> short 'p' <>
         help "Network peer (as many as required)"
     configCache <-
-        switch $
-        long "cache" <> short 'c' <> help "Enable caching"
+        option str $
+        long "cache" <> short 'c' <> help "Memory mapped disk for cache" <>
+        value ""
     configVersion <-
         switch $ long "version" <> short 'v' <> help "Show version"
     return Config {..}
@@ -132,7 +133,7 @@ main =
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
             die "ERROR: Specify peers to connect or enable peer discovery."
         let net = configNetwork conf
-        let wdir = configDir conf </> getNetworkName net
+            wdir = configDir conf </> getNetworkName net
         liftIO $ createDirectoryIfMissing True wdir
         db <-
             open
@@ -145,9 +146,14 @@ main =
                     }
         $(logInfoS) "Main" "Populating cache..."
         cache <-
-            if configCache conf
-                then Just <$> newCache defaultReadOptions db
-                else return Nothing
+            case configCache conf of
+                "" -> return Nothing
+                ch -> do
+                    let cdir = ch </> getNetworkName net </> "cache"
+                    liftIO $ createDirectoryIfMissing True cdir
+                    cdb <- open cdir R.defaultOptions {createIfMissing = True}
+                    Just <$>
+                        newCache defaultReadOptions db defaultReadOptions cdb
         $(logInfoS) "Main" "Finished populating cache"
         withPublisher $ \pub -> do
             let scfg =

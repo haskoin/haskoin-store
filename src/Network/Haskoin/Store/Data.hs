@@ -20,7 +20,6 @@ import           Data.Default
 import           Data.Hashable
 import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as M
-import qualified Data.HashTable.IO         as H
 import           Data.Int
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
@@ -31,6 +30,7 @@ import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as T
 import qualified Data.Text.Lazy            as T.Lazy
 import           Data.Word
+import           Database.RocksDB          (DB, ReadOptions)
 import           GHC.Generics
 import           Haskoin                   as H
 import           Network.Socket            (SockAddr)
@@ -47,19 +47,7 @@ decodeShort bs = case S.decode (B.Short.fromShort bs) of
     Left e  -> error e
     Right a -> a
 
-type HashTable k v = H.BasicHashTable k v
-
--- | UTXO cache.
-type UnspentMap = HashTable ShortByteString ShortByteString
-
--- | Address balance cache.
-type BalanceMap = HashTable ShortByteString ShortByteString
-
-data Cache =
-    Cache
-        { cacheUnspent :: !UnspentMap
-        , cacheBalance :: !BalanceMap
-        }
+type Cache = (ReadOptions, DB)
 
 type UnixTime = Word64
 type BlockPos = Word32

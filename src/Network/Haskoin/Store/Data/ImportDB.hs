@@ -16,7 +16,6 @@ import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString.Short               as B.Short
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
-import qualified Data.HashTable.IO                   as H
 import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.List
@@ -60,10 +59,16 @@ runImportDB db cache f = do
                 }
     ops <- hashMapOps <$> readTVarIO hm
     $(logDebugS) "ImportDB" "Committing changes to database and cache..."
-    writeBatch db ops
     case cache of
-        Just ch -> updateCache hm ch
-        Nothing -> return ()
+        Just (_, cdb) -> do
+            cops <- cacheMapOps <$> readTVarIO hm
+            let del Put {} = False
+                del Del {} = True
+                (delcops, addcops) = partition del cops
+            writeBatch cdb delcops
+            writeBatch db ops
+            writeBatch cdb addcops
+        Nothing -> writeBatch db ops
     $(logDebugS) "ImportDB" "Finished committing changes to database and cache"
     return x
 
@@ -79,6 +84,11 @@ hashMapOps db =
     addrOutOps (hAddrOut db) <>
     mempoolOps (hMempool db) <>
     orphanOps (hOrphans db) <>
+    unspentOps (hUnspent db)
+
+cacheMapOps :: HashMapDB -> [BatchOp]
+cacheMapOps db =
+    balOps (hBalance db) <>
     unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
@@ -174,32 +184,6 @@ unspentOps = concatMap (uncurry f) . M.toList
     f h = map (uncurry (g h)) . I.toList
     g h i (Just u) = insertOp (UnspentKey (OutPoint h (fromIntegral i))) u
     g h i Nothing  = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
-
-updateCache :: MonadIO m => TVar HashMapDB -> Cache -> m ()
-updateCache ht Cache {cacheUnspent = um, cacheBalance = bm} = do
-    HashMapDB {hUnspent = u, hBalance = b} <- readTVarIO ht
-    updateUnspentCache u um
-    updateBalanceCache b bm
-
-updateUnspentCache ::
-       MonadIO m
-    => HashMap TxHash (IntMap (Maybe UnspentVal))
-    -> UnspentMap
-    -> m ()
-updateUnspentCache hm um =
-    liftIO $ mapM_ (uncurry f) (M.toList hm)
-  where
-    f h = mapM_ (uncurry (g h)) . I.toList
-    g h i (Just u) =
-        H.insert um (encodeShort (OutPoint h (fromIntegral i))) (encodeShort u)
-    g h i Nothing =
-        H.delete um (encodeShort (OutPoint h (fromIntegral i)))
-
-updateBalanceCache :: MonadIO m => HashMap Address BalVal -> BalanceMap -> m ()
-updateBalanceCache hm bm =
-    liftIO $ mapM_ (uncurry f) (M.toList hm)
-  where
-    f a b = H.insert bm (encodeShort a) (encodeShort b)
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
 isInitializedI = isInitializedC . importToCached

@@ -35,8 +35,6 @@ module Haskoin.Store
     , StartFrom(..)
     , UnixTime
     , BlockPos
-    , UnspentMap
-    , BalanceMap
     , Cache
     , WebConfig(..)
     , newCache

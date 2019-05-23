@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 module Network.Haskoin.Store.Data.Cached where
@@ -10,7 +11,6 @@ import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString.Short               as B.Short
-import qualified Data.HashTable.IO                   as H
 import           Data.IntMap.Strict                  (IntMap)
 import           Data.List
 import           Data.Maybe
@@ -31,11 +31,9 @@ data CachedDB =
         , cachedCache :: !(Maybe Cache)
         }
 
-newCache :: MonadUnliftIO m => ReadOptions -> DB -> m Cache
-newCache opts db = do
-    bm <- liftIO H.new
-    um <- liftIO H.new
-    let cache = Cache {cacheBalance = bm, cacheUnspent = um}
+newCache :: MonadUnliftIO m => ReadOptions -> DB -> ReadOptions -> DB -> m Cache
+newCache opts db copts cdb = do
+    let cache = (copts, cdb)
     runResourceT . withBlockDB opts db $ do
         runConduit $ getAddressBalances .| mapMC (bal cache) .| sinkNull
         runConduit $ getUnspents .| mapMC (uns cache) .| sinkNull
@@ -80,42 +78,19 @@ getSpendersC :: MonadIO m => TxHash -> CachedDB -> m (IntMap Spender)
 getSpendersC t CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpenders t)
 
 getBalanceC :: MonadIO m => Address -> CachedDB -> m (Maybe Balance)
-getBalanceC a CachedDB {cachedCache = Just (Cache {cacheBalance = bm})} =
-    liftIO (H.lookup bm (encodeShort a)) >>= \case
-        Just b -> return . Just $ balValToBalance a (decodeShort b)
-        Nothing -> return Nothing
+getBalanceC a CachedDB {cachedCache = Just cdb} =
+    uncurry withBlockDB cdb (getBalance a)
 getBalanceC a CachedDB {cachedDB = db} = uncurry withBlockDB db (getBalance a)
 
-setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
-setBalanceC bal CachedDB {cachedCache = Just (Cache {cacheBalance = bm})} =
-    liftIO $ H.insert bm (encodeShort a) (encodeShort b)
-  where
-    (a, b) = balanceToBalVal bal
-setBalanceC _ CachedDB {cachedCache = Nothing} = return ()
-
 getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
-getUnspentC op CachedDB {cachedDB = db, cachedCache = Just (Cache {cacheUnspent = um})} =
-    liftIO (H.lookup um (encodeShort op)) >>= \case
-        Just u -> return . Just $ unspentValToUnspent op (decodeShort u)
-        Nothing -> return Nothing
-getUnspentC op CachedDB {cachedDB = db, cachedCache = Nothing} =
+getUnspentC op CachedDB {cachedDB = db, cachedCache = Just cdb} =
+    uncurry withBlockDB cdb (getUnspent op)
+getUnspentC op CachedDB {cachedDB = db} =
     uncurry withBlockDB db $ getUnspent op
 
 getUnspentsC :: (MonadResource m, MonadIO m) => CachedDB -> ConduitT () Unspent m ()
 getUnspentsC CachedDB {cachedDB = db} = do
     uncurry getUnspentsDB db
-
-addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
-addUnspentC u CachedDB {cachedCache = Just (Cache {cacheUnspent = um})} =
-    liftIO $ H.insert um (encodeShort a) (encodeShort b)
-  where
-    (a, b) = unspentToUnspentVal u
-addUnspentC _ CachedDB {cachedCache = Nothing} = return ()
-
-delUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
-delUnspentC op CachedDB {cachedCache = Just (Cache {cacheUnspent = um})} =
-    liftIO $ H.delete um (encodeShort op)
-delUnspentC _ CachedDB {cachedCache = Nothing} = return ()
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)
@@ -155,6 +130,20 @@ getAddressTxsC ::
 getAddressTxsC addr mbr CachedDB {cachedDB = db} =
     uncurry (getAddressTxsDB addr mbr) db
 
+addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
+addUnspentC u CachedDB {cachedCache = Just cdb} =
+    uncurry withBlockDB cdb (addUnspent u)
+addUnspentC _ _ = return ()
+
+delUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
+delUnspentC p CachedDB {cachedCache = Just cdb} =
+    uncurry withBlockDB cdb (delUnspent p)
+delUnspentC _ _ = return ()
+
+setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
+setBalanceC b CachedDB {cachedCache = Just cdb} =
+    uncurry withBlockDB cdb (setBalance b)
+
 instance (MonadUnliftIO m, MonadResource m) =>
          StoreStream (ReaderT CachedDB m) where
     getMempool x = R.ask >>= getMempoolC x
@@ -180,9 +169,9 @@ instance MonadIO m => UnspentRead (ReaderT CachedDB m) where
 instance MonadIO m => BalanceRead (ReaderT CachedDB m) where
     getBalance a = R.ask >>= getBalanceC a
 
+instance MonadIO m => BalanceWrite (ReaderT CachedDB m) where
+    setBalance b = R.ask >>= setBalanceC b
+
 instance MonadIO m => UnspentWrite (ReaderT CachedDB m) where
     addUnspent u = R.ask >>= addUnspentC u
     delUnspent p = R.ask >>= delUnspentC p
-
-instance MonadIO m => BalanceWrite (ReaderT CachedDB m) where
-    setBalance b = R.ask >>= setBalanceC b

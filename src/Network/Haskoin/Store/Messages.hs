@@ -20,14 +20,15 @@ import           UnliftIO.STM               (TVar)
 type BlockStore = Mailbox BlockMessage
 
 -- | Store mailboxes.
-data Store = Store
-    { storeManager :: !Manager
+data Store =
+    Store
+        { storeManager :: !Manager
       -- ^ peer manager mailbox
-    , storeChain   :: !Chain
+        , storeChain :: !Chain
       -- ^ chain header process mailbox
-    , storeBlock   :: !BlockStore
+        , storeBlock :: !BlockStore
       -- ^ block storage mailbox
-    }
+        }
 
 -- | Configuration for a 'Store'.
 data StoreConfig =

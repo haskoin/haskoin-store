@@ -173,6 +173,19 @@ getUnspentDB op opts db =
 setInitDB :: MonadIO m => DB -> m ()
 setInitDB db = insert db VersionKey dataVersion
 
+setBalanceDB :: MonadIO m => Balance -> DB -> m ()
+setBalanceDB bal db = insert db (BalKey a) b
+  where
+    (a, b) = balanceToBalVal bal
+
+addUnspentDB :: MonadIO m => Unspent -> DB -> m ()
+addUnspentDB uns db = insert db (UnspentKey p) u
+  where
+    (p, u) = unspentToUnspentVal uns
+
+delUnspentDB :: MonadIO m => OutPoint -> DB -> m ()
+delUnspentDB op db = remove db (UnspentKey op)
+
 instance MonadIO m => StoreRead (ReaderT BlockDB m) where
     isInitialized = R.ask >>= uncurry isInitializedDB
     getBestBlock = R.ask >>= uncurry getBestBlockDB
@@ -197,3 +210,10 @@ instance MonadIO m => BalanceRead (ReaderT BlockDB m) where
 
 instance MonadIO m => UnspentRead (ReaderT BlockDB m) where
     getUnspent p = R.ask >>= uncurry (getUnspentDB p)
+
+instance MonadIO m => BalanceWrite (ReaderT BlockDB m) where
+    setBalance b = R.ask >>= setBalanceDB b . snd
+
+instance MonadIO m => UnspentWrite (ReaderT BlockDB m) where
+    addUnspent u = R.ask >>= addUnspentDB u . snd
+    delUnspent p = R.ask >>= delUnspentDB p . snd
