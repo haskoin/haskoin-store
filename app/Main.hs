@@ -139,7 +139,9 @@ main =
                     , maxOpenFiles = -1
                     , writeBufferSize = 2 `shift` 30
                     }
+        $(logInfoS) "Main" "Populating cache..."
         cache <- newCache defaultReadOptions db
+        $(logInfoS) "Main" "Done populating cache"
         withPublisher $ \pub -> do
             let scfg =
                     StoreConfig
