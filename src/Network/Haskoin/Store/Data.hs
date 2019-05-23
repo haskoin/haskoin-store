@@ -38,11 +38,19 @@ import           UnliftIO
 import           UnliftIO.Exception
 import qualified Web.Scotty.Trans          as Scotty
 
+encodeShort :: Serialize a => a -> ShortByteString
+encodeShort = B.Short.toShort . S.encode
+
+decodeShort :: Serialize a => ShortByteString -> a
+decodeShort bs = case S.decode (B.Short.fromShort bs) of
+    Left e -> error e
+    Right a -> a
+
 -- | UTXO cache.
-type UnspentMap = HashMap OutPoint UnspentVal
+type UnspentMap = HashMap ShortByteString ShortByteString
 
 -- | Address balance cache.
-type BalanceMap = HashMap Address BalVal
+type BalanceMap = HashMap ShortByteString ShortByteString
 
 type Cache = (TVar UnspentMap, TVar BalanceMap)
 

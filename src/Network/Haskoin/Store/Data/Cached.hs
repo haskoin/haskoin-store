@@ -98,10 +98,9 @@ getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
 getUnspentC op CachedDB {cachedDB = db, cachedCache = (um, _)} =
     atomically $ withUnspentSTM um (getUnspent op)
 
-getUnspentsC :: MonadIO m => CachedDB -> ConduitT () Unspent m ()
-getUnspentsC CachedDB {cachedCache = (um, _)} = do
-    readTVarIO um >>= \m ->
-        yieldMany (M.toList m) .| mapC (uncurry unspentValToUnspent)
+getUnspentsC :: (MonadResource m, MonadIO m) => CachedDB -> ConduitT () Unspent m ()
+getUnspentsC CachedDB {cachedDB = db} = do
+    uncurry getUnspentsDB db
 
 addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
 addUnspentC u CachedDB {cachedCache = (um, _)} =
@@ -125,12 +124,11 @@ getOrphansC ::
 getOrphansC CachedDB {cachedDB = db} = uncurry getOrphansDB db
 
 getAddressBalancesC ::
-       MonadUnliftIO m
+       (MonadUnliftIO m, MonadResource m)
     => CachedDB
     -> ConduitT () Balance m ()
-getAddressBalancesC CachedDB {cachedCache = (_, bm)} =
-    readTVarIO bm >>= \m ->
-        yieldMany (M.toList m) .| mapC (uncurry balValToBalance)
+getAddressBalancesC CachedDB {cachedDB = db} =
+    uncurry getAddressBalancesDB db
 
 getAddressUnspentsC ::
        (MonadUnliftIO m, MonadResource m)

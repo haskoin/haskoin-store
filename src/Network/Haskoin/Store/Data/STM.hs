@@ -366,23 +366,26 @@ instance UnspentWrite BlockSTM where
 instance UnspentRead UnspentSTM where
     getUnspent op = do
         um <- lift . readTVar =<< R.ask
-        return $ unspentValToUnspent op <$> M.lookup op um
+        return $
+            unspentValToUnspent op . decodeShort <$>
+            M.lookup (encodeShort op) um
 
 instance UnspentWrite UnspentSTM where
     addUnspent u = do
         v <- R.ask
-        let (p, u') = unspentToUnspentVal u
-        lift . modifyTVar v $ M.insert p u'
-    delUnspent op = lift . (`modifyTVar` M.delete op) =<< R.ask
+        let (p, x) = unspentToUnspentVal u
+        lift . modifyTVar v $ M.insert (encodeShort p) (encodeShort x)
+    delUnspent op = lift . (`modifyTVar` M.delete (encodeShort op)) =<< R.ask
 
 instance BalanceRead BalanceSTM where
     getBalance a = do
         b <- lift . readTVar =<< R.ask
-        return $ balValToBalance a <$> M.lookup a b
+        let bs = M.lookup (encodeShort a) b
+        return $ balValToBalance a . decodeShort <$> bs
 
 instance BalanceWrite BalanceSTM where
     setBalance bal = do
         v <- R.ask
-        lift . modifyTVar v $ M.insert a b
+        lift . modifyTVar v $ M.insert (encodeShort a) (encodeShort b)
       where
         (a, b) = balanceToBalVal bal

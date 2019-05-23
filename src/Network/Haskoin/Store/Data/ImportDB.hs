@@ -189,13 +189,16 @@ updateUnspentCache hm um =
     foldl' (flip ($)) um (concatMap (uncurry f) (M.toList hm))
   where
     f h = map (uncurry (g h)) . I.toList
-    g h i (Just u) = M.insert (OutPoint h (fromIntegral i)) u
-    g h i Nothing = M.delete (OutPoint h (fromIntegral i))
+    g h i (Just u) =
+        M.insert (encodeShort (OutPoint h (fromIntegral i))) (encodeShort u)
+    g h i Nothing = M.delete (encodeShort (OutPoint h (fromIntegral i)))
 
 updateBalanceCache ::
        HashMap Address BalVal -> BalanceMap -> BalanceMap
 updateBalanceCache hm bm =
-    foldl' (flip ($)) bm (map (uncurry M.insert) (M.toList hm))
+    foldl' (flip ($)) bm (map (uncurry f) (M.toList hm))
+  where
+    f a b = M.insert (encodeShort a) (encodeShort b)
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
 isInitializedI = isInitializedC . importToCached
