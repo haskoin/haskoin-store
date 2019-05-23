@@ -180,18 +180,11 @@ orphanOps = map (uncurry f) . M.toList
     f h (Just x) = insertOp (OrphanKey h) x
     f h Nothing  = deleteOp (OrphanKey h)
 
-unspentOps :: HashMap TxHash (IntMap (Maybe Unspent)) -> [BatchOp]
+unspentOps :: HashMap TxHash (IntMap (Maybe UnspentVal)) -> [BatchOp]
 unspentOps = concatMap (uncurry f) . M.toList
   where
     f h = map (uncurry (g h)) . I.toList
-    g h i (Just u) =
-        insertOp
-            (UnspentKey (OutPoint h (fromIntegral i)))
-            UnspentVal
-                { unspentValAmount = unspentAmount u
-                , unspentValBlock = unspentBlock u
-                , unspentValScript = B.Short.fromShort (unspentScript u)
-                }
+    g h i (Just u) = insertOp (UnspentKey (OutPoint h (fromIntegral i))) u
     g h i Nothing = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)

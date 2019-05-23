@@ -40,7 +40,7 @@ data HashMapDB = HashMapDB
     , hHeight :: !(HashMap BlockHeight [BlockHash])
     , hTx :: !(HashMap TxHash TxData)
     , hSpender :: !(HashMap TxHash (IntMap (Maybe Spender)))
-    , hUnspent :: !(HashMap TxHash (IntMap (Maybe Unspent)))
+    , hUnspent :: !(HashMap TxHash (IntMap (Maybe UnspentVal)))
     , hBalance :: !(HashMap Address BalVal)
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
@@ -116,8 +116,15 @@ getOrphanTxH :: TxHash -> HashMapDB -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
 
 getUnspentsH :: Monad m => HashMapDB -> ConduitT () Unspent m ()
-getUnspentsH HashMapDB {hUnspent = u} =
-    yieldMany . catMaybes $ concatMap I.elems (M.elems u)
+getUnspentsH HashMapDB {hUnspent = us} =
+    yieldMany
+        [ u
+        | (h, m) <- M.toList us
+        , (i, mv) <- I.toList m
+        , v <- maybeToList mv
+        , let p = OutPoint h (fromIntegral i)
+        , let u = unspentValToUnspent p v
+        ]
 
 getAddressTxsH :: Address -> Maybe BlockRef -> HashMapDB -> [BlockTx]
 getAddressTxsH a mbr db =
@@ -272,7 +279,7 @@ deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
 getUnspentH :: OutPoint -> HashMapDB -> Maybe (Maybe Unspent)
 getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
-    I.lookup (fromIntegral (outPointIndex op)) m
+    fmap (unspentValToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
 
 addUnspentH :: Unspent -> HashMapDB -> HashMapDB
 addUnspentH u db =
@@ -283,7 +290,7 @@ addUnspentH u db =
                   (outPointHash (unspentPoint u))
                   (I.singleton
                        (fromIntegral (outPointIndex (unspentPoint u)))
-                       (Just u))
+                       (Just (snd (unspentToUnspentVal u))))
                   (hUnspent db)
         }
 
@@ -359,25 +366,13 @@ instance UnspentWrite BlockSTM where
 instance UnspentRead UnspentSTM where
     getUnspent op = do
         um <- lift . readTVar =<< R.ask
-        return $ do
-            m <- M.lookup (outPointHash op) um
-            I.lookup (fromIntegral (outPointIndex op)) m
+        return $ M.lookup op um
 
 instance UnspentWrite UnspentSTM where
     addUnspent u = do
         v <- R.ask
-        lift . modifyTVar v $
-            M.insertWith
-                (<>)
-                (outPointHash (unspentPoint u))
-                (I.singleton (fromIntegral (outPointIndex (unspentPoint u))) u)
-    delUnspent op = lift . (`modifyTVar` M.update g (outPointHash op)) =<< R.ask
-      where
-        g m =
-            let n = I.delete (fromIntegral (outPointIndex op)) m
-             in if I.null n
-                    then Nothing
-                    else Just n
+        lift . modifyTVar v $ M.insert (unspentPoint u) u
+    delUnspent op = lift . (`modifyTVar` M.delete op) =<< R.ask
 
 instance BalanceRead BalanceSTM where
     getBalance a = do

@@ -100,8 +100,8 @@ getUnspentC op CachedDB {cachedDB = db, cachedCache = (um, _)} =
 
 getUnspentsC :: MonadIO m => CachedDB -> ConduitT () Unspent m ()
 getUnspentsC CachedDB {cachedCache = (um, _)} = do
-    m <- readTVarIO um
-    yieldMany $ concatMap I.elems (M.elems m)
+    readTVarIO um >>= \m ->
+        yieldMany (M.toList m) .| mapC (uncurry unspentValToUnspent)
 
 addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
 addUnspentC u CachedDB {cachedCache = (um, _)} =

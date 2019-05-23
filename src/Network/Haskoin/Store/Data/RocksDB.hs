@@ -163,7 +163,7 @@ unspentFromDB p UnspentVal { unspentValBlock = b
         { unspentBlock = b
         , unspentAmount = v
         , unspentPoint = p
-        , unspentScript = B.Short.toShort s
+        , unspentScript = s
         }
 
 getUnspentDB :: MonadIO m => OutPoint -> ReadOptions -> DB -> m (Maybe Unspent)

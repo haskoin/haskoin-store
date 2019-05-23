@@ -39,7 +39,7 @@ import           UnliftIO.Exception
 import qualified Web.Scotty.Trans          as Scotty
 
 -- | UTXO cache.
-type UnspentMap = HashMap TxHash (IntMap Unspent)
+type UnspentMap = HashMap OutPoint UnspentVal
 
 -- | Address balance cache.
 type BalanceMap = HashMap Address BalVal
@@ -1064,3 +1064,31 @@ instance Default BalVal where
             , balValTxCount = 0
             , balValTotalReceived = 0
             }
+
+data UnspentVal = UnspentVal
+    { unspentValBlock  :: !BlockRef
+    , unspentValAmount :: !Word64
+    , unspentValScript :: !ShortByteString
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
+
+unspentToUnspentVal :: Unspent -> (OutPoint, UnspentVal)
+unspentToUnspentVal Unspent { unspentBlock = b
+                            , unspentPoint = p
+                            , unspentAmount = v
+                            , unspentScript = s
+                            } =
+    ( p
+    , UnspentVal
+          {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
+
+unspentValToUnspent :: OutPoint -> UnspentVal -> Unspent
+unspentValToUnspent p UnspentVal { unspentValBlock = b
+                                 , unspentValAmount = v
+                                 , unspentValScript = s
+                                 } =
+    Unspent
+        { unspentBlock = b
+        , unspentPoint = p
+        , unspentAmount = v
+        , unspentScript = s
+        }

@@ -179,12 +179,6 @@ instance Serialize UnspentKey
         i <- get
         return $ UnspentKey OutPoint {outPointHash = h, outPointIndex = i}
 
-data UnspentVal = UnspentVal
-    { unspentValBlock  :: !BlockRef
-    , unspentValAmount :: !Word64
-    , unspentValScript :: !ByteString
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
-
 instance R.Key UnspentKey
 
 instance R.KeyValue UnspentKey UnspentVal
