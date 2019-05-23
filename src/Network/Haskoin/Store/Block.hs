@@ -67,16 +67,12 @@ blockStore cfg inbox = do
     pb <- newTVarIO Nothing
     runReaderT
         (ini >> run)
-        BlockRead
-            { mySelf = inboxToMailbox inbox
-            , myConfig = cfg
-            , myPeer = pb
-            }
+        BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb}
   where
     ini = do
         (db, net) <- (blockConfDB &&& blockConfNet) <$> asks myConfig
         cache <- asks (blockConfCache . myConfig)
-        runImportDB db cache (initDB net) >>= \case
+        runExceptT (runImportDB db cache (initDB net)) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -131,7 +127,7 @@ processBlock p b = do
         upr
         net <- blockConfNet <$> asks myConfig
         cache <- asks (blockConfCache . myConfig)
-        (runImportDB db cache (importBlock net b n)) >>= \case
+        runExceptT (runImportDB db cache (importBlock net b n)) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 $(logInfoS) "Block" $
@@ -205,7 +201,7 @@ processTx _p tx =
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
             cache <- asks (blockConfCache . myConfig)
-            runImportDB db cache (newMempoolTx net tx now) >>= \case
+            runExceptT (runImportDB db cache (newMempoolTx net tx now)) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -228,18 +224,32 @@ processOrphans =
             db <- asks (blockConfDB . myConfig)
             cache <- asks (blockConfCache . myConfig)
             net <- asks (blockConfNet . myConfig)
-            e <-
-                runImportDB db cache $ do
-                    pruneOrphans now
-                    importOrphans net now
-            case e of
-                Left e ->
-                    $(logErrorS) "Block" $
-                    "Error importing orphan transactions: " <> cs (show e)
-                Right () ->
-                    $(logDebugS)
-                        "Block"
-                        "Finished processing orphan transactions"
+            $(logDebugS) "Block" "Getting expired orphan transactions..."
+            old <-
+                runResourceT . withBlockDB defaultReadOptions db . runConduit $
+                getOldOrphans now .| sinkList
+            case old of
+                [] ->
+                    $(logDebugS) "Block" "No old orphan transactions to remove"
+                _ -> do
+                    $(logDebugS) "Block" $
+                        "Removing " <> cs (show (length old)) <>
+                        "expired orphan transactions..."
+                    runExceptT . runImportDB db cache $ mapM_ deleteOrphanTx old
+                    return ()
+            $(logDebugS) "Block" "Selecting orphan transactions to import..."
+            orphans <-
+                runResourceT . withBlockDB defaultReadOptions db . runConduit $
+                getOrphans .| sinkList
+            case orphans of
+                [] -> $(logDebugS) "Block" "No orphan tranasctions to import"
+                _ ->
+                    $(logDebugS) "Block" $
+                    "Importing " <> cs (show (length orphans)) <>
+                    " orphan transactions"
+            forM_ orphans $
+                runExceptT . runImportDB db cache . uncurry (importOrphan net)
+            $(logDebugS) "Block" $ "Finished importing orphans"
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -407,7 +417,7 @@ syncMe =
                 db <- blockConfDB <$> asks myConfig
                 cache <- asks (blockConfCache . myConfig)
                 net <- blockConfNet <$> asks myConfig
-                runImportDB db cache (revertBlock net d) >>= \case
+                runExceptT (runImportDB db cache (revertBlock net d)) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>

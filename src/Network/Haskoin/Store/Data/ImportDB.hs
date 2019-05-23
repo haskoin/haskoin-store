@@ -42,42 +42,27 @@ importToCached ImportDB {importRocksDB = db, importCache = cache} =
     CachedDB {cachedDB = db, cachedCache = cache}
 
 runImportDB ::
-       (MonadLoggerIO m, Show e)
+       (MonadError e m, MonadLoggerIO m)
     => DB
     -> Cache
-    -> ReaderT ImportDB m (Either e a)
-    -> m (Either e a)
-runImportDB db (um, bm) f = do
+    -> ReaderT ImportDB m a
+    -> m a
+runImportDB db cache f = do
     hm <- newTVarIO emptyHashMapDB
-    (um', bm') <-
-        atomically $
-        (,) <$> (readTVar um >>= newTVar) <*> (readTVar bm >>= newTVar)
     x <-
         R.runReaderT
             f
             ImportDB
                 { importRocksDB = (defaultReadOptions, db)
                 , importHashMap = hm
-                , importCache = (um', bm')
+                , importCache = cache
                 }
-    case x of
-        Right y -> do
-            ops <- hashMapOps <$> readTVarIO hm
-            $(logDebugS)
-                "ImportDB"
-                "Committing changes to database and cache..."
-            writeBatch db ops
-            atomically $ do
-                readTVar um' >>= writeTVar um
-                readTVar bm' >>= writeTVar bm
-            $(logDebugS)
-                "ImportDB"
-                "Finished committing changes to database and cache"
-            return x
-        Left e -> do
-            $(logErrorS) "ImportDB" $
-                "Not committing changes due to error: " <> cs (show e)
-            return x
+    ops <- hashMapOps <$> readTVarIO hm
+    $(logDebugS) "ImportDB" "Committing changes to database and cache..."
+    writeBatch db ops
+    updateCache hm cache
+    $(logDebugS) "ImportDB" "Finished committing changes to database and cache"
+    return x
 
 hashMapOps :: HashMapDB -> [BatchOp]
 hashMapOps db =
@@ -186,6 +171,31 @@ unspentOps = concatMap (uncurry f) . M.toList
     f h = map (uncurry (g h)) . I.toList
     g h i (Just u) = insertOp (UnspentKey (OutPoint h (fromIntegral i))) u
     g h i Nothing = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
+
+updateCache :: MonadIO m => TVar HashMapDB -> Cache -> m ()
+updateCache ht (ut, bt) = do
+    HashMapDB {hUnspent = u, hBalance = b} <- readTVarIO ht
+    um <- readTVarIO ut
+    bm <- readTVarIO bt
+    let um' = updateUnspentCache u um
+        bm' = updateBalanceCache b bm
+    atomically $ do
+        writeTVar ut um'
+        writeTVar bt bm'
+
+updateUnspentCache ::
+       HashMap TxHash (IntMap (Maybe UnspentVal)) -> UnspentMap -> UnspentMap
+updateUnspentCache hm um =
+    foldl' (flip ($)) um (concatMap (uncurry f) (M.toList hm))
+  where
+    f h = map (uncurry (g h)) . I.toList
+    g h i (Just u) = M.insert (OutPoint h (fromIntegral i)) u
+    g h i Nothing = M.delete (OutPoint h (fromIntegral i))
+
+updateBalanceCache ::
+       HashMap Address BalVal -> BalanceMap -> BalanceMap
+updateBalanceCache hm bm =
+    foldl' (flip ($)) bm (map (uncurry M.insert) (M.toList hm))
 
 isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
 isInitializedI = isInitializedC . importToCached
@@ -299,30 +309,30 @@ getSpendersI t ImportDB {importRocksDB = db, importHashMap = hm} = do
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
 getBalanceI :: MonadIO m => Address -> ImportDB -> m (Maybe Balance)
-getBalanceI a ImportDB {importCache = (_, bm)} =
-    atomically $ withBalanceSTM bm $ getBalance a
+getBalanceI a ImportDB {importCache = (_, bm), importHashMap = hm} =
+    atomically (runMaybeT (MaybeT hashmap <|> MaybeT cached))
+  where
+    hashmap = withBlockSTM hm (getBalance a)
+    cached = withBalanceSTM bm (getBalance a)
 
 setBalanceI :: MonadIO m => Balance -> ImportDB -> m ()
-setBalanceI b ImportDB {importHashMap = hm, importCache = (_, bm)} =
-    atomically $ do
-        withBlockSTM hm $ setBalance b
-        withBalanceSTM bm $ setBalance b
+setBalanceI b ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ setBalance b
 
 getUnspentI :: MonadIO m => OutPoint -> ImportDB -> m (Maybe Unspent)
-getUnspentI op ImportDB {importCache = (um, _)} = do
-    atomically $ withUnspentSTM um (getUnspent op)
+getUnspentI op ImportDB {importCache = (um, _), importHashMap = hm} =
+    join <$> atomically (runMaybeT (MaybeT hashmap <|> MaybeT cached))
+  where
+    hashmap = getUnspentH op <$> readTVar hm
+    cached = Just <$> withUnspentSTM um (getUnspent op)
 
 addUnspentI :: MonadIO m => Unspent -> ImportDB -> m ()
-addUnspentI u ImportDB {importHashMap = hm, importCache = (um, _)} =
-    atomically $ do
-        withBlockSTM hm $ addUnspent u
-        withUnspentSTM um $ addUnspent u
+addUnspentI u ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ addUnspent u
 
 delUnspentI :: MonadIO m => OutPoint -> ImportDB -> m ()
-delUnspentI p ImportDB {importHashMap = hm, importCache = (um, _)} =
-    atomically $ do
-        withUnspentSTM um $ delUnspent p
-        withBlockSTM hm $ delUnspent p
+delUnspentI p ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ delUnspent p
 
 getMempoolI ::
        MonadUnliftIO m
@@ -347,97 +357,6 @@ getMempoolI mpu ImportDB {importHashMap = hm, importRocksDB = db} = do
         case mpu of
             Just x  -> (<= x) . fst . fst
             Nothing -> const True
-
-getOrphansI :: MonadUnliftIO m => ImportDB -> ConduitT () (UnixTime, Tx) m ()
-getOrphansI ImportDB {importHashMap = hm, importRocksDB = db} = do
-    hmap <- hOrphans <$> readTVarIO hm
-    dmap <-
-        lift .
-        fmap M.fromList . runResourceT . uncurry withBlockDB db . runConduit $
-        getOrphans .| mapC (\(u, tx) -> (txHash tx, Just (u, tx))) .| sinkList
-    yieldMany . catMaybes . M.elems $ M.union hmap dmap
-
-getAddressBalancesI :: MonadUnliftIO m => ImportDB -> ConduitT () Balance m ()
-getAddressBalancesI = getAddressBalancesC . importToCached
-
-getUnspentsI :: MonadUnliftIO m => ImportDB -> ConduitT () Unspent m ()
-getUnspentsI = getUnspentsC . importToCached
-
-getAddressUnspentsI ::
-       MonadUnliftIO m
-    => Address
-    -> Maybe BlockRef
-    -> ImportDB
-    -> ConduitT () Unspent m ()
-getAddressUnspentsI addr mbr ImportDB {importHashMap = hm, importRocksDB = db} = do
-    xmap <- M.lookupDefault M.empty addr . hAddrOut <$> readTVarIO hm
-    let hmap =
-            M.fromList . filter tfilter $
-            concatMap
-                (\(b, x) -> map (\(p, o) -> ((b, p), o)) (M.toList x))
-                (M.toList xmap)
-    dmap <-
-        lift .
-        fmap M.fromList . runResourceT . uncurry withBlockDB db . runConduit $
-        getAddressUnspents addr mbr .| mapC f .| sinkList
-    yieldMany . mapMaybe g . sortBy (flip compare) . M.toList $
-        M.union hmap dmap
-  where
-    f Unspent { unspentBlock = b
-              , unspentPoint = p
-              , unspentAmount = a
-              , unspentScript = s
-              } =
-        ( (b, p)
-        , Just OutVal {outValAmount = a, outValScript = B.Short.fromShort s})
-    g (_, Nothing) = Nothing
-    g ((b, p), Just OutVal {outValAmount = a, outValScript = s}) =
-        Just
-            Unspent
-                { unspentBlock = b
-                , unspentPoint = p
-                , unspentAmount = a
-                , unspentScript = B.Short.toShort s
-                }
-    tfilter =
-        case mbr of
-            Nothing -> const True
-            Just x  -> (<= x) . fst . fst
-
-getAddressTxsI ::
-       MonadUnliftIO m
-    => Address
-    -> Maybe BlockRef
-    -> ImportDB
-    -> ConduitT () BlockTx m ()
-getAddressTxsI addr mbr ImportDB {importHashMap = hm, importRocksDB = db} = do
-    xmap <- M.lookupDefault M.empty addr . hAddrTx <$> readTVarIO hm
-    let hmap =
-            M.fromList . filter tfilter $
-            concatMap
-                (\(b, x) -> map ((\(t, y) -> ((b, t), y))) (M.toList x))
-                (M.toList xmap)
-    dmap <-
-        lift .
-        fmap M.fromList . runResourceT . uncurry withBlockDB db . runConduit $
-        getAddressTxs addr mbr .| mapC f .| sinkList
-    yieldMany . map g . sortBy (flip compare) . M.keys . M.filter id $
-        M.union hmap dmap
-  where
-    f BlockTx {blockTxBlock = b, blockTxHash = t} = ((b, t), True)
-    g (b, t) = BlockTx {blockTxBlock = b, blockTxHash = t}
-    tfilter =
-        case mbr of
-            Nothing -> const True
-            Just x  -> (<= x) . fst . fst
-
-instance MonadUnliftIO m => StoreStream (ReaderT ImportDB m) where
-    getMempool x = R.ask >>= getMempoolI x
-    getOrphans = R.ask >>= getOrphansI
-    getAddressUnspents a x = R.ask >>= getAddressUnspentsI a x
-    getAddressTxs a x = R.ask >>= getAddressTxsI a x
-    getAddressBalances = R.ask >>= getAddressBalancesI
-    getUnspents = R.ask >>= getUnspentsI
 
 instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     isInitialized = R.ask >>= isInitializedI

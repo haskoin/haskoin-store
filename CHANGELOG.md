@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Full unspent output cache.
 
 ### Changed
-- Less use of the `ExceptT` monad transformer and more explicit use of `Either`.
 - Significantly refactor code.
 - Move web stuff to a separate module.
 
