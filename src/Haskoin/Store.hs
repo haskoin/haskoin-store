@@ -40,6 +40,7 @@ module Haskoin.Store
     , Cache
     , WebConfig(..)
     , newCache
+    , cacheSize
     , withStore
     , runWeb
     , store

@@ -33,7 +33,7 @@ data CachedDB =
         , cachedCache :: !Cache
         }
 
-newCache :: (MonadUnliftIO m) => ReadOptions -> DB -> m Cache
+newCache :: MonadUnliftIO m => ReadOptions -> DB -> m Cache
 newCache opts db = do
     um <- newTVarIO M.empty
     bm <- newTVarIO M.empty
@@ -44,6 +44,12 @@ newCache opts db = do
   where
     bal bm = atomically . withBalanceSTM bm . setBalance
     uns um = atomically . withUnspentSTM um . addUnspent
+
+cacheSize :: Cache -> STM (Int, Int)
+cacheSize (um, bm) = do
+    us <- M.size <$> readTVar um
+    bs <- M.size <$> readTVar bm
+    return (us, bs)
 
 withCachedDB ::
        ReadOptions
