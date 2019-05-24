@@ -199,20 +199,33 @@ onCachedDB Nothing _         = return ()
 bulkCopy ::
        (Serialize k, MonadUnliftIO m) => ReadOptions -> DB -> DB -> k -> m ()
 bulkCopy opts db cdb k =
-    runResourceT $
-    withIterator db opts $ \it -> do iterSeek it (encode k) >> recurse it []
+    runResourceT $ do
+        ch <- newTBQueueIO 1000000
+        withAsync (iterate ch) $ \a -> write_batch ch []
   where
-    write_batch = write db defaultWriteOptions . map (uncurry Put)
-    recurse it acc
-        | length acc >= 100000 = write_batch acc >> recurse it []
+    iterate ch =
+        withIterator db opts $ \it -> do
+            iterSeek it (encode k)
+            recurse it ch
+    write_batch ch acc
+        | length acc >= 100000 = do
+            write db defaultWriteOptions $ map (uncurry Put) acc
+            write_batch ch []
         | otherwise =
-            iterEntry it >>= \case
-                Nothing -> write_batch acc
-                Just (key, val) -> do
-                    let pfx = B.take (B.length (encode k)) key
-                    if pfx == encode k
-                        then iterNext it >> recurse it ((key, val) : acc)
-                        else write_batch acc
+            atomically (readTBQueue ch) >>= \case
+                Just (key, val) -> write_batch ch ((key, val) : acc)
+                Nothing -> write db defaultWriteOptions $ map (uncurry Put) acc
+    recurse it ch =
+        iterEntry it >>= \case
+            Nothing -> atomically $ writeTBQueue ch Nothing
+            Just (key, val) ->
+                let pfx = B.take (B.length (encode k)) key
+                 in if pfx == encode k
+                        then do
+                            atomically . writeTBQueue ch $ Just (key, val)
+                            iterNext it
+                            recurse it ch
+                        else atomically $ writeTBQueue ch Nothing
 
 instance (MonadUnliftIO m, MonadResource m) =>
          StoreStream (ReaderT CachedDB m) where
