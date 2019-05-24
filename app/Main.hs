@@ -153,6 +153,8 @@ run Config { configPort = port
            , configDir = db_dir
            } =
     flip finally clear $ do
+        $(logInfoS) "Main" $
+            "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
         db <-
             open
@@ -167,8 +169,11 @@ run Config { configPort = port
             case cd of
                 Nothing -> return Nothing
                 Just ch -> do
-                    $(logInfoS) "Main" "Populating cache..."
+                    $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
+                    removePathForcibly ch
+                    $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
                     createDirectoryIfMissing True ch
+                    $(logInfoS) "Main" "Populating cache..."
                     cdb <- open ch R.defaultOptions {createIfMissing = True}
                     let o = defaultReadOptions
                     cache <- newCache o db o cdb
@@ -203,7 +208,9 @@ run Config { configPort = port
     clear =
         case cd of
             Nothing -> return ()
-            Just ch -> removeDirectoryRecursive ch
+            Just ch -> do
+                $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
+                removePathForcibly ch
     wd = db_dir </> getNetworkName net
     cd =
         case cache_path of
