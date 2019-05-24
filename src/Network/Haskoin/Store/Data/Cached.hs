@@ -209,12 +209,12 @@ bulkCopy opts db cdb k =
             recurse it ch
     write_batch ch acc
         | length acc >= 100000 = do
-            write db defaultWriteOptions $ map (uncurry Put) acc
+            write cdb defaultWriteOptions $ map (uncurry Put) acc
             write_batch ch []
         | otherwise =
             atomically (readTBQueue ch) >>= \case
                 Just (key, val) -> write_batch ch ((key, val) : acc)
-                Nothing -> write db defaultWriteOptions $ map (uncurry Put) acc
+                Nothing -> write cdb defaultWriteOptions $ map (uncurry Put) acc
     recurse it ch =
         iterEntry it >>= \case
             Nothing -> atomically $ writeTBQueue ch Nothing
