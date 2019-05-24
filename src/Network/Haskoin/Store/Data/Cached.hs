@@ -37,6 +37,7 @@ newCache :: MonadUnliftIO m => ReadOptions -> DB -> ReadOptions -> DB -> m Cache
 newCache opts db copts cdb = do
     bulkCopy opts db cdb BalKeyS
     bulkCopy opts db cdb UnspentKeyB
+    bulkCopy opts db cdb AddrTxKeyS
     return (copts, cdb)
 
 withCachedDB ::
@@ -124,6 +125,8 @@ getAddressTxsC ::
     -> Maybe BlockRef
     -> CachedDB
     -> ConduitT () BlockTx m ()
+getAddressTxsC addr mbr CachedDB {cachedCache = Just cdb} =
+    uncurry (getAddressTxsDB addr mbr) cdb
 getAddressTxsC addr mbr CachedDB {cachedDB = db} =
     uncurry (getAddressTxsDB addr mbr) db
 

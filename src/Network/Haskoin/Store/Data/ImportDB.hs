@@ -89,6 +89,7 @@ hashMapOps db =
 cacheMapOps :: HashMapDB -> [BatchOp]
 cacheMapOps db =
     balOps (hBalance db) <>
+    addrTxOps (hAddrTx db) <>
     unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]

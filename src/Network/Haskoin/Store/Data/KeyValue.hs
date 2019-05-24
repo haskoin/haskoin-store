@@ -27,6 +27,7 @@ data AddrTxKey
     | AddrTxKeyB { addrTxKeyA :: !Address
                  , addrTxKeyB :: !BlockRef
                  }
+    | AddrTxKeyS
     deriving (Show, Eq, Ord, Generic, Hashable)
 
 instance Serialize AddrTxKey
@@ -50,6 +51,8 @@ instance Serialize AddrTxKey
         putWord8 0x05
         put a
         put b
+    -- 0x05
+    put AddrTxKeyS = putWord8 0x05
     get = do
         guard . (== 0x05) =<< getWord8
         a <- get
@@ -80,6 +83,7 @@ data AddrOutKey
     | AddrOutKeyB { addrOutKeyA :: !Address
                   , addrOutKeyB :: !BlockRef
                   }
+    | AddrOutKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize AddrOutKey
@@ -90,15 +94,17 @@ instance Serialize AddrOutKey
         put a
         put b
         put p
-    -- 0x06 · StoreAddr
-    put AddrOutKeyA {addrOutKeyA = a} = do
-        putWord8 0x06
-        put a
     -- 0x06 · StoreAddr · BlockRef
     put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b} = do
         putWord8 0x06
         put a
         put b
+    -- 0x06 · StoreAddr
+    put AddrOutKeyA {addrOutKeyA = a} = do
+        putWord8 0x06
+        put a
+    -- 0x06
+    put AddrOutKeyS = putWord8 0x06
     get = do
         guard . (== 0x06) =<< getWord8
         AddrOutKey <$> get <*> get <*> get
