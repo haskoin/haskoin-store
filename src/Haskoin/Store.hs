@@ -62,9 +62,6 @@ module Haskoin.Store
     , getAddressesTxsFull
     , getAddressesTxsLimit
     , getPeersInformation
-    , xpubTxs
-    , xpubTxsLimit
-    , xpubTxsFull
     , xpubBals
     , xpubUnspent
     , xpubUnspentLimit

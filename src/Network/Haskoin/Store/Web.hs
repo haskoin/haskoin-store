@@ -305,12 +305,12 @@ scottyAddressesBalances net = do
     res <- mapM (\a -> f a <$> getBalance a) as
     protoSerial net proto res
 
-scottyXpubBalances :: Network -> WebM ()
-scottyXpubBalances net = do
+scottyXpubBalances :: Network -> DB -> Maybe Cache -> WebM ()
+scottyXpubBalances net db cache = do
     cors
     xpub <- parseXpub net
     proto <- setupBin
-    res <- xpubBals xpub
+    res <- liftIO $ dbRunner db cache (xpubBals xpub)
     protoSerial net proto res
 
 scottyXpubTxs :: Network -> Bool -> DB -> Maybe Cache -> WebM ()
@@ -319,14 +319,18 @@ scottyXpubTxs net full db cache = do
     x <- parseXpub net
     (l, s) <- parseLimits
     proto <- setupBin
-    bs <- xpubBals x
+    bs <- liftIO $ dbRunner db cache (xpubBals x)
     stream $ \io flush' -> do
         dbRunner db cache . runConduit $ f proto l s bs io
         liftIO flush'
   where
     f proto l s bs io
-        | full = xpubTxsFull l s bs .| streamAny net proto io
-        | otherwise = xpubTxsLimit l s bs .| streamAny net proto io
+        | full =
+            getAddressesTxsFull l s (map (balanceAddress . xPubBal) bs) .|
+            streamAny net proto io
+        | otherwise =
+            getAddressesTxsLimit l s (map (balanceAddress . xPubBal) bs) .|
+            streamAny net proto io
 
 scottyXpubUnspents :: Network -> DB -> Maybe Cache -> WebM ()
 scottyXpubUnspents net db cache = do
@@ -335,16 +339,17 @@ scottyXpubUnspents net db cache = do
     proto <- setupBin
     (l, s) <- parseLimits
     stream $ \io flush' -> do
-        dbRunner db cache . runConduit $ xpubUnspentLimit l s x .| streamAny net proto io
+        dbRunner db cache . runConduit $
+            xpubUnspentLimit l s x .| streamAny net proto io
         liftIO flush'
 
-scottyXpubSummary :: Network -> WebM ()
-scottyXpubSummary net = do
+scottyXpubSummary :: Network -> DB -> Maybe Cache -> WebM ()
+scottyXpubSummary net db cache = do
     cors
     x <- parseXpub net
     (l, s) <- parseLimits
     proto <- setupBin
-    res <- xpubSummary l s x
+    res <- liftIO $ dbRunner db cache (xpubSummary l s x)
     protoSerial net proto res
 
 scottyPostTx ::
@@ -457,11 +462,11 @@ runWeb WebConfig { webDB = db
         S.get "/address/unspent" $ scottyAddressesUnspent net db cache
         S.get "/address/:address/balance" $ scottyAddressBalance net
         S.get "/address/balances" $ scottyAddressesBalances net
-        S.get "/xpub/:xpub/balances" $ scottyXpubBalances net
+        S.get "/xpub/:xpub/balances" $ scottyXpubBalances net db cache
         S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net False db cache
         S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net True db cache
         S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net db cache
-        S.get "/xpub/:xpub" $ scottyXpubSummary net
+        S.get "/xpub/:xpub" $ scottyXpubSummary net db cache
         S.post "/transactions" $ scottyPostTx net st pub db cache
         S.get "/dbstats" $ scottyDbStats db
         S.get "/events" $ scottyEvents net pub db cache
@@ -650,54 +655,30 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-xpubBals :: (Monad m, StoreRead m) => XPubKey -> m [XPubBal]
-xpubBals xpub = (<>) <$> go 0 0 <*> go 1 0
+xpubBals :: (MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
+xpubBals xpub =
+    withAsync (go 0) $ \a0 ->
+        withAsync (go 1) $ \a1 -> do
+            l0 <- wait a0
+            l1 <- wait a1
+            return $ l0 <> l1
   where
-    go m n = do
-        xs <- catMaybes <$> mapM (uncurry b) (as m n)
-        case xs of
-            [] -> return []
-            _  -> (xs <>) <$> go m (n + 20)
+    go m = runConduit $ yieldMany (as m) .| mapMC (uncurry b) .| f 0 .| sinkList
     b a p =
         getBalance a >>= \case
             Nothing -> return Nothing
             Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
-    as m n =
-        map
-            (\(a, _, n') -> (a, [m, n']))
-            (take 20 (deriveAddrs (pubSubKey xpub m) n))
-
-xpubTxs ::
-       (Monad m, StoreRead m, StoreStream m)
-    => Maybe BlockRef
-    -> [XPubBal]
-    -> ConduitT () BlockTx m ()
-xpubTxs m bs = do
-    xs <-
-        forM bs $ \XPubBal {xPubBal = b} ->
-            return $ getAddressTxs (balanceAddress b) m
-    mergeSourcesBy (flip compare `on` blockTxBlock) xs .| dedup
-
-xpubTxsLimit ::
-       (Monad m, StoreRead m, StoreStream m)
-    => Maybe Word32
-    -> StartFrom
-    -> [XPubBal]
-    -> ConduitT () BlockTx m ()
-xpubTxsLimit l s bs = do
-    xpubTxs (mbr s) bs .| (offset s >> limit l)
-
-xpubTxsFull ::
-       (Monad m, StoreStream m, StoreRead m)
-    => Maybe Word32
-    -> StartFrom
-    -> [XPubBal]
-    -> ConduitT () Transaction m ()
-xpubTxsFull l s bs =
-    xpubTxsLimit l s bs .| concatMapMC (getTransaction . blockTxHash)
+    as m = map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
+    f n
+        | n <= 20 =
+            await >>= \case
+                Nothing -> return ()
+                Just (Just b) -> yield b >> f 0
+                Just Nothing -> f (n + 1)
+        | otherwise = return ()
 
 xpubUnspent ::
-       (Monad m, StoreStream m, StoreRead m)
+       (MonadUnliftIO m, StoreStream m, StoreRead m)
     => Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
@@ -711,7 +692,7 @@ xpubUnspent mbr xpub = do
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
 xpubUnspentLimit ::
-       (Monad m, StoreStream m, StoreRead m)
+       (MonadUnliftIO m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> XPubKey
@@ -720,7 +701,7 @@ xpubUnspentLimit l s x =
     xpubUnspent (mbr s) x .| (offset s >> limit l)
 
 xpubSummary ::
-       (Monad m, StoreStream m, StoreRead m)
+       (MonadUnliftIO m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> XPubKey
@@ -730,7 +711,9 @@ xpubSummary l s x = do
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs
-    txs <- runConduit $ xpubTxsFull l s bs .| sinkList
+    txs <-
+        runConduit $
+        getAddressesTxsFull l s (map (balanceAddress . xPubBal) bs) .| sinkList
     let as =
             nub
                 [ a
