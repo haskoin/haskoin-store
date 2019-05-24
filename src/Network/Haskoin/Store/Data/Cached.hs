@@ -10,10 +10,12 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
 import           Control.Monad.Trans.Maybe
+import qualified Data.ByteString                     as B
 import qualified Data.ByteString.Short               as B.Short
 import           Data.IntMap.Strict                  (IntMap)
 import           Data.List
 import           Data.Maybe
+import           Data.Serialize                      (Serialize, encode)
 import           Data.String.Conversions             (cs)
 import           Database.RocksDB                    as R
 import           Database.RocksDB.Query              as R
@@ -33,14 +35,9 @@ data CachedDB =
 
 newCache :: MonadUnliftIO m => ReadOptions -> DB -> ReadOptions -> DB -> m Cache
 newCache opts db copts cdb = do
-    let cache = (copts, cdb)
-    runResourceT . withBlockDB opts db $ do
-        runConduit $ getAddressBalances .| mapMC (bal cache) .| sinkNull
-        runConduit $ getUnspents .| mapMC (uns cache) .| sinkNull
-    return cache
-  where
-    bal cache = withCachedDB opts db (Just cache) . setBalance
-    uns cache = withCachedDB opts db (Just cache) . insertUnspent
+    bulkCopy opts db cdb BalKeyS
+    bulkCopy opts db cdb UnspentKeyB
+    return (copts, cdb)
 
 withCachedDB ::
        ReadOptions
@@ -197,7 +194,25 @@ setBalanceC b CachedDB {cachedCache = cdb} = onCachedDB cdb $ setBalance b
 
 onCachedDB :: MonadIO m => Maybe Cache -> ReaderT BlockDB m () -> m ()
 onCachedDB (Just cdb) action = uncurry withBlockDB cdb action
-onCachedDB Nothing _ = return ()
+onCachedDB Nothing _         = return ()
+
+bulkCopy ::
+       (Serialize k, MonadUnliftIO m) => ReadOptions -> DB -> DB -> k -> m ()
+bulkCopy opts db cdb k =
+    runResourceT $
+    withIterator db opts $ \it -> do iterSeek it (encode k) >> recurse it []
+  where
+    write_batch = write db defaultWriteOptions . map (uncurry Put)
+    recurse it acc
+        | length acc >= 100000 = write_batch acc >> recurse it []
+        | otherwise =
+            iterEntry it >>= \case
+                Nothing -> write_batch acc
+                Just (key, val) -> do
+                    let pfx = B.take (B.length (encode k)) key
+                    if pfx == encode k
+                        then iterNext it >> recurse it ((key, val) : acc)
+                        else write_batch acc
 
 instance (MonadUnliftIO m, MonadResource m) =>
          StoreStream (ReaderT CachedDB m) where
