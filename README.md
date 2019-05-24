@@ -20,6 +20,15 @@ Full blockchain index & store featuring:
 * From the root of this repository run `stack --nix build --copy-bins`.
 * File will usually be installed in `~/.local/bin/haskoin-store`.
 
+## Cache
+
+A memory-based RocksDB database can be used as a cache to store:
+
+* Address balances.
+* Unspent outputs.
+
+Give `haskoin-store` the path to a directory mapped to RAM, and it will be used to create a RockDB database for caching. Needs at least 30 GB
+
 
 ## API Documentation
 

@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Orphan transaction support.
 - Full address balance cache in RocksDB.
 - Full unspent output cache in RocksDB.
-- Address transaction pointer cache in RocksDB.
 
 ### Changed
 - Significantly refactor code.
