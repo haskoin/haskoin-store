@@ -208,7 +208,7 @@ bulkCopy opts db cdb k =
             iterSeek it (encode k)
             recurse it ch
     write_batch ch acc
-        | length acc >= 100000 = do
+        | length acc >= 10000 = do
             write cdb defaultWriteOptions $ map (uncurry Put) acc
             write_batch ch []
         | otherwise =
