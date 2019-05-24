@@ -225,10 +225,13 @@ instance MonadIO m => StoreWrite (ReaderT CachedDB m) where
     setBest h = R.ask >>= setBestC h
     insertBlock b = R.ask >>= insertBlockC b
     insertAtHeight h g = R.ask >>= insertAtHeightC h g
+    insertTx t = R.ask >>= insertTxC t
     insertSpender p s = R.ask >>= insertSpenderC p s
     deleteSpender p = R.ask >>= deleteSpenderC p
     insertAddrTx a t = R.ask >>= insertAddrTxC a t
     deleteAddrTx a t = R.ask >>= deleteAddrTxC a t
+    insertAddrUnspent a u = R.ask >>= insertAddrUnspentC a u
+    deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentC a u
     insertMempoolTx h t = R.ask >>= insertMempoolTxC h t
     deleteMempoolTx h t = R.ask >>= deleteMempoolTxC h t
     insertOrphanTx t u = R.ask >>= insertOrphanTxC t u
