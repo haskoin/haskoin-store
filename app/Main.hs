@@ -132,70 +132,80 @@ main =
             exitSuccess
         when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
             die "ERROR: Specify peers to connect or enable peer discovery."
-        let net = configNetwork conf
-            wdir = configDir conf </> getNetworkName net
-        createDirectoryIfMissing True wdir
+        run conf
+  where
+    opts =
+        info (helper <*> config) $
+        fullDesc <> progDesc "Blockchain store and API" <>
+        Options.Applicative.header
+            ("haskoin-store version " <> showVersion P.version)
+
+cacheDir :: Network -> FilePath -> Maybe FilePath
+cacheDir net "" = Nothing
+cacheDir net ch = Just (ch </> getNetworkName net </> "cache")
+
+run :: (MonadLoggerIO m, MonadUnliftIO m) => Config -> m ()
+run Config { configPort = port
+           , configNetwork = net
+           , configDiscover = disc
+           , configPeers = peers
+           , configCache = cache_path
+           , configDir = db_dir
+           } =
+    flip finally clear $ do
+        createDirectoryIfMissing True wd
         db <-
             open
-                (wdir </> "db")
+                (wd </> "db")
                 R.defaultOptions
                     { createIfMissing = True
                     , compression = SnappyCompression
                     , maxOpenFiles = -1
                     , writeBufferSize = 2 `shift` 30
                     }
-        $(logInfoS) "Main" "Populating cache..."
-        let cdir = cachedir net (configCache conf)
         cache <-
-            runMaybeT $ do
-                ch <- MaybeT $ return cdir
-                createDirectoryIfMissing True ch
-                cdb <- open ch R.defaultOptions {createIfMissing = True}
-                let o = defaultReadOptions
-                lift $ newCache o db o cdb
-        $(logInfoS) "Main" "Finished populating cache"
-        run conf db cache `finally` clear cdir
+            case cd of
+                Nothing -> return Nothing
+                Just ch -> do
+                    $(logInfoS) "Main" "Populating cache..."
+                    createDirectoryIfMissing True ch
+                    cdb <- open ch R.defaultOptions {createIfMissing = True}
+                    let o = defaultReadOptions
+                    cache <- newCache o db o cdb
+                    $(logInfoS) "Main" "Finished populating cache"
+                    return $ Just cache
+        withPublisher $ \pub ->
+            let scfg =
+                    StoreConfig
+                        { storeConfMaxPeers = 20
+                        , storeConfInitPeers =
+                              map
+                                  (second (fromMaybe (getDefaultPort net)))
+                                  peers
+                        , storeConfDiscover = disc
+                        , storeConfDB = db
+                        , storeConfNetwork = net
+                        , storeConfListen = (`sendSTM` pub) . Event
+                        , storeConfCache = cache
+                        }
+             in withStore scfg $ \str ->
+                    let wcfg =
+                            WebConfig
+                                { webPort = port
+                                , webNetwork = net
+                                , webDB = db
+                                , webCache = cache
+                                , webPublisher = pub
+                                , webStore = str
+                                }
+                     in runWeb wcfg
   where
-    cachedir net "" = Nothing
-    cachedir net ch = Just (ch </> getNetworkName net </> "cache")
-    opts =
-        info (helper <*> config) $
-        fullDesc <> progDesc "Blockchain store and API" <>
-        Options.Applicative.header
-            ("haskoin-store version " <> showVersion P.version)
-    clear Nothing   = return ()
-    clear (Just ch) = removeDirectoryRecursive ch
-
-run :: (MonadLoggerIO m, MonadUnliftIO m)
-    => Config
-    -> DB
-    -> Maybe Cache
-    -> m ()
-run Config { configPort = port
-           , configNetwork = net
-           , configDiscover = disc
-           , configPeers = peers
-           } db cache =
-    withPublisher $ \pub ->
-        let scfg =
-                StoreConfig
-                    { storeConfMaxPeers = 20
-                    , storeConfInitPeers =
-                          map (second (fromMaybe (getDefaultPort net))) peers
-                    , storeConfDiscover = disc
-                    , storeConfDB = db
-                    , storeConfNetwork = net
-                    , storeConfListen = (`sendSTM` pub) . Event
-                    , storeConfCache = cache
-                    }
-         in withStore scfg $ \str ->
-                let wcfg =
-                        WebConfig
-                            { webPort = port
-                            , webNetwork = net
-                            , webDB = db
-                            , webCache = cache
-                            , webPublisher = pub
-                            , webStore = str
-                            }
-                 in runWeb wcfg
+    clear =
+        case cd of
+            Nothing -> return ()
+            Just ch -> removeDirectoryRecursive ch
+    wd = db_dir </> getNetworkName net
+    cd =
+        case cache_path of
+            "" -> Nothing
+            ch -> Just (ch </> getNetworkName net </> "cache")
