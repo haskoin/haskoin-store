@@ -55,7 +55,6 @@ executables:
       - -with-rtsopts=-N
     dependencies:
       - haskoin-store
-      - directory
       - filepath
       - optparse-applicative
 tests:

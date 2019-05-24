@@ -35,12 +35,12 @@ import           Network.HTTP.Types
 import           NQE
 import           Options.Applicative
 import           Paths_haskoin_store        as P
-import           System.Directory
 import           System.Exit
 import           System.FilePath
 import           System.IO.Unsafe
 import           Text.Read                  (readMaybe)
 import           UnliftIO
+import           UnliftIO.Directory
 import           Web.Scotty.Trans           as S
 
 data Config = Config
@@ -134,7 +134,7 @@ main =
             die "ERROR: Specify peers to connect or enable peer discovery."
         let net = configNetwork conf
             wdir = configDir conf </> getNetworkName net
-        liftIO $ createDirectoryIfMissing True wdir
+        createDirectoryIfMissing True wdir
         db <-
             open
                 (wdir </> "db")
@@ -145,46 +145,57 @@ main =
                     , writeBufferSize = 2 `shift` 30
                     }
         $(logInfoS) "Main" "Populating cache..."
+        let cdir = cachedir net (configCache conf)
         cache <-
-            case configCache conf of
-                "" -> return Nothing
-                ch -> do
-                    let cdir = ch </> getNetworkName net </> "cache"
-                    liftIO $ createDirectoryIfMissing True cdir
-                    cdb <- open cdir R.defaultOptions {createIfMissing = True}
-                    Just <$>
-                        newCache defaultReadOptions db defaultReadOptions cdb
+            runMaybeT $ do
+                ch <- MaybeT $ return cdir
+                createDirectoryIfMissing True ch
+                cdb <- open ch R.defaultOptions {createIfMissing = True}
+                let o = defaultReadOptions
+                lift $ newCache o db o cdb
         $(logInfoS) "Main" "Finished populating cache"
-        withPublisher $ \pub -> do
-            let scfg =
-                    StoreConfig
-                        { storeConfMaxPeers = 20
-                        , storeConfInitPeers =
-                              map
-                                  (second
-                                       (fromMaybe
-                                            (getDefaultPort (configNetwork conf))))
-                                  (configPeers conf)
-                        , storeConfDiscover = configDiscover conf
-                        , storeConfDB = db
-                        , storeConfNetwork = configNetwork conf
-                        , storeConfListen = (`sendSTM` pub) . Event
-                        , storeConfCache = cache
-                        }
-            withStore scfg $ \st -> do
-                let wcfg =
-                        WebConfig
-                            { webPort = configPort conf
-                            , webNetwork = configNetwork conf
-                            , webDB = db
-                            , webCache = cache
-                            , webPublisher = pub
-                            , webStore = st
-                            }
-                runWeb wcfg
+        run conf db cache `finally` clear cdir
   where
+    cachedir net "" = Nothing
+    cachedir net ch = Just (ch </> getNetworkName net </> "cache")
     opts =
         info (helper <*> config) $
         fullDesc <> progDesc "Blockchain store and API" <>
         Options.Applicative.header
             ("haskoin-store version " <> showVersion P.version)
+    clear Nothing   = return ()
+    clear (Just ch) = removeDirectoryRecursive ch
+
+run :: (MonadLoggerIO m, MonadUnliftIO m)
+    => Config
+    -> DB
+    -> Maybe Cache
+    -> m ()
+run Config { configPort = port
+           , configNetwork = net
+           , configDiscover = disc
+           , configPeers = peers
+           } db cache =
+    withPublisher $ \pub ->
+        let scfg =
+                StoreConfig
+                    { storeConfMaxPeers = 20
+                    , storeConfInitPeers =
+                          map (second (fromMaybe (getDefaultPort net))) peers
+                    , storeConfDiscover = disc
+                    , storeConfDB = db
+                    , storeConfNetwork = net
+                    , storeConfListen = (`sendSTM` pub) . Event
+                    , storeConfCache = cache
+                    }
+         in withStore scfg $ \str ->
+                let wcfg =
+                        WebConfig
+                            { webPort = port
+                            , webNetwork = net
+                            , webDB = db
+                            , webCache = cache
+                            , webPublisher = pub
+                            , webStore = str
+                            }
+                 in runWeb wcfg
