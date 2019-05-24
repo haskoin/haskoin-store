@@ -201,20 +201,20 @@ bulkCopy ::
 bulkCopy opts db cdb k =
     runResourceT $ do
         ch <- newTBQueueIO 1000000
-        withAsync (iterate ch) $ \a -> write_batch ch []
+        withAsync (iterate ch) $ \a -> write_batch ch [] 0
   where
     iterate ch =
         withIterator db opts $ \it -> do
             iterSeek it (encode k)
             recurse it ch
-    write_batch ch acc
-        | length acc >= 10000 = do
-            write cdb defaultWriteOptions $ map (uncurry Put) acc
-            write_batch ch []
+    write_batch ch acc l
+        | l >= 10000 = do
+            write cdb defaultWriteOptions acc
+            write_batch ch [] 0
         | otherwise =
             atomically (readTBQueue ch) >>= \case
-                Just (key, val) -> write_batch ch ((key, val) : acc)
-                Nothing -> write cdb defaultWriteOptions $ map (uncurry Put) acc
+                Just (key, val) -> write_batch ch (Put key val : acc) (l + 1)
+                Nothing -> write cdb defaultWriteOptions acc
     recurse it ch =
         iterEntry it >>= \case
             Nothing -> atomically $ writeTBQueue ch Nothing
