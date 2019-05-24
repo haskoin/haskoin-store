@@ -55,19 +55,6 @@ type BlockPos = Word32
 newtype InitException = IncorrectVersion Word32
     deriving (Show, Read, Eq, Ord, Exception)
 
-class UnspentWrite m where
-    addUnspent :: Unspent -> m ()
-    delUnspent :: OutPoint -> m ()
-
-class UnspentRead m where
-    getUnspent :: OutPoint -> m (Maybe Unspent)
-
-class BalanceWrite m where
-    setBalance :: Balance -> m ()
-
-class BalanceRead m where
-    getBalance :: Address -> m (Maybe Balance)
-
 class StoreRead m where
     isInitialized :: m (Either InitException Bool)
     getBestBlock :: m (Maybe BlockHash)
@@ -77,6 +64,28 @@ class StoreRead m where
     getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
+    getBalance :: Address -> m (Maybe Balance)
+    getUnspent :: OutPoint -> m (Maybe Unspent)
+
+class StoreWrite m where
+    setInit :: m ()
+    setBest :: BlockHash -> m ()
+    insertBlock :: BlockData -> m ()
+    insertAtHeight :: BlockHash -> BlockHeight -> m ()
+    insertTx :: TxData -> m ()
+    insertSpender :: OutPoint -> Spender -> m ()
+    deleteSpender :: OutPoint -> m ()
+    insertAddrTx :: Address -> BlockTx -> m ()
+    deleteAddrTx :: Address -> BlockTx -> m ()
+    insertAddrUnspent :: Address -> Unspent -> m ()
+    deleteAddrUnspent :: Address -> Unspent -> m ()
+    insertMempoolTx :: TxHash -> UnixTime -> m ()
+    deleteMempoolTx :: TxHash -> UnixTime -> m ()
+    insertOrphanTx :: Tx -> UnixTime -> m ()
+    deleteOrphanTx :: TxHash -> m ()
+    setBalance :: Balance -> m ()
+    insertUnspent :: Unspent -> m ()
+    deleteUnspent :: OutPoint -> m ()
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
@@ -92,23 +101,6 @@ class StoreStream m where
     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
     getAddressBalances :: ConduitT () Balance m ()
     getUnspents :: ConduitT () Unspent m ()
-
-class StoreWrite m where
-    setInit :: m ()
-    setBest :: BlockHash -> m ()
-    insertBlock :: BlockData -> m ()
-    insertAtHeight :: BlockHash -> BlockHeight -> m ()
-    insertTx :: TxData -> m ()
-    insertSpender :: OutPoint -> Spender -> m ()
-    deleteSpender :: OutPoint -> m ()
-    insertAddrTx :: Address -> BlockTx -> m ()
-    removeAddrTx :: Address -> BlockTx -> m ()
-    insertAddrUnspent :: Address -> Unspent -> m ()
-    removeAddrUnspent :: Address -> Unspent -> m ()
-    insertMempoolTx :: TxHash -> UnixTime -> m ()
-    deleteMempoolTx :: TxHash -> UnixTime -> m ()
-    insertOrphanTx :: Tx -> UnixTime -> m ()
-    deleteOrphanTx :: TxHash -> m ()
 
 -- | Serialize such that ordering is inverted.
 putUnixTime w = putWord64be $ maxBound - w

@@ -216,8 +216,8 @@ insertAddrTxH a btx db =
                      (M.singleton (blockTxHash btx) True))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-removeAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
-removeAddrTxH a btx db =
+deleteAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
+deleteAddrTxH a btx db =
     let s =
             M.singleton
                 a
@@ -241,8 +241,8 @@ insertAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) (Just uns)))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-removeAddrUnspentH :: Address -> Unspent -> HashMapDB -> HashMapDB
-removeAddrUnspentH a u db =
+deleteAddrUnspentH :: Address -> Unspent -> HashMapDB -> HashMapDB
+deleteAddrUnspentH a u db =
     let s =
             M.singleton
                 a
@@ -273,8 +273,8 @@ getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
     fmap (unspentValToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
 
-addUnspentH :: Unspent -> HashMapDB -> HashMapDB
-addUnspentH u db =
+insertUnspentH :: Unspent -> HashMapDB -> HashMapDB
+insertUnspentH u db =
     db
         { hUnspent =
               M.insertWith
@@ -286,8 +286,8 @@ addUnspentH u db =
                   (hUnspent db)
         }
 
-delUnspentH :: OutPoint -> HashMapDB -> HashMapDB
-delUnspentH op db =
+deleteUnspentH :: OutPoint -> HashMapDB -> HashMapDB
+deleteUnspentH op db =
     db
         { hUnspent =
               M.insertWith
@@ -310,15 +310,8 @@ instance StoreRead BlockSTM where
         lift . readTVar =<<
         R.ask
     getOrphanTx h = fmap (join . getOrphanTxH h) . lift . readTVar =<< R.ask
-
-instance BalanceRead BlockSTM where
-    getBalance a = fmap (getBalanceH a) . lift . readTVar =<< R.ask
-
-instance UnspentRead BlockSTM where
     getUnspent op = fmap (join . getUnspentH op) . lift . readTVar =<< R.ask
-
-instance BalanceWrite BlockSTM where
-    setBalance b = lift . (`modifyTVar` setBalanceH b) =<< R.ask
+    getBalance a = fmap (getBalanceH a) . lift . readTVar =<< R.ask
 
 instance StoreStream BlockSTM where
     getMempool m = getMempoolH m =<< lift . lift . readTVar =<< lift R.ask
@@ -341,16 +334,15 @@ instance StoreWrite BlockSTM where
     insertSpender p s = lift . (`modifyTVar` insertSpenderH p s) =<< R.ask
     deleteSpender p = lift . (`modifyTVar` deleteSpenderH p) =<< R.ask
     insertAddrTx a t = lift . (`modifyTVar` insertAddrTxH a t) =<< R.ask
-    removeAddrTx a t = lift . (`modifyTVar` removeAddrTxH a t) =<< R.ask
+    deleteAddrTx a t = lift . (`modifyTVar` deleteAddrTxH a t) =<< R.ask
     insertAddrUnspent a u =
         lift . (`modifyTVar` insertAddrUnspentH a u) =<< R.ask
-    removeAddrUnspent a u =
-        lift . (`modifyTVar` removeAddrUnspentH a u) =<< R.ask
+    deleteAddrUnspent a u =
+        lift . (`modifyTVar` deleteAddrUnspentH a u) =<< R.ask
     insertMempoolTx h t = lift . (`modifyTVar` insertMempoolTxH h t) =<< R.ask
     deleteMempoolTx h t = lift . (`modifyTVar` deleteMempoolTxH h t) =<< R.ask
-    deleteOrphanTx h = lift . (`modifyTVar` deleteOrphanTxH h) =<< R.ask
     insertOrphanTx t u = lift . (`modifyTVar` insertOrphanTxH t u) =<< R.ask
-
-instance UnspentWrite BlockSTM where
-    addUnspent h = lift . (`modifyTVar` addUnspentH h) =<< R.ask
-    delUnspent p = lift . (`modifyTVar` delUnspentH p) =<< R.ask
+    deleteOrphanTx h = lift . (`modifyTVar` deleteOrphanTxH h) =<< R.ask
+    setBalance b = lift . (`modifyTVar` setBalanceH b) =<< R.ask
+    insertUnspent h = lift . (`modifyTVar` insertUnspentH h) =<< R.ask
+    deleteUnspent p = lift . (`modifyTVar` deleteUnspentH p) =<< R.ask

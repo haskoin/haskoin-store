@@ -56,10 +56,6 @@ data ImportException
 initDB ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -91,10 +87,6 @@ getOldOrphans now =
 importOrphan ::
        ( StoreRead m
        , StoreWrite m
-       , BalanceRead m
-       , BalanceWrite m
-       , UnspentRead m
-       , UnspentWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -130,10 +122,6 @@ importOrphan net t tx = do
 newMempoolTx ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -202,10 +190,6 @@ newMempoolTx net tx w = do
 revertBlock ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -241,10 +225,6 @@ revertBlock net bh = do
 importBlock ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -337,10 +317,6 @@ sortTxs txs = go $ zip [0 ..] txs
 importTx ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -468,10 +444,6 @@ importTx net br tt tx = do
 confirmTx ::
        ( StoreRead m
        , StoreWrite m
-       , BalanceRead m
-       , BalanceWrite m
-       , UnspentRead m
-       , UnspentWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -485,7 +457,7 @@ confirmTx net t br tx = do
         case scriptToAddressBS (prevScript p) of
             Left _ -> return ()
             Right a -> do
-                removeAddrTx
+                deleteAddrTx
                     a
                     BlockTx
                         {blockTxBlock = txDataBlock t, blockTxHash = txHash tx}
@@ -496,8 +468,8 @@ confirmTx net t br tx = do
         let op = OutPoint (txHash tx) n
         s <- getSpender (OutPoint (txHash tx) n)
         when (isNothing s) $ do
-            delUnspent op
-            addUnspent
+            deleteUnspent op
+            insertUnspent
                 Unspent
                     { unspentBlock = br
                     , unspentPoint = op
@@ -507,7 +479,7 @@ confirmTx net t br tx = do
         case scriptToAddressBS (scriptOutput o) of
             Left _ -> return ()
             Right a -> do
-                removeAddrTx
+                deleteAddrTx
                     a
                     BlockTx
                         {blockTxBlock = txDataBlock t, blockTxHash = txHash tx}
@@ -515,7 +487,7 @@ confirmTx net t br tx = do
                     a
                     BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
                 when (isNothing s) $ do
-                    removeAddrUnspent
+                    deleteAddrUnspent
                         a
                         Unspent
                             { unspentBlock = txDataBlock t
@@ -551,10 +523,6 @@ getRecursiveTx th =
 deleteTx ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -657,10 +625,6 @@ insertDeletedMempoolTx tx w = do
 newOutput ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        )
     => Network
@@ -669,7 +633,7 @@ newOutput ::
     -> TxOut
     -> m ()
 newOutput net br op to = do
-    addUnspent u
+    insertUnspent u
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
         Right a -> do
@@ -690,10 +654,6 @@ newOutput net br op to = do
 delOutput ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -703,11 +663,11 @@ delOutput ::
 delOutput net op = do
     t <- getImportTx (outPointHash op)
     u <- getTxOutput (outPointIndex op) t
-    delUnspent op
+    deleteUnspent op
     case scriptToAddressBS (outputScript u) of
         Left _ -> return ()
         Right a -> do
-            removeAddrUnspent
+            deleteAddrUnspent
                 a
                 Unspent
                     { unspentScript = B.Short.toShort (outputScript u)
@@ -715,7 +675,7 @@ delOutput net op = do
                     , unspentPoint = op
                     , unspentAmount = outputAmount u
                     }
-            removeAddrTx
+            deleteAddrTx
                 a
                 BlockTx
                     { blockTxHash = outPointHash op
@@ -769,10 +729,6 @@ getTxOutput i tx = do
 spendOutput ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -793,17 +749,13 @@ spendOutput net br th ix u = do
                 False
                 a
                 (unspentAmount u)
-            removeAddrUnspent a u
+            deleteAddrUnspent a u
             insertAddrTx a BlockTx {blockTxHash = th, blockTxBlock = br}
-    delUnspent (unspentPoint u)
+    deleteUnspent (unspentPoint u)
 
 unspendOutput ::
        ( StoreRead m
        , StoreWrite m
-       , UnspentRead m
-       , UnspentWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -832,12 +784,12 @@ unspendOutput net op = do
                     , unspentScript = B.Short.toShort (outputScript o)
                     , unspentPoint = op
                     }
-        addUnspent u
+        insertUnspent u
         case scriptToAddressBS (outputScript o) of
             Left _ -> return ()
             Right a -> do
                 insertAddrUnspent a u
-                removeAddrTx
+                deleteAddrTx
                     a
                     BlockTx
                         { blockTxHash = spenderHash s
@@ -852,8 +804,6 @@ unspendOutput net op = do
 reduceBalance ::
        ( StoreRead m
        , StoreWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -918,8 +868,6 @@ reduceBalance net c t a v = do
 increaseBalance ::
        ( StoreRead m
        , StoreWrite m
-       , BalanceRead m
-       , BalanceWrite m
        , MonadLogger m
        )
     => Bool -- ^ add confirmed output
@@ -967,7 +915,7 @@ increaseBalance c t a v = do
             else "unconfirmed"
 
 updateAddressCounts ::
-       (BalanceWrite m, BalanceRead m, Monad m, MonadError ImportException m)
+       (StoreWrite m, StoreRead m, Monad m, MonadError ImportException m)
     => Network
     -> [Address]
     -> (Word64 -> Word64)

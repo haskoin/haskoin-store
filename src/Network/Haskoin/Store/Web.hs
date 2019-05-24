@@ -596,19 +596,8 @@ instance StoreRead WebM where
     getSpender = lift . getSpender
     getSpenders = lift . getSpenders
     getOrphanTx = lift . getOrphanTx
-
-instance UnspentRead WebM where
     getUnspent = lift . getUnspent
-
-instance BalanceRead WebM where
     getBalance = lift . getBalance
-
-instance UnspentWrite WebM where
-    addUnspent = lift . addUnspent
-    delUnspent = lift . delUnspent
-
-instance BalanceWrite WebM where
-    setBalance = lift . setBalance
 
 healthCheck ::
        (MonadUnliftIO m, StoreRead m)
@@ -661,7 +650,7 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-xpubBals :: (Monad m, BalanceRead m) => XPubKey -> m [XPubBal]
+xpubBals :: (Monad m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = (<>) <$> go 0 0 <*> go 1 0
   where
     go m n = do
@@ -679,7 +668,7 @@ xpubBals xpub = (<>) <$> go 0 0 <*> go 1 0
             (take 20 (deriveAddrs (pubSubKey xpub m) n))
 
 xpubTxs ::
-       (Monad m, BalanceRead m, StoreStream m)
+       (Monad m, StoreRead m, StoreStream m)
     => Maybe BlockRef
     -> [XPubBal]
     -> ConduitT () BlockTx m ()
@@ -690,7 +679,7 @@ xpubTxs m bs = do
     mergeSourcesBy (flip compare `on` blockTxBlock) xs .| dedup
 
 xpubTxsLimit ::
-       (Monad m, BalanceRead m, StoreStream m)
+       (Monad m, StoreRead m, StoreStream m)
     => Maybe Word32
     -> StartFrom
     -> [XPubBal]
@@ -699,7 +688,7 @@ xpubTxsLimit l s bs = do
     xpubTxs (mbr s) bs .| (offset s >> limit l)
 
 xpubTxsFull ::
-       (Monad m, BalanceRead m, StoreStream m, StoreRead m)
+       (Monad m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> [XPubBal]
@@ -708,7 +697,7 @@ xpubTxsFull l s bs =
     xpubTxsLimit l s bs .| concatMapMC (getTransaction . blockTxHash)
 
 xpubUnspent ::
-       (Monad m, StoreStream m, BalanceRead m, StoreRead m)
+       (Monad m, StoreStream m, StoreRead m)
     => Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
@@ -722,7 +711,7 @@ xpubUnspent mbr xpub = do
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
 xpubUnspentLimit ::
-       (Monad m, StoreStream m, BalanceRead m, StoreRead m)
+       (Monad m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> XPubKey
@@ -731,7 +720,7 @@ xpubUnspentLimit l s x =
     xpubUnspent (mbr s) x .| (offset s >> limit l)
 
 xpubSummary ::
-       (Monad m, StoreStream m, BalanceRead m, StoreRead m)
+       (Monad m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> XPubKey

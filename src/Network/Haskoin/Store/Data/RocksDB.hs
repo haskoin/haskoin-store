@@ -178,13 +178,67 @@ setBalanceDB bal db = insert db (BalKey a) b
   where
     (a, b) = balanceToBalVal bal
 
-addUnspentDB :: MonadIO m => Unspent -> DB -> m ()
-addUnspentDB uns db = insert db (UnspentKey p) u
+insertUnspentDB :: MonadIO m => Unspent -> DB -> m ()
+insertUnspentDB uns db = insert db (UnspentKey p) u
   where
     (p, u) = unspentToUnspentVal uns
 
-delUnspentDB :: MonadIO m => OutPoint -> DB -> m ()
-delUnspentDB op db = remove db (UnspentKey op)
+deleteUnspentDB :: MonadIO m => OutPoint -> DB -> m ()
+deleteUnspentDB op db = remove db (UnspentKey op)
+
+setBestDB :: MonadIO m => BlockHash -> DB -> m ()
+setBestDB h db = insert db BestKey h
+
+insertBlockDB :: MonadIO m => BlockData -> DB -> m ()
+insertBlockDB b db = insert db (BlockKey (headerHash (blockDataHeader b))) b
+
+insertAtHeightDB ::
+       MonadIO m => BlockHash -> BlockHeight -> ReadOptions -> DB -> m ()
+insertAtHeightDB bh he opts db = do
+    bs <- getBlocksAtHeightDB he opts db
+    insert db (HeightKey he) (bh : bs)
+
+insertTxDB :: MonadIO m => TxData -> DB -> m ()
+insertTxDB t db = insert db (TxKey (txHash (txData t))) t
+
+insertSpenderDB :: MonadIO m => OutPoint -> Spender -> DB -> m ()
+insertSpenderDB op s db = insert db (SpenderKey op) s
+
+deleteSpenderDB :: MonadIO m => OutPoint -> DB -> m ()
+deleteSpenderDB op db = remove db (SpenderKey op)
+
+insertAddrTxDB :: MonadIO m => Address -> BlockTx -> DB -> m ()
+insertAddrTxDB a t db = insert db (AddrTxKey a t) ()
+
+deleteAddrTxDB :: MonadIO m => Address -> BlockTx -> DB -> m ()
+deleteAddrTxDB a t db = remove db (AddrTxKey a t)
+
+insertAddrUnspentDB :: MonadIO m => Address -> Unspent -> DB -> m ()
+insertAddrUnspentDB a Unspent { unspentBlock = b
+                              , unspentPoint = p
+                              , unspentAmount = v
+                              , unspentScript = s
+                              } db =
+    insert
+        db
+        AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p}
+        OutVal {outValAmount = v, outValScript = B.Short.fromShort s}
+
+deleteAddrUnspentDB :: MonadIO m => Address -> Unspent -> DB -> m ()
+deleteAddrUnspentDB a Unspent {unspentBlock = b, unspentPoint = p} db =
+    remove db AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p}
+
+insertMempoolTxDB :: MonadIO m => TxHash -> UnixTime -> DB -> m ()
+insertMempoolTxDB h t db = insert db MemKey {memTime = t, memKey = h} ()
+
+deleteMempoolTxDB :: MonadIO m => TxHash -> UnixTime -> DB -> m ()
+deleteMempoolTxDB h t db = remove db MemKey {memTime = t, memKey = h}
+
+insertOrphanTxDB :: MonadIO m => Tx -> UnixTime -> DB -> m ()
+insertOrphanTxDB t u db = insert db (OrphanKey (txHash t)) (u, t)
+
+deleteOrphanTxDB :: MonadIO m => TxHash -> DB -> m ()
+deleteOrphanTxDB h db = remove db (OrphanKey h)
 
 instance MonadIO m => StoreRead (ReaderT BlockDB m) where
     isInitialized = R.ask >>= uncurry isInitializedDB
@@ -195,6 +249,8 @@ instance MonadIO m => StoreRead (ReaderT BlockDB m) where
     getSpenders p = R.ask >>= uncurry (getSpendersDB p)
     getSpender p = R.ask >>= uncurry (getSpenderDB p)
     getOrphanTx h = R.ask >>= uncurry (getOrphanTxDB h)
+    getBalance a = R.ask >>= uncurry (getBalanceDB a)
+    getUnspent p = R.ask >>= uncurry (getUnspentDB p)
 
 instance (MonadIO m, MonadResource m) =>
          StoreStream (ReaderT BlockDB m) where
@@ -205,15 +261,22 @@ instance (MonadIO m, MonadResource m) =>
     getAddressBalances = R.ask >>= uncurry getAddressBalancesDB
     getUnspents = R.ask >>= uncurry getUnspentsDB
 
-instance MonadIO m => BalanceRead (ReaderT BlockDB m) where
-    getBalance a = R.ask >>= uncurry (getBalanceDB a)
-
-instance MonadIO m => UnspentRead (ReaderT BlockDB m) where
-    getUnspent p = R.ask >>= uncurry (getUnspentDB p)
-
-instance MonadIO m => BalanceWrite (ReaderT BlockDB m) where
+instance MonadIO m => StoreWrite (ReaderT BlockDB m) where
+    setInit = R.ask >>= setInitDB . snd
+    setBest h = R.ask >>= setBestDB h . snd
+    insertBlock b = R.ask >>= insertBlockDB b . snd
+    insertAtHeight h g = R.ask >>= uncurry (insertAtHeightDB h g)
+    insertTx t = R.ask >>= insertTxDB t . snd
+    insertSpender p s = R.ask >>= insertSpenderDB p s . snd
+    deleteSpender p = R.ask >>= deleteSpenderDB p . snd
+    insertAddrTx a t = R.ask >>= insertAddrTxDB a t . snd
+    deleteAddrTx a t = R.ask >>= deleteAddrTxDB a t . snd
+    insertAddrUnspent a u = R.ask >>= insertAddrUnspentDB a u . snd
+    deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentDB a u . snd
+    insertMempoolTx h t = R.ask >>= insertMempoolTxDB h t . snd
+    deleteMempoolTx h t = R.ask >>= deleteMempoolTxDB h t . snd
+    insertOrphanTx t u = R.ask >>= insertOrphanTxDB t u . snd
+    deleteOrphanTx h = R.ask >>= deleteOrphanTxDB h . snd
     setBalance b = R.ask >>= setBalanceDB b . snd
-
-instance MonadIO m => UnspentWrite (ReaderT BlockDB m) where
-    addUnspent u = R.ask >>= addUnspentDB u . snd
-    delUnspent p = R.ask >>= delUnspentDB p . snd
+    insertUnspent u = R.ask >>= insertUnspentDB u . snd
+    deleteUnspent p = R.ask >>= deleteUnspentDB p . snd

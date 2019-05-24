@@ -221,17 +221,17 @@ insertAddrTxI :: MonadIO m => Address -> BlockTx -> ImportDB -> m ()
 insertAddrTxI a t ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ insertAddrTx a t
 
-removeAddrTxI :: MonadIO m => Address -> BlockTx -> ImportDB -> m ()
-removeAddrTxI a t ImportDB {importHashMap = hm} =
-    atomically . withBlockSTM hm $ removeAddrTx a t
+deleteAddrTxI :: MonadIO m => Address -> BlockTx -> ImportDB -> m ()
+deleteAddrTxI a t ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ deleteAddrTx a t
 
 insertAddrUnspentI :: MonadIO m => Address -> Unspent -> ImportDB -> m ()
 insertAddrUnspentI a u ImportDB {importHashMap = hm} =
     atomically . withBlockSTM hm $ insertAddrUnspent a u
 
-removeAddrUnspentI :: MonadIO m => Address -> Unspent -> ImportDB -> m ()
-removeAddrUnspentI a u ImportDB {importHashMap = hm} =
-    atomically . withBlockSTM hm $ removeAddrUnspent a u
+deleteAddrUnspentI :: MonadIO m => Address -> Unspent -> ImportDB -> m ()
+deleteAddrUnspentI a u ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ deleteAddrUnspent a u
 
 insertMempoolTxI :: MonadIO m => TxHash -> UnixTime -> ImportDB -> m ()
 insertMempoolTxI t p ImportDB {importHashMap = hm} =
@@ -319,13 +319,13 @@ getUnspentI op ImportDB { importRocksDB = db
     hashmap = atomically $ getUnspentH op <$> readTVar hm
     cached = Just <$> uncurry withCachedDB db cache (getUnspent op)
 
-addUnspentI :: MonadIO m => Unspent -> ImportDB -> m ()
-addUnspentI u ImportDB {importHashMap = hm} =
-    atomically . withBlockSTM hm $ addUnspent u
+insertUnspentI :: MonadIO m => Unspent -> ImportDB -> m ()
+insertUnspentI u ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ insertUnspent u
 
-delUnspentI :: MonadIO m => OutPoint -> ImportDB -> m ()
-delUnspentI p ImportDB {importHashMap = hm} =
-    atomically . withBlockSTM hm $ delUnspent p
+deleteUnspentI :: MonadIO m => OutPoint -> ImportDB -> m ()
+deleteUnspentI p ImportDB {importHashMap = hm} =
+    atomically . withBlockSTM hm $ deleteUnspent p
 
 getMempoolI ::
        MonadUnliftIO m
@@ -360,6 +360,8 @@ instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     getSpender p = R.ask >>= getSpenderI p
     getSpenders t = R.ask >>= getSpendersI t
     getOrphanTx h = R.ask >>= getOrphanTxI h
+    getUnspent a = R.ask >>= getUnspentI a
+    getBalance a = R.ask >>= getBalanceI a
 
 instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setInit = R.ask >>= setInitI
@@ -370,23 +372,13 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     insertSpender p s = R.ask >>= insertSpenderI p s
     deleteSpender p = R.ask >>= deleteSpenderI p
     insertAddrTx a t = R.ask >>= insertAddrTxI a t
-    removeAddrTx a t = R.ask >>= removeAddrTxI a t
+    deleteAddrTx a t = R.ask >>= deleteAddrTxI a t
     insertAddrUnspent a u = R.ask >>= insertAddrUnspentI a u
-    removeAddrUnspent a u = R.ask >>= removeAddrUnspentI a u
+    deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentI a u
     insertMempoolTx t p = R.ask >>= insertMempoolTxI t p
     deleteMempoolTx t p = R.ask >>= deleteMempoolTxI t p
     insertOrphanTx t p = R.ask >>= insertOrphanTxI t p
     deleteOrphanTx t = R.ask >>= deleteOrphanTxI t
-
-instance MonadIO m => UnspentRead (ReaderT ImportDB m) where
-    getUnspent a = R.ask >>= getUnspentI a
-
-instance MonadIO m => UnspentWrite (ReaderT ImportDB m) where
-    addUnspent u = R.ask >>= addUnspentI u
-    delUnspent p = R.ask >>= delUnspentI p
-
-instance MonadIO m => BalanceRead (ReaderT ImportDB m) where
-    getBalance a = R.ask >>= getBalanceI a
-
-instance MonadIO m => BalanceWrite (ReaderT ImportDB m) where
+    insertUnspent u = R.ask >>= insertUnspentI u
+    deleteUnspent p = R.ask >>= deleteUnspentI p
     setBalance b = R.ask >>= setBalanceI b

@@ -40,7 +40,7 @@ newCache opts db copts cdb = do
     return cache
   where
     bal cache = withCachedDB opts db (Just cache) . setBalance
-    uns cache = withCachedDB opts db (Just cache) . addUnspent
+    uns cache = withCachedDB opts db (Just cache) . insertUnspent
 
 withCachedDB ::
        ReadOptions
@@ -130,19 +130,74 @@ getAddressTxsC ::
 getAddressTxsC addr mbr CachedDB {cachedDB = db} =
     uncurry (getAddressTxsDB addr mbr) db
 
-addUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
-addUnspentC u CachedDB {cachedCache = Just cdb} =
-    uncurry withBlockDB cdb (addUnspent u)
-addUnspentC _ _ = return ()
+setInitC :: MonadIO m => CachedDB -> m ()
+setInitC CachedDB {cachedCache = cdb} = onCachedDB cdb setInit
 
-delUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
-delUnspentC p CachedDB {cachedCache = Just cdb} =
-    uncurry withBlockDB cdb (delUnspent p)
-delUnspentC _ _ = return ()
+setBestC :: MonadIO m => BlockHash -> CachedDB -> m ()
+setBestC bh CachedDB {cachedCache = cdb} = onCachedDB cdb $ setBest bh
+
+insertBlockC :: MonadIO m => BlockData -> CachedDB -> m ()
+insertBlockC bd CachedDB {cachedCache = cdb} = onCachedDB cdb $ insertBlock bd
+
+insertAtHeightC :: MonadIO m => BlockHash -> BlockHeight -> CachedDB -> m ()
+insertAtHeightC bh he CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ insertAtHeight bh he
+
+insertTxC :: MonadIO m => TxData -> CachedDB -> m ()
+insertTxC td CachedDB {cachedCache = cdb} = onCachedDB cdb $ insertTx td
+
+insertSpenderC :: MonadIO m => OutPoint -> Spender -> CachedDB -> m ()
+insertSpenderC op sp CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ insertSpender op sp
+
+deleteSpenderC :: MonadIO m => OutPoint -> CachedDB -> m ()
+deleteSpenderC op CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ deleteSpender op
+
+insertAddrTxC :: MonadIO m => Address -> BlockTx -> CachedDB -> m ()
+insertAddrTxC ad bt CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ insertAddrTx ad bt
+
+deleteAddrTxC :: MonadIO m => Address -> BlockTx -> CachedDB -> m ()
+deleteAddrTxC ad bt CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ deleteAddrTx ad bt
+
+insertAddrUnspentC :: MonadIO m => Address -> Unspent -> CachedDB -> m ()
+insertAddrUnspentC ad u CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ insertAddrUnspent ad u
+
+deleteAddrUnspentC :: MonadIO m => Address -> Unspent -> CachedDB -> m ()
+deleteAddrUnspentC ad u CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ deleteAddrUnspent ad u
+
+insertMempoolTxC :: MonadIO m => TxHash -> UnixTime -> CachedDB -> m ()
+insertMempoolTxC h u CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ insertMempoolTx h u
+
+deleteMempoolTxC :: MonadIO m => TxHash -> UnixTime -> CachedDB -> m ()
+deleteMempoolTxC h u CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ deleteMempoolTx h u
+
+insertOrphanTxC :: MonadIO m => Tx -> UnixTime -> CachedDB -> m ()
+insertOrphanTxC t u CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ insertOrphanTx t u
+
+deleteOrphanTxC :: MonadIO m => TxHash -> CachedDB -> m ()
+deleteOrphanTxC h CachedDB {cachedCache = cdb} =
+    onCachedDB cdb $ deleteOrphanTx h
+
+insertUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
+insertUnspentC u CachedDB {cachedCache = cdb} = onCachedDB cdb $ insertUnspent u
+
+deleteUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
+deleteUnspentC p CachedDB {cachedCache = cdb} = onCachedDB cdb $ deleteUnspent p
 
 setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
-setBalanceC b CachedDB {cachedCache = Just cdb} =
-    uncurry withBlockDB cdb (setBalance b)
+setBalanceC b CachedDB {cachedCache = cdb} = onCachedDB cdb $ setBalance b
+
+onCachedDB :: MonadIO m => Maybe Cache -> ReaderT BlockDB m () -> m ()
+onCachedDB (Just cdb) action = uncurry withBlockDB cdb action
+onCachedDB Nothing _ = return ()
 
 instance (MonadUnliftIO m, MonadResource m) =>
          StoreStream (ReaderT CachedDB m) where
@@ -162,16 +217,22 @@ instance MonadIO m => StoreRead (ReaderT CachedDB m) where
     getSpender p = R.ask >>= getSpenderC p
     getSpenders t = R.ask >>= getSpendersC t
     getOrphanTx h = R.ask >>= getOrphanTxC h
-
-instance MonadIO m => UnspentRead (ReaderT CachedDB m) where
     getUnspent a = R.ask >>= getUnspentC a
-
-instance MonadIO m => BalanceRead (ReaderT CachedDB m) where
     getBalance a = R.ask >>= getBalanceC a
 
-instance MonadIO m => BalanceWrite (ReaderT CachedDB m) where
+instance MonadIO m => StoreWrite (ReaderT CachedDB m) where
+    setInit = R.ask >>= setInitC
+    setBest h = R.ask >>= setBestC h
+    insertBlock b = R.ask >>= insertBlockC b
+    insertAtHeight h g = R.ask >>= insertAtHeightC h g
+    insertSpender p s = R.ask >>= insertSpenderC p s
+    deleteSpender p = R.ask >>= deleteSpenderC p
+    insertAddrTx a t = R.ask >>= insertAddrTxC a t
+    deleteAddrTx a t = R.ask >>= deleteAddrTxC a t
+    insertMempoolTx h t = R.ask >>= insertMempoolTxC h t
+    deleteMempoolTx h t = R.ask >>= deleteMempoolTxC h t
+    insertOrphanTx t u = R.ask >>= insertOrphanTxC t u
+    deleteOrphanTx h = R.ask >>= deleteOrphanTxC h
     setBalance b = R.ask >>= setBalanceC b
-
-instance MonadIO m => UnspentWrite (ReaderT CachedDB m) where
-    addUnspent u = R.ask >>= addUnspentC u
-    delUnspent p = R.ask >>= delUnspentC p
+    insertUnspent u = R.ask >>= insertUnspentC u
+    deleteUnspent p = R.ask >>= deleteUnspentC p
