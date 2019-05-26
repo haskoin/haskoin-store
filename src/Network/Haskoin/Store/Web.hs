@@ -658,7 +658,7 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = do
-    (rk, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
+    (_, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     e <- newTVarIO False
     q0 <- newTBQueueIO 20
     q1 <- newTBQueueIO 20
@@ -670,7 +670,6 @@ xpubBals xpub = do
                         xs0 <- wait r0
                         xs1 <- wait r1
                         return $ xs0 <> xs1
-    release rk
     return xs
   where
     stp e =
