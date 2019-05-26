@@ -655,25 +655,42 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 }
 
 xpubBals :: (MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
-xpubBals xpub =
-    withAsync (go 0) $ \a0 ->
-        withAsync (go 1) $ \a1 -> do
-            l0 <- wait a0
-            l1 <- wait a1
-            return $ l0 <> l1
+xpubBals xpub = do
+    q0 <- newTBQueueIO 50
+    q1 <- newTBQueueIO 50
+    ss <- newTVarIO []
+    xs <-
+        withAsync (go ss q0 0) $ \_ ->
+            withAsync (go ss q1 1) $ \_ ->
+                withAsync (red q0) $ \r0 ->
+                    withAsync (red q1) $ \r1 -> do
+                        xs0 <- wait r0
+                        xs1 <- wait r1
+                        return $ xs0 <> xs1
+    readTVarIO ss >>= mapM_ cancel
+    return xs
   where
-    go m = runConduit $ yieldMany (as m) .| mapMC (uncurry b) .| f 0 .| sinkList
-    b a p =
-        getBalance a >>= \case
-            Nothing -> return Nothing
-            Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
+    go ss q m =
+        runConduit $
+        yieldMany (as m) .| mapMC (uncurry (b ss)) .| conduitToQueue q
+    red q = runConduit $ queueToConduit q .| f 0 .| sinkList
+    b ss a p = do
+        s <-
+            async $
+            getBalance a >>= \case
+                Nothing -> return Nothing
+                Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
+        atomically $ modifyTVar ss (s :)
+        return s
     as m = map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
     f n
         | n <= 20 =
             await >>= \case
+                Just a ->
+                    wait a >>= \case
+                        Nothing -> return ()
+                        Just b -> yield b >> f 0
                 Nothing -> return ()
-                Just (Just b) -> yield b >> f 0
-                Just Nothing -> f (n + 1)
         | otherwise = return ()
 
 xpubUnspent ::
@@ -891,6 +908,17 @@ mbr :: StartFrom -> Maybe BlockRef
 mbr (StartBlock h p) = Just (BlockRef h p)
 mbr (StartMem t)     = Just (MemRef t)
 mbr (StartOffset _)  = Nothing
+
+conduitToQueue :: MonadIO m => TBQueue (Maybe a) -> ConduitT a Void m ()
+conduitToQueue q = do
+    awaitForever $ atomically . writeTBQueue q . Just
+    atomically $ writeTBQueue q Nothing
+
+queueToConduit :: MonadIO m => TBQueue (Maybe a) -> ConduitT () a m ()
+queueToConduit q =
+    atomically (readTBQueue q) >>= \case
+        Just x -> yield x
+        Nothing -> return ()
 
 dedup :: (Eq i, Monad m) => ConduitT i i m ()
 dedup =
