@@ -910,14 +910,15 @@ mbr (StartMem t)     = Just (MemRef t)
 mbr (StartOffset _)  = Nothing
 
 conduitToQueue :: MonadIO m => TBQueue (Maybe a) -> ConduitT a Void m ()
-conduitToQueue q = do
-    awaitForever $ atomically . writeTBQueue q . Just
-    atomically $ writeTBQueue q Nothing
+conduitToQueue q =
+    await >>= \case
+        Just x -> atomically (writeTBQueue q (Just x)) >> conduitToQueue q
+        Nothing -> atomically $ writeTBQueue q Nothing
 
 queueToConduit :: MonadIO m => TBQueue (Maybe a) -> ConduitT () a m ()
 queueToConduit q =
     atomically (readTBQueue q) >>= \case
-        Just x -> yield x
+        Just x -> yield x >> queueToConduit q
         Nothing -> return ()
 
 dedup :: (Eq i, Monad m) => ConduitT i i m ()
