@@ -688,7 +688,7 @@ xpubBals xpub = do
             await >>= \case
                 Just a ->
                     wait a >>= \case
-                        Nothing -> return ()
+                        Nothing -> f (n + 1)
                         Just b -> yield b >> f 0
                 Nothing -> return ()
         | otherwise = return ()
