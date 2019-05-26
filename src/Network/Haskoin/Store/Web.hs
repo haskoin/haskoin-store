@@ -659,15 +659,14 @@ xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = do
     (rk, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
-    e <- netTVarIO False
+    e <- newTVarIO False
     q0 <- newTBQueueIO 20
     q1 <- newTBQueueIO 20
-    ss <- newTVarIO []
     xs <-
         withAsync (go e ss q0 0) $ \_ ->
             withAsync (go e ss q1 1) $ \_ ->
-                withAsync (red q0) $ \r0 ->
-                    withAsync (red q1) $ \r1 -> do
+                withAsync (red ss e q0) $ \r0 ->
+                    withAsync (red ss e q1) $ \r1 -> do
                         xs0 <- wait r0
                         xs1 <- wait r1
                         return $ xs0 <> xs1
@@ -681,10 +680,10 @@ xpubBals xpub = do
                 else await >>= \case
                          Nothing -> return ()
                          Just x -> yield x >> stp e
-    go ss e q m =
+    go e ss q m =
         runConduit $
         yieldMany (as m) .| stp e .| mapMC (uncurry (b ss)) .| conduitToQueue q
-    red q = runConduit $ queueToConduit q .| f 0 .| sinkList
+    red ss e q = runConduit $ queueToConduit q .| f ss e 0 .| sinkList
     b ss a p = do
         s <-
             async $
@@ -694,17 +693,21 @@ xpubBals xpub = do
         atomically $ modifyTVar ss (s :)
         return s
     as m = map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
-    f n
+    f ss e n
         | n <= 20 =
             await >>= \case
                 Just a ->
                     wait a >>= \case
-                        Nothing -> f (n + 1)
-                        Just b -> yield b >> f 0
+                        Nothing -> f ss e (n + 1)
+                        Just b -> yield b >> f ss e 0
                 Nothing -> return ()
-        | otherwise =
+        | otherwise = do
+            atomically $ writeTVar e True
             await >>= \case
-                Just a -> cancel a >> f n
+                Just a -> do
+                    cancel a
+                    atomically $ modifyTVar ss (Data.List.delete a)
+                    f ss e n
                 Nothing -> return ()
 
 xpubUnspent ::
