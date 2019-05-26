@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Store.Web where
-import           Conduit
+import           Conduit                           hiding (runResourceT)
 import           Control.Applicative               ((<|>))
 import           Control.Arrow
 import           Control.Exception                 ()
@@ -41,6 +41,7 @@ import           NQE
 import qualified Paths_haskoin_store               as P
 import           Text.Read                         (readMaybe)
 import           UnliftIO
+import           UnliftIO.Resource
 import           Web.Scotty.Internal.Types         (ActionT (ActionT, runAM))
 import           Web.Scotty.Trans                  as S
 
@@ -654,20 +655,21 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-xpubBals :: (MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
+xpubBals ::
+       (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = do
+    (rk, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     q0 <- newTBQueueIO 50
     q1 <- newTBQueueIO 50
     ss <- newTVarIO []
-    xs <-
-        withAsync (go ss q0 0) $ \_ ->
-            withAsync (go ss q1 1) $ \_ ->
-                withAsync (red q0) $ \r0 ->
-                    withAsync (red q1) $ \r1 -> do
-                        xs0 <- wait r0
-                        xs1 <- wait r1
-                        return $ xs0 <> xs1
-    readTVarIO ss >>= mapM_ cancel
+    xs <- withAsync (go ss q0 0) $ \_ ->
+        withAsync (go ss q1 1) $ \_ ->
+            withAsync (red q0) $ \r0 ->
+                withAsync (red q1) $ \r1 -> do
+                    xs0 <- wait r0
+                    xs1 <- wait r1
+                    return $ xs0 <> xs1
+    release rk
     return xs
   where
     go ss q m =
@@ -694,21 +696,29 @@ xpubBals xpub = do
         | otherwise = return ()
 
 xpubUnspent ::
-       (MonadUnliftIO m, StoreStream m, StoreRead m)
+       (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
     => Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
 xpubUnspent mbr xpub = do
-    bals <- lift $ xpubBals xpub
+    (_, as) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     xs <-
-        forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
-            return $ getAddressUnspents (balanceAddress b) mbr .| mapC (f p)
+        lift $ do
+            bals <- xpubBals xpub
+            forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} -> do
+                q <- newTBQueueIO 50
+                a <-
+                    async . runConduit $
+                    getAddressUnspents (balanceAddress b) mbr .| mapC (f p) .|
+                    conduitToQueue q
+                atomically $ modifyTVar as (a :)
+                return $ queueToConduit q
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
 xpubUnspentLimit ::
-       (MonadUnliftIO m, StoreStream m, StoreRead m)
+       (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> XPubKey
@@ -717,7 +727,7 @@ xpubUnspentLimit l s x =
     xpubUnspent (mbr s) x .| (offset s >> limit l)
 
 xpubSummary ::
-       (MonadUnliftIO m, StoreStream m, StoreRead m)
+       (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
     => Maybe Word32
     -> StartFrom
     -> XPubKey
@@ -868,12 +878,7 @@ getAddressesTxsFull ::
     -> [Address]
     -> ConduitT () Transaction m ()
 getAddressesTxsFull l s as =
-    mergeSourcesBy
-        (flip compare `on` blockTxBlock)
-        (map (`getAddressTxs` mbr s) as) .|
-    dedup .|
-    (offset s >> limit l) .|
-    concatMapMC (getTransaction . blockTxHash)
+    getAddressesTxsLimit l s as .| concatMapMC (getTransaction . blockTxHash)
 
 getAddressUnspentsLimit ::
        (Monad m, StoreStream m)
