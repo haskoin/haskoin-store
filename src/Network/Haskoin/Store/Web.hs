@@ -659,22 +659,31 @@ xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = do
     (rk, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
-    q0 <- newTBQueueIO 50
-    q1 <- newTBQueueIO 50
+    e <- netTVarIO False
+    q0 <- newTBQueueIO 20
+    q1 <- newTBQueueIO 20
     ss <- newTVarIO []
-    xs <- withAsync (go ss q0 0) $ \_ ->
-        withAsync (go ss q1 1) $ \_ ->
-            withAsync (red q0) $ \r0 ->
-                withAsync (red q1) $ \r1 -> do
-                    xs0 <- wait r0
-                    xs1 <- wait r1
-                    return $ xs0 <> xs1
+    xs <-
+        withAsync (go e ss q0 0) $ \_ ->
+            withAsync (go e ss q1 1) $ \_ ->
+                withAsync (red q0) $ \r0 ->
+                    withAsync (red q1) $ \r1 -> do
+                        xs0 <- wait r0
+                        xs1 <- wait r1
+                        return $ xs0 <> xs1
     release rk
     return xs
   where
-    go ss q m =
+    stp e =
+        readTVarIO e >>= \s ->
+            if s
+                then return ()
+                else await >>= \case
+                         Nothing -> return ()
+                         Just x -> yield x >> stp e
+    go ss e q m =
         runConduit $
-        yieldMany (as m) .| mapMC (uncurry (b ss)) .| conduitToQueue q
+        yieldMany (as m) .| stp e .| mapMC (uncurry (b ss)) .| conduitToQueue q
     red q = runConduit $ queueToConduit q .| f 0 .| sinkList
     b ss a p = do
         s <-
@@ -693,7 +702,10 @@ xpubBals xpub = do
                         Nothing -> f (n + 1)
                         Just b -> yield b >> f 0
                 Nothing -> return ()
-        | otherwise = return ()
+        | otherwise =
+            await >>= \case
+                Just a -> cancel a >> f n
+                Nothing -> return ()
 
 xpubUnspent ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
