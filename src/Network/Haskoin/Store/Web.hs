@@ -732,6 +732,11 @@ xpubUnspent net mbr xpub = do
                 q <- newTBQueueIO 50
                 a <-
                     async $ do
+                        $(logDebugS) "Web" $
+                            "Start getting unspents for " <>
+                            fromMaybe
+                                "???"
+                                (addrToString net (balanceAddress b))
                         runConduit $
                             getAddressUnspents (balanceAddress b) mbr .|
                             mapC (f p) .|
