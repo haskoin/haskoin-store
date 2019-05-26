@@ -711,15 +711,23 @@ xpubBals xpub = do
                 Nothing -> return ()
 
 xpubUnspent ::
-       (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
+       ( MonadLogger m
+       , MonadResource m
+       , MonadUnliftIO m
+       , StoreStream m
+       , StoreRead m
+       )
     => Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
 xpubUnspent mbr xpub = do
-    (_, as) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
+    $(logDebugS) "Main" "Allocating shared resource for cleanup"
+    (_, as) <- lift $ allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     xs <-
         lift $ do
+            $(logDebugS) "Main" "Getting xpub balances"
             bals <- xpubBals xpub
+            $(logDebugS) "Main" "Launching unspent async pipes"
             forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} -> do
                 q <- newTBQueueIO 50
                 a <-
@@ -728,12 +736,18 @@ xpubUnspent mbr xpub = do
                     conduitToQueue q
                 atomically $ modifyTVar as (a :)
                 return $ queueToConduit q
+    $(logDebugS) "Main" "Getting all unspents"
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
 xpubUnspentLimit ::
-       (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
+       ( MonadLogger m
+       , MonadResource m
+       , MonadUnliftIO m
+       , StoreStream m
+       , StoreRead m
+       )
     => Maybe Word32
     -> StartFrom
     -> XPubKey
