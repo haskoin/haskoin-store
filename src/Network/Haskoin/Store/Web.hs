@@ -346,8 +346,7 @@ scottyXpubUnspents net = do
     (l, s) <- parseLimits
     run <- lift askRunInIO
     stream $ \io flush' -> do
-        run . runConduit $
-            xpubUnspentLimit l s x .| streamAny net proto io
+        run . runConduit $ xpubUnspentLimit net l s x .| streamAny net proto io
         liftIO flush'
 
 scottyXpubSummary :: Network -> WebM ()
@@ -374,7 +373,7 @@ scottyPostTx net st pub = do
     lift (publishTx net pub st tx) >>= \case
         Right () -> do
             protoSerial net proto (TxId (txHash tx))
-            $(logDebugS) "Main" $
+            $(logDebugS) "Web" $
                 "Success publishing tx " <> txHashToHex (txHash tx)
         Left e -> do
             case e of
@@ -384,7 +383,7 @@ scottyPostTx net st pub = do
                 PubNotFound         -> status status500
                 PubReject _         -> status status400
             protoSerial net proto (UserError (show e))
-            $(logErrorS) "Main" $
+            $(logErrorS) "Web" $
                 "Error publishing tx " <> txHashToHex (txHash tx) <> ": " <>
                 cs (show e)
             finish
@@ -716,26 +715,35 @@ xpubUnspent ::
        , StoreStream m
        , StoreRead m
        )
-    => Maybe BlockRef
+    => Network
+    -> Maybe BlockRef
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
-xpubUnspent mbr xpub = do
-    $(logDebugS) "Main" "Allocating shared resource for cleanup"
-    (_, as) <- lift $ allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
+xpubUnspent net mbr xpub = do
+    $(logDebugS) "Web" "Allocating shared resource for cleanup"
+    (_, as) <-
+        lift $ allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     xs <-
         lift $ do
-            $(logDebugS) "Main" "Getting xpub balances"
+            $(logDebugS) "Web" "Getting xpub balances"
             bals <- xpubBals xpub
-            $(logDebugS) "Main" "Launching unspent async pipes"
+            $(logDebugS) "Web" "Launching unspent async pipes"
             forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} -> do
                 q <- newTBQueueIO 50
                 a <-
-                    async . runConduit $
-                    getAddressUnspents (balanceAddress b) mbr .| mapC (f p) .|
-                    conduitToQueue q
+                    async $ do
+                        runConduit $
+                            getAddressUnspents (balanceAddress b) mbr .|
+                            mapC (f p) .|
+                            conduitToQueue q
+                        $(logDebugS) "Web" $
+                            "Finished getting unspents for " <>
+                            fromMaybe
+                                "???"
+                                (addrToString net (balanceAddress b))
                 atomically $ modifyTVar as (a :)
                 return $ queueToConduit q
-    $(logDebugS) "Main" "Getting all unspents"
+    $(logDebugS) "Web" "Getting all unspents"
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
@@ -747,12 +755,13 @@ xpubUnspentLimit ::
        , StoreStream m
        , StoreRead m
        )
-    => Maybe Word32
+    => Network
+    -> Maybe Word32
     -> StartFrom
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
-xpubUnspentLimit l s x =
-    xpubUnspent (mbr s) x .| (offset s >> limit l)
+xpubUnspentLimit net l s x =
+    xpubUnspent net (mbr s) x .| (offset s >> limit l)
 
 xpubSummary ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
