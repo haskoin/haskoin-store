@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 - Significantly refactor code.
-- Move web stuff to a separate module.
+- Move web stuff to its own module.
+- Change types related to databases.
+- Make xpub balance, transaction and unspent queries fetch data in parallel.
 
 ## 0.15.2
 ### Added
