@@ -661,14 +661,15 @@ xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = do
     (rk, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
-    e <- newTVarIO False
+    stp0 <- newTVarIO False
+    stp1 <- newTVarIO False
     q0 <- newTBQueueIO 20
     q1 <- newTBQueueIO 20
     xs <-
-        withAsync (go e ss q0 0) $ \_ ->
-            withAsync (go e ss q1 1) $ \_ ->
-                withAsync (red ss e q0) $ \r0 ->
-                    withAsync (red ss e q1) $ \r1 -> do
+        withAsync (go stp0 ss q0 0) $ \_ ->
+            withAsync (go stp1 ss q1 1) $ \_ ->
+                withAsync (red ss stp0 q0) $ \r0 ->
+                    withAsync (red ss stp1 q1) $ \r1 -> do
                         xs0 <- wait r0
                         xs1 <- wait r1
                         return $ xs0 <> xs1
