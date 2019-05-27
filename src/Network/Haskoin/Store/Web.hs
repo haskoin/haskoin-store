@@ -687,7 +687,7 @@ xpubBals xpub = do
         runConduit $
         yieldMany (as m) .| stp e .| mapMC (uncurry (b ss)) .| conduitToQueue q
     red ss e q = runConduit $ queueToConduit q .| f ss e 0 .| sinkList
-    b ss a p = do
+    b ss a p = mask_ $ do
         s <-
             async $
             getBalance a >>= \case
@@ -729,14 +729,15 @@ xpubUnspent net mbr xpub = do
     xs <-
         lift $ do
             bals <- xpubBals xpub
-            forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} -> do
-                q <- newTBQueueIO 10
-                a <-
-                    async . runConduit $
-                    getAddressUnspents (balanceAddress b) mbr .| mapC (f p) .|
-                    conduitToQueue q
-                atomically $ modifyTVar as (a :)
-                return $ queueToConduit q
+            forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
+                mask_ $ do
+                    q <- newTBQueueIO 10
+                    a <-
+                        async . runConduit $
+                        getAddressUnspents (balanceAddress b) mbr .| mapC (f p) .|
+                        conduitToQueue q
+                    atomically $ modifyTVar as (a :)
+                    return $ queueToConduit q
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
@@ -905,7 +906,7 @@ getAddressesTxsLimit l s addrs = do
         lift $ allocate (newTVarIO []) (\ss -> readTVarIO ss >>= mapM_ cancel)
     xs <-
         lift $ do
-            forM addrs $ \addr -> do
+            forM addrs $ \addr -> mask_ $ do
                 q <- newTBQueueIO 10
                 a <-
                     async . runConduit $
