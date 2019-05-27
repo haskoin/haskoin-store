@@ -157,15 +157,17 @@ run Config { configPort = port
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
         db <-
-            open
-                (wd </> "db")
-                R.defaultOptions
-                    { createIfMissing = True
-                    , compression = SnappyCompression
-                    , maxOpenFiles = -1
-                    , writeBufferSize = 2 `shift` 30
-                    }
-        cache <-
+            do dbh <-
+                   open
+                       (wd </> "db")
+                       R.defaultOptions
+                           { createIfMissing = True
+                           , compression = SnappyCompression
+                           , maxOpenFiles = -1
+                           , writeBufferSize = 2 `shift` 30
+                           }
+               return BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
+        cdb <-
             case cd of
                 Nothing -> return Nothing
                 Just ch -> do
@@ -173,12 +175,16 @@ run Config { configPort = port
                     removePathForcibly ch
                     $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
                     createDirectoryIfMissing True ch
-                    $(logInfoS) "Main" "Populating cache..."
-                    cdb <- open ch R.defaultOptions {createIfMissing = True}
-                    let o = defaultReadOptions
-                    cache <- newCache o db o cdb
-                    $(logInfoS) "Main" "Finished populating cache"
-                    return $ Just cache
+                    dbh <- open ch R.defaultOptions {createIfMissing = True}
+                    return $
+                        Just
+                            BlockDB
+                                { blockDB = dbh
+                                , blockDBopts = defaultReadOptions
+                                }
+        $(logInfoS) "Main" "Populating cache (if active)..."
+        ldb <- newLayeredDB db cdb
+        $(logInfoS) "Main" "Finished populating cache"
         withPublisher $ \pub ->
             let scfg =
                     StoreConfig
@@ -188,18 +194,16 @@ run Config { configPort = port
                                   (second (fromMaybe (getDefaultPort net)))
                                   peers
                         , storeConfDiscover = disc
-                        , storeConfDB = db
+                        , storeConfDB = ldb
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` pub) . Event
-                        , storeConfCache = cache
                         }
              in withStore scfg $ \str ->
                     let wcfg =
                             WebConfig
                                 { webPort = port
                                 , webNetwork = net
-                                , webDB = db
-                                , webCache = cache
+                                , webDB = ldb
                                 , webPublisher = pub
                                 , webStore = str
                                 }

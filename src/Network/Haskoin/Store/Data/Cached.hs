@@ -7,7 +7,7 @@ import           Conduit
 import           Control.Applicative
 import           Control.Monad.Except
 import           Control.Monad.Logger
-import           Control.Monad.Reader                (ReaderT)
+import           Control.Monad.Reader                (MonadReader, ReaderT)
 import qualified Control.Monad.Reader                as R
 import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString                     as B
@@ -23,178 +23,95 @@ import           Haskoin
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
 import           Network.Haskoin.Store.Data.RocksDB
-import           Network.Haskoin.Store.Data.STM
 import           NQE                                 (query)
 import           UnliftIO
 
-data CachedDB =
-    CachedDB
-        { cachedDB    :: !(ReadOptions, DB)
-        , cachedCache :: !(Maybe Cache)
-        }
-
-newCache :: MonadUnliftIO m => ReadOptions -> DB -> ReadOptions -> DB -> m Cache
-newCache opts db copts cdb = do
+newLayeredDB :: MonadUnliftIO m => BlockDB -> Maybe BlockDB -> m LayeredDB
+newLayeredDB blocks Nothing =
+    return LayeredDB {layeredDB = blocks, layeredCache = Nothing}
+newLayeredDB blocks (Just cache) = do
     bulkCopy opts db cdb BalKeyS
     bulkCopy opts db cdb UnspentKeyB
-    return (copts, cdb)
+    return LayeredDB {layeredDB = blocks, layeredCache = Just cache}
+  where
+    BlockDB {blockDBopts = opts, blockDB = db} = blocks
+    BlockDB {blockDB = cdb} = cache
 
-withCachedDB ::
-       ReadOptions
-    -> DB
-    -> Maybe Cache
-    -> ReaderT CachedDB m a
-    -> m a
-withCachedDB opts db cache f =
-    R.runReaderT f CachedDB {cachedDB = (opts, db), cachedCache = cache}
+withLayeredDB :: LayeredDB -> ReaderT LayeredDB m a -> m a
+withLayeredDB = flip R.runReaderT
 
-isInitializedC :: MonadIO m => CachedDB -> m (Either InitException Bool)
-isInitializedC CachedDB {cachedDB = db} = uncurry withBlockDB db isInitialized
+isInitializedC :: MonadIO m => LayeredDB -> m (Either InitException Bool)
+isInitializedC LayeredDB {layeredDB = db} = isInitializedDB db
 
-getBestBlockC :: MonadIO m => CachedDB -> m (Maybe BlockHash)
-getBestBlockC CachedDB {cachedDB = db} =
-    uncurry withBlockDB db getBestBlock
+getBestBlockC :: MonadIO m => LayeredDB -> m (Maybe BlockHash)
+getBestBlockC LayeredDB {layeredDB = db} = getBestBlockDB db
 
-getBlocksAtHeightC :: MonadIO m => BlockHeight -> CachedDB -> m [BlockHash]
-getBlocksAtHeightC bh CachedDB {cachedDB = db} =
-    uncurry withBlockDB db (getBlocksAtHeight bh)
+getBlocksAtHeightC :: MonadIO m => BlockHeight -> LayeredDB -> m [BlockHash]
+getBlocksAtHeightC h LayeredDB {layeredDB = db} = getBlocksAtHeightDB h db
 
-getBlockC :: MonadIO m => BlockHash -> CachedDB -> m (Maybe BlockData)
-getBlockC bh CachedDB {cachedDB = db} = uncurry withBlockDB db (getBlock bh)
+getBlockC :: MonadIO m => BlockHash -> LayeredDB -> m (Maybe BlockData)
+getBlockC bh LayeredDB {layeredDB = db} = getBlockDB bh db
 
-getTxDataC :: MonadIO m => TxHash -> CachedDB -> m (Maybe TxData)
-getTxDataC th CachedDB {cachedDB = db} = uncurry withBlockDB db (getTxData th)
+getTxDataC :: MonadIO m => TxHash -> LayeredDB -> m (Maybe TxData)
+getTxDataC th LayeredDB {layeredDB = db} = getTxDataDB th db
 
-getOrphanTxC :: MonadIO m => TxHash -> CachedDB -> m (Maybe (UnixTime, Tx))
-getOrphanTxC h CachedDB {cachedDB = db} = uncurry withBlockDB db (getOrphanTx h)
+getOrphanTxC :: MonadIO m => TxHash -> LayeredDB -> m (Maybe (UnixTime, Tx))
+getOrphanTxC h LayeredDB {layeredDB = db} = getOrphanTxDB h db
 
-getSpenderC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Spender)
-getSpenderC op CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpender op)
+getSpenderC :: MonadIO m => OutPoint -> LayeredDB -> m (Maybe Spender)
+getSpenderC p LayeredDB {layeredDB = db} = getSpenderDB p db
 
-getSpendersC :: MonadIO m => TxHash -> CachedDB -> m (IntMap Spender)
-getSpendersC t CachedDB {cachedDB = db} = uncurry withBlockDB db (getSpenders t)
+getSpendersC :: MonadIO m => TxHash -> LayeredDB -> m (IntMap Spender)
+getSpendersC t LayeredDB {layeredDB = db} = getSpendersDB t db
 
-getBalanceC :: MonadIO m => Address -> CachedDB -> m (Maybe Balance)
-getBalanceC a CachedDB {cachedCache = Just cdb} =
-    uncurry withBlockDB cdb (getBalance a)
-getBalanceC a CachedDB {cachedDB = db} = uncurry withBlockDB db (getBalance a)
+getBalanceC :: MonadIO m => Address -> LayeredDB -> m (Maybe Balance)
+getBalanceC a LayeredDB {layeredCache = Just db} = getBalanceDB a db
+getBalanceC a LayeredDB {layeredDB = db}         = getBalanceDB a db
 
-getUnspentC :: MonadIO m => OutPoint -> CachedDB -> m (Maybe Unspent)
-getUnspentC op CachedDB {cachedDB = db, cachedCache = Just cdb} =
-    uncurry withBlockDB cdb (getUnspent op)
-getUnspentC op CachedDB {cachedDB = db} =
-    uncurry withBlockDB db $ getUnspent op
+getUnspentC :: MonadIO m => OutPoint -> LayeredDB -> m (Maybe Unspent)
+getUnspentC op LayeredDB {layeredCache = Just db} = getUnspentDB op db
+getUnspentC op LayeredDB {layeredDB = db}         = getUnspentDB op db
 
-getUnspentsC :: (MonadResource m, MonadIO m) => CachedDB -> ConduitT () Unspent m ()
-getUnspentsC CachedDB {cachedDB = db} = do
-    uncurry getUnspentsDB db
+getUnspentsC ::
+       (MonadResource m, MonadIO m) => LayeredDB -> ConduitT () Unspent m ()
+getUnspentsC LayeredDB {layeredDB = db} = getUnspentsDB db
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)
     => Maybe UnixTime
-    -> CachedDB
+    -> LayeredDB
     -> ConduitT () (UnixTime, TxHash) m ()
-getMempoolC mpu CachedDB {cachedDB = db} = uncurry (getMempoolDB mpu) db
+getMempoolC mpu LayeredDB {layeredDB = db} = getMempoolDB mpu db
 
 getOrphansC ::
        (MonadUnliftIO m, MonadResource m)
-    => CachedDB
+    => LayeredDB
     -> ConduitT () (UnixTime, Tx) m ()
-getOrphansC CachedDB {cachedDB = db} = uncurry getOrphansDB db
+getOrphansC LayeredDB {layeredDB = db} = getOrphansDB db
 
 getAddressBalancesC ::
        (MonadUnliftIO m, MonadResource m)
-    => CachedDB
+    => LayeredDB
     -> ConduitT () Balance m ()
-getAddressBalancesC CachedDB {cachedDB = db} =
-    uncurry getAddressBalancesDB db
+getAddressBalancesC LayeredDB {layeredDB = db} = getAddressBalancesDB db
 
 getAddressUnspentsC ::
        (MonadUnliftIO m, MonadResource m)
     => Address
     -> Maybe BlockRef
-    -> CachedDB
+    -> LayeredDB
     -> ConduitT () Unspent m ()
-getAddressUnspentsC addr mbr CachedDB {cachedDB = db} =
-    uncurry (getAddressUnspentsDB addr mbr) db
+getAddressUnspentsC addr mbr LayeredDB {layeredDB = db} =
+    getAddressUnspentsDB addr mbr db
 
 getAddressTxsC ::
        (MonadUnliftIO m, MonadResource m)
     => Address
     -> Maybe BlockRef
-    -> CachedDB
+    -> LayeredDB
     -> ConduitT () BlockTx m ()
-getAddressTxsC addr mbr CachedDB {cachedDB = db} =
-    uncurry (getAddressTxsDB addr mbr) db
-
-setInitC :: MonadIO m => CachedDB -> m ()
-setInitC CachedDB {cachedCache = cdb} = onCachedDB cdb setInit
-
-setBestC :: MonadIO m => BlockHash -> CachedDB -> m ()
-setBestC bh CachedDB {cachedCache = cdb} = onCachedDB cdb $ setBest bh
-
-insertBlockC :: MonadIO m => BlockData -> CachedDB -> m ()
-insertBlockC bd CachedDB {cachedCache = cdb} = onCachedDB cdb $ insertBlock bd
-
-insertAtHeightC :: MonadIO m => BlockHash -> BlockHeight -> CachedDB -> m ()
-insertAtHeightC bh he CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ insertAtHeight bh he
-
-insertTxC :: MonadIO m => TxData -> CachedDB -> m ()
-insertTxC td CachedDB {cachedCache = cdb} = onCachedDB cdb $ insertTx td
-
-insertSpenderC :: MonadIO m => OutPoint -> Spender -> CachedDB -> m ()
-insertSpenderC op sp CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ insertSpender op sp
-
-deleteSpenderC :: MonadIO m => OutPoint -> CachedDB -> m ()
-deleteSpenderC op CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ deleteSpender op
-
-insertAddrTxC :: MonadIO m => Address -> BlockTx -> CachedDB -> m ()
-insertAddrTxC ad bt CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ insertAddrTx ad bt
-
-deleteAddrTxC :: MonadIO m => Address -> BlockTx -> CachedDB -> m ()
-deleteAddrTxC ad bt CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ deleteAddrTx ad bt
-
-insertAddrUnspentC :: MonadIO m => Address -> Unspent -> CachedDB -> m ()
-insertAddrUnspentC ad u CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ insertAddrUnspent ad u
-
-deleteAddrUnspentC :: MonadIO m => Address -> Unspent -> CachedDB -> m ()
-deleteAddrUnspentC ad u CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ deleteAddrUnspent ad u
-
-insertMempoolTxC :: MonadIO m => TxHash -> UnixTime -> CachedDB -> m ()
-insertMempoolTxC h u CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ insertMempoolTx h u
-
-deleteMempoolTxC :: MonadIO m => TxHash -> UnixTime -> CachedDB -> m ()
-deleteMempoolTxC h u CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ deleteMempoolTx h u
-
-insertOrphanTxC :: MonadIO m => Tx -> UnixTime -> CachedDB -> m ()
-insertOrphanTxC t u CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ insertOrphanTx t u
-
-deleteOrphanTxC :: MonadIO m => TxHash -> CachedDB -> m ()
-deleteOrphanTxC h CachedDB {cachedCache = cdb} =
-    onCachedDB cdb $ deleteOrphanTx h
-
-insertUnspentC :: MonadIO m => Unspent -> CachedDB -> m ()
-insertUnspentC u CachedDB {cachedCache = cdb} = onCachedDB cdb $ insertUnspent u
-
-deleteUnspentC :: MonadIO m => OutPoint -> CachedDB -> m ()
-deleteUnspentC p CachedDB {cachedCache = cdb} = onCachedDB cdb $ deleteUnspent p
-
-setBalanceC :: MonadIO m => Balance -> CachedDB -> m ()
-setBalanceC b CachedDB {cachedCache = cdb} = onCachedDB cdb $ setBalance b
-
-onCachedDB :: MonadIO m => Maybe Cache -> ReaderT BlockDB m () -> m ()
-onCachedDB (Just cdb) action = uncurry withBlockDB cdb action
-onCachedDB Nothing _         = return ()
+getAddressTxsC addr mbr LayeredDB {layeredDB = db} =
+    getAddressTxsDB addr mbr db
 
 bulkCopy ::
        (Serialize k, MonadUnliftIO m) => ReadOptions -> DB -> DB -> k -> m ()
@@ -228,42 +145,54 @@ bulkCopy opts db cdb k =
                         else atomically $ writeTBQueue ch Nothing
 
 instance (MonadUnliftIO m, MonadResource m) =>
-         StoreStream (ReaderT CachedDB m) where
-    getMempool x = R.ask >>= getMempoolC x
-    getOrphans = R.ask >>= getOrphansC
-    getAddressUnspents a x = R.ask >>= getAddressUnspentsC a x
-    getAddressTxs a x = R.ask >>= getAddressTxsC a x
-    getAddressBalances = R.ask >>= getAddressBalancesC
-    getUnspents = R.ask >>= getUnspentsC
+         StoreStream (ReaderT LayeredDB m) where
+    getMempool x = do
+        c <- R.ask
+        getMempoolC x c
+    getOrphans = do
+        c <- R.ask
+        getOrphansC c
+    getAddressUnspents a x = do
+        c <- R.ask
+        getAddressUnspentsC a x c
+    getAddressTxs a x = do
+        c <- R.ask
+        getAddressTxsC a x c
+    getAddressBalances = do
+        c <- R.ask
+        getAddressBalancesC c
+    getUnspents = do
+        c <- R.ask
+        getUnspentsC c
 
-instance MonadIO m => StoreRead (ReaderT CachedDB m) where
-    isInitialized = R.ask >>= isInitializedC
-    getBestBlock = R.ask >>= getBestBlockC
-    getBlocksAtHeight h = R.ask >>= getBlocksAtHeightC h
-    getBlock b = R.ask >>= getBlockC b
-    getTxData t = R.ask >>= getTxDataC t
-    getSpender p = R.ask >>= getSpenderC p
-    getSpenders t = R.ask >>= getSpendersC t
-    getOrphanTx h = R.ask >>= getOrphanTxC h
-    getUnspent a = R.ask >>= getUnspentC a
-    getBalance a = R.ask >>= getBalanceC a
-
-instance MonadIO m => StoreWrite (ReaderT CachedDB m) where
-    setInit = R.ask >>= setInitC
-    setBest h = R.ask >>= setBestC h
-    insertBlock b = R.ask >>= insertBlockC b
-    insertAtHeight h g = R.ask >>= insertAtHeightC h g
-    insertTx t = R.ask >>= insertTxC t
-    insertSpender p s = R.ask >>= insertSpenderC p s
-    deleteSpender p = R.ask >>= deleteSpenderC p
-    insertAddrTx a t = R.ask >>= insertAddrTxC a t
-    deleteAddrTx a t = R.ask >>= deleteAddrTxC a t
-    insertAddrUnspent a u = R.ask >>= insertAddrUnspentC a u
-    deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentC a u
-    insertMempoolTx h t = R.ask >>= insertMempoolTxC h t
-    deleteMempoolTx h t = R.ask >>= deleteMempoolTxC h t
-    insertOrphanTx t u = R.ask >>= insertOrphanTxC t u
-    deleteOrphanTx h = R.ask >>= deleteOrphanTxC h
-    setBalance b = R.ask >>= setBalanceC b
-    insertUnspent u = R.ask >>= insertUnspentC u
-    deleteUnspent p = R.ask >>= deleteUnspentC p
+instance MonadIO m => StoreRead (ReaderT LayeredDB m) where
+    isInitialized = do
+        c <- R.ask
+        isInitializedC c
+    getBestBlock = do
+        c <- R.ask
+        getBestBlockC c
+    getBlocksAtHeight h = do
+        c <- R.ask
+        getBlocksAtHeightC h c
+    getBlock b = do
+        c <- R.ask
+        getBlockC b c
+    getTxData t = do
+        c <- R.ask
+        getTxDataC t c
+    getSpender p = do
+        c <- R.ask
+        getSpenderC p c
+    getSpenders t = do
+        c <- R.ask
+        getSpendersC t c
+    getOrphanTx h = do
+        c <- R.ask
+        getOrphanTxC h c
+    getUnspent a = do
+        c <- R.ask
+        getUnspentC a c
+    getBalance a = do
+        c <- R.ask
+        getBalanceC a c

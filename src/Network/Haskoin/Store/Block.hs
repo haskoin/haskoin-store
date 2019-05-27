@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -25,8 +26,6 @@ import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.ImportDB
-import           Network.Haskoin.Store.Data.RocksDB
-import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Logic
 import           Network.Haskoin.Store.Messages
 import           NQE
@@ -51,10 +50,43 @@ data Syncing = Syncing
 
 -- | Block store process state.
 data BlockRead = BlockRead
-    { mySelf     :: !BlockStore
-    , myConfig   :: !BlockConfig
-    , myPeer     :: !(TVar (Maybe Syncing))
+    { mySelf   :: !BlockStore
+    , myConfig :: !BlockConfig
+    , myPeer   :: !(TVar (Maybe Syncing))
     }
+
+type BlockT m = ReaderT BlockRead m
+
+runImport ::
+       MonadLoggerIO m
+    => ReaderT ImportDB (ExceptT ImportException m) a
+    -> ReaderT BlockRead m (Either ImportException a)
+runImport f =
+    ReaderT $ \r -> runExceptT (runImportDB (blockConfDB (myConfig r)) f)
+
+runLayered :: ReaderT LayeredDB m a -> ReaderT BlockRead m a
+runLayered f = ReaderT $ \r -> runReaderT f (blockConfDB (myConfig r))
+
+instance MonadIO m => StoreRead (ReaderT BlockRead m) where
+    isInitialized = runLayered isInitialized
+    getBestBlock = runLayered getBestBlock
+    getBlocksAtHeight = runLayered . getBlocksAtHeight
+    getBlock = runLayered . getBlock
+    getTxData = runLayered . getTxData
+    getSpender = runLayered . getSpender
+    getSpenders = runLayered . getSpenders
+    getOrphanTx = runLayered . getOrphanTx
+    getUnspent = runLayered . getUnspent
+    getBalance = runLayered . getBalance
+
+instance (MonadResource m, MonadUnliftIO m) =>
+         StoreStream (ReaderT BlockRead m) where
+    getMempool = transPipe runLayered . getMempool
+    getOrphans = transPipe runLayered getOrphans
+    getAddressUnspents a x = transPipe runLayered $ getAddressUnspents a x
+    getAddressTxs a x = transPipe runLayered $ getAddressTxs a x
+    getAddressBalances = transPipe runLayered getAddressBalances
+    getUnspents = transPipe runLayered getUnspents
 
 -- | Run block store process.
 blockStore ::
@@ -70,9 +102,8 @@ blockStore cfg inbox = do
         BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb}
   where
     ini = do
-        (db, net) <- (blockConfDB &&& blockConfNet) <$> asks myConfig
-        cache <- asks (blockConfCache . myConfig)
-        runExceptT (runImportDB db cache (initDB net)) >>= \case
+        net <- asks (blockConfNet . myConfig)
+        runImport (initDB net) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -81,28 +112,29 @@ blockStore cfg inbox = do
     run =
         withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
             $(logDebugS) "Block" "Awaiting message..."
-            receive inbox >>= processBlockMessage
+            receive inbox >>= \msg ->
+                ReaderT $ \r ->
+                    runResourceT (runReaderT (processBlockMessage msg) r)
 
 isSynced :: (MonadLoggerIO m, MonadUnliftIO m) => ReaderT BlockRead m Bool
 isSynced = do
-    (db, ch) <- (blockConfDB &&& blockConfChain) <$> asks myConfig
+    ch <- asks (blockConfChain . myConfig)
     $(logDebugS) "Block" "Testing if synced with header chain..."
-    withBlockDB defaultReadOptions db $
-        getBestBlock >>= \case
-            Nothing -> do
-                $(logErrorS) "Block" "Block database uninitialized"
-                throwIO Uninitialized
-            Just bb -> do
-                $(logDebugS) "Block" $ "Best block: " <> blockHashToHex bb
-                chainGetBest ch >>= \cb -> do
-                    $(logDebugS) "Block" $
-                        "Best chain block " <>
-                        blockHashToHex (headerHash (nodeHeader cb)) <>
-                        " at height " <>
-                        cs (show (nodeHeight cb))
-                    let s = headerHash (nodeHeader cb) == bb
-                    $(logDebugS) "Block" $ "Synced: " <> cs (show s)
-                    return s
+    getBestBlock >>= \case
+        Nothing -> do
+            $(logErrorS) "Block" "Block database uninitialized"
+            throwIO Uninitialized
+        Just bb -> do
+            $(logDebugS) "Block" $ "Best block: " <> blockHashToHex bb
+            chainGetBest ch >>= \cb -> do
+                $(logDebugS) "Block" $
+                    "Best chain block " <>
+                    blockHashToHex (headerHash (nodeHeader cb)) <>
+                    " at height " <>
+                    cs (show (nodeHeight cb))
+                let s = headerHash (nodeHeader cb) == bb
+                $(logDebugS) "Block" $ "Synced: " <> cs (show s)
+                return s
 
 mempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => Peer -> ReaderT BlockRead m ()
@@ -122,12 +154,10 @@ processBlock p b = do
                     "Block"
                     ("Cannot accept block " <> hex <> " from non-syncing peer")
                 mzero
-        db <- blockConfDB <$> asks myConfig
         n <- cbn
         upr
         net <- blockConfNet <$> asks myConfig
-        cache <- asks (blockConfCache . myConfig)
-        runExceptT (runImportDB db cache (importBlock net b n)) >>= \case
+        lift (runImport (importBlock net b n)) >>= \case
             Right () -> do
                 l <- blockConfListener <$> asks myConfig
                 $(logInfoS) "Block" $
@@ -186,11 +216,7 @@ processNoBlocks p _bs = do
         (PeerMisbehaving "We do not like peers that cannot find them blocks")
         p
 
-processTx ::
-       (MonadUnliftIO m, MonadLoggerIO m)
-    => Peer
-    -> Tx
-    -> ReaderT BlockRead m ()
+processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
 processTx _p tx =
     isSynced >>= \case
         False ->
@@ -199,9 +225,8 @@ processTx _p tx =
         True -> do
             $(logInfoS) "Block" $ "Incoming tx: " <> txHashToHex (txHash tx)
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            (net, db) <- (blockConfNet &&& blockConfDB) <$> asks myConfig
-            cache <- asks (blockConfCache . myConfig)
-            runExceptT (runImportDB db cache (newMempoolTx net tx now)) >>= \case
+            net <- asks (blockConfNet . myConfig)
+            runImport (newMempoolTx net tx now) >>= \case
                 Left e ->
                     $(logErrorS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
@@ -215,19 +240,16 @@ processTx _p tx =
                     $(logDebugS) "Block" $
                     "Not importing mempool tx: " <> txHashToHex (txHash tx)
 
-processOrphans :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
+processOrphans ::
+       (MonadResource m, MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processOrphans =
     isSynced >>= \case
         False -> $(logDebugS) "Block" "Not importing orphans as not yet in sync"
         True -> do
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            db <- asks (blockConfDB . myConfig)
-            cache <- asks (blockConfCache . myConfig)
-            net <- asks (blockConfNet . myConfig)
+            (ldb, net) <- asks ((blockConfDB &&& blockConfNet) . myConfig)
             $(logDebugS) "Block" "Getting expired orphan transactions..."
-            old <-
-                runResourceT . withBlockDB defaultReadOptions db . runConduit $
-                getOldOrphans now .| sinkList
+            old <- runConduit $ getOldOrphans now .| sinkList
             case old of
                 [] ->
                     $(logDebugS) "Block" "No old orphan transactions to remove"
@@ -235,20 +257,17 @@ processOrphans =
                     $(logDebugS) "Block" $
                         "Removing " <> cs (show (length old)) <>
                         "expired orphan transactions..."
-                    runExceptT . runImportDB db cache $ mapM_ deleteOrphanTx old
+                    runImport $ mapM_ deleteOrphanTx old
                     return ()
             $(logDebugS) "Block" "Selecting orphan transactions to import..."
-            orphans <-
-                runResourceT . withBlockDB defaultReadOptions db . runConduit $
-                getOrphans .| sinkList
+            orphans <- runConduit $ getOrphans .| sinkList
             case orphans of
                 [] -> $(logDebugS) "Block" "No orphan tranasctions to import"
                 _ ->
                     $(logDebugS) "Block" $
                     "Importing " <> cs (show (length orphans)) <>
                     " orphan transactions"
-            forM_ orphans $
-                runExceptT . runImportDB db cache . uncurry (importOrphan net)
+            forM_ orphans $ runImport . uncurry (importOrphan net)
             $(logDebugS) "Block" $ "Finished importing orphans"
 
 processTxs ::
@@ -261,14 +280,13 @@ processTxs p hs =
         False ->
             $(logDebugS) "Block" "Ignoring incoming tx inv (not synced yet)"
         True -> do
-            db <- blockConfDB <$> asks myConfig
             $(logDebugS) "Block" $
                 "Received " <> fromString (show (length hs)) <>
                 " transaction inventory"
             xs <-
                 fmap catMaybes . forM hs $ \h ->
                     runMaybeT $ do
-                        t <- withBlockDB defaultReadOptions db $ getTxData h
+                        t <- lift $ getTxData h
                         guard (isNothing t)
                         return (getTxHash h)
             unless (null xs) $ do
@@ -355,9 +373,8 @@ syncMe =
                     OnlinePeer {onlinePeerMailbox = p}:_ -> return (Just p)
     cbn = chainGetBest =<< blockConfChain <$> asks myConfig
     dbn = do
-        db <- blockConfDB <$> asks myConfig
         bb <-
-            withBlockDB defaultReadOptions db getBestBlock >>= \case
+            lift getBestBlock >>= \case
                 Nothing -> do
                     $(logErrorS) "Block" "Best block not in database"
                     throwIO Uninitialized
@@ -414,10 +431,8 @@ syncMe =
                     "Reverting best block " <> blockHashToHex d <>
                     " as it is not in main chain..."
                 resetPeer
-                db <- blockConfDB <$> asks myConfig
-                cache <- asks (blockConfCache . myConfig)
-                net <- blockConfNet <$> asks myConfig
-                runExceptT (runImportDB db cache (revertBlock net d)) >>= \case
+                net <- asks (blockConfNet . myConfig)
+                lift (runImport (revertBlock net d)) >>= \case
                     Left e -> do
                         $(logErrorS) "Block" $
                             "Could not revert best block: " <>
@@ -439,9 +454,9 @@ setPeer p b = do
         Just Syncing {syncingPeer = p, syncingHead = b, syncingTime = now}
 
 processBlockMessage ::
-       (MonadUnliftIO m, MonadLoggerIO m)
+       (MonadResource m, MonadUnliftIO m, MonadLoggerIO m)
     => BlockMessage
-    -> ReaderT BlockRead m ()
+    -> BlockT m ()
 processBlockMessage (BlockNewBest bn) = do
     $(logDebugS) "Block" $
         "New best block header " <> fromString (show (nodeHeight bn)) <> ": " <>

@@ -25,8 +25,6 @@ import           Database.RocksDB
 import           Haskoin
 import           Network.Haskoin.Block.Headers       (computeSubsidy)
 import           Network.Haskoin.Store.Data
-import           Network.Haskoin.Store.Data.ImportDB
-import           Network.Haskoin.Store.Data.STM
 import           UnliftIO
 
 data ImportException

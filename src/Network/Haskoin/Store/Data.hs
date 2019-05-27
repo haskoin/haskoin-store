@@ -47,7 +47,17 @@ decodeShort bs = case S.decode (B.Short.fromShort bs) of
     Left e  -> error e
     Right a -> a
 
-type Cache = (ReadOptions, DB)
+data BlockDB =
+    BlockDB
+        { blockDB     :: !DB
+        , blockDBopts :: !ReadOptions
+        }
+
+data LayeredDB =
+    LayeredDB
+        { layeredDB    :: !BlockDB
+        , layeredCache :: !(Maybe BlockDB)
+        }
 
 type UnixTime = Word64
 type BlockPos = Word32

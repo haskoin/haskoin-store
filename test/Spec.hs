@@ -15,7 +15,7 @@ import           Test.Hspec
 import           UnliftIO
 
 data TestStore = TestStore
-    { testStoreDB         :: !DB
+    { testStoreDB         :: !LayeredDB
     , testStoreBlockStore :: !BlockStore
     , testStoreChain      :: !Chain
     , testStoreEvents     :: !(Inbox StoreEvent)
@@ -39,7 +39,7 @@ main = do
                 bestHeight `shouldBe` 8
         it "get a block and its transactions" $
             withTestStore net "get-block-txs" $ \TestStore {..} ->
-                withBlockDB defaultReadOptions testStoreDB $ do
+                withLayeredDB testStoreDB $ do
                     let h1 =
                             "e8588129e146eeb0aa7abdc3590f8c5920cc5ff42daf05c23b29d4ae5b51fc22"
                         h2 =
@@ -80,21 +80,29 @@ withTestStore net t f =
                         , errorIfExists = True
                         , compression = SnappyCompression
                         }
+            let ldb =
+                    LayeredDB
+                        { layeredDB =
+                              BlockDB
+                                  { blockDB = db
+                                  , blockDBopts = defaultReadOptions
+                                  }
+                        , layeredCache = Nothing
+                        }
             let cfg =
                     StoreConfig
                         { storeConfMaxPeers = 20
                         , storeConfInitPeers = []
                         , storeConfDiscover = True
-                        , storeConfDB = db
+                        , storeConfDB = ldb
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` x)
-                        , storeConfCache = Nothing
                         }
             withStore cfg $ \Store {..} ->
                 lift $
                 f
                     TestStore
-                        { testStoreDB = db
+                        { testStoreDB = ldb
                         , testStoreBlockStore = storeBlock
                         , testStoreChain = storeChain
                         , testStoreEvents = x

@@ -1,11 +1,12 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE TupleSections        #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-module Network.Haskoin.Store.Data.STM where
+module Network.Haskoin.Store.Data.Memory where
 
 import           Conduit
 import           Control.Monad
-import           Control.Monad.Reader                (ReaderT)
+import           Control.Monad.Reader                (MonadReader, ReaderT)
 import qualified Control.Monad.Reader                as R
 import qualified Data.ByteString.Short               as B.Short
 import           Data.Function
@@ -21,12 +22,10 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           Network.Haskoin.Store.Messages
 import           UnliftIO
 
-type BlockSTM = ReaderT (TVar HashMapDB) STM
+withBlockMem :: MonadIO m => TVar BlockMem -> ReaderT (TVar BlockMem) m a -> m a
+withBlockMem = flip R.runReaderT
 
-withBlockSTM :: TVar HashMapDB -> ReaderT (TVar HashMapDB) STM a -> STM a
-withBlockSTM = flip R.runReaderT
-
-data HashMapDB = HashMapDB
+data BlockMem = BlockMem
     { hBest :: !(Maybe BlockHash)
     , hBlock :: !(HashMap BlockHash BlockData)
     , hHeight :: !(HashMap BlockHeight [BlockHash])
@@ -41,9 +40,9 @@ data HashMapDB = HashMapDB
     , hInit :: !Bool
     } deriving (Eq, Show)
 
-emptyHashMapDB :: HashMapDB
-emptyHashMapDB =
-    HashMapDB
+emptyBlockMem :: BlockMem
+emptyBlockMem =
+    BlockMem
         { hBest = Nothing
         , hBlock = M.empty
         , hHeight = M.empty
@@ -58,37 +57,36 @@ emptyHashMapDB =
         , hInit = False
         }
 
-isInitializedH :: HashMapDB -> Either InitException Bool
+isInitializedH :: BlockMem -> Either InitException Bool
 isInitializedH = Right . hInit
 
-getBestBlockH :: HashMapDB -> Maybe BlockHash
+getBestBlockH :: BlockMem -> Maybe BlockHash
 getBestBlockH = hBest
 
-getBlocksAtHeightH ::
-       BlockHeight -> HashMapDB -> [BlockHash]
+getBlocksAtHeightH :: BlockHeight -> BlockMem -> [BlockHash]
 getBlocksAtHeightH h = M.lookupDefault [] h . hHeight
 
-getBlockH :: BlockHash -> HashMapDB -> Maybe BlockData
+getBlockH :: BlockHash -> BlockMem -> Maybe BlockData
 getBlockH h = M.lookup h . hBlock
 
-getTxDataH :: TxHash -> HashMapDB -> Maybe TxData
+getTxDataH :: TxHash -> BlockMem -> Maybe TxData
 getTxDataH t = M.lookup t . hTx
 
-getSpenderH :: OutPoint -> HashMapDB -> Maybe (Maybe Spender)
+getSpenderH :: OutPoint -> BlockMem -> Maybe (Maybe Spender)
 getSpenderH op db = do
     m <- M.lookup (outPointHash op) (hSpender db)
     I.lookup (fromIntegral (outPointIndex op)) m
 
-getSpendersH :: TxHash -> HashMapDB -> IntMap (Maybe Spender)
+getSpendersH :: TxHash -> BlockMem -> IntMap (Maybe Spender)
 getSpendersH t = M.lookupDefault I.empty t . hSpender
 
-getBalanceH :: Address -> HashMapDB -> Maybe Balance
+getBalanceH :: Address -> BlockMem -> Maybe Balance
 getBalanceH a = fmap (balValToBalance a) . M.lookup a . hBalance
 
 getMempoolH ::
        Monad m
     => Maybe UnixTime
-    -> HashMapDB
+    -> BlockMem
     -> ConduitT () (UnixTime, TxHash) m ()
 getMempoolH mpu db =
     let f ts =
@@ -101,14 +99,14 @@ getMempoolH mpu db =
             hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
 
-getOrphansH :: Monad m => HashMapDB -> ConduitT () (UnixTime, Tx) m ()
+getOrphansH :: Monad m => BlockMem -> ConduitT () (UnixTime, Tx) m ()
 getOrphansH = yieldMany . catMaybes . M.elems . hOrphans
 
-getOrphanTxH :: TxHash -> HashMapDB -> Maybe (Maybe (UnixTime, Tx))
+getOrphanTxH :: TxHash -> BlockMem -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
 
-getUnspentsH :: Monad m => HashMapDB -> ConduitT () Unspent m ()
-getUnspentsH HashMapDB {hUnspent = us} =
+getUnspentsH :: Monad m => BlockMem -> ConduitT () Unspent m ()
+getUnspentsH BlockMem {hUnspent = us} =
     yieldMany
         [ u
         | (h, m) <- M.toList us
@@ -118,7 +116,7 @@ getUnspentsH HashMapDB {hUnspent = us} =
         , let u = unspentValToUnspent p v
         ]
 
-getAddressTxsH :: Address -> Maybe BlockRef -> HashMapDB -> [BlockTx]
+getAddressTxsH :: Address -> Maybe BlockRef -> BlockMem -> [BlockTx]
 getAddressTxsH a mbr db =
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
@@ -135,12 +133,12 @@ getAddressTxsH a mbr db =
             Nothing -> False
             Just br -> b > br
 
-getAddressBalancesH :: Monad m => HashMapDB -> ConduitT () Balance m ()
-getAddressBalancesH HashMapDB {hBalance = bm} =
+getAddressBalancesH :: Monad m => BlockMem -> ConduitT () Balance m ()
+getAddressBalancesH BlockMem {hBalance = bm} =
     yieldMany (M.toList bm) .| mapC (uncurry balValToBalance)
 
 getAddressUnspentsH ::
-       Address -> Maybe BlockRef -> HashMapDB -> [Unspent]
+       Address -> Maybe BlockRef -> BlockMem -> [Unspent]
 getAddressUnspentsH a mbr db =
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
@@ -161,25 +159,25 @@ getAddressUnspentsH a mbr db =
             Nothing -> False
             Just br -> b > br
 
-setInitH :: HashMapDB -> HashMapDB
+setInitH :: BlockMem -> BlockMem
 setInitH db = db {hInit = True}
 
-setBestH :: BlockHash -> HashMapDB -> HashMapDB
+setBestH :: BlockHash -> BlockMem -> BlockMem
 setBestH h db = db {hBest = Just h}
 
-insertBlockH :: BlockData -> HashMapDB -> HashMapDB
+insertBlockH :: BlockData -> BlockMem -> BlockMem
 insertBlockH bd db =
     db {hBlock = M.insert (headerHash (blockDataHeader bd)) bd (hBlock db)}
 
-insertAtHeightH :: BlockHash -> BlockHeight -> HashMapDB -> HashMapDB
+insertAtHeightH :: BlockHash -> BlockHeight -> BlockMem -> BlockMem
 insertAtHeightH h g db = db {hHeight = M.insertWith f g [h] (hHeight db)}
   where
     f xs ys = nub $ xs <> ys
 
-insertTxH :: TxData -> HashMapDB -> HashMapDB
+insertTxH :: TxData -> BlockMem -> BlockMem
 insertTxH tx db = db {hTx = M.insert (txHash (txData tx)) tx (hTx db)}
 
-insertSpenderH :: OutPoint -> Spender -> HashMapDB -> HashMapDB
+insertSpenderH :: OutPoint -> Spender -> BlockMem -> BlockMem
 insertSpenderH op s db =
     db
         { hSpender =
@@ -190,7 +188,7 @@ insertSpenderH op s db =
                   (hSpender db)
         }
 
-deleteSpenderH :: OutPoint -> HashMapDB -> HashMapDB
+deleteSpenderH :: OutPoint -> BlockMem -> BlockMem
 deleteSpenderH op db =
     db
         { hSpender =
@@ -201,12 +199,12 @@ deleteSpenderH op db =
                   (hSpender db)
         }
 
-setBalanceH :: Balance -> HashMapDB -> HashMapDB
+setBalanceH :: Balance -> BlockMem -> BlockMem
 setBalanceH bal db = db {hBalance = M.insert a b (hBalance db)}
   where
     (a, b) = balanceToBalVal bal
 
-insertAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
+insertAddrTxH :: Address -> BlockTx -> BlockMem -> BlockMem
 insertAddrTxH a btx db =
     let s =
             M.singleton
@@ -216,7 +214,7 @@ insertAddrTxH a btx db =
                      (M.singleton (blockTxHash btx) True))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-deleteAddrTxH :: Address -> BlockTx -> HashMapDB -> HashMapDB
+deleteAddrTxH :: Address -> BlockTx -> BlockMem -> BlockMem
 deleteAddrTxH a btx db =
     let s =
             M.singleton
@@ -226,7 +224,7 @@ deleteAddrTxH a btx db =
                      (M.singleton (blockTxHash btx) False))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-insertAddrUnspentH :: Address -> Unspent -> HashMapDB -> HashMapDB
+insertAddrUnspentH :: Address -> Unspent -> BlockMem -> BlockMem
 insertAddrUnspentH a u db =
     let uns =
             OutVal
@@ -241,7 +239,7 @@ insertAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) (Just uns)))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-deleteAddrUnspentH :: Address -> Unspent -> HashMapDB -> HashMapDB
+deleteAddrUnspentH :: Address -> Unspent -> BlockMem -> BlockMem
 deleteAddrUnspentH a u db =
     let s =
             M.singleton
@@ -251,29 +249,29 @@ deleteAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-insertMempoolTxH :: TxHash -> UnixTime -> HashMapDB -> HashMapDB
+insertMempoolTxH :: TxHash -> UnixTime -> BlockMem -> BlockMem
 insertMempoolTxH h u db =
     let s = M.singleton u (M.singleton h True)
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
-deleteMempoolTxH :: TxHash -> UnixTime -> HashMapDB -> HashMapDB
+deleteMempoolTxH :: TxHash -> UnixTime -> BlockMem -> BlockMem
 deleteMempoolTxH h u db =
     let s = M.singleton u (M.singleton h False)
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
-insertOrphanTxH :: Tx -> UnixTime -> HashMapDB -> HashMapDB
+insertOrphanTxH :: Tx -> UnixTime -> BlockMem -> BlockMem
 insertOrphanTxH tx u db =
     db {hOrphans = M.insert (txHash tx) (Just (u, tx)) (hOrphans db)}
 
-deleteOrphanTxH :: TxHash -> HashMapDB -> HashMapDB
+deleteOrphanTxH :: TxHash -> BlockMem -> BlockMem
 deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
 
-getUnspentH :: OutPoint -> HashMapDB -> Maybe (Maybe Unspent)
+getUnspentH :: OutPoint -> BlockMem -> Maybe (Maybe Unspent)
 getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
     fmap (unspentValToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
 
-insertUnspentH :: Unspent -> HashMapDB -> HashMapDB
+insertUnspentH :: Unspent -> BlockMem -> BlockMem
 insertUnspentH u db =
     db
         { hUnspent =
@@ -286,7 +284,7 @@ insertUnspentH u db =
                   (hUnspent db)
         }
 
-deleteUnspentH :: OutPoint -> HashMapDB -> HashMapDB
+deleteUnspentH :: OutPoint -> BlockMem -> BlockMem
 deleteUnspentH op db =
     db
         { hUnspent =
@@ -297,52 +295,110 @@ deleteUnspentH op db =
                   (hUnspent db)
         }
 
-instance StoreRead BlockSTM where
-    isInitialized = fmap isInitializedH . lift . readTVar =<< R.ask
-    getBestBlock = fmap getBestBlockH . lift . readTVar =<< R.ask
-    getBlocksAtHeight h =
-        fmap (getBlocksAtHeightH h) . lift . readTVar =<< R.ask
-    getBlock b = fmap (getBlockH b) . lift . readTVar =<< R.ask
-    getTxData t = fmap (getTxDataH t) . lift . readTVar =<< R.ask
-    getSpender t = fmap (join . getSpenderH t) . lift . readTVar =<< R.ask
-    getSpenders t =
-        fmap (I.map fromJust . I.filter isJust . getSpendersH t) .
-        lift . readTVar =<<
-        R.ask
-    getOrphanTx h = fmap (join . getOrphanTxH h) . lift . readTVar =<< R.ask
-    getUnspent op = fmap (join . getUnspentH op) . lift . readTVar =<< R.ask
-    getBalance a = fmap (getBalanceH a) . lift . readTVar =<< R.ask
+instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where
+    isInitialized = do
+        v <- R.ask >>= readTVarIO
+        return $ isInitializedH v
+    getBestBlock = do
+        v <- R.ask >>= readTVarIO
+        return $ getBestBlockH v
+    getBlocksAtHeight h = do
+        v <- R.ask >>= readTVarIO
+        return $ getBlocksAtHeightH h v
+    getBlock b = do
+        v <- R.ask >>= readTVarIO
+        return $ getBlockH b v
+    getTxData t = do
+        v <- R.ask >>= readTVarIO
+        return $ getTxDataH t v
+    getSpender t = do
+        v <- R.ask >>= readTVarIO
+        return . join $ getSpenderH t v
+    getSpenders t = do
+        v <- R.ask >>= readTVarIO
+        return . I.map fromJust . I.filter isJust $ getSpendersH t v
+    getOrphanTx h = do
+        v <- R.ask >>= readTVarIO
+        return . join $ getOrphanTxH h v
+    getUnspent p = do
+        v <- R.ask >>= readTVarIO
+        return . join $ getUnspentH p v
+    getBalance a = do
+        v <- R.ask >>= readTVarIO
+        return $ getBalanceH a v
 
-instance StoreStream BlockSTM where
-    getMempool m = getMempoolH m =<< lift . lift . readTVar =<< lift R.ask
-    getOrphans = getOrphansH =<< lift . lift . readTVar =<< lift R.ask
-    getAddressTxs a m =
-        yieldMany . getAddressTxsH a m =<< lift . lift . readTVar =<< lift R.ask
-    getAddressUnspents a m =
-        yieldMany . getAddressUnspentsH a m =<<
-        lift . lift . readTVar =<< lift R.ask
-    getAddressBalances =
-        getAddressBalancesH =<< lift . lift . readTVar =<< lift R.ask
-    getUnspents = getUnspentsH =<< lift . lift . readTVar =<< lift R.ask
+instance MonadIO m => StoreStream (ReaderT (TVar BlockMem) m) where
+    getMempool m = do
+        v <- R.ask >>= readTVarIO
+        getMempoolH m v
+    getOrphans = do
+        v <- R.ask >>= readTVarIO
+        getOrphansH v
+    getAddressTxs a m = do
+        v <- R.ask >>= readTVarIO
+        yieldMany $ getAddressTxsH a m v
+    getAddressUnspents a m = do
+        v <- R.ask >>= readTVarIO
+        yieldMany $ getAddressUnspentsH a m v
+    getAddressBalances = do
+        v <- R.ask >>= readTVarIO
+        getAddressBalancesH v
+    getUnspents = do
+        v <- R.ask >>= readTVarIO
+        getUnspentsH v
 
-instance StoreWrite BlockSTM where
-    setInit = lift . (`modifyTVar` setInitH) =<< R.ask
-    setBest h = lift . (`modifyTVar` setBestH h) =<< R.ask
-    insertBlock b = lift . (`modifyTVar` insertBlockH b) =<< R.ask
-    insertAtHeight h g = lift . (`modifyTVar` insertAtHeightH h g) =<< R.ask
-    insertTx t = lift . (`modifyTVar` insertTxH t) =<< R.ask
-    insertSpender p s = lift . (`modifyTVar` insertSpenderH p s) =<< R.ask
-    deleteSpender p = lift . (`modifyTVar` deleteSpenderH p) =<< R.ask
-    insertAddrTx a t = lift . (`modifyTVar` insertAddrTxH a t) =<< R.ask
-    deleteAddrTx a t = lift . (`modifyTVar` deleteAddrTxH a t) =<< R.ask
-    insertAddrUnspent a u =
-        lift . (`modifyTVar` insertAddrUnspentH a u) =<< R.ask
-    deleteAddrUnspent a u =
-        lift . (`modifyTVar` deleteAddrUnspentH a u) =<< R.ask
-    insertMempoolTx h t = lift . (`modifyTVar` insertMempoolTxH h t) =<< R.ask
-    deleteMempoolTx h t = lift . (`modifyTVar` deleteMempoolTxH h t) =<< R.ask
-    insertOrphanTx t u = lift . (`modifyTVar` insertOrphanTxH t u) =<< R.ask
-    deleteOrphanTx h = lift . (`modifyTVar` deleteOrphanTxH h) =<< R.ask
-    setBalance b = lift . (`modifyTVar` setBalanceH b) =<< R.ask
-    insertUnspent h = lift . (`modifyTVar` insertUnspentH h) =<< R.ask
-    deleteUnspent p = lift . (`modifyTVar` deleteUnspentH p) =<< R.ask
+instance (MonadIO m) => StoreWrite (ReaderT (TVar BlockMem) m) where
+    setInit = do
+        v <- R.ask
+        atomically $ modifyTVar v setInitH
+    setBest h = do
+        v <- R.ask
+        atomically $ modifyTVar v (setBestH h)
+    insertBlock b = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertBlockH b)
+    insertAtHeight h g = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertAtHeightH h g)
+    insertTx t = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertTxH t)
+    insertSpender p s = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertSpenderH p s)
+    deleteSpender p = do
+        v <- R.ask
+        atomically $ modifyTVar v (deleteSpenderH p)
+    insertAddrTx a t = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertAddrTxH a t)
+    deleteAddrTx a t = do
+        v <- R.ask
+        atomically $ modifyTVar v (deleteAddrTxH a t)
+    insertAddrUnspent a u = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertAddrUnspentH a u)
+    deleteAddrUnspent a u = do
+        v <- R.ask
+        atomically $ modifyTVar v (deleteAddrUnspentH a u)
+    insertMempoolTx h t = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertMempoolTxH h t)
+    deleteMempoolTx h t = do
+        v <- R.ask
+        atomically $ modifyTVar v (deleteMempoolTxH h t)
+    insertOrphanTx t u = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertOrphanTxH t u)
+    deleteOrphanTx h = do
+        v <- R.ask
+        atomically $ modifyTVar v (deleteOrphanTxH h)
+    setBalance b = do
+        v <- R.ask
+        atomically $ modifyTVar v (setBalanceH b)
+    insertUnspent h = do
+        v <- R.ask
+        atomically $ modifyTVar v (insertUnspentH h)
+    deleteUnspent p = do
+        v <- R.ask
+        atomically $ modifyTVar v (deleteUnspentH p)

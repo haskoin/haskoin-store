@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Store.Web where
@@ -11,7 +12,8 @@ import           Control.Arrow
 import           Control.Exception                 ()
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Reader              (ReaderT)
+import           Control.Monad.Reader              (MonadReader, ReaderT)
+import qualified Control.Monad.Reader              as R
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson.Encoding               (encodingToLazyByteString,
                                                     fromEncoding)
@@ -45,14 +47,13 @@ import           UnliftIO.Resource
 import           Web.Scotty.Internal.Types         (ActionT (ActionT, runAM))
 import           Web.Scotty.Trans                  as S
 
-type WebM = ActionT Except (ReaderT CachedDB (LoggingT (ResourceT IO)))
+type WebT m = ActionT Except (ReaderT LayeredDB m)
 
 data WebConfig =
     WebConfig
         { webPort      :: !Int
         , webNetwork   :: !Network
-        , webDB        :: !DB
-        , webCache     :: !(Maybe Cache)
+        , webDB        :: !LayeredDB
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
         }
@@ -65,7 +66,31 @@ instance Parsable TxHash where
     parseParam =
         maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
 
-defHandler :: Monad m => Network -> Except -> ActionT Except m ()
+instance MonadIO m => StoreRead (WebT m) where
+    isInitialized = lift isInitialized
+    getBestBlock = lift getBestBlock
+    getBlocksAtHeight = lift . getBlocksAtHeight
+    getBlock = lift . getBlock
+    getTxData = lift . getTxData
+    getSpender = lift . getSpender
+    getSpenders = lift . getSpenders
+    getOrphanTx = lift . getOrphanTx
+    getUnspent = lift . getUnspent
+    getBalance = lift . getBalance
+
+instance (MonadResource m, MonadUnliftIO m) =>
+         StoreStream (WebT (ReaderT LayeredDB m)) where
+    getMempool = transPipe lift . getMempool
+    getOrphans = transPipe lift getOrphans
+    getAddressUnspents a x = transPipe lift $ getAddressUnspents a x
+    getAddressTxs a x = transPipe lift $ getAddressTxs a x
+    getAddressBalances = transPipe lift getAddressBalances
+    getUnspents = transPipe lift getUnspents
+
+askDB :: Monad m => WebT m LayeredDB
+askDB = lift R.ask
+
+defHandler :: Monad m => Network -> Except -> WebT m ()
 defHandler net e = do
     proto <- setupBin
     case e of
@@ -81,7 +106,7 @@ maybeSerial ::
     => Network
     -> Bool -- ^ binary
     -> Maybe a
-    -> ActionT Except m ()
+    -> WebT m ()
 maybeSerial _ _ Nothing        = raise ThingNotFound
 maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
 
@@ -90,9 +115,10 @@ protoSerial ::
     => Network
     -> Bool
     -> a
-    -> ActionT Except m ()
+    -> WebT m ()
 protoSerial net proto = S.raw . serialAny net proto
 
+scottyBestBlock :: MonadIO m => Network -> WebT m ()
 scottyBestBlock net = do
     cors
     n <- parseNoTx
@@ -104,6 +130,7 @@ scottyBestBlock net = do
             return $ pruneTx n b
     maybeSerial net proto res
 
+scottyBlock :: MonadIO m => Network -> WebT m ()
 scottyBlock net = do
     cors
     block <- param "block"
@@ -115,7 +142,7 @@ scottyBlock net = do
             return $ pruneTx n b
     maybeSerial net proto res
 
-scottyBlockHeight :: Network -> WebM ()
+scottyBlockHeight :: MonadIO m => Network -> WebT m ()
 scottyBlockHeight net = do
     cors
     height <- param "height"
@@ -130,7 +157,7 @@ scottyBlockHeight net = do
                     return $ pruneTx n b
     protoSerial net proto res
 
-scottyBlockHeights :: Network -> WebM ()
+scottyBlockHeights :: MonadIO m => Network -> WebT m ()
 scottyBlockHeights net = do
     cors
     heights <- param "heights"
@@ -144,7 +171,7 @@ scottyBlockHeights net = do
                 return $ pruneTx n b
     protoSerial net proto res
 
-scottyBlocks :: Network -> WebM ()
+scottyBlocks :: MonadIO m => Network -> WebT m ()
 scottyBlocks net = do
     cors
     blocks <- param "blocks"
@@ -157,17 +184,18 @@ scottyBlocks net = do
                 return $ pruneTx n b
     protoSerial net proto res
 
-scottyMempool :: Network -> WebM ()
+scottyMempool :: MonadUnliftIO m => Network -> WebT m ()
 scottyMempool net = do
     cors
     (l, s) <- parseLimits
     proto <- setupBin
-    run <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        run . runConduit $ getMempoolLimit l s .| streamAny net proto io
-        liftIO flush'
+        runResourceT . withLayeredDB db $
+            runConduit $ getMempoolLimit l s .| streamAny net proto io
+        flush'
 
-scottyTransaction :: Network -> WebM ()
+scottyTransaction :: MonadIO m => Network -> WebT m ()
 scottyTransaction net = do
     cors
     txid <- param "txid"
@@ -175,7 +203,7 @@ scottyTransaction net = do
     res <- getTransaction txid
     maybeSerial net proto res
 
-scottyRawTransaction :: Bool -> WebM ()
+scottyRawTransaction :: MonadIO m => Bool -> WebT m ()
 scottyRawTransaction hex = do
     cors
     txid <- param "txid"
@@ -190,7 +218,7 @@ scottyRawTransaction hex = do
                     S.setHeader "Content-Type" "application/octet-stream"
                     S.raw $ Serialize.encodeLazy (transactionData x)
 
-scottyTxAfterHeight :: Network -> WebM ()
+scottyTxAfterHeight :: MonadIO m => Network -> WebT m ()
 scottyTxAfterHeight net = do
     cors
     txid <- param "txid"
@@ -199,7 +227,7 @@ scottyTxAfterHeight net = do
     res <- cbAfterHeight 10000 height txid
     protoSerial net proto res
 
-scottyTransactions :: Network -> WebM ()
+scottyTransactions :: MonadIO m => Network -> WebT m ()
 scottyTransactions net = do
     cors
     txids <- param "txids"
@@ -207,7 +235,7 @@ scottyTransactions net = do
     res <- catMaybes <$> mapM getTransaction (nub txids)
     protoSerial net proto res
 
-scottyRawTransactions :: Bool -> WebM ()
+scottyRawTransactions :: MonadIO m => Bool -> WebT m ()
 scottyRawTransactions hex = do
     cors
     txids <- param "txids"
@@ -218,61 +246,61 @@ scottyRawTransactions hex = do
             S.setHeader "Content-Type" "application/octet-stream"
             S.raw . L.concat $ map (Serialize.encodeLazy . transactionData) res
 
-scottyAddressTxs :: Network -> Bool -> WebM ()
+scottyAddressTxs :: MonadUnliftIO m => Network -> Bool -> WebT m ()
 scottyAddressTxs net full = do
     cors
     a <- parseAddress net
     (l, s) <- parseLimits
     proto <- setupBin
-    run <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        run . runConduit $ f proto l s a io
-        liftIO flush'
+        runResourceT . withLayeredDB db . runConduit $ f proto l s a io
+        flush'
   where
     f proto l s a io
         | full = getAddressTxsFull l s a .| streamAny net proto io
         | otherwise = getAddressTxsLimit l s a .| streamAny net proto io
 
-scottyAddressesTxs :: Network -> Bool -> WebM ()
+scottyAddressesTxs :: MonadUnliftIO m => Network -> Bool -> WebT m ()
 scottyAddressesTxs net full = do
     cors
     as <- parseAddresses net
     (l, s) <- parseLimits
     proto <- setupBin
-    run <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        run . runConduit $ f proto l s as io
-        liftIO flush'
+        runResourceT . withLayeredDB db . runConduit $ f proto l s as io
+        flush'
   where
     f proto l s as io
         | full = getAddressesTxsFull l s as .| streamAny net proto io
         | otherwise = getAddressesTxsLimit l s as .| streamAny net proto io
 
-scottyAddressUnspent :: Network -> WebM ()
+scottyAddressUnspent :: MonadUnliftIO m => Network -> WebT m ()
 scottyAddressUnspent net = do
     cors
     a <- parseAddress net
     (l, s) <- parseLimits
     proto <- setupBin
-    run <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        run . runConduit $
+        runResourceT . withLayeredDB db . runConduit $
             getAddressUnspentsLimit l s a .| streamAny net proto io
-        liftIO flush'
+        flush'
 
-scottyAddressesUnspent :: Network -> WebM ()
+scottyAddressesUnspent :: MonadUnliftIO m => Network -> WebT m ()
 scottyAddressesUnspent net = do
     cors
     as <- parseAddresses net
     (l, s) <- parseLimits
     proto <- setupBin
-    run <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        run . runConduit $
+        runResourceT . withLayeredDB db . runConduit $
             getAddressesUnspentsLimit l s as .| streamAny net proto io
-        liftIO flush'
+        flush'
 
-scottyAddressBalance :: Network -> WebM ()
+scottyAddressBalance :: MonadIO m => Network -> WebT m ()
 scottyAddressBalance net = do
     cors
     address <- parseAddress net
@@ -292,7 +320,7 @@ scottyAddressBalance net = do
                         }
     protoSerial net proto res
 
-scottyAddressesBalances :: Network -> WebM ()
+scottyAddressesBalances :: MonadIO m => Network -> WebT m ()
 scottyAddressesBalances net = do
     cors
     as <- parseAddresses net
@@ -310,25 +338,26 @@ scottyAddressesBalances net = do
     res <- mapM (\a -> f a <$> getBalance a) as
     protoSerial net proto res
 
-scottyXpubBalances :: Network -> WebM ()
+scottyXpubBalances :: MonadUnliftIO m => Network -> WebT m ()
 scottyXpubBalances net = do
     cors
     xpub <- parseXpub net
     proto <- setupBin
-    res <- lift $ xpubBals xpub
+    db <- askDB
+    res <- liftIO . runResourceT . withLayeredDB db $ xpubBals xpub
     protoSerial net proto res
 
-scottyXpubTxs :: Network -> Bool -> WebM ()
+scottyXpubTxs :: MonadUnliftIO m => Network -> Bool -> WebT m ()
 scottyXpubTxs net full = do
     cors
     x <- parseXpub net
     (l, s) <- parseLimits
     proto <- setupBin
-    bs <- lift $ xpubBals x
-    run <- lift askRunInIO
+    db <- askDB
+    bs <- liftIO . runResourceT . withLayeredDB db $ xpubBals x
     stream $ \io flush' -> do
-        run . runConduit $ f proto l s bs io
-        liftIO flush'
+        runResourceT . withLayeredDB db . runConduit $ f proto l s bs io
+        flush'
   where
     f proto l s bs io
         | full =
@@ -338,28 +367,34 @@ scottyXpubTxs net full = do
             getAddressesTxsLimit l s (map (balanceAddress . xPubBal) bs) .|
             streamAny net proto io
 
-scottyXpubUnspents :: Network -> WebM ()
+scottyXpubUnspents :: MonadIO m => Network -> WebT m ()
 scottyXpubUnspents net = do
     cors
     x <- parseXpub net
     proto <- setupBin
     (l, s) <- parseLimits
-    run <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        run . runConduit $ xpubUnspentLimit net l s x .| streamAny net proto io
-        liftIO flush'
+        runResourceT . withLayeredDB db . runConduit $
+            xpubUnspentLimit net l s x .| streamAny net proto io
+        flush'
 
-scottyXpubSummary :: Network -> WebM ()
+scottyXpubSummary :: MonadUnliftIO m => Network -> WebT m ()
 scottyXpubSummary net = do
     cors
     x <- parseXpub net
     (l, s) <- parseLimits
     proto <- setupBin
-    res <- lift $ xpubSummary l s x
+    db <- askDB
+    res <- liftIO . runResourceT . withLayeredDB db $ xpubSummary l s x
     protoSerial net proto res
 
 scottyPostTx ::
-       Network -> Store -> Publisher StoreEvent -> WebM ()
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Network
+    -> Store
+    -> Publisher StoreEvent
+    -> WebT m ()
 scottyPostTx net st pub = do
     cors
     proto <- setupBin
@@ -388,20 +423,20 @@ scottyPostTx net st pub = do
                 cs (show e)
             finish
 
-scottyDbStats :: DB -> WebM ()
-scottyDbStats db = do
+scottyDbStats :: MonadIO m => WebT m ()
+scottyDbStats = do
     cors
-    getProperty db Stats >>= text . cs . fromJust
+    LayeredDB {layeredDB = BlockDB {blockDB = db}} <- askDB
+    lift (getProperty db Stats) >>= text . cs . fromJust
 
-scottyEvents :: Network -> Publisher StoreEvent -> WebM ()
+scottyEvents :: MonadUnliftIO m => Network -> Publisher StoreEvent -> WebT m ()
 scottyEvents net pub = do
     cors
     proto <- setupBin
-    run <- lift askRunInIO
     stream $ \io flush' ->
-        run . withSubscription pub $ \sub ->
+        withSubscription pub $ \sub ->
             forever $
-            liftIO flush' >> receive sub >>= \se -> do
+            flush' >> receive sub >>= \se -> do
                 let me =
                         case se of
                             StoreBestBlock block_hash ->
@@ -410,22 +445,22 @@ scottyEvents net pub = do
                             _ -> Nothing
                 case me of
                     Nothing -> return ()
-                    Just e -> do
+                    Just e ->
                         let bs =
                                 serialAny net proto e <>
                                 if proto
                                     then mempty
                                     else "\n"
-                        liftIO $ io (lazyByteString bs)
+                         in io (lazyByteString bs)
 
-scottyPeers :: Network -> Store -> WebM ()
+scottyPeers :: MonadIO m => Network -> Store -> WebT m ()
 scottyPeers net st = do
     cors
     proto <- setupBin
     ps <- getPeersInformation (storeManager st)
     protoSerial net proto ps
 
-scottyHealth :: Network -> Store -> WebM ()
+scottyHealth :: MonadUnliftIO m => Network -> Store -> WebT m ()
 scottyHealth net st = do
     cors
     proto <- setupBin
@@ -433,16 +468,15 @@ scottyHealth net st = do
     when (not (healthOK h) || not (healthSynced h)) $ status status503
     protoSerial net proto h
 
-runWeb :: MonadLoggerIO m => WebConfig -> m ()
+runWeb :: (MonadLoggerIO m, MonadUnliftIO m) => WebConfig -> m ()
 runWeb WebConfig { webDB = db
-                 , webCache = cache
                  , webPort = port
                  , webNetwork = net
                  , webStore = st
                  , webPublisher = pub
                  } = do
-    l <- askLoggerIO
-    scottyT port (scottyRunner db cache l) $ do
+    runner <- askRunInIO
+    scottyT port (runner . withLayeredDB db) $ do
         defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
         S.get "/block/:block" $ scottyBlock net
@@ -471,7 +505,7 @@ runWeb WebConfig { webDB = db
         S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net
         S.get "/xpub/:xpub" $ scottyXpubSummary net
         S.post "/transactions" $ scottyPostTx net st pub
-        S.get "/dbstats" $ scottyDbStats db
+        S.get "/dbstats" $ scottyDbStats
         S.get "/events" $ scottyEvents net pub
         S.get "/peers" $ scottyPeers net st
         S.get "/health" $ scottyHealth net st
@@ -512,22 +546,11 @@ parseXpub net = do
         Nothing -> next
         Just x  -> return x
 
-runCached = withCachedDB defaultReadOptions
-
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
 parseNoTx = param "notx" `rescue` const (return False)
 
 pruneTx False b = b
 pruneTx True b  = b {blockDataTxs = take 1 (blockDataTxs b)}
-
-scottyRunner ::
-       DB
-    -> Maybe Cache
-    -> (Loc -> LogSource -> LogLevel -> LogStr -> IO ())
-    -> ReaderT CachedDB (LoggingT (ResourceT IO)) a
-    -> IO a
-scottyRunner db cache l f =
-    runResourceT $ runLoggingT (withCachedDB defaultReadOptions db cache f) l
 
 cors :: Monad m => ActionT e m ()
 cors = setHeader "Access-Control-Allow-Origin" "*"
@@ -577,31 +600,11 @@ setupBin =
   where
     is_binary = (== "application/octet-stream")
 
-instance MonadLoggerIO WebM where
+instance MonadLoggerIO m => MonadLoggerIO (WebT m) where
     askLoggerIO = lift askLoggerIO
 
-instance MonadLogger WebM where
+instance MonadLogger m => MonadLogger (WebT m) where
     monadLoggerLog loc src lvl = lift . monadLoggerLog loc src lvl
-
-instance StoreStream WebM where
-    getMempool = transPipe lift . getMempool
-    getOrphans = transPipe lift getOrphans
-    getAddressUnspents a = transPipe lift . getAddressUnspents a
-    getAddressTxs a = transPipe lift . getAddressTxs a
-    getAddressBalances = transPipe lift getAddressBalances
-    getUnspents = transPipe lift getUnspents
-
-instance StoreRead WebM where
-    isInitialized = lift isInitialized
-    getBestBlock = lift getBestBlock
-    getBlocksAtHeight = lift . getBlocksAtHeight
-    getBlock = lift . getBlock
-    getTxData = lift . getTxData
-    getSpender = lift . getSpender
-    getSpenders = lift . getSpenders
-    getOrphanTx = lift . getOrphanTx
-    getUnspent = lift . getUnspent
-    getBalance = lift . getBalance
 
 healthCheck ::
        (MonadUnliftIO m, StoreRead m)
@@ -657,7 +660,7 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
 xpubBals xpub = do
-    (_, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
+    (rk, ss) <- allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     e <- newTVarIO False
     q0 <- newTBQueueIO 20
     q1 <- newTBQueueIO 20
@@ -669,6 +672,7 @@ xpubBals xpub = do
                         xs0 <- wait r0
                         xs1 <- wait r1
                         return $ xs0 <> xs1
+    release rk
     return xs
   where
     stp e =
@@ -709,8 +713,7 @@ xpubBals xpub = do
                 Nothing -> return ()
 
 xpubUnspent ::
-       ( MonadLogger m
-       , MonadResource m
+       ( MonadResource m
        , MonadUnliftIO m
        , StoreStream m
        , StoreRead m
@@ -720,42 +723,26 @@ xpubUnspent ::
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
 xpubUnspent net mbr xpub = do
-    $(logDebugS) "Web" "Allocating shared resource for cleanup"
     (_, as) <-
         lift $ allocate (newTVarIO []) (\as -> readTVarIO as >>= mapM_ cancel)
     xs <-
         lift $ do
-            $(logDebugS) "Web" "Getting xpub balances"
             bals <- xpubBals xpub
-            $(logDebugS) "Web" "Launching unspent async pipes"
             forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} -> do
                 q <- newTBQueueIO 50
                 a <-
-                    async $ do
-                        $(logDebugS) "Web" $
-                            "Start getting unspents for " <>
-                            fromMaybe
-                                "???"
-                                (addrToString net (balanceAddress b))
-                        runConduit $
-                            getAddressUnspents (balanceAddress b) mbr .|
-                            mapC (f p) .|
-                            conduitToQueue q
-                        $(logDebugS) "Web" $
-                            "Finished getting unspents for " <>
-                            fromMaybe
-                                "???"
-                                (addrToString net (balanceAddress b))
+                    async $
+                    runConduit $
+                    getAddressUnspents (balanceAddress b) mbr .| mapC (f p) .|
+                    conduitToQueue q
                 atomically $ modifyTVar as (a :)
                 return $ queueToConduit q
-    $(logDebugS) "Web" "Getting all unspents"
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
 
 xpubUnspentLimit ::
-       ( MonadLogger m
-       , MonadResource m
+       ( MonadResource m
        , MonadUnliftIO m
        , StoreStream m
        , StoreRead m
@@ -817,36 +804,43 @@ xpubSummary l s x = do
 -- specified height. Returns 'Nothing' if answer cannot be computed before
 -- hitting limits.
 cbAfterHeight ::
-       (Monad m, StoreRead m)
+       (MonadIO m, StoreRead m)
     => Int -- ^ how many ancestors to test before giving up
     -> BlockHeight
     -> TxHash
     -> m TxAfterHeight
 cbAfterHeight d h t
     | d <= 0 = return $ TxAfterHeight Nothing
-    | otherwise = TxAfterHeight <$> runMaybeT (snd <$> tst d t)
+    | otherwise = do
+        x <- fmap snd <$> tst d t
+        return $ TxAfterHeight x
   where
     tst e x
-        | e <= 0 = MaybeT $ return Nothing
+        | e <= 0 = return Nothing
         | otherwise = do
             let e' = e - 1
-            tx <- MaybeT $ getTransaction x
-            if any isCoinbase (transactionInputs tx)
-                then return (e', blockRefHeight (transactionBlock tx) > h)
-                else case transactionBlock tx of
-                         BlockRef {blockRefHeight = b}
-                             | b <= h -> return (e', False)
-                         _ ->
-                             r e' . nub $
-                             map
-                                 (outPointHash . inputPoint)
-                                 (transactionInputs tx)
-    r e [] = return (e, False)
-    r e (n:ns) = do
-        (e', s) <- tst e n
-        if s
-            then return (e', True)
-            else r e' ns
+            getTransaction x >>= \case
+                Nothing -> return Nothing
+                Just tx ->
+                    if any isCoinbase (transactionInputs tx)
+                        then return $
+                             Just (e', blockRefHeight (transactionBlock tx) > h)
+                        else case transactionBlock tx of
+                                 BlockRef {blockRefHeight = b}
+                                     | b <= h -> return $ Just (e', False)
+                                 _ ->
+                                     r e' . nub $
+                                     map
+                                         (outPointHash . inputPoint)
+                                         (transactionInputs tx)
+    r e [] = return $ Just (e, False)
+    r e (n:ns) =
+        tst e n >>= \case
+            Nothing -> return Nothing
+            Just (e', s) ->
+                if s
+                    then return $ Just (e', True)
+                    else r e' ns
 
 -- Snatched from:
 -- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs

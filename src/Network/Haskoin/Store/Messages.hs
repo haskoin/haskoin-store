@@ -39,14 +39,12 @@ data StoreConfig =
       -- ^ static set of peers to connect to
         , storeConfDiscover  :: !Bool
       -- ^ discover new peers?
-        , storeConfDB        :: !DB
+        , storeConfDB        :: !LayeredDB
       -- ^ RocksDB database handler
         , storeConfNetwork   :: !Network
       -- ^ network constants
         , storeConfListen    :: !(Listen StoreEvent)
       -- ^ listen to store events
-        , storeConfCache     :: !(Maybe Cache)
-      -- ^ cache UTXO and address balances
         }
 
 -- | Configuration for a block store.
@@ -58,12 +56,10 @@ data BlockConfig =
       -- ^ chain from a running node
         , blockConfListener :: !(Listen StoreEvent)
       -- ^ listener for store events
-        , blockConfDB       :: !DB
+        , blockConfDB       :: !LayeredDB
       -- ^ RocksDB database handle
         , blockConfNet      :: !Network
       -- ^ network constants
-        , blockConfCache    :: !(Maybe Cache)
-      -- ^ cache UTXO and address balances
         }
 
 -- | Messages that a 'BlockStore' can accept.

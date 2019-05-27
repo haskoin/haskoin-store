@@ -35,9 +35,10 @@ module Haskoin.Store
     , StartFrom(..)
     , UnixTime
     , BlockPos
-    , Cache
+    , BlockDB(..)
+    , LayeredDB(..)
     , WebConfig(..)
-    , newCache
+    , newLayeredDB
     , withStore
     , runWeb
     , store
@@ -72,10 +73,8 @@ module Haskoin.Store
     , confirmed
     , cbAfterHeight
     , healthCheck
-    , mergeSourcesBy
-    , withBlockDB
-    , withBlockSTM
-    , withCachedDB
+    , withBlockMem
+    , withLayeredDB
     ) where
 
 import           Conduit
@@ -97,8 +96,8 @@ import           Haskoin.Node
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.Cached
+import           Network.Haskoin.Store.Data.Memory
 import           Network.Haskoin.Store.Data.RocksDB
-import           Network.Haskoin.Store.Data.STM
 import           Network.Haskoin.Store.Messages
 import           Network.Haskoin.Store.Web
 import           Network.Socket                     (SockAddr (..))
@@ -136,7 +135,7 @@ store cfg mgri chi bsi = do
     let ncfg =
             NodeConfig
                 { nodeConfMaxPeers = storeConfMaxPeers cfg
-                , nodeConfDB = storeConfDB cfg
+                , nodeConfDB = blockDB . layeredDB $ storeConfDB cfg
                 , nodeConfPeers = storeConfInitPeers cfg
                 , nodeConfDiscover = storeConfDiscover cfg
                 , nodeConfEvents = storeDispatch b l
@@ -153,7 +152,6 @@ store cfg mgri chi bsi = do
                     , blockConfListener = l
                     , blockConfDB = storeConfDB cfg
                     , blockConfNet = storeConfNetwork cfg
-                    , blockConfCache = storeConfCache cfg
                     }
         blockStore bcfg bsi
   where
