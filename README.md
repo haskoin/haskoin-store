@@ -27,7 +27,7 @@ A memory-based RocksDB database can be used as a cache to store:
 * Address balances.
 * Unspent outputs.
 
-Give `haskoin-store` the path to a directory mapped to RAM, and it will be used to create a RockDB database for caching. Needs at least 30 GB
+Give `haskoin-store` the path to a directory mapped to RAM, and it will populate a RockDB database for caching. Needs around 25 GB at the moment (May 2019).
 
 
 ## API Documentation
