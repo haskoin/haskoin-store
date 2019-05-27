@@ -696,7 +696,7 @@ xpubBals xpub = do
         return s
     as m = map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
     f ss e n
-        | n <= 20 =
+        | n < 20 =
             await >>= \case
                 Just a ->
                     wait a >>= \case
