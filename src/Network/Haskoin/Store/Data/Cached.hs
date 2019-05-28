@@ -32,6 +32,7 @@ newLayeredDB blocks Nothing =
 newLayeredDB blocks (Just cache) = do
     bulkCopy opts db cdb BalKeyS
     bulkCopy opts db cdb UnspentKeyB
+    bulkCopy opts db cdb MemKeyS
     return LayeredDB {layeredDB = blocks, layeredCache = Just cache}
   where
     BlockDB {blockDBopts = opts, blockDB = db} = blocks
@@ -81,7 +82,8 @@ getMempoolC ::
     => Maybe UnixTime
     -> LayeredDB
     -> ConduitT () (UnixTime, TxHash) m ()
-getMempoolC mpu LayeredDB {layeredDB = db} = getMempoolDB mpu db
+getMempoolC mpu LayeredDB {layeredCache = Just db} = getMempoolDB mpu db
+getMempoolC mpu LayeredDB {layeredDB = db}         = getMempoolDB mpu db
 
 getOrphansC ::
        (MonadUnliftIO m, MonadResource m)

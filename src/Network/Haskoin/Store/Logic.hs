@@ -54,6 +54,7 @@ data ImportException
 initDB ::
        ( StoreRead m
        , StoreWrite m
+       , StoreStream m
        , MonadLogger m
        , MonadError ImportException m
        )
@@ -75,10 +76,7 @@ initDB net =
             importBlock net (genesisBlock net) (genesisNode net)
             setInit
 
-getOldOrphans ::
-       (StoreStream m, MonadResource m)
-    => UnixTime
-    -> ConduitT () TxHash m ()
+getOldOrphans :: (Monad m, StoreStream m) => UnixTime -> ConduitT () TxHash m ()
 getOldOrphans now =
     getOrphans .| filterC ((< now - 600) . fst) .| mapC (txHash . snd)
 
@@ -222,6 +220,7 @@ revertBlock net bh = do
 
 importBlock ::
        ( StoreRead m
+       , StoreStream m
        , StoreWrite m
        , MonadLogger m
        , MonadError ImportException m
@@ -231,59 +230,66 @@ importBlock ::
     -> BlockNode
     -> m ()
 importBlock net b n = do
-        getBestBlock >>= \case
-            Nothing
-                | isGenesis n -> do
-                    $(logInfoS) "BlockLogic" $
-                        "Importing genesis block: " <>
-                        blockHashToHex (headerHash (nodeHeader n))
-                    return ()
-                | otherwise -> do
-                    $(logErrorS) "BlockLogic" $
-                        "Importing non-genesis block when best block unknown: " <>
-                        blockHashToHex (headerHash (blockHeader b))
-                    throwError BestBlockUnknown
-            Just h
-                | prevBlock (blockHeader b) == h -> return ()
-                | otherwise -> do
-                    $(logErrorS) "BlockLogic" $
-                        "Block " <> blockHashToHex (headerHash (blockHeader b)) <>
-                        " does not build on current best " <>
-                        blockHashToHex h
-                    throwError
-                        (PrevBlockNotBest
-                             (blockHashToHex (prevBlock (nodeHeader n))))
-        insertBlock
-            BlockData
-                { blockDataHeight = nodeHeight n
-                , blockDataMainChain = True
-                , blockDataWork = nodeWork n
-                , blockDataHeader = nodeHeader n
-                , blockDataSize = fromIntegral (B.length (encode b))
-                , blockDataTxs = map txHash (blockTxns b)
-                , blockDataWeight = fromIntegral w
-                , blockDataSubsidy = subsidy (nodeHeight n)
-                , blockDataFees = cb_out_val - subsidy (nodeHeight n)
-                , blockDataOutputs = ts_out_val
-                }
-        insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
-        setBest (headerHash (nodeHeader n))
-        $(logDebugS) "Block" $ "Importing or confirming block transactions..."
-        mapM_ (uncurry import_or_confirm) (sortTxs (blockTxns b))
-        $(logDebugS) "Block" $
-            "Done importing transactions for block " <>
-            blockHashToHex (headerHash (nodeHeader n))
+    mp <-
+        runConduit $
+        getMempool Nothing .| mapC snd .| filterC (`elem` bths) .| sinkList
+    getBestBlock >>= \case
+        Nothing
+            | isGenesis n -> do
+                $(logInfoS) "BlockLogic" $
+                    "Importing genesis block: " <>
+                    blockHashToHex (headerHash (nodeHeader n))
+                return ()
+            | otherwise -> do
+                $(logErrorS) "BlockLogic" $
+                    "Importing non-genesis block when best block unknown: " <>
+                    blockHashToHex (headerHash (blockHeader b))
+                throwError BestBlockUnknown
+        Just h
+            | prevBlock (blockHeader b) == h -> return ()
+            | otherwise -> do
+                $(logErrorS) "BlockLogic" $
+                    "Block " <> blockHashToHex (headerHash (blockHeader b)) <>
+                    " does not build on current best " <>
+                    blockHashToHex h
+                throwError
+                    (PrevBlockNotBest
+                         (blockHashToHex (prevBlock (nodeHeader n))))
+    insertBlock
+        BlockData
+            { blockDataHeight = nodeHeight n
+            , blockDataMainChain = True
+            , blockDataWork = nodeWork n
+            , blockDataHeader = nodeHeader n
+            , blockDataSize = fromIntegral (B.length (encode b))
+            , blockDataTxs = map txHash (blockTxns b)
+            , blockDataWeight = fromIntegral w
+            , blockDataSubsidy = subsidy (nodeHeight n)
+            , blockDataFees = cb_out_val - subsidy (nodeHeight n)
+            , blockDataOutputs = ts_out_val
+            }
+    insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
+    setBest (headerHash (nodeHeader n))
+    $(logDebugS) "Block" $ "Importing or confirming block transactions..."
+    mapM_ (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
+    $(logDebugS) "Block" $
+        "Done importing transactions for block " <>
+        blockHashToHex (headerHash (nodeHeader n))
   where
-    import_or_confirm x tx =
-        getTxData (txHash tx) >>= \case
-            Just t
-                | x > 0 && not (txDataDeleted t) -> do confirmTx net t (br x) tx
-            _ -> do
-                importTx
-                    net
-                    (br x)
-                    (fromIntegral (blockTimestamp (nodeHeader n)))
-                    tx
+    bths = map txHash (blockTxns b)
+    import_or_confirm mp x tx =
+        if txHash tx `elem` mp
+            then getTxData (txHash tx) >>= \case
+                     Just td -> confirmTx net td (br x) tx
+                     Nothing -> do
+                         $(logErrorS) "Block" $
+                             "Cannot get data for transaction in mempool"
+                         throwError $ TxNotFound (txHashToHex (txHash tx))
+            else importTx
+                     net
+                     (br x)
+                     (fromIntegral (blockTimestamp (nodeHeader n)))
+                     tx
     subsidy = computeSubsidy net
     cb_out_val = sum (map outValue (txOut (head (blockTxns b))))
     ts_out_val = sum (map (sum . map outValue . txOut) (tail (blockTxns b)))

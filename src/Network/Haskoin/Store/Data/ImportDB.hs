@@ -77,8 +77,7 @@ hashMapOps db =
 
 cacheMapOps :: BlockMem -> [BatchOp]
 cacheMapOps db =
-    balOps (hBalance db) <>
-    unspentOps (hUnspent db)
+    balOps (hBalance db) <> mempoolOps (hMempool db) <> unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
 bestBlockOp Nothing  = []
@@ -315,6 +314,29 @@ deleteUnspentI :: MonadIO m => OutPoint -> ImportDB -> m ()
 deleteUnspentI p ImportDB {importHashMap = hm} =
     withBlockMem hm $ deleteUnspent p
 
+getMempoolI ::
+       MonadIO m
+    => Maybe UnixTime
+    -> ImportDB
+    -> ConduitT () (UnixTime, TxHash) m ()
+getMempoolI mpu ImportDB {importHashMap = hm, importLayeredDB = db} = do
+    h <- hMempool <$> readTVarIO hm
+    let hmap =
+            M.fromList . filter tfilter $
+            concatMap
+                (\(u, l) -> map (\(t, b) -> ((u, t), b)) (M.toList l))
+                (M.toList h)
+    dmap <-
+        fmap M.fromList . liftIO . runResourceT . withLayeredDB db . runConduit $
+        getMempool mpu .| mapC (, True) .| sinkList
+    let rmap = M.filter id (M.union hmap dmap)
+    yieldMany $ sortBy (flip compare) (M.keys rmap)
+  where
+    tfilter =
+        case mpu of
+            Just x -> (<= x) . fst . fst
+            Nothing -> const True
+
 instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     isInitialized = R.ask >>= isInitializedI
     getBestBlock = R.ask >>= getBestBlockI
@@ -346,3 +368,11 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     insertUnspent u = R.ask >>= insertUnspentI u
     deleteUnspent p = R.ask >>= deleteUnspentI p
     setBalance b = R.ask >>= setBalanceI b
+
+instance MonadIO m => StoreStream (ReaderT ImportDB m) where
+    getMempool m = R.ask >>= getMempoolI m
+    getOrphans = undefined
+    getAddressUnspents a m = undefined
+    getAddressTxs a m = undefined
+    getAddressBalances = undefined
+    getUnspents = undefined
