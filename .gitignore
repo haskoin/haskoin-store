@@ -22,3 +22,5 @@ cabal.project.local~
 .ghc.environment.*
 haskoin-store.cabal
 TAGS
+.idea/
+*.iml
