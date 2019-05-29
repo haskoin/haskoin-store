@@ -62,6 +62,9 @@ tests:
   haskoin-store-test:
     main: Spec.hs
     source-dirs: test
+    verbatim:
+      build-tool-depends:
+        hspec-discover:hspec-discover
     ghc-options:
       - -threaded
       - -rtsopts
