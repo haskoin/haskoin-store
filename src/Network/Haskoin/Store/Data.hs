@@ -131,6 +131,9 @@ instance JsonSerial TxHash where
 instance BinSerial TxHash where
     binSerial _ = put
 
+instance BinDeserial TxHash where
+    binDeserial _ = get
+
 instance BinSerial Address where
     binSerial net a =
         case addrToString net a of
@@ -139,6 +142,9 @@ instance BinSerial Address where
 
 class BinSerial a where
     binSerial :: Network -> Putter a
+
+class BinDeserial a where
+    binDeserial :: Network -> Get a
 
 instance BinSerial a => BinSerial [a] where
     binSerial net = putListOf (binSerial net)
