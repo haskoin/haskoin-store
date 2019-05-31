@@ -26,5 +26,3 @@ spec = do
           raw = runPut $ binSerial net tx
           deserial = runGet (binDeserial net) raw
       fromRight def deserial `shouldBe` tx
-
-
