@@ -132,13 +132,24 @@ instance BinSerial TxHash where
     binSerial _ = put
 
 instance BinDeserial TxHash where
-    binDeserial _ = get
+    binDeserial _  = get
 
 instance BinSerial Address where
     binSerial net a =
         case addrToString net a of
             Nothing -> put B.empty
             Just x  -> put $ T.encodeUtf8 x
+
+instance BinDeserial Address where
+    binDeserial net = do
+      bs <- get
+      guard (not (B.null bs))
+      t <- case T.decodeUtf8' bs of
+        Left _ -> mzero
+        Right v -> return v
+      case stringToAddr net t of
+        Nothing -> mzero
+        Just x -> return x
 
 class BinSerial a where
     binSerial :: Network -> Putter a
