@@ -51,6 +51,7 @@ data Config = Config
     , configPeers    :: ![(Host, Maybe Port)]
     , configVersion  :: !Bool
     , configCache    :: !FilePath
+    , configDebug    :: !Bool
     }
 
 defPort :: Int
@@ -93,6 +94,8 @@ config = do
         value ""
     configVersion <-
         switch $ long "version" <> short 'v' <> help "Show version"
+    configDebug <-
+        switch $ long "debug" <> help "Show debug messages"
     return Config {..}
 
 networkReader :: String -> Either String Network
@@ -124,15 +127,14 @@ myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
 {-# NOINLINE myDirectory #-}
 
 main :: IO ()
-main =
-    runStderrLoggingT $ do
-        conf <- liftIO (execParser opts)
-        when (configVersion conf) . liftIO $ do
-            putStrLn $ showVersion P.version
-            exitSuccess
-        when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
-            die "ERROR: Specify peers to connect or enable peer discovery."
-        run conf
+main = do
+    conf <- liftIO (execParser opts)
+    when (configVersion conf) . liftIO $ do
+        putStrLn $ showVersion P.version
+        exitSuccess
+    when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
+        die "ERROR: Specify peers to connect or enable peer discovery."
+    run conf
   where
     opts =
         info (helper <*> config) $
@@ -144,15 +146,16 @@ cacheDir :: Network -> FilePath -> Maybe FilePath
 cacheDir net "" = Nothing
 cacheDir net ch = Just (ch </> getNetworkName net </> "cache")
 
-run :: (MonadLoggerIO m, MonadUnliftIO m) => Config -> m ()
+run :: MonadUnliftIO m => Config -> m ()
 run Config { configPort = port
            , configNetwork = net
            , configDiscover = disc
            , configPeers = peers
            , configCache = cache_path
            , configDir = db_dir
+           , configDebug = deb
            } =
-    flip finally clear $ do
+    runStderrLoggingT . filterLogger l . flip finally clear $ do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
@@ -209,6 +212,9 @@ run Config { configPort = port
                                 }
                      in runWeb wcfg
   where
+    l _ lvl
+        | deb = True
+        | otherwise = LevelWarn <= lvl
     clear =
         case cd of
             Nothing -> return ()
