@@ -143,11 +143,11 @@ instance BinSerial Address where
           bs <- get
           guard (not (B.null bs))
           t <- case T.decodeUtf8' bs of
-            Left _ -> mzero
+            Left _  -> mzero
             Right v -> return v
           case stringToAddr net t of
             Nothing -> mzero
-            Just x -> return x
+            Just x  -> return x
 
 class BinSerial a where
     binSerial :: Network -> Putter a
