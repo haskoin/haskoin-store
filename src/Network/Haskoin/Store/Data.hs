@@ -157,6 +157,7 @@ class BinSerial a where
 
 instance BinSerial a => BinSerial [a] where
     binSerial net = putListOf (binSerial net)
+    binDeserial net = getListOf (binDeserial net)
 
 -- | Reference to a block where a transaction is stored.
 data BlockRef
