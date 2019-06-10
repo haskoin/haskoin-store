@@ -30,7 +30,6 @@ module Haskoin.Store
     , TxAfterHeight(..)
     , JsonSerial(..)
     , BinSerial(..)
-    , BinDeserial(..)
     , Except(..)
     , TxId(..)
     , StartFrom(..)
