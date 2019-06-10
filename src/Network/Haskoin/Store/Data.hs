@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+
 module Network.Haskoin.Store.Data where
 
 import           Conduit
@@ -130,8 +131,6 @@ instance JsonSerial TxHash where
 
 instance BinSerial TxHash where
     binSerial _ = put
-
-instance BinDeserial TxHash where
     binDeserial _  = get
 
 instance BinSerial Address where
@@ -140,22 +139,21 @@ instance BinSerial Address where
             Nothing -> put B.empty
             Just x  -> put $ T.encodeUtf8 x
 
-instance BinDeserial Address where
     binDeserial net = do
-      bs <- get
-      guard (not (B.null bs))
-      t <- case T.decodeUtf8' bs of
-        Left _ -> mzero
-        Right v -> return v
-      case stringToAddr net t of
-        Nothing -> mzero
-        Just x -> return x
+          bs <- get
+          guard (not (B.null bs))
+          t <- case T.decodeUtf8' bs of
+            Left _ -> mzero
+            Right v -> return v
+          case stringToAddr net t of
+            Nothing -> mzero
+            Just x -> return x
 
 class BinSerial a where
     binSerial :: Network -> Putter a
 
-class BinDeserial a where
     binDeserial :: Network -> Get a
+    binDeserial _ = mzero
 
 instance BinSerial a => BinSerial [a] where
     binSerial net = putListOf (binSerial net)
