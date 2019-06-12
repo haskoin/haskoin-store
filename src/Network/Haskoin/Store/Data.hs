@@ -969,37 +969,6 @@ instance JsonSerial TxAfterHeight where
 instance BinSerial TxAfterHeight where
     binSerial _ TxAfterHeight {txAfterHeight = a} = put a
 
-data Except
-    = ThingNotFound
-    | ServerError
-    | BadRequest
-    | UserError String
-    | StringError String
-    deriving Eq
-
-instance Show Except where
-    show ThingNotFound   = "not found"
-    show ServerError     = "you made me kill a unicorn"
-    show BadRequest      = "bad request"
-    show (UserError s)   = s
-    show (StringError _) = "you made me kill a unicorn"
-
-instance Exception Except
-
-instance Scotty.ScottyError Except where
-    stringError = StringError
-    showError = T.Lazy.pack . show
-
-instance ToJSON Except where
-    toJSON e = object ["error" .= T.pack (show e)]
-
-instance JsonSerial Except where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial Except where
-    binSerial _ = put . T.encodeUtf8 . T.pack . show
-
 newtype TxId = TxId TxHash deriving (Show, Eq, Generic)
 
 instance ToJSON TxId where

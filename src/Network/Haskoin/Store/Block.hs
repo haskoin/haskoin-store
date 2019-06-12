@@ -150,9 +150,8 @@ processBlock p b = do
     void . runMaybeT $ do
         iss >>= \x ->
             unless x $ do
-                $(logErrorS)
-                    "Block"
-                    ("Cannot accept block " <> hex <> " from non-syncing peer")
+                $(logErrorS) "Block" $
+                    "Cannot accept block " <> hex <> " from non-syncing peer"
                 mzero
         n <- cbn
         upr
@@ -228,7 +227,7 @@ processTx _p tx =
             net <- asks (blockConfNet . myConfig)
             runImport (newMempoolTx net tx now) >>= \case
                 Left e ->
-                    $(logErrorS) "Block" $
+                    $(logWarnS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
                     fromString (show e)
                 Right True -> do
@@ -268,7 +267,7 @@ processOrphans =
                     "Importing " <> cs (show (length orphans)) <>
                     " orphan transactions"
             forM_ orphans $ runImport . uncurry (importOrphan net)
-            $(logDebugS) "Block" $ "Finished importing orphans"
+            $(logDebugS) "Block" "Finished importing orphans"
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)

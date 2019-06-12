@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.16.2
+version: 0.16.3
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
@@ -40,6 +40,7 @@ dependencies:
   - transformers
   - unliftio
   - unordered-containers
+  - uuid
 library:
   source-dirs: src
   generated-exposed-modules:

@@ -106,7 +106,7 @@ importOrphan net t tx = do
                 "Orphan transaction already imported: " <>
                 txHashToHex (txHash tx)
         deleteOrphanTx (txHash tx)
-    ex (OrphanTx _) = do
+    ex (OrphanTx _) =
         $(logDebugS) "BlockLogic" $
             "Transaction still orphan: " <> txHashToHex (txHash tx)
     ex e = do
@@ -270,7 +270,7 @@ importBlock net b n = do
             }
     insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
-    $(logDebugS) "Block" $ "Importing or confirming block transactions..."
+    $(logDebugS) "Block" "Importing or confirming block transactions..."
     mapM_ (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
     $(logDebugS) "Block" $
         "Done importing transactions for block " <>
@@ -282,7 +282,8 @@ importBlock net b n = do
             then getTxData (txHash tx) >>= \case
                      Just td -> confirmTx net td (br x) tx
                      Nothing -> do
-                         $(logErrorS) "Block" $
+                         $(logErrorS)
+                             "Block"
                              "Cannot get data for transaction in mempool"
                          throwError $ TxNotFound (txHashToHex (txHash tx))
             else importTx
@@ -330,54 +331,49 @@ importTx ::
     -> Tx
     -> m ()
 importTx net br tt tx = do
-        when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
-            $(logErrorS) "BlockLogic" $
-                "Transaction spends same output twice: " <>
-                txHashToHex (txHash tx)
-            throwError (DuplicatePrevOutput (txHashToHex (txHash tx)))
-        when (iscb && not (confirmed br)) $ do
-            $(logErrorS) "BlockLogic" $
-                "Attempting to import coinbase to the mempool: " <>
-                txHashToHex (txHash tx)
-            throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
-        us <-
-            if iscb
-                then return []
-                else forM (txIn tx) $ \TxIn {prevOutput = op} -> uns op
-        when
-            (not (confirmed br) &&
-             sum (map unspentAmount us) < sum (map outValue (txOut tx))) $ do
-            $(logErrorS) "BlockLogic" $
-                "Insufficient funds: " <> txHashToHex (txHash tx)
-            throwError (InsufficientFunds (txHashToHex th))
-        zipWithM_
-            (\i u -> spendOutput net br (txHash tx) i u)
-            [0 ..]
-            us
-        zipWithM_
-            (\i o -> newOutput net br (OutPoint (txHash tx) i) o)
-            [0 ..]
-            (txOut tx)
-        rbf <- getrbf
-        let t =
-                Transaction
-                    { transactionBlock = br
-                    , transactionVersion = txVersion tx
-                    , transactionLockTime = txLockTime tx
-                    , transactionInputs =
-                          if iscb
-                              then zipWith mkcb (txIn tx) ws
-                              else zipWith3 mkin us (txIn tx) ws
-                    , transactionOutputs = map mkout (txOut tx)
-                    , transactionDeleted = False
-                    , transactionRBF = rbf
-                    , transactionTime = tt
-                    }
-        let (d, _) = fromTransaction t
-        insertTx d
-        updateAddressCounts net (txAddresses t) (+ 1)
-        unless (confirmed br) $
-            insertMempoolTx (txHash tx) (memRefTime br)
+    when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
+        $(logErrorS) "BlockLogic" $
+            "Transaction spends same output twice: " <> txHashToHex (txHash tx)
+        throwError (DuplicatePrevOutput (txHashToHex (txHash tx)))
+    when (iscb && not (confirmed br)) $ do
+        $(logErrorS) "BlockLogic" $
+            "Attempting to import coinbase to the mempool: " <>
+            txHashToHex (txHash tx)
+        throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
+    us <-
+        if iscb
+            then return []
+            else forM (txIn tx) $ \TxIn {prevOutput = op} -> uns op
+    when
+        (not (confirmed br) &&
+         sum (map unspentAmount us) < sum (map outValue (txOut tx))) $ do
+        $(logErrorS) "BlockLogic" $
+            "Insufficient funds: " <> txHashToHex (txHash tx)
+        throwError (InsufficientFunds (txHashToHex th))
+    zipWithM_ (spendOutput net br (txHash tx)) [0 ..] us
+    zipWithM_
+        (\i o -> newOutput net br (OutPoint (txHash tx) i) o)
+        [0 ..]
+        (txOut tx)
+    rbf <- getrbf
+    let t =
+            Transaction
+                { transactionBlock = br
+                , transactionVersion = txVersion tx
+                , transactionLockTime = txLockTime tx
+                , transactionInputs =
+                      if iscb
+                          then zipWith mkcb (txIn tx) ws
+                          else zipWith3 mkin us (txIn tx) ws
+                , transactionOutputs = map mkout (txOut tx)
+                , transactionDeleted = False
+                , transactionRBF = rbf
+                , transactionTime = tt
+                }
+    let (d, _) = fromTransaction t
+    insertTx d
+    updateAddressCounts net (txAddresses t) (+ 1)
+    unless (confirmed br) $ insertMempoolTx (txHash tx) (memRefTime br)
   where
     uns op =
         getUnspent op >>= \case
@@ -817,7 +813,7 @@ reduceBalance ::
     -> Address
     -> Word64
     -> m ()
-reduceBalance net c t a v = do
+reduceBalance net c t a v =
     getBalance a >>= \case
         Nothing -> do
             $(logErrorS) "BlockLogic" $
@@ -864,10 +860,7 @@ reduceBalance net c t a v = do
         if c
             then "confirmed"
             else "unconfirmed"
-    addr =
-        case addrToString net a of
-            Nothing -> "???"
-            Just x  -> x
+    addr = fromMaybe "???" (addrToString net a)
 
 increaseBalance ::
        ( StoreRead m
