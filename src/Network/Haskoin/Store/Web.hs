@@ -885,23 +885,14 @@ xpubUnspent ::
     -> XPubKey
     -> ConduitT () XPubUnspent m ()
 xpubUnspent net mbr xpub = do
-    (_, as) <-
-        lift $ allocate (newTVarIO []) (readTVarIO >=> mapM_ cancel)
-    xs <-
-        lift $ do
-            bals <- xpubBals xpub
-            forM bals $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
-                mask_ $ do
-                    q <- newTBQueueIO 10
-                    a <-
-                        async . runConduit $
-                        getAddressUnspents (balanceAddress b) mbr .| mapC (f p) .|
-                        conduitToQueue q
-                    atomically $ modifyTVar as (a :)
-                    return $ queueToConduit q
+    xs <- do
+        bs <- lift $ xpubBals xpub
+        return $ map g bs
     mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
+    g XPubBal {xPubBalPath = p, xPubBal = b} =
+        getAddressUnspents (balanceAddress b) mbr .| mapC (f p)
 
 xpubUnspentLimit ::
        ( MonadResource m
@@ -1062,19 +1053,11 @@ getAddressesTxsLimit ::
     -> StartFrom
     -> [Address]
     -> ConduitT () BlockTx m ()
-getAddressesTxsLimit l s addrs = do
-    (_, ss) <- lift $ allocate (newTVarIO []) (readTVarIO >=> mapM_ cancel)
-    xs <-
-        lift . forM addrs $ \addr ->
-            mask_ $ do
-                q <- newTBQueueIO 10
-                a <-
-                    async . runConduit $
-                    getAddressTxs addr (mbr s) .| conduitToQueue q
-                atomically $ modifyTVar ss (a :)
-                return $ queueToConduit q
+getAddressesTxsLimit l s as =
     mergeSourcesBy (flip compare `on` blockTxBlock) xs .| dedup .|
-        (offset s >> limit l)
+    (offset s >> limit l)
+  where
+    xs = map (\a -> getAddressTxs a (mbr s)) as
 
 getAddressesTxsFull ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
