@@ -820,11 +820,11 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 
 xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
-xpubBals xpub =
-    runConduit $
-    mergeSourcesBy (compare `on` xPubBalPath) [go 0, go 1] .| sinkList
+xpubBals xpub = (<>) <$> go 0 <*> go 1
   where
-    go m = yieldMany (addrs m) .| mapMC (uncurry bal) .| gap 20
+    go m =
+        runConduit $
+        yieldMany (addrs m) .| mapMC (uncurry bal) .| gap 20 .| sinkList
     bal a p =
         getBalance a >>= \case
             Nothing -> return Nothing
