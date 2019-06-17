@@ -35,4 +35,3 @@ testSerial net input =
   let raw = runPut $ binSerial net input
       deser = runGet (binDeserial net) raw
   in deser `shouldBe` Right input
-
