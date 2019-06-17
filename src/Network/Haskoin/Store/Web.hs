@@ -820,59 +820,24 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 
 xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
-xpubBals xpub = do
-    (rk, ss) <- allocate (newTVarIO []) (readTVarIO >=> mapM_ cancel)
-    stp0 <- newTVarIO False
-    stp1 <- newTVarIO False
-    q0 <- newTBQueueIO 20
-    q1 <- newTBQueueIO 20
-    xs <-
-        withAsync (go stp0 ss q0 0) $ \_ ->
-            withAsync (go stp1 ss q1 1) $ \_ ->
-                withAsync (red ss stp0 q0) $ \r0 ->
-                    withAsync (red ss stp1 q1) $ \r1 -> do
-                        xs0 <- wait r0
-                        xs1 <- wait r1
-                        return $ xs0 <> xs1
-    release rk
-    return xs
+xpubBals xpub =
+    runConduit $
+    mergeSourcesBy (compare `on` xPubBalPath) [go 0, go 1] .| sinkList
   where
-    stp e =
-        readTVarIO e >>= \s ->
-            if s
-                then return ()
-                else await >>= \case
-                         Nothing -> return ()
-                         Just x -> yield x >> stp e
-    go e ss q m =
-        runConduit $
-        yieldMany (as m) .| stp e .| mapMC (uncurry (b ss)) .| conduitToQueue q
-    red ss e q = runConduit $ queueToConduit q .| f ss e 0 .| sinkList
-    b ss a p = mask_ $ do
-        s <-
-            async $
-            getBalance a >>= \case
-                Nothing -> return Nothing
-                Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
-        atomically $ modifyTVar ss (s :)
-        return s
-    as m = map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
-    f ss e n
-        | n < 20 =
-            await >>= \case
-                Just a ->
-                    wait a >>= \case
-                        Nothing -> f ss e (n + 1)
-                        Just b -> yield b >> f ss e 0
-                Nothing -> return ()
-        | otherwise = do
-            atomically $ writeTVar e True
-            await >>= \case
-                Just a -> do
-                    cancel a
-                    atomically $ modifyTVar ss (Data.List.delete a)
-                    f ss e n
-                Nothing -> return ()
+    go m = yieldMany (addrs m) .| mapMC (uncurry bal) .| gap 20
+    bal a p =
+        getBalance a >>= \case
+            Nothing -> return Nothing
+            Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
+    addrs m =
+        map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
+    gap n =
+        let r 0 = return ()
+            r i =
+                awaitForever $ \case
+                    Just b -> yield b >> r n
+                    Nothing -> r (i - 1)
+         in r n
 
 xpubUnspent ::
        ( MonadResource m

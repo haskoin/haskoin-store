@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.16.5
+### Removed
+- Remove concurrency from xpub balance requests to prevent RocksDB segfaults.
+
 ## 0.16.4
 ### Removed
 - Remove concurrency from requests using iterators to prevent RocksDB from segfaulting.
