@@ -834,9 +834,10 @@ xpubBals xpub = (<>) <$> go 0 <*> go 1
     gap n =
         let r 0 = return ()
             r i =
-                awaitForever $ \case
-                    Just b -> yield b >> r n
-                    Nothing -> r (i - 1)
+                await >>= \case
+                    Just (Just b) -> yield b >> r n
+                    Just Nothing -> r (i - 1)
+                    Nothing -> return ()
          in r n
 
 xpubUnspent ::
