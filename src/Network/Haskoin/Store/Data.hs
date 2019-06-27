@@ -1,8 +1,10 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+
 
 module Network.Haskoin.Store.Data where
 
@@ -34,7 +36,7 @@ import           Data.Word
 import           Database.RocksDB          (DB, ReadOptions)
 import           GHC.Generics
 import           Haskoin                   as H
-import           Network.Socket            (SockAddr)
+import           Network.Socket            (SockAddr (SockAddrUnix))
 import           Paths_haskoin_store       as P
 import           UnliftIO
 import           UnliftIO.Exception
@@ -151,9 +153,8 @@ instance BinSerial Address where
 
 class BinSerial a where
     binSerial :: Network -> Putter a
-
     binDeserial :: Network -> Get a
-    binDeserial _ = mzero
+--    binDeserial _ = mzero
 
 instance BinSerial a => BinSerial [a] where
     binSerial net = putListOf (binSerial net)
@@ -198,6 +199,14 @@ instance BinSerial BlockRef where
         putWord8 0x01
         putWord64be t
 
+    binDeserial _ = getWord8 >>=
+        \case
+            0x00-> do
+              h <- getWord32be
+              BlockRef h <$> getWord32be
+            0x01 -> MemRef <$> getUnixTime
+            _ -> fail "Expected fst byte to be 0x00 or 0x01"
+
 -- | JSON serialization for 'BlockRef'.
 blockRefPairs :: A.KeyValue kv => BlockRef -> [kv]
 blockRefPairs BlockRef {blockRefHeight = h, blockRefPos = p} =
@@ -236,9 +245,13 @@ instance JsonSerial BlockTx where
     jsonValue _ = toJSON
 
 instance BinSerial BlockTx where
-    binSerial net BlockTx { blockTxBlock = b, blockTxHash = h }= do
+    binSerial net BlockTx { blockTxBlock = b, blockTxHash = h } = do
         binSerial net b
-        put h
+        binSerial net h
+    binDeserial net = do
+      b <- binDeserial net
+      h <- binDeserial net
+      return $ BlockTx b h
 
 -- | Address balance information.
 data Balance = Balance
@@ -291,6 +304,14 @@ instance BinSerial Balance where
         putWord64be u
         putWord64be c
         putWord64be t
+
+    binDeserial net = do a <- binDeserial net
+                         v <- getWord64be
+                         z <- getWord64be
+                         u <- getWord64be
+                         c <- getWord64be
+                         Balance a v z u c <$> getWord64be
+
 
 -- | Unspent output.
 data Unspent = Unspent
@@ -348,6 +369,13 @@ instance BinSerial Unspent where
         putWord64be v
         put $ B.Short.fromShort s
 
+    binDeserial net = do
+      b <- binDeserial net
+      p <- get
+      v <- getWord64be
+      s <- B.Short.toShort <$> get
+      return $ Unspent b p v s
+
 -- | Database value for a block entry.
 data BlockData = BlockData
     { blockDataHeight    :: !BlockHeight
@@ -404,6 +432,7 @@ instance JsonSerial BlockData where
 instance BinSerial BlockData where
     binSerial _ BlockData { blockDataHeight = e
                           , blockDataMainChain = m
+                          , blockDataWork = w
                           , blockDataHeader = h
                           , blockDataSize = z
                           , blockDataWeight = g
@@ -415,6 +444,7 @@ instance BinSerial BlockData where
         put m
         putWord32be e
         put h
+        put w
         putWord32be z
         putWord32be g
         putWord64be o
@@ -422,6 +452,18 @@ instance BinSerial BlockData where
         putWord64be y
         put t
 
+    binDeserial _ = do
+      m <- get
+      e <- getWord32be
+      h <- get
+      w <- get
+      z <- getWord32be
+      g <- getWord32be
+      o <- getWord64be
+      f <- getWord64be
+      y <- getWord64be
+      t <- get
+      return $ BlockData e m w h z g t o f y
 
 -- | Input information.
 data StoreInput
@@ -784,6 +826,14 @@ instance BinSerial PeerInformation where
         put $ show a
         put u
 
+    binDeserial _ = do
+      v <- getWord32be
+      s <- getWord64be
+      b <- get
+      a <- SockAddrUnix <$> get
+      u <- get
+      return $ PeerInformation u a v s b
+
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
     { xPubBalPath :: ![KeyIndex]
@@ -954,6 +1004,8 @@ instance BinSerial HealthCheck where
         put ok
         put synced
 
+    binDeserial _ = HealthCheck <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*> get
+
 data Event
     = EventBlock BlockHash
     | EventTx TxHash
@@ -971,6 +1023,13 @@ instance BinSerial Event where
     binSerial _ (EventBlock bh) = putWord8 0x00 >> put bh
     binSerial _ (EventTx th)    = putWord8 0x01 >> put th
 
+    binDeserial _ = getWord8 >>=
+            \case
+                0x00-> EventBlock <$> get
+                0x01 -> EventTx <$> get
+                _ -> fail "Expected fst byte to be 0x00 or 0x01"
+
+
 newtype TxAfterHeight = TxAfterHeight
     { txAfterHeight :: Maybe Bool
     } deriving (Show, Eq, Generic)
@@ -984,6 +1043,11 @@ instance JsonSerial TxAfterHeight where
 
 instance BinSerial TxAfterHeight where
     binSerial _ TxAfterHeight {txAfterHeight = a} = put a
+    binDeserial _ = do
+      m <- get
+      case m of
+        Nothing -> return $ TxAfterHeight Nothing
+        Just x  -> return $ TxAfterHeight $ Just x
 
 newtype TxId = TxId TxHash deriving (Show, Eq, Generic)
 
@@ -996,6 +1060,7 @@ instance JsonSerial TxId where
 
 instance BinSerial TxId where
     binSerial _ (TxId th) = put th
+    binDeserial _ = TxId <$> get
 
 data StartFrom
     = StartBlock !BlockHeight !BlockPos
