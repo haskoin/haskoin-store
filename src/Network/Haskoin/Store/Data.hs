@@ -780,6 +780,17 @@ instance BinSerial Transaction where
         put is
         put os
 
+    binDeserial net = do
+      b <- binDeserial net
+      v <- getWord32be
+      l <- getWord32be
+      d <- get
+      r <- get
+      t <- getWord64be
+      is <- get
+      os <- get
+      return $ Transaction b v l is os d r t
+
 -- | Information about a connected peer.
 data PeerInformation
     = PeerInformation { peerUserAgent :: !ByteString
@@ -861,6 +872,10 @@ instance BinSerial XPubBal where
     binSerial net XPubBal {xPubBalPath = p, xPubBal = b} = do
         put p
         binSerial net b
+    binDeserial net  = do
+      p <- get
+      b <- binDeserial net
+      return $ XPubBal p b
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
@@ -891,6 +906,11 @@ instance BinSerial XPubUnspent where
     binSerial net XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} = do
         put p
         binSerial net u
+
+    binDeserial net = do
+      p <- get
+      u <- binDeserial net
+      return $ XPubUnspent p u
 
 data XPubSummary =
     XPubSummary
