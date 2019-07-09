@@ -154,7 +154,6 @@ instance BinSerial Address where
 class BinSerial a where
     binSerial :: Network -> Putter a
     binDeserial :: Network -> Get a
---    binDeserial _ = mzero
 
 instance BinSerial a => BinSerial [a] where
     binSerial net = putListOf (binSerial net)
@@ -565,6 +564,8 @@ instance BinSerial StoreInput where
                 StoreCoinbase {}               -> B.empty
                 StoreInput {inputPkScript = s} -> s
 
+    binDeserial _ = mzero
+
 -- | Information about input spending output.
 data Spender = Spender
     { spenderHash  :: !TxHash
@@ -647,6 +648,33 @@ data TxData = TxData
     , txDataRBF     :: !Bool
     , txDataTime    :: !Word64
     } deriving (Show, Eq, Ord, Generic, Serialize)
+
+instance BinSerial TxData where
+  binSerial _ TxData
+        { txDataBlock   = blockRef
+        , txData        = tx
+        , txDataPrevs   = dataPrev
+        , txDataDeleted = dataDeleted
+        , txDataRBF     = dataRbf
+        , txDataTime    = time
+        } = do
+      put blockRef
+      put tx
+      put dataPrev
+      put dataDeleted
+      put dataRbf
+      putWord64be time
+
+  binDeserial _ = do blockRef <- get
+                     tx <- get
+                     dataPrev <- get
+                     dataDeleted <- get
+                     dataRbf <- get
+                     TxData blockRef tx dataPrev dataDeleted dataRbf <$> getWord64be
+
+instance Serialize a => BinSerial (IntMap a) where
+  binSerial _ = put
+  binDeserial _ = get
 
 toTransaction :: TxData -> IntMap Spender -> Transaction
 toTransaction t sm =
@@ -972,6 +1000,32 @@ instance BinSerial XPubSummary where
             put p
         putWord64be (fromIntegral $ length ts)
         forM_ ts $ binSerial net
+
+    binDeserial net = do
+      r <- get
+      c <- get
+      z <- get
+      ext <- get
+      ch <- get
+      si <- toInteger <$> getWord64be
+      ps <- deserPaths net si
+      tsi <- toInteger <$> getWord64be
+      ts <- deserTxs net tsi
+
+      return $ XPubSummary r c z ext ch ps ts
+
+deserPaths :: Network -> Integer -> Get (HashMap Address [KeyIndex])
+deserPaths _ 0 = return M.empty
+createPaths net size = do
+  a <- binDeserial net
+  p <- get
+  M.union (M.singleton a p) <$> deserPaths net (size - 1)
+
+deserTxs :: Network -> Integer -> Get [Transaction]
+deserTxs _ 0 = return []
+deserTxs net s = do
+  tx <- binDeserial net
+  (tx ++) <$> deserTxs net (s - 1)
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)

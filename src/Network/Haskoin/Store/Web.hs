@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
+
 module Network.Haskoin.Store.Web where
 import           Conduit                           hiding (runResourceT)
 import           Control.Applicative               ((<|>))
@@ -34,7 +35,7 @@ import           Data.Text                         (Text)
 import qualified Data.Text                         as T
 import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
-import           Data.UUID                         (UUID)
+import           Data.UUID                         as U
 import           Data.UUID.V4
 import           Data.Version
 import           Data.Word                         (Word32)
@@ -84,7 +85,36 @@ instance JsonSerial Except where
     jsonValue _ = toJSON
 
 instance BinSerial Except where
-    binSerial _ = Serialize.put . T.encodeUtf8 . T.pack . show
+    binSerial _ ex = case ex of
+      ThingNotFound u -> putWord8 0 >> mapTuple (U.toWords u) >> go ex
+      ServerError u   -> putWord8 1 >> mapTuple (U.toWords u) >> go ex
+      BadRequest u    -> putWord8 2 >> mapTuple (U.toWords u) >> go ex
+      UserError u s   -> putWord8 3 >> mapTuple (U.toWords u) >> Serialize.put s >> go ex
+      StringError s   -> putWord8 4 >> Serialize.put s >> go ex
+      where go = Serialize.put . show
+            mapTuple :: (Word32, Word32, Word32, Word32) -> PutM ()
+            mapTuple (a1, a2, a3, a4) = do
+              putWord32be a1
+              putWord32be a2
+              putWord32be a3
+              putWord32be a4
+
+    binDeserial _ = do
+      c <- getWord8
+      case c of
+        0 -> ThingNotFound <$> getUUID
+        1 -> ServerError <$> getUUID
+        2 -> BadRequest <$> getUUID
+        3 -> do
+          uuid <- getUUID
+          UserError uuid <$> Serialize.get
+        4 -> StringError <$> Serialize.get
+
+getUUID :: Get UUID
+getUUID = do a1 <- getWord32be
+             a2 <- getWord32be
+             a3 <- getWord32be
+             U.fromWords a1 a2 a3 <$> getWord32be
 
 data WebConfig =
     WebConfig
@@ -780,7 +810,7 @@ healthCheck net mgr ch = do
             h <- MaybeT getBestBlock
             MaybeT $ getBlock h
     p <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
-    let k = isNothing n || isNothing b || maybe False (not . null) p
+    let k = isNothing n || isNothing b || maybe False (not . Data.List.null) p
         s =
             isJust $ do
                 x <- n
