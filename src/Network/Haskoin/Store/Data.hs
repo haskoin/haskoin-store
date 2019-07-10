@@ -200,9 +200,7 @@ instance BinSerial BlockRef where
 
     binDeserial _ = getWord8 >>=
         \case
-            0x00-> do
-              h <- getWord32be
-              BlockRef h <$> getWord32be
+            0x00 -> BlockRef <$> getWord32be <*> getWord32be
             0x01 -> MemRef <$> getUnixTime
             _ -> fail "Expected fst byte to be 0x00 or 0x01"
 
@@ -247,10 +245,8 @@ instance BinSerial BlockTx where
     binSerial net BlockTx { blockTxBlock = b, blockTxHash = h } = do
         binSerial net b
         binSerial net h
-    binDeserial net = do
-      b <- binDeserial net
-      h <- binDeserial net
-      return $ BlockTx b h
+
+    binDeserial net = BlockTx <$> binDeserial net <*> binDeserial net
 
 -- | Address balance information.
 data Balance = Balance
@@ -304,12 +300,13 @@ instance BinSerial Balance where
         putWord64be c
         putWord64be t
 
-    binDeserial net = do a <- binDeserial net
-                         v <- getWord64be
-                         z <- getWord64be
-                         u <- getWord64be
-                         c <- getWord64be
-                         Balance a v z u c <$> getWord64be
+    binDeserial net =
+      Balance <$> binDeserial net
+        <*> getWord64be
+        <*> getWord64be
+        <*> getWord64be
+        <*> getWord64be
+        <*> getWord64be
 
 
 -- | Unspent output.
@@ -366,14 +363,14 @@ instance BinSerial Unspent where
         binSerial net b
         put p
         putWord64be v
-        put $ B.Short.fromShort s
+        put s
 
-    binDeserial net = do
-      b <- binDeserial net
-      p <- get
-      v <- getWord64be
-      s <- B.Short.toShort <$> get
-      return $ Unspent b p v s
+    binDeserial net =
+      Unspent
+      <$> binDeserial net
+      <*> get
+      <*> getWord64be
+      <*> get
 
 -- | Database value for a block entry.
 data BlockData = BlockData
@@ -537,35 +534,6 @@ inputToJSON net = object . inputPairs net
 inputToEncoding :: Network -> StoreInput -> Encoding
 inputToEncoding net = pairs . mconcat . inputPairs net
 
-instance BinSerial StoreInput where
-    binSerial net i = do
-        put $
-            case i of
-                StoreCoinbase {} -> True
-                StoreInput {}    -> False
-        put $ inputPoint i
-        putWord32be $ inputSequence i
-        put $ inputSigScript i
-        put $ inputWitness i
-        let a =
-                case i of
-                    StoreCoinbase {} -> Nothing
-                    StoreInput {inputPkScript = s} ->
-                        eitherToMaybe (scriptToAddressBS s)
-        case a of
-            Nothing -> put B.empty
-            Just x  -> binSerial net x
-        putWord64be $
-            case i of
-                StoreCoinbase {}             -> 0
-                StoreInput {inputAmount = v} -> v
-        put $
-            case i of
-                StoreCoinbase {}               -> B.empty
-                StoreInput {inputPkScript = s} -> s
-
-    binDeserial _ = mzero
-
 -- | Information about input spending output.
 data Spender = Spender
     { spenderHash  :: !TxHash
@@ -651,26 +619,26 @@ data TxData = TxData
 
 instance BinSerial TxData where
   binSerial _ TxData
-        { txDataBlock   = blockRef
+        { txDataBlock   = br
         , txData        = tx
-        , txDataPrevs   = dataPrev
-        , txDataDeleted = dataDeleted
-        , txDataRBF     = dataRbf
-        , txDataTime    = time
+        , txDataPrevs   = dp
+        , txDataDeleted = dd
+        , txDataRBF     = dr
+        , txDataTime    = t
         } = do
-      put blockRef
+      put br
       put tx
-      put dataPrev
-      put dataDeleted
-      put dataRbf
-      putWord64be time
+      put dp
+      put dd
+      put dr
+      putWord64be t
 
-  binDeserial _ = do blockRef <- get
+  binDeserial _ = do br <- get
                      tx <- get
-                     dataPrev <- get
-                     dataDeleted <- get
-                     dataRbf <- get
-                     TxData blockRef tx dataPrev dataDeleted dataRbf <$> getWord64be
+                     dp <- get
+                     dd <- get
+                     dr <- get
+                     TxData br tx dp dd dr <$> getWord64be
 
 instance Serialize a => BinSerial (IntMap a) where
   binSerial _ = put
@@ -790,34 +758,15 @@ instance JsonSerial Transaction where
     jsonValue = transactionToJSON
 
 instance BinSerial Transaction where
-    binSerial net Transaction { transactionBlock = b
-                              , transactionVersion = v
-                              , transactionLockTime = l
-                              , transactionInputs = is
-                              , transactionOutputs = os
-                              , transactionDeleted = d
-                              , transactionRBF = r
-                              , transactionTime = t
-                              } = do
-        binSerial net b
-        putWord32be v
-        putWord32be l
-        put d
-        put r
-        putWord64be t
-        put is
-        put os
+    binSerial net tx = do
+        let (txd, sp) = fromTransaction tx
+        binSerial net txd
+        binSerial net sp
 
     binDeserial net = do
-      b <- binDeserial net
-      v <- getWord32be
-      l <- getWord32be
-      d <- get
-      r <- get
-      t <- getWord64be
-      is <- get
-      os <- get
-      return $ Transaction b v l is os d r t
+      txd <- binDeserial net
+      sp <- binDeserial net
+      return $ toTransaction txd sp
 
 -- | Information about a connected peer.
 data PeerInformation
@@ -860,17 +809,15 @@ instance BinSerial PeerInformation where
                                 , peerRelay = b
                                 } = do
         putWord32be v
-        putWord64be s
         put b
-        put $ show a
         put u
+        put $ NetworkAddress s a
 
     binDeserial _ = do
       v <- getWord32be
-      s <- getWord64be
       b <- get
-      a <- SockAddrUnix <$> get
       u <- get
+      NetworkAddress { naServices = s, naAddress = a } <- get
       return $ PeerInformation u a v s b
 
 -- | Address balances for an extended public key.
