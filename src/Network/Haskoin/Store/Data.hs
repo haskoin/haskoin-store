@@ -941,8 +941,7 @@ instance BinSerial XPubSummary where
         put ext
         put ch
         put (map (first (runPut . binSerial net)) (M.toList ps))
-        putWord64be (fromIntegral $ length ts)
-        forM_ ts $ binSerial net
+        put $ map (runPut . binSerial net) ts
 
     binDeserial net = do
       r <- get
@@ -955,15 +954,12 @@ instance BinSerial XPubSummary where
       ys <- forM xs $ \(k, v) -> case k of
         Right a -> return (a, v)
         Left _  -> mzero
-      tsi <- toInteger <$> getWord64be
-      ts <- deserTxs net tsi
-      return $ XPubSummary r c z ext ch (M.fromList ys) ts
-
-deserTxs :: Network -> Integer -> Get [Transaction]
-deserTxs _ 0 = return []
-deserTxs net s = do
-  tx <- binDeserial net
-  (tx ++) <$> deserTxs net (s - 1)
+      ts <- get
+      let txs = map (runGet (binDeserial net)) ts
+      tys <- forM txs $ \case
+        Right a -> return a
+        Left _ -> mzero
+      return $ XPubSummary r c z ext ch (M.fromList ys) tys
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)
