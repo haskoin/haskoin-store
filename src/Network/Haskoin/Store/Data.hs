@@ -5,7 +5,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 
-
 module Network.Haskoin.Store.Data where
 
 import           Conduit
@@ -941,10 +940,7 @@ instance BinSerial XPubSummary where
         put z
         put ext
         put ch
-        putWord64be (fromIntegral $ M.size ps)
-        forM_ (M.toList ps) $ \(a, p) -> do
-            binSerial net a
-            put p
+        put (map (first (runPut . binSerial net)) (M.toList ps))
         putWord64be (fromIntegral $ length ts)
         forM_ ts $ binSerial net
 
@@ -954,19 +950,14 @@ instance BinSerial XPubSummary where
       z <- get
       ext <- get
       ch <- get
-      si <- toInteger <$> getWord64be
-      ps <- deserPaths net si
+      ps <- get
+      let xs = map (first (runGet (binDeserial net))) ps
+      ys <- forM xs $ \(k, v) -> case k of
+        Right a -> return (a, v)
+        Left _  -> mzero
       tsi <- toInteger <$> getWord64be
       ts <- deserTxs net tsi
-
-      return $ XPubSummary r c z ext ch ps ts
-
-deserPaths :: Network -> Integer -> Get (HashMap Address [KeyIndex])
-deserPaths _ 0 = return M.empty
-createPaths net size = do
-  a <- binDeserial net
-  p <- get
-  M.union (M.singleton a p) <$> deserPaths net (size - 1)
+      return $ XPubSummary r c z ext ch (M.fromList ys) ts
 
 deserTxs :: Network -> Integer -> Get [Transaction]
 deserTxs _ 0 = return []
