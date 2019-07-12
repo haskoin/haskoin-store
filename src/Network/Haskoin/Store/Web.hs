@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
+
 module Network.Haskoin.Store.Web where
 import           Conduit                           hiding (runResourceT)
 import           Control.Applicative               ((<|>))
@@ -34,7 +35,7 @@ import           Data.Text                         (Text)
 import qualified Data.Text                         as T
 import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
-import           Data.UUID                         (UUID)
+import           Data.UUID                         as U
 import           Data.UUID.V4
 import           Data.Version
 import           Data.Word                         (Word32)
@@ -84,7 +85,24 @@ instance JsonSerial Except where
     jsonValue _ = toJSON
 
 instance BinSerial Except where
-    binSerial _ = Serialize.put . T.encodeUtf8 . T.pack . show
+    binSerial _ ex = case ex of
+      ThingNotFound u -> putWord8 0 >> (Serialize.put . U.toWords) u
+      ServerError u   -> putWord8 1 >> Serialize.put (U.toWords u)
+      BadRequest u    -> putWord8 2 >> Serialize.put (U.toWords u)
+      UserError u s   -> putWord8 3 >> Serialize.put (U.toWords u) >> Serialize.put s
+      StringError s   -> putWord8 4 >> Serialize.put s
+
+    binDeserial _ = do
+      c <- getWord8
+      case c of
+        0 -> ThingNotFound <$> go
+        1 -> ServerError <$> go
+        2 -> BadRequest <$> go
+        3 -> do
+          uuid <- go
+          UserError uuid <$> Serialize.get
+        4 -> StringError <$> Serialize.get
+        where go = U.fromWords <$> getWord32be <*> getWord32be <*> getWord32be <*> getWord32be
 
 data WebConfig =
     WebConfig
@@ -780,7 +798,7 @@ healthCheck net mgr ch = do
             h <- MaybeT getBestBlock
             MaybeT $ getBlock h
     p <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
-    let k = isNothing n || isNothing b || maybe False (not . null) p
+    let k = isNothing n || isNothing b || maybe False (not . Data.List.null) p
         s =
             isJust $ do
                 x <- n
