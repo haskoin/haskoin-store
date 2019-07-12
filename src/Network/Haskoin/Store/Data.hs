@@ -1051,11 +1051,7 @@ instance JsonSerial TxAfterHeight where
 
 instance BinSerial TxAfterHeight where
     binSerial _ TxAfterHeight {txAfterHeight = a} = put a
-    binDeserial _ = do
-      m <- get
-      case m of
-        Nothing -> return $ TxAfterHeight Nothing
-        Just x  -> return $ TxAfterHeight $ Just x
+    binDeserial _ = TxAfterHeight <$> get
 
 newtype TxId = TxId TxHash deriving (Show, Eq, Generic)
 
