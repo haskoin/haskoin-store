@@ -40,7 +40,7 @@ dependencies:
   - transformers
   - unliftio
   - unordered-containers
-  - uuid
+  - wai
 library:
   source-dirs: src
   generated-exposed-modules:

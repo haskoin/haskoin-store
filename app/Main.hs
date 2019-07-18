@@ -214,7 +214,7 @@ run Config { configPort = port
   where
     l _ lvl
         | deb = True
-        | otherwise = LevelWarn <= lvl
+        | otherwise = LevelInfo <= lvl
     clear =
         case cd of
             Nothing -> return ()

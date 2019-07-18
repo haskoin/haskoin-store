@@ -35,8 +35,7 @@ import           Data.Text                         (Text)
 import qualified Data.Text                         as T
 import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
-import           Data.UUID                         as U
-import           Data.UUID.V4
+import           Data.Time.Clock
 import           Data.Version
 import           Data.Word                         (Word32)
 import           Database.RocksDB                  as R
@@ -46,6 +45,7 @@ import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.Cached
 import           Network.Haskoin.Store.Messages
 import           Network.HTTP.Types
+import           Network.Wai
 import           NQE
 import qualified Paths_haskoin_store               as P
 import           Text.Read                         (readMaybe)
@@ -57,19 +57,19 @@ import           Web.Scotty.Trans                  as S
 type WebT m = ActionT Except (ReaderT LayeredDB m)
 
 data Except
-    = ThingNotFound UUID
-    | ServerError UUID
-    | BadRequest UUID
-    | UserError UUID String
+    = ThingNotFound
+    | ServerError
+    | BadRequest
+    | UserError String
     | StringError String
     deriving Eq
 
 instance Show Except where
-    show (ThingNotFound u) = "not found"
-    show (ServerError u)   = "you made me kill a unicorn"
-    show (BadRequest u)    = "bad request"
-    show (UserError u s)   = s
-    show (StringError s)   = "you killed the dragon with your bare hands"
+    show ThingNotFound   = "not found"
+    show ServerError     = "you made me kill a unicorn"
+    show BadRequest      = "bad request"
+    show (UserError s)   = s
+    show (StringError s) = "you killed the dragon with your bare hands"
 
 instance Exception Except
 
@@ -85,24 +85,20 @@ instance JsonSerial Except where
     jsonValue _ = toJSON
 
 instance BinSerial Except where
-    binSerial _ ex = case ex of
-      ThingNotFound u -> putWord8 0 >> (Serialize.put . U.toWords) u
-      ServerError u   -> putWord8 1 >> Serialize.put (U.toWords u)
-      BadRequest u    -> putWord8 2 >> Serialize.put (U.toWords u)
-      UserError u s   -> putWord8 3 >> Serialize.put (U.toWords u) >> Serialize.put s
-      StringError s   -> putWord8 4 >> Serialize.put s
-
-    binDeserial _ = do
-      c <- getWord8
-      case c of
-        0 -> ThingNotFound <$> go
-        1 -> ServerError <$> go
-        2 -> BadRequest <$> go
-        3 -> do
-          uuid <- go
-          UserError uuid <$> Serialize.get
-        4 -> StringError <$> Serialize.get
-        where go = U.fromWords <$> getWord32be <*> getWord32be <*> getWord32be <*> getWord32be
+    binSerial _ ex =
+        case ex of
+            ThingNotFound -> putWord8 0
+            ServerError   -> putWord8 1
+            BadRequest    -> putWord8 2
+            UserError s   -> putWord8 3 >> Serialize.put s
+            StringError s -> putWord8 4 >> Serialize.put s
+    binDeserial _ =
+        getWord8 >>= \case
+            0 -> return ThingNotFound
+            1 -> return ServerError
+            2 -> return BadRequest
+            3 -> UserError <$> Serialize.get
+            4 -> StringError <$> Serialize.get
 
 data WebConfig =
     WebConfig
@@ -149,22 +145,21 @@ defHandler :: Monad m => Network -> Except -> WebT m ()
 defHandler net e = do
     proto <- setupBin
     case e of
-        ThingNotFound _ -> status status404
-        BadRequest _    -> status status400
-        UserError _ _   -> status status400
-        StringError _   -> status status400
-        ServerError _   -> status status500
+        ThingNotFound -> status status404
+        BadRequest    -> status status400
+        UserError _   -> status status400
+        StringError _ -> status status400
+        ServerError   -> status status500
     protoSerial net proto e
 
 maybeSerial ::
        (Monad m, JsonSerial a, BinSerial a)
     => Network
-    -> UUID
     -> Bool -- ^ binary
     -> Maybe a
     -> WebT m ()
-maybeSerial _ u _ Nothing        = raise $ ThingNotFound u
-maybeSerial net _ proto (Just x) = S.raw $ serialAny net proto x
+maybeSerial _ _ Nothing        = raise ThingNotFound
+maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
 
 protoSerial ::
        (Monad m, JsonSerial a, BinSerial a)
@@ -177,8 +172,6 @@ protoSerial net proto = S.raw . serialAny net proto
 scottyBestBlock :: MonadLoggerIO m => Network -> WebT m ()
 scottyBestBlock net = do
     cors
-    (i, u) <- uuid
-    $(logDebugS) i "Get best block"
     n <- parseNoTx
     proto <- setupBin
     res <-
@@ -186,32 +179,24 @@ scottyBestBlock net = do
             h <- MaybeT getBestBlock
             b <- MaybeT $ getBlock h
             return $ pruneTx n b
-    $(logDebugS) i $
-        "Response block hash: " <>
-        maybe "[none]" (blockHashToHex . headerHash . blockDataHeader) res
-    maybeSerial net u proto res
+    maybeSerial net proto res
 
 scottyBlock :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlock net = do
     cors
     block <- param "block"
-    (i, u) <- uuid
-    $(logDebugS) i $ "Get block: " <> blockHashToHex block
     n <- parseNoTx
     proto <- setupBin
     res <-
         runMaybeT $ do
             b <- MaybeT $ getBlock block
             return $ pruneTx n b
-    $(logDebugS) i $ maybe "Block not found" (const "Block found") res
-    maybeSerial net u proto res
+    maybeSerial net proto res
 
 scottyBlockHeight :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlockHeight net = do
     cors
     height <- param "height"
-    (i, u) <- uuid
-    $(logDebugS) i $ "Get blocks at height: " <> cs (show height)
     n <- parseNoTx
     proto <- setupBin
     res <-
@@ -221,15 +206,12 @@ scottyBlockHeight net = do
                 runMaybeT $ do
                     b <- MaybeT $ getBlock h
                     return $ pruneTx n b
-    $(logDebugS) i $ "Blocks returned: " <> cs (show (length res))
     protoSerial net proto res
 
 scottyBlockHeights :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlockHeights net = do
     cors
     heights <- param "heights"
-    (i, u) <- uuid
-    $(logDebugS) i $ "Get blocks at multiple heights: " <> cs (show heights)
     n <- parseNoTx
     proto <- setupBin
     bs <- concat <$> mapM getBlocksAtHeight (nub heights)
@@ -238,15 +220,12 @@ scottyBlockHeights net = do
             runMaybeT $ do
                 b <- MaybeT $ getBlock bh
                 return $ pruneTx n b
-    $(logDebugS) i $ "Blocks returned: " <> cs (show (length res))
     protoSerial net proto res
 
 scottyBlocks :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlocks net = do
     cors
     blocks <- param "blocks"
-    (i, u) <- uuid
-    $(logDebugS) i $ "Get multiple blocks: " <> cs (show blocks)
     n <- parseNoTx
     proto <- setupBin
     res <-
@@ -254,49 +233,35 @@ scottyBlocks net = do
             runMaybeT $ do
                 b <- MaybeT $ getBlock bh
                 return $ pruneTx n b
-    $(logDebugS) i $ "Blocks returned: " <> cs (show (length res))
     protoSerial net proto res
 
 scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyMempool net = do
     cors
     (l, s) <- parseLimits
-    (i, u) <- uuid
     proto <- setupBin
     db <- askDB
-    $(logDebugS) i "Get mempool"
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db $
             runConduit $ getMempoolLimit l s .| streamAny net proto io
         flush'
-    $(logDebugS) i "Mempool streaming complete"
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyTransaction net = do
     cors
     txid <- param "txid"
-    (i, u) <- uuid
-    $(logDebugS) i $ "Get transaction: " <> txHashToHex txid
     proto <- setupBin
     res <- getTransaction txid
-    case res of
-        Nothing -> $(logDebugS) i "Transaction not found"
-        Just _  -> $(logDebugS) i "Transaction found"
-    maybeSerial net u proto res
+    maybeSerial net proto res
 
 scottyRawTransaction :: MonadLoggerIO m => Bool -> WebT m ()
 scottyRawTransaction hex = do
     cors
     txid <- param "txid"
-    (i, u) <- uuid
-    $(logDebugS) i $ "Get raw transaction: " <> txHashToHex txid
     res <- getTransaction txid
     case res of
-        Nothing -> do
-            $(logDebugS) i "Transaction not found"
-            raise $ ThingNotFound u
+        Nothing -> raise ThingNotFound
         Just x -> do
-            $(logDebugS) i "Transaction found"
             if hex
                 then text . cs . encodeHex . Serialize.encode $
                      transactionData x
@@ -309,16 +274,8 @@ scottyTxAfterHeight net = do
     cors
     txid <- param "txid"
     height <- param "height"
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Is transaction " <> txHashToHex txid <> "after height" <>
-        cs (show height) <> "?"
     proto <- setupBin
     res <- cbAfterHeight 10000 height txid
-    case txAfterHeight res of
-      Nothing    -> $(logDebugS) i $ "Could not find out"
-      Just False -> $(logDebugS) i "No"
-      Just True  -> $(logDebugS) i "Yes"
     protoSerial net proto res
 
 scottyTransactions :: MonadLoggerIO m => Network -> WebT m ()
@@ -326,20 +283,14 @@ scottyTransactions net = do
     cors
     txids <- param "txids"
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $ "Get transactions: " <> cs (show txids)
     res <- catMaybes <$> mapM getTransaction (nub txids)
-    $(logDebugS) i $ "Transactions returned: " <> cs (show (length res))
     protoSerial net proto res
 
 scottyRawTransactions :: MonadLoggerIO m => Bool -> WebT m ()
 scottyRawTransactions hex = do
     cors
     txids <- param "txids"
-    (i, _) <- uuid
-    $(logDebugS) i $ "Get raw transactions: " <> cs (show txids)
     res <- catMaybes <$> mapM getTransaction (nub txids)
-    $(logDebugS) i $ "Transactions returned: " <> cs (show (length res))
     if hex
         then S.json $ map (encodeHex . Serialize.encode . transactionData) res
         else do
@@ -353,14 +304,10 @@ scottyAddressTxs net full = do
     a <- parseAddress net
     (l, s) <- parseLimits
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Get transactions for address: " <> fromMaybe "???" (addrToString net a)
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $ f proto l s a io
         flush'
-    $(logDebugS) i "Streamed transactions"
   where
     f proto l s a io
         | full = getAddressTxsFull l s a .| streamAny net proto io
@@ -373,15 +320,10 @@ scottyAddressesTxs net full = do
     as <- parseAddresses net
     (l, s) <- parseLimits
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Get transactions for addresses: [" <>
-        T.intercalate "," (map (fromMaybe "???" . addrToString net) as) <> "]"
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $ f proto l s as io
         flush'
-    $(logDebugS) i "Streamed transactions"
   where
     f proto l s as io
         | full = getAddressesTxsFull l s as .| streamAny net proto io
@@ -392,9 +334,6 @@ scottyAddressUnspent ::
 scottyAddressUnspent net = do
     cors
     a <- parseAddress net
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Get UTXO for address: " <> fromMaybe "???" (addrToString net a)
     (l, s) <- parseLimits
     proto <- setupBin
     db <- askDB
@@ -402,7 +341,6 @@ scottyAddressUnspent net = do
         runResourceT . withLayeredDB db . runConduit $
             getAddressUnspentsLimit l s a .| streamAny net proto io
         flush'
-    $(logDebugS) i "Streamed UTXO"
 
 scottyAddressesUnspent ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
@@ -410,26 +348,18 @@ scottyAddressesUnspent net = do
     cors
     as <- parseAddresses net
     (l, s) <- parseLimits
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Get UTXO for addresses: [" <>
-        T.intercalate "," (map (fromMaybe "???" . addrToString net) as) <> "]"
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $
             getAddressesUnspentsLimit l s as .| streamAny net proto io
         flush'
-    $(logDebugS) i "Streamed UTXO"
 
 scottyAddressBalance :: MonadLoggerIO m => Network -> WebT m ()
 scottyAddressBalance net = do
     cors
     a <- parseAddress net
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Get balance for address: " <> fromMaybe "???" (addrToString net a)
     res <-
         getBalance a >>= \case
             Just b -> return b
@@ -443,7 +373,6 @@ scottyAddressBalance net = do
                         , balanceTxCount = 0
                         , balanceTotalReceived = 0
                         }
-    $(logDebugS) i "Returned balance"
     protoSerial net proto res
 
 scottyAddressesBalances :: MonadLoggerIO m => Network -> WebT m ()
@@ -451,11 +380,6 @@ scottyAddressesBalances net = do
     cors
     as <- parseAddresses net
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $
-        "Get UTXO for addresses: [" <>
-        T.intercalate "," (map (fromMaybe "???" . addrToString net) as) <>
-        "]"
     let f a Nothing =
             Balance
                 { balanceAddress = a
@@ -467,7 +391,6 @@ scottyAddressesBalances net = do
                 }
         f _ (Just b) = b
     res <- mapM (\a -> f a <$> getBalance a) as
-    $(logDebugS) i $ "Returned balances: " <> cs (show (length res))
     protoSerial net proto res
 
 scottyXpubBalances :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> WebT m ()
@@ -475,11 +398,8 @@ scottyXpubBalances net = do
     cors
     xpub <- parseXpub net
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $ "Get balances for xpub: " <> xPubExport net xpub
     db <- askDB
     res <- liftIO . runResourceT . withLayeredDB db $ xpubBals xpub
-    $(logDebugS) i $ "Returned balances: " <> cs (show (length res))
     protoSerial net proto res
 
 scottyXpubTxs ::
@@ -489,14 +409,11 @@ scottyXpubTxs net full = do
     x <- parseXpub net
     (l, s) <- parseLimits
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i $ "Get transactions for xpub: " <> xPubExport net x
     db <- askDB
     bs <- liftIO . runResourceT . withLayeredDB db $ xpubBals x
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $ f proto l s bs io
         flush'
-    $(logDebugS) i "Streamed balances"
   where
     f proto l s bs io
         | full =
@@ -512,26 +429,20 @@ scottyXpubUnspents net = do
     x <- parseXpub net
     proto <- setupBin
     (l, s) <- parseLimits
-    (i, _) <- uuid
-    $(logDebugS) i $ "Get UTXO for xpub: " <> xPubExport net x
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $
             xpubUnspentLimit net l s x .| streamAny net proto io
         flush'
-    $(logDebugS) i "Streamed UTXO"
 
 scottyXpubSummary :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyXpubSummary net = do
     cors
     x <- parseXpub net
     (l, s) <- parseLimits
-    (i, _) <- uuid
-    $(logDebugS) i $ "Get summary for xpub: " <> xPubExport net x
     proto <- setupBin
     db <- askDB
     res <- liftIO . runResourceT . withLayeredDB db $ xpubSummary l s x
-    $(logDebugS) i "Returning summary"
     protoSerial net proto res
 
 scottyPostTx ::
@@ -544,22 +455,15 @@ scottyPostTx net st pub = do
     cors
     proto <- setupBin
     b <- body
-    (i, u) <- uuid
-    $(logDebugS) i "Received transaction to publish"
     let bin = eitherToMaybe . Serialize.decode
         hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
     tx <-
         case hex b <|> bin (L.toStrict b) of
-            Nothing -> do
-                $(logDebugS) i "Decode tx fail"
-                raise $ UserError u "decode tx fail"
-            Just x -> do
-                $(logDebugS) i $ "Transaction id: " <> txHashToHex (txHash x)
-                return x
+            Nothing -> raise $ UserError "decode tx fail"
+            Just x  -> return x
     lift (publishTx net pub st tx) >>= \case
         Right () -> do
             protoSerial net proto (TxId (txHash tx))
-            $(logDebugS) i "Success publishing transaction"
         Left e -> do
             case e of
                 PubNoPeers          -> status status500
@@ -567,25 +471,18 @@ scottyPostTx net st pub = do
                 PubPeerDisconnected -> status status500
                 PubNotFound         -> status status500
                 PubReject _         -> status status400
-            protoSerial net proto (UserError u (show e))
-            $(logWarnS) i $
-                "Could not publish: " <> txHashToHex (txHash tx) <> ": " <>
-                cs (show e)
+            protoSerial net proto (UserError (show e))
             finish
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
     cors
-    (i, _) <- uuid
-    $(logDebugS) i "Get DB stats"
     LayeredDB {layeredDB = BlockDB {blockDB = db}} <- askDB
     stats <- lift (getProperty db Stats)
     case stats of
       Nothing -> do
-          $(logWarnS) i "Could not get stats"
           text "Could not get stats"
       Just txt -> do
-          $(logDebugS) i "Returning stats"
           text $ cs txt
 
 scottyEvents ::
@@ -595,9 +492,7 @@ scottyEvents ::
     -> WebT m ()
 scottyEvents net pub = do
     cors
-    (i, _) <- uuid
     proto <- setupBin
-    $(logDebugS) i "Streaming events..."
     stream $ \io flush' ->
         withSubscription pub $ \sub ->
             forever $
@@ -617,16 +512,12 @@ scottyEvents net pub = do
                                     then mempty
                                     else "\n"
                          in io (lazyByteString bs)
-    $(logDebugS) i "Finished streaming events"
 
 scottyPeers :: MonadLoggerIO m => Network -> Store -> WebT m ()
 scottyPeers net st = do
     cors
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i "Get peer information"
     ps <- getPeersInformation (storeManager st)
-    $(logDebugS) i $ "Returned peers: " <> cs (show (length ps))
     protoSerial net proto ps
 
 scottyHealth ::
@@ -634,14 +525,8 @@ scottyHealth ::
 scottyHealth net st = do
     cors
     proto <- setupBin
-    (i, _) <- uuid
-    $(logDebugS) i "Get health information"
     h <- lift $ healthCheck net (storeManager st) (storeChain st)
-    if not (healthOK h) || not (healthSynced h)
-        then do
-            $(logDebugS) i "Not healthy"
-            status status503
-        else $(logDebugS) i "Healthy"
+    when (not (healthOK h) || not (healthSynced h)) $ status status503
     protoSerial net proto h
 
 runWeb :: (MonadLoggerIO m, MonadUnliftIO m) => WebConfig -> m ()
@@ -652,7 +537,9 @@ runWeb WebConfig { webDB = db
                  , webPublisher = pub
                  } = do
     runner <- askRunInIO
+    l <- logIt
     scottyT port (runner . withLayeredDB db) $ do
+        middleware l
         defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
         S.get "/block/:block" $ scottyBlock net
@@ -685,10 +572,7 @@ runWeb WebConfig { webDB = db
         S.get "/events" $ scottyEvents net pub
         S.get "/peers" $ scottyPeers net st
         S.get "/health" $ scottyHealth net st
-        notFound $ do
-            (i, u) <- uuid
-            $(logDebugS) i "Requested resource not found"
-            raise (ThingNotFound u)
+        notFound $ raise ThingNotFound
 
 parseLimits :: (ScottyError e, Monad m) => ActionT e m (Maybe Word32, StartFrom)
 parseLimits = do
@@ -1159,10 +1043,31 @@ publishTx net pub st tx =
                 | h' == txHash tx -> return $ Right ()
             _ -> g p s
 
-uuid :: MonadLoggerIO m => WebT m (Text, UUID)
-uuid = do
-    u <- liftIO nextRandom
-    r <- request
-    let t = "Web<" <> cs (show u) <> ">"
-    $(logDebugS) t $ cs (show r)
-    return (t, u)
+logIt :: (MonadLoggerIO m, MonadUnliftIO m) => m Middleware
+logIt = do
+    runner <- askRunInIO
+    return $ \app req respond -> do
+        t1 <- getCurrentTime
+        app req $ \res -> do
+            t2 <- getCurrentTime
+            let d = diffUTCTime t2 t1 * 1000 * 1000
+                s = responseStatus res
+            runner $
+                $(logInfoS) "Web" $
+                fmtReq req <> " [" <> fmtStatus s <> " / " <> fmtDiff d <> "]"
+            respond res
+
+fmtReq :: Request -> Text
+fmtReq req =
+    let method = requestMethod req
+        version = httpVersion req
+        path = rawPathInfo req
+        query = rawQueryString req
+     in T.decodeUtf8 $
+        method <> " " <> path <> query <> " " <> cs (show version)
+
+fmtDiff :: NominalDiffTime -> Text
+fmtDiff d = cs (show (round d :: Integer)) <> " ns"
+
+fmtStatus :: Status -> Text
+fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
