@@ -1050,7 +1050,7 @@ logIt = do
         t1 <- getCurrentTime
         app req $ \res -> do
             t2 <- getCurrentTime
-            let d = diffUTCTime t2 t1 * 1000 * 1000
+            let d = diffUTCTime t2 t1
                 s = responseStatus res
             runner $
                 $(logInfoS) "Web" $
@@ -1067,7 +1067,7 @@ fmtReq req =
         method <> " " <> path <> query <> " " <> cs (show version)
 
 fmtDiff :: NominalDiffTime -> Text
-fmtDiff d = cs (show (round d :: Integer)) <> " ns"
+fmtDiff d = cs (show (round (d * 1000) :: Integer)) <> " ms"
 
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
