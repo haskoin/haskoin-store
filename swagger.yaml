@@ -9,7 +9,7 @@ servers:
 
 
 info:
-  version: '0.16.5'
+  version: '0.16.6'
   title: Blockchain API
   contact:
     name: Haskoin
