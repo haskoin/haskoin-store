@@ -222,6 +222,9 @@ scottyBlockHeights net = do
                 return $ pruneTx n b
     protoSerial net proto res
 
+scottyBlockLatest :: MonadLoggerIO m => Network -> WebT m ()
+scottyBlockLatest _net = undefined
+
 scottyBlocks :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlocks net = do
     cors
@@ -283,6 +286,21 @@ scottyTransactions net = do
             streamAny net proto io
         flush'
 
+scottyBlockTransactions :: MonadLoggerIO m => Network -> WebT m ()
+scottyBlockTransactions net = do
+    cors
+    h <- param "block"
+    proto <- setupBin
+    db <- askDB
+    getBlock h >>= \case
+        Just b -> stream $ \io flush' -> do
+            runResourceT . withLayeredDB db . runConduit $
+                yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
+                streamAny net proto io
+            flush'
+        Nothing ->
+            raise ThingNotFound
+
 scottyRawTransactions :: MonadLoggerIO m => Network -> WebT m ()
 scottyRawTransactions net = do
     cors
@@ -295,6 +313,22 @@ scottyRawTransactions net = do
             mapC transactionData .|
             streamAny net proto io
         flush'
+
+scottyRawBlockTransactions :: MonadLoggerIO m => Network -> WebT m ()
+scottyRawBlockTransactions net = do
+    cors
+    h <- param "block"
+    proto <- setupBin
+    db <- askDB
+    getBlock h >>= \case
+        Just b -> stream $ \io flush' -> do
+            runResourceT . withLayeredDB db . runConduit $
+                yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
+                mapC transactionData .|
+                streamAny net proto io
+            flush'
+        Nothing ->
+            raise ThingNotFound
 
 scottyAddressTxs ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
@@ -544,6 +578,7 @@ runWeb WebConfig { webDB = db
         S.get "/block/:block" $ scottyBlock net
         S.get "/block/height/:height" $ scottyBlockHeight net
         S.get "/block/heights" $ scottyBlockHeights net
+        S.get "/block/latest" $ scottyBlockLatest net
         S.get "/blocks" $ scottyBlocks net
         S.get "/mempool" $ scottyMempool net
         S.get "/transaction/:txid" $ scottyTransaction net
@@ -551,6 +586,8 @@ runWeb WebConfig { webDB = db
         S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
         S.get "/transactions" $ scottyTransactions net
         S.get "/transactions/raw" $ scottyRawTransactions net
+        S.get "/transactions/block/:block" $ scottyBlockTransactions net
+        S.get "/transactions/block/:block/raw" $ scottyRawBlockTransactions net
         S.get "/address/:address/transactions" $ scottyAddressTxs net False
         S.get "/address/:address/transactions/full" $ scottyAddressTxs net True
         S.get "/address/transactions" $ scottyAddressesTxs net False

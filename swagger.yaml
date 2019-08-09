@@ -375,7 +375,7 @@ paths:
       tags:
         - block
       summary: get best block in chain
-      operationId: GetBlockHead
+      operationId: getBlockHead
       parameters:
         - $ref: '#/components/parameters/notxParam'
       responses:
@@ -385,6 +385,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlockData'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                
+  '/block/latest':
+    get:
+      tags:
+        - block
+      summary: get latest blocks in chain
+      operationId: getLatestBlocks
+      parameters:
+        - $ref: '#/components/parameters/notxParam'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BlockData'
             application/octet-stream:
               schema:
                 type: string
@@ -494,16 +516,6 @@ paths:
       operationId: getBlocksAtHeights
       summary: get multiple blocks at specified heights
       parameters:
-        - name: heights
-          in: query
-          explode: false
-          required: true
-          schema:
-            type: array
-            example:
-              - 1283393
-            items:
-              type: integer
         - $ref: '#/components/parameters/blockHeightsParam'
         - $ref: '#/components/parameters/notxParam'
       responses:
@@ -688,6 +700,71 @@ paths:
 
         '500':
           description: server or network error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  '/transactions/block/{block}':
+    get:
+      tags:
+        - transaction
+        - block
+      operationId: getBlockTransactions
+      parameters:
+        - $ref: '#/components/parameters/blockParam'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  '/transactions/block/{block}/raw':
+    get:
+      tags:
+        - transaction
+        - block
+      operationId: getRawBlockTransactions
+      parameters:
+        - $ref: '#/components/parameters/blockParam'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                  example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: transaction not found
           content:
             application/json:
               schema:
@@ -1246,6 +1323,7 @@ components:
         - nonce
         - size
         - tx
+        - txn
         - merkle
         - subsidy
         - fees
@@ -1290,6 +1368,10 @@ components:
             - 'ce0b0d3ac21b91f24b5b0fc8f057071656496aa898fa7ee01f6b1f7d9b169a9a'
           items:
             type: string
+        txn:
+          type: integer
+          format: int32
+          example: 3
         merkle:
           type: string
           example: '76999ce20135a02df2d7a7a78282fd748b8804b76a817a25ced05f1cf4f2d2a5'
