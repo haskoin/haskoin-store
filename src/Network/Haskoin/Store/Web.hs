@@ -223,7 +223,29 @@ scottyBlockHeights net = do
     protoSerial net proto res
 
 scottyBlockLatest :: MonadLoggerIO m => Network -> WebT m ()
-scottyBlockLatest _net = undefined
+scottyBlockLatest net = do
+    cors
+    n <- parseNoTx
+    proto <- setupBin
+    db <- askDB
+    getBestBlock >>= \case
+        Just h ->
+            stream $ \io flush' -> do
+                runResourceT . withLayeredDB db . runConduit $
+                    f n h 100 .| streamAny net proto io
+                flush'
+        Nothing -> raise ThingNotFound
+  where
+    f n h 0 = return ()
+    f n h i =
+        lift (getBlock h) >>= \case
+            Nothing -> return ()
+            Just b -> do
+                yield $ pruneTx n b
+                if blockDataHeight b <= 0
+                    then return ()
+                    else f n (prevBlock (blockDataHeader b)) (i - 1)
+
 
 scottyBlocks :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlocks net = do
@@ -245,8 +267,8 @@ scottyMempool net = do
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
-        runResourceT . withLayeredDB db $
-            runConduit $ getMempoolLimit l s .| streamAny net proto io
+        runResourceT . withLayeredDB db . runConduit $
+            getMempoolLimit l s .| streamAny net proto io
         flush'
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
