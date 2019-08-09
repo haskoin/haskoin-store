@@ -387,8 +387,6 @@ data BlockData = BlockData
       -- ^ weight of this block (for segwit networks)
     , blockDataTxs       :: ![TxHash]
       -- ^ block transactions
-    , blockDataTxCount   :: !Word32
-      -- ^ count of transactions in block
     , blockDataOutputs   :: !Word64
       -- ^ sum of all transaction outputs
     , blockDataFees      :: !Word64
@@ -410,7 +408,6 @@ blockDataPairs net bv =
     , "nonce" .= bhNonce (blockDataHeader bv)
     , "size" .= blockDataSize bv
     , "tx" .= blockDataTxs bv
-    , "txn" .= blockDataTxCount bv
     , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
     , "subsidy" .= blockDataSubsidy bv
     , "fees" .= blockDataFees bv
@@ -435,7 +432,6 @@ instance BinSerial BlockData where
                           , blockDataSize = z
                           , blockDataWeight = g
                           , blockDataTxs = t
-                          , blockDataTxCount = c
                           , blockDataOutputs = o
                           , blockDataFees = f
                           , blockDataSubsidy = y
@@ -449,7 +445,6 @@ instance BinSerial BlockData where
         putWord64be o
         putWord64be f
         putWord64be y
-        putWord32be c
         put t
 
     binDeserial _ = do
@@ -462,9 +457,8 @@ instance BinSerial BlockData where
       o <- getWord64be
       f <- getWord64be
       y <- getWord64be
-      c <- getWord32be
       t <- get
-      return $ BlockData e m w h z g t c o f y
+      return $ BlockData e m w h z g t o f y
 
 -- | Input information.
 data StoreInput

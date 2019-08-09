@@ -263,7 +263,6 @@ importBlock net b n = do
             , blockDataHeader = nodeHeader n
             , blockDataSize = fromIntegral (B.length (encode b))
             , blockDataTxs = map txHash (blockTxns b)
-            , blockDataTxCount = fromIntegral (length (blockTxns b))
             , blockDataWeight = fromIntegral w
             , blockDataSubsidy = subsidy (nodeHeight n)
             , blockDataFees = cb_out_val - subsidy (nodeHeight n)

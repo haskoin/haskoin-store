@@ -1323,7 +1323,6 @@ components:
         - nonce
         - size
         - tx
-        - txn
         - merkle
         - subsidy
         - fees
@@ -1368,10 +1367,6 @@ components:
             - 'ce0b0d3ac21b91f24b5b0fc8f057071656496aa898fa7ee01f6b1f7d9b169a9a'
           items:
             type: string
-        txn:
-          type: integer
-          format: int32
-          example: 3
         merkle:
           type: string
           example: '76999ce20135a02df2d7a7a78282fd748b8804b76a817a25ced05f1cf4f2d2a5'
