@@ -767,6 +767,14 @@ instance BinSerial Transaction where
       sp <- binDeserial net
       return $ toTransaction txd sp
 
+instance JsonSerial Tx where
+    jsonSerial _ = toEncoding
+    jsonValue _ = toJSON
+
+instance BinSerial Tx where
+    binSerial _ = put
+    binDeserial _ = get
+
 -- | Information about a connected peer.
 data PeerInformation
     = PeerInformation { peerUserAgent :: !ByteString

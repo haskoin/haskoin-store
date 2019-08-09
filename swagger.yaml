@@ -9,7 +9,7 @@ servers:
 
 
 info:
-  version: '0.16.6'
+  version: '0.17.0'
   title: Blockchain API
   contact:
     name: Haskoin
@@ -559,43 +559,31 @@ paths:
                 type: string
                 format: binary
 
-  '/transaction/{txid}/hex':
+  '/transaction/{txid}/raw':
     get:
       tags:
         - transaction
-      operationId: getHexTransaction
+      operationId: getRawTransaction
       parameters:
         - $ref: '#/components/parameters/txidParam'
       responses:
         '200':
           description: success
           content:
-            text/plain:
+            application/json:
               schema:
                 type: string
                 example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         '404':
           description: transaction not found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-
-  '/transaction/{txid}/bin':
-    get:
-      tags:
-        - transaction
-      operationId: getBinTransaction
-      parameters:
-        - $ref: '#/components/parameters/txidParam'
-      responses:
-        '200':
-          description: success
-          content:
             application/octet-stream:
               schema:
                 type: string
@@ -709,11 +697,11 @@ paths:
                 type: string
                 format: binary
 
-  '/transactions/hex':
+  '/transactions/raw':
     get:
       tags:
         - transaction
-      operationId: getHexTransactions
+      operationId: getRawTransactions
       parameters:
         - $ref: '#/components/parameters/txidsParam'
       responses:
@@ -726,28 +714,6 @@ paths:
                 items:
                   type: string
                   example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
-        '404':
-          description: transaction not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-
-  '/transactions/bin':
-    get:
-      tags:
-        - transaction
-      operationId: getBinTransactions
-      parameters:
-        - $ref: '#/components/parameters/txidsParam'
-      responses:
-        '200':
-          description: success
-          content:
             application/octet-stream:
               schema:
                 type: string

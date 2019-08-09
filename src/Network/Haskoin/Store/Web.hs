@@ -254,20 +254,13 @@ scottyTransaction net = do
     res <- getTransaction txid
     maybeSerial net proto res
 
-scottyRawTransaction :: MonadLoggerIO m => Bool -> WebT m ()
-scottyRawTransaction hex = do
+scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
+scottyRawTransaction net = do
     cors
     txid <- param "txid"
-    res <- getTransaction txid
-    case res of
-        Nothing -> raise ThingNotFound
-        Just x -> do
-            if hex
-                then text . cs . encodeHex . Serialize.encode $
-                     transactionData x
-                else do
-                    S.setHeader "Content-Type" "application/octet-stream"
-                    S.raw $ Serialize.encodeLazy (transactionData x)
+    proto <- setupBin
+    res <- fmap transactionData <$> getTransaction txid
+    maybeSerial net proto res
 
 scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
 scottyTxAfterHeight net = do
@@ -283,19 +276,25 @@ scottyTransactions net = do
     cors
     txids <- param "txids"
     proto <- setupBin
-    res <- catMaybes <$> mapM getTransaction (nub txids)
-    protoSerial net proto res
+    db <- askDB
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            yieldMany (nub txids) .| concatMapMC getTransaction .|
+            streamAny net proto io
+        flush'
 
-scottyRawTransactions :: MonadLoggerIO m => Bool -> WebT m ()
-scottyRawTransactions hex = do
+scottyRawTransactions :: MonadLoggerIO m => Network -> WebT m ()
+scottyRawTransactions net = do
     cors
     txids <- param "txids"
-    res <- catMaybes <$> mapM getTransaction (nub txids)
-    if hex
-        then S.json $ map (encodeHex . Serialize.encode . transactionData) res
-        else do
-            S.setHeader "Content-Type" "application/octet-stream"
-            S.raw . L.concat $ map (Serialize.encodeLazy . transactionData) res
+    proto <- setupBin
+    db <- askDB
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            yieldMany (nub txids) .| concatMapMC getTransaction .|
+            mapC transactionData .|
+            streamAny net proto io
+        flush'
 
 scottyAddressTxs ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
@@ -548,12 +547,10 @@ runWeb WebConfig { webDB = db
         S.get "/blocks" $ scottyBlocks net
         S.get "/mempool" $ scottyMempool net
         S.get "/transaction/:txid" $ scottyTransaction net
-        S.get "/transaction/:txid/hex" $ scottyRawTransaction True
-        S.get "/transaction/:txid/bin" $ scottyRawTransaction False
+        S.get "/transaction/:txid/raw" $ scottyRawTransaction net
         S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
         S.get "/transactions" $ scottyTransactions net
-        S.get "/transactions/hex" $ scottyRawTransactions True
-        S.get "/transactions/bin" $ scottyRawTransactions False
+        S.get "/transactions/raw" $ scottyRawTransactions net
         S.get "/address/:address/transactions" $ scottyAddressTxs net False
         S.get "/address/:address/transactions/full" $ scottyAddressTxs net True
         S.get "/address/transactions" $ scottyAddressesTxs net False
