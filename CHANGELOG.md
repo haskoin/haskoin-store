@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## 0.17.0
+### Added
+- Endpoints for retrieving block transactions.
+- Endpoint for retrieving set of latest blocks.
+
 ### Changed
 - Use standardized JSON and binary serialization schemes for raw transaction endpoints.
 
