@@ -680,7 +680,9 @@ paths:
             This error is returned if:
 
             - No network peers are connected to node at the time.
+
             - Timeout was reached while publishing. This is most likely a silent rejection.
+
             - Selected network peer disconnected while publishing transaction.
           content:
             application/json:
