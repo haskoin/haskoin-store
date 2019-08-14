@@ -199,14 +199,13 @@ scottyBlockHeight net = do
     height <- param "height"
     n <- parseNoTx
     proto <- setupBin
-    res <-
-        fmap catMaybes $ do
-            hs <- getBlocksAtHeight height
-            forM hs $ \h ->
-                runMaybeT $ do
-                    b <- MaybeT $ getBlock h
-                    return $ pruneTx n b
-    protoSerial net proto res
+    db <- askDB
+    hs <- getBlocksAtHeight height
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .|
+            streamAny net proto io
+        flush'
 
 scottyBlockHeights :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlockHeights net = do
@@ -214,13 +213,15 @@ scottyBlockHeights net = do
     heights <- param "heights"
     n <- parseNoTx
     proto <- setupBin
+    db <- askDB
     bs <- concat <$> mapM getBlocksAtHeight (nub heights)
-    res <-
-        fmap catMaybes . forM bs $ \bh ->
-            runMaybeT $ do
-                b <- MaybeT $ getBlock bh
-                return $ pruneTx n b
-    protoSerial net proto res
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            yieldMany (nub heights) .| concatMapMC getBlocksAtHeight .|
+            concatMapMC getBlock .|
+            mapC (pruneTx n) .|
+            streamAny net proto io
+        flush'
 
 scottyBlockLatest :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlockLatest net = do
@@ -253,12 +254,12 @@ scottyBlocks net = do
     blocks <- param "blocks"
     n <- parseNoTx
     proto <- setupBin
-    res <-
-        fmap catMaybes . forM blocks $ \bh ->
-            runMaybeT $ do
-                b <- MaybeT $ getBlock bh
-                return $ pruneTx n b
-    protoSerial net proto res
+    db <- askDB
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            yieldMany (nub blocks) .| concatMapMC getBlock .| mapC (pruneTx n) .|
+            streamAny net proto io
+        flush'
 
 scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyMempool net = do
@@ -524,7 +525,6 @@ scottyPostTx net st pub = do
                 PubNoPeers          -> status status500
                 PubTimeout          -> status status500
                 PubPeerDisconnected -> status status500
-                PubNotFound         -> status status500
                 PubReject _         -> status status400
             protoSerial net proto (UserError (show e))
             finish
@@ -1083,7 +1083,7 @@ publishTx net pub st tx =
                     (MGetData (GetData [InvVector t (getTxHash (txHash tx))]))
                     p
                 f p s
-    t = 15 * 1000 * 1000
+    t = 5 * 1000 * 1000
     f p s =
         liftIO (timeout t (g p s)) >>= \case
             Nothing -> return $ Left PubTimeout

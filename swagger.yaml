@@ -1,38 +1,34 @@
 openapi: '3.0.0'
 
-
 servers:
   - url: 'https://btc.haskoin.com/api/'
   - url: 'https://bch.haskoin.com/api/'
   - url: 'https://btctest.haskoin.com/api/'
   - url: 'https://bchtest.haskoin.com/api/'
 
-
 info:
-  version: '0.17.0'
+  version: '0.17.1'
   title: Blockchain API
   contact:
-    name: Haskoin
-    url: http://haskoin.com
+    name: Jean-Pierre Rupp
+    url: https://github.com/haskoin/haskoin-store
     email: xenog@protonmail.com
   license:
     name: Unlicense
     url: http://unlicense.org/
 
-
 tags:
-  - name: address
-  - name: transaction
-  - name: block
-  - name: network
-  
-  
+  - name: Address
+  - name: Transaction
+  - name: Block
+  - name: Network
+
 paths:
   '/health':
     get:
       tags:
-        - network
-      summary: get health status information
+        - Network
+      summary: Node health status.
       operationId: healthCheck
       responses:
         '200':
@@ -71,8 +67,8 @@ paths:
   '/address/{address}/transactions':
     get:
       tags:
-        - address
-      summary: get transactions for an address
+        - Address
+      summary: Transactions relevant to an address.
       operationId: getAddressTxs
       parameters:
         - $ref: '#/components/parameters/addressParam'
@@ -83,7 +79,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of transactions.
           content:
             application/json:
               schema:
@@ -104,7 +100,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -117,8 +113,8 @@ paths:
   '/address/{address}/transactions/full':
     get:
       tags:
-        - address
-      summary: get transactions for an address
+        - Address
+      summary: Full transactions relevant to an address.
       operationId: getAddressTxsFull
       parameters:
         - $ref: '#/components/parameters/addressParam'
@@ -129,7 +125,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of transactions.
           content:
             application/json:
               schema:
@@ -141,7 +137,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -154,8 +150,8 @@ paths:
   '/address/transactions':
     get:
       tags:
-        - address
-      summary: get transactions for multiple addresses
+        - Address
+      summary: Transactions relevant to multiple addresses.
       operationId: getMultipleAddressTxs
       parameters:
         - $ref: '#/components/parameters/addressesParam'
@@ -166,7 +162,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: Success
+          description: List of full transactions.
           content:
             application/json:
               schema:
@@ -187,7 +183,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -200,8 +196,8 @@ paths:
   '/address/transactions/full':
     get:
       tags:
-        - address
-      summary: get transactions for multiple addresses
+        - Address
+      summary: Full transactions relevant to multiple addresses.
       operationId: getMultipleAddressTxsFull
       parameters:
         - $ref: '#/components/parameters/addressesParam'
@@ -212,7 +208,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: Success
+          description: List of full transactions.
           content:
             application/json:
               schema:
@@ -224,7 +220,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -237,14 +233,16 @@ paths:
   '/address/{address}/balance':
     get:
       tags:
-        - address
+        - Address
       operationId: getBalance
-      summary: get balance for an address
+      summary: Balance and transaction counts for an address.
       parameters:
         - $ref: '#/components/parameters/addressParam'
       responses:
         '200':
-          description: success
+          description: >
+            Address balance.
+            Will return data for unknown but valid addresses.
           content:
             application/json:
               schema:
@@ -254,7 +252,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -267,14 +265,16 @@ paths:
   '/address/balances':
     get:
       tags:
-        - address
-      summary: get balances for multiple addresses
+        - Address
+      summary: Balance and transaction counts for multiple addresses.
       operationId: getMultipleAddressBalances
       parameters:
         - $ref: '#/components/parameters/addressesParam'
       responses:
         '200':
-          description: success
+          description: >
+            List of balances for every valid address provided.
+            Will return data for unknown but valid addresses.
           content:
             application/json:
               schema:
@@ -286,7 +286,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid Address Provided.
           content:
             application/json:
               schema:
@@ -299,8 +299,8 @@ paths:
   '/address/{address}/unspent':
     get:
       tags:
-        - address
-      summary: get unspent outputs for an address
+        - Address
+      summary: Unspent outputs for an address.
       operationId: getAddressUnspent
       parameters:
         - $ref: '#/components/parameters/addressParam'
@@ -311,7 +311,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of unspent outputs.
           content:
             application/json:
               schema:
@@ -323,7 +323,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -336,8 +336,8 @@ paths:
   '/address/unspent':
     get:
       tags:
-        - address
-      summary: get unspent outputs for multiple addresses
+        - Address
+      summary: Unspent outputs for multiple addresses.
       operationId: getMultipleAddressUnspent
       parameters:
         - $ref: '#/components/parameters/addressesParam'
@@ -348,7 +348,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of unspent outputs.
           content:
             application/json:
               schema:
@@ -360,7 +360,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: invalid address
+          description: Invalid address provided.
           content:
             application/json:
               schema:
@@ -373,14 +373,14 @@ paths:
   '/block/best':
     get:
       tags:
-        - block
-      summary: get best block in chain
+        - Block
+      summary: Head of block chain.
       operationId: getBlockHead
       parameters:
         - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
-          description: success
+          description: Best block data.
           content:
             application/json:
               schema:
@@ -393,14 +393,14 @@ paths:
   '/block/latest':
     get:
       tags:
-        - block
-      summary: get latest blocks in chain
+        - Block
+      summary: Latest nodes of block chain.
       operationId: getLatestBlocks
       parameters:
         - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
-          description: success
+          description: List of contiguous blocks up to block chain head.
           content:
             application/json:
               schema:
@@ -415,15 +415,15 @@ paths:
   '/block/{block}':
     get:
       tags:
-        - block
+        - Block
       operationId: getBlock
-      summary: get block by hash
+      summary: Information about a block.
       parameters:
         - $ref: '#/components/parameters/notxParam'
         - $ref: '#/components/parameters/blockParam'
       responses:
         '200':
-          description: success
+          description: Block data.
           content:
             application/json:
               schema:
@@ -433,7 +433,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: block not found
+          description: Block not found.
           content:
             application/json:
               schema:
@@ -446,31 +446,23 @@ paths:
   '/blocks':
     get:
       tags:
-        - block
+        - Block
       operationId: getBlocks
-      summary: get multiple blocks by hash
+      summary: Information about multiple blocks.
       parameters:
         - $ref: '#/components/parameters/notxParam'
         - $ref: '#/components/parameters/blocksParam'
       responses:
         '200':
-          description: success
+          description: >
+            List of block data objects.
+            If a block is not found it will not be on the list.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        '404':
-          description: block not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
             application/octet-stream:
               schema:
                 type: string
@@ -479,31 +471,24 @@ paths:
   '/block/height/{height}':
     get:
       tags:
-        - block
+        - Block
       operationId: getBlocksAtHeight
-      summary: get block hashes at specified height
+      summary: Blocks at specific height.
       parameters:
         - $ref: '#/components/parameters/blockHeightParam'
         - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
-          description: success
+          description: >
+            List of block data objects at specified height.
+            First one in list is on the main block chain.
+            If height is beyond block chain head the list will be empty.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        '404':
-          description: block not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
             application/octet-stream:
               schema:
                 type: string
@@ -512,15 +497,19 @@ paths:
   '/block/heights':
     get:
       tags:
-        - block
+        - Block
       operationId: getBlocksAtHeights
-      summary: get multiple blocks at specified heights
+      summary: Blocks at specific heights.
       parameters:
         - $ref: '#/components/parameters/blockHeightsParam'
         - $ref: '#/components/parameters/notxParam'
       responses:
         '200':
-          description: success
+          description: >
+            List of block data objects at heights provided.
+            First block returned at each height is on the main chain.
+            If a provided height is beyond the block chain head there
+            will be no blocks at that height in the list.
           content:
             application/json:
               schema:
@@ -531,27 +520,18 @@ paths:
               schema:
                 type: string
                 format: binary
-        '404':
-          description: block not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transaction/{txid}':
     get:
       tags:
-        - transaction
+        - Transaction
       operationId: getTransaction
+      summary: Transaction information.
       parameters:
         - $ref: '#/components/parameters/txidParam'
       responses:
         '200':
-          description: success
+          description: Transaction object.
           content:
             application/json:
               schema:
@@ -561,7 +541,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: transaction not found
+          description: Transaction not found.
           content:
             application/json:
               schema:
@@ -574,13 +554,14 @@ paths:
   '/transaction/{txid}/raw':
     get:
       tags:
-        - transaction
+        - Transaction
       operationId: getRawTransaction
+      summary: Transaction encoded in network binary format.
       parameters:
         - $ref: '#/components/parameters/txidParam'
       responses:
         '200':
-          description: success
+          description: Binary transaction encoded as a hex JSON string.
           content:
             application/json:
               schema:
@@ -591,7 +572,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: transaction not found
+          description: Transaction not found.
           content:
             application/json:
               schema:
@@ -604,15 +585,17 @@ paths:
   '/transaction/{txid}/after/{height}':
     get:
       tags:
-        - transaction
+        - Transaction
       operationId: cbAfterHeight
-      summary: find out if transaction has a coinbase ancestor past height
+      summary: Transaction spends coins created after height.
       parameters:
         - $ref: '#/components/parameters/txidParam'
         - $ref: '#/components/parameters/blockHeightParam'
       responses:
         '200':
-          description: success
+          description: >
+            Returns whether the given transaction has a coinbase ancestor beyond the specified height.
+            If an internal recursion limit is reached, the response will be `null`.
           content:
             application/json:
               schema:
@@ -621,7 +604,6 @@ paths:
                   - result
                 properties:
                   result:
-                    description: transaction has a coinbase ancestor after height
                     type: boolean
                     nullable: true
                     example: true
@@ -633,13 +615,16 @@ paths:
   '/transactions':
     get:
       tags:
-        - transaction
+        - Transaction
       operationId: getTransactions
+      summary: Multiple transaction information.
       parameters:
         - $ref: '#/components/parameters/txidsParam'
       responses:
         '200':
-          description: success
+          description: >
+            List of transaction information objects.
+            If a transaction is not found, it will not appear in the list.
           content:
             application/json:
               schema:
@@ -650,35 +635,27 @@ paths:
               schema:
                 type: string
                 format: binary
-        '404':
-          description: transaction not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
     post:
       tags:
-        - transaction
+        - Transaction
       operationId: postTransaction
       requestBody:
-        description: transaction to publish
+        description: Publish a transaction to the peer-to-peer network.
         content:
           text/plain:
             schema:
               type: string
+              description: Hex-encoded transaction.
               example: '01000000017795e2e9960d5aaf8bd679521e1928a0ade0c8ac4d0c2b1d8529c5be5e68b75f000000006b483045022100bb913689120d3b0c15a4cbf8692db56b280fce590d6742c0786eb9e86adafeff022057eb92814fa417349a867aa38b8a7c38a12c72ae6fa3b479b2e477c5a4482898412103d740fe05c374c9ffdc294d6d486b4b490db9322124cafbd56fee3a71cb9c006cfeffffff02481f3d00000000001976a914151a5bd62929872630531213391c3e2952fa069c88ac00000000000000002c6a09696e7465726c696e6b2094112b9aec1d3e1e7c397d40330c920677f74966c858f5ccf940bdb43c580c3000000000'
           application/octet-stream:
             schema:
               type: string
               format: binary
+              description: Binary transaction encoded in network-specific format.
       responses:
         '200':
-          description: success
+          description: Transaction published.
           content:
             application/json:
               schema:
@@ -688,7 +665,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: invalid transaction
+          description: Transaction rejected.
           content:
             application/json:
               schema:
@@ -699,7 +676,12 @@ paths:
                 format: binary
 
         '500':
-          description: server or network error
+          description: >
+            This error is returned if:
+
+            - No network peers are connected to node at the time.
+            - Timeout was reached while publishing. This is most likely a silent rejection.
+            - Selected network peer disconnected while publishing transaction.
           content:
             application/json:
               schema:
@@ -712,14 +694,15 @@ paths:
   '/transactions/block/{block}':
     get:
       tags:
-        - transaction
-        - block
+        - Transaction
+        - Block
       operationId: getBlockTransactions
+      summary: Block transaction data.
       parameters:
         - $ref: '#/components/parameters/blockParam'
       responses:
         '200':
-          description: success
+          description: List of transaction objects.
           content:
             application/json:
               schema:
@@ -731,7 +714,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: transaction not found
+          description: Block not found.
           content:
             application/json:
               schema:
@@ -744,14 +727,15 @@ paths:
   '/transactions/block/{block}/raw':
     get:
       tags:
-        - transaction
-        - block
+        - Transaction
+        - Block
       operationId: getRawBlockTransactions
+      summary: Block transactions encoded in network binary format.
       parameters:
         - $ref: '#/components/parameters/blockParam'
       responses:
         '200':
-          description: success
+          description: List of transaction objects.
           content:
             application/json:
               schema:
@@ -764,7 +748,7 @@ paths:
                 type: string
                 format: binary
         '404':
-          description: transaction not found
+          description: Block not found.
           content:
             application/json:
               schema:
@@ -777,13 +761,16 @@ paths:
   '/transactions/raw':
     get:
       tags:
-        - transaction
+        - Transaction
       operationId: getRawTransactions
+      summary: Transactions encoded in network binary format.
       parameters:
         - $ref: '#/components/parameters/txidsParam'
       responses:
         '200':
-          description: success
+          description: >
+            List of transaction objects.
+            If a transaction is not found it will not be in the list.
           content:
             application/json:
               schema:
@@ -795,29 +782,20 @@ paths:
               schema:
                 type: string
                 format: binary
-        '404':
-          description: transaction not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/mempool':
     get:
       tags:
-        - transaction
+        - Transaction
       operationId: getMempool
+      summary: Mempool transactions.
       parameters:
         - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/timeParam'
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of transaction identifiers from mempool.
           content:
             application/json:
               schema:
@@ -837,12 +815,13 @@ paths:
   '/events':
     get:
       tags:
-        - block
-        - transaction
+        - Block
+        - Transaction
       operationId: getEventStream
+      summary: Live stream of imported transactions and blocks.
       responses:
         '200':
-          description: stream
+          description: Stream of event objects.
           content:
             application/x-json-stream:
               schema:
@@ -855,11 +834,12 @@ paths:
   '/peers':
     get:
       tags:
-        - network
+        - Network
       operationId: getPeers
+      summary: Connected network peers.
       responses:
         '200':
-          description: success
+          description: List of peer objects.
           content:
             application/json:
               schema:
@@ -885,8 +865,9 @@ paths:
   '/xpub/{xpub}':
     get:
       tags:
-        - address
+        - Address
       operationId: getXPubSummary
+      summary: Extended public key aggregate balance and transactions.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/limitParam'
@@ -896,7 +877,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: Summary object for extended public key.
           content:
             application/json:
               schema:
@@ -906,7 +887,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: invalid xpub
+          description: Extended public key invalid.
           content:
             application/json:
               schema:
@@ -919,8 +900,9 @@ paths:
   '/xpub/{xpub}/transactions/full':
     get:
       tags:
-        - address
+        - Address
       operationId: getXPubTransactionsFull
+      summary: Transaction data relevant to an extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/limitParam'
@@ -930,7 +912,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of transaction objects.
           content:
             application/json:
               schema:
@@ -942,7 +924,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: invalid xpub
+          description: Extended public key invalid.
           content:
             application/json:
               schema:
@@ -955,8 +937,9 @@ paths:
   '/xpub/{xpub}/transactions':
     get:
       tags:
-        - address
+        - Address
       operationId: getXPubTransactions
+      summary: Transactions relevant to an extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/limitParam'
@@ -966,7 +949,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of transactions.
           content:
             application/json:
               schema:
@@ -991,7 +974,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: invalid xpub
+          description: Extended public key invalid.
           content:
             application/json:
               schema:
@@ -1004,13 +987,14 @@ paths:
   '/xpub/{xpub}/balances':
     get:
       tags:
-        - address
+        - Address
       operationId: getXPubBalances
+      summary: Extended public key balances.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
       responses:
         '200':
-          description: success
+          description: List of address balances for extended public key provided.
           content:
             application/json:
               schema:
@@ -1047,7 +1031,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: invalid xpub
+          description: Extended public key invalid.
           content:
             application/json:
               schema:
@@ -1060,8 +1044,9 @@ paths:
   '/xpub/{xpub}/unspent':
     get:
       tags:
-        - address
+        - Address
       operationId: getXPubUnspent
+      summary: Unspent outputs from extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/limitParam'
@@ -1071,7 +1056,7 @@ paths:
         - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
-          description: success
+          description: List of unspent outputs.
           content:
             application/json:
               schema:
@@ -1104,7 +1089,7 @@ paths:
                 type: string
                 format: binary
         '400':
-          description: invalid xpub
+          description: Extended public key invalid.
           content:
             application/json:
               schema:
@@ -1133,11 +1118,11 @@ components:
         - position
       properties:
         height:
-          description: height of block
+          description: Block height.
           type: integer
           example: 1283393
         position:
-          description: position of transaction within block
+          description: Position of transaction within block.
           type: integer
           example: 2
 
@@ -1147,7 +1132,7 @@ components:
         - mempool
       properties:
         mempool:
-          description: time transaction was received in mempool
+          description: Time when transaction was accepted in mempool.
           type: integer
           format: int64
           example: 1548766187
@@ -1159,13 +1144,16 @@ components:
         - balance
       properties:
         path:
-          description: derivation path (non-hardened)
-          type: array
-          items:
-            type: integer
-          example: [1, 10]
+          $ref: '#/components/schemas/XPubPath'
         balance:
           $ref: '#/components/schemas/Balance'
+
+    XPubPath:
+      type: array
+      description: Extended public key derivation path for an address.
+      items:
+        type: integer
+      example: [1, 10]
 
     XPubUnspent:
       type: object
@@ -1174,11 +1162,7 @@ components:
         - unspent
       properties:
         path:
-          description: derivation path (non-hardened)
-          type: array
-          items:
-            type: integer
-          example: [1, 10]
+          $ref: '#/components/schemas/XPubPath'
         unspent:
           $ref: '#/components/schemas/Unspent'
 
@@ -1192,19 +1176,28 @@ components:
       properties:
         balance:
           type: object
+          description: Aggregate balance for all addresses in extended public key.
           required:
             - received
             - confirmed
             - unconfirmed
           properties:
             recived:
+              description: >
+                Total funds received by all addresses in extended public key.
+                Includes funds already spent.
               type: integer
             confirmed:
+              description: Confirmed balance for all addresses in extended public key.
               type: integer
             unconfirmed:
+              description: Mempool balance for all addresses in extended public key.
               type: integer
         indices:
           type: object
+          description: >
+            Highest derivation indices found for provided extended public key.
+            See: [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)
           required:
             - external
             - change
@@ -1215,6 +1208,8 @@ components:
               type: integer
         paths:
           type: object
+          description: >
+            Addresses and corresponding paths for returned transactions.
           additionalProperties:
             type: array
             items:
@@ -1225,11 +1220,13 @@ components:
             'bchtest:qquvk7vrffk7m76x24tnr572mjpykghhg5fjptsjs6': [1, 10]
         txs:
           type: array
+          description: Transactions relevant to provided extended public key.
           items:
             $ref: '#/components/schemas/Transaction'
 
     BlockTx:
       type: object
+      description: Information about a transaction and its place in the block chain.
       required:
         - block
         - txid
@@ -1256,31 +1253,32 @@ components:
         confirmed:
           type: integer
           format: int64
-          description: sum of confirmed unspent output values
+          description: Sum of confirmed unspent output values.
           example: 0
         unconfirmed:
           type: integer
           format: int64
-          description: sum of unconfirmed unspent output values
+          description: Sum of unconfirmed unspent output values.
           example: 0
         utxo:
-          description: number of unspent outputs
+          description: Total number of unspent outputs.
           type: integer
           format: int64
           example: 0
         received:
-          description: total received by this address
+          description: Total received by this address, including spent.
           type: integer
           format: int64
           example: 4013201
         txs:
-          description: count of transactions affecting this address
+          description: Number of transactions affecting this address balance.
           type: integer
           format: int64
           example: 2
 
     Unspent:
       type: object
+      description: Information about unspent output.
       required:
         - address
         - block
@@ -1307,7 +1305,7 @@ components:
         value:
           type: integer
           format: int64
-          description: output value in satoshi
+          description: Value in satoshi.
           example: 4005704
 
     BlockData:
@@ -1333,12 +1331,16 @@ components:
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
         size:
           type: integer
+          description: >
+            Raw size of a block, including witness data.
+            This is not a virtual size and does not perform segwit discount calculations.
           example: 722
         height:
           type: integer
           example: 1283393
         mainchain:
           type: boolean
+          description: Block is the block chain head or an ancestor. It has not been orphaned.
           example: true
         previous:
           type: string
@@ -1373,21 +1375,21 @@ components:
         subsidy:
           type: integer
           format: int64
-          description: block subsidies
+          description: Total block subsidy in satoshi.
           example: 78125000
         fees:
           type: integer
           format: int64
-          description: transaction fees
+          description: Total transaction fees in satoshi.
           example: 115499
         outputs:
           type: integer
           format: int64
-          description: all outputs
+          description: Total outputs from this block, including spent.
           example: 470103316006
         weight:
           type: integer
-          description: block weight for segwit networks
+          description: SegWit block weight.
 
     Input:
       type: object
@@ -1431,7 +1433,7 @@ components:
           nullable: true
           example: '76a9148836437a157981dfa0a885d8b89f1e7dbeb19f6a88ac'
         witness:
-          description: witness data on segwit networks
+          description: Witness Data.
           type: array
           example: []
           items:
@@ -1439,6 +1441,7 @@ components:
 
     Spender:
       type: object
+      description: Reference to a transaction input.
       required:
         - txid
         - input
@@ -1452,6 +1455,7 @@ components:
 
     Output:
       type: object
+      description: Transactiotn Output data.
       required:
         - address
         - pkscript
@@ -1473,10 +1477,12 @@ components:
           type: boolean
           example: true
         spender:
+          description: Input spending this output.
           $ref: '#/components/schemas/Spender'
 
     Transaction:
       type: object
+      description: Detailed transaction information.
       required:
         - txid
         - size
@@ -1494,6 +1500,8 @@ components:
           example: '0d5764c89d3fbf8bea9b329ad5e0ddb6047e72313c0f7b54dcb14f4d242da64b'
         size:
           type: integer
+          description: >
+            Raw transaction size including witness data but excluding SegWit discount calculations.
           example: 245
         version:
           type: integer
@@ -1540,6 +1548,7 @@ components:
           $ref: '#/components/schemas/BlockRef'
         deleted:
           type: boolean
+          description: This transaction is no longer considered valid.
           example: false
         time:
           type: integer
@@ -1548,11 +1557,11 @@ components:
         rbf:
           type: boolean
           example: false
-          description: transaction vulnerable to replace-by-fee
+          description: Unconfirmed transaction vulnerable to replace-by-fee attack.
         weight:
           type: integer
           example: 980
-          description: transaction weight for segwit networks
+          description: SegWit transaction weight.
 
     Event:
       type: object
@@ -1568,7 +1577,7 @@ components:
           example: block
         id:
           type: string
-          description: block or transaction id
+          description: Block or transaction identifier
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
 
     Peer:
@@ -1594,6 +1603,7 @@ components:
           example: '0000000000000025'
         relay:
           type: boolean
+          description: This peer relays transactions.
           example: true
 
     HealthCheck:
@@ -1609,6 +1619,7 @@ components:
       properties:
         headers:
           type: object
+          description: Information about block chain headers.
           required:
             - hash
             - height
@@ -1623,6 +1634,7 @@ components:
               example: 1283393
         blocks:
           type: object
+          description: Information about indexed full blocks.
           required:
             - hash
             - height
@@ -1637,20 +1649,25 @@ components:
               example: 1283393
         peers:
           type: integer
+          description: Number of connected peers.
           nullable: true
           example: 20
         net:
           type: string
+          description: Network to which this node is connected.
           example: bchtest
         ok:
           type: boolean
+          description: Node is in good health.
           example: true
         synced:
           type: boolean
+          description: Block chain is fully indexed.
           example: true
         version:
           type: string
           example: '0.1.2'
+
     Error:
       type: object
       required:
@@ -1694,7 +1711,7 @@ components:
       required: false
       schema:
         type: integer
-      description: maximum number of entries to return
+      description: Maximum number of entries to return.
 
     heightParam:
       name: height
@@ -1702,7 +1719,9 @@ components:
       required: false
       schema:
         type: integer
-      description: highest block to return objects from (not to be used with offset or time parameters)
+      description: >
+        Highest block to return objects from.
+        Do not use in conjuction with `offset` or `time` parameters.
 
     posParam:
       name: pos
@@ -1710,7 +1729,9 @@ components:
       required: false
       schema:
         type: integer
-      description: highest transaction position at block specified by height parameter to return objects from (must specify height)
+      description: >
+        Highest transaction position at block specified by height parameter to return objects from.
+        Specify `height` too.
 
     timeParam:
       name: time
@@ -1719,7 +1740,9 @@ components:
       schema:
         type: integer
         format: int64
-      description: highest unix timestamp from where to start returning mempool objects (not compatible with height/pos or offset parameters)
+      description: >
+        Highest unix timestamp from where to start returning mempool objects.
+        Do not use in conjunction with `height`, `pos` or `offset` parameters
 
     offsetParam:
       name: offset
@@ -1727,7 +1750,9 @@ components:
       required: false
       schema:
         type: integer
-      description: skip this many objects (not to be used with height/pos or time parameters)
+      description: >
+        Skip this many objects at the beginning.
+        Do not use in conjunction with `height`, `pos` or `offset` parameters.
 
     notxParam:
       name: notx
@@ -1735,7 +1760,7 @@ components:
       required: false
       schema:
         type: boolean
-      description: do not include block transactions (only coinbase)
+      description: Do not include block transaction identifiers except for the coinbase.
 
     blockParam:
       name: block

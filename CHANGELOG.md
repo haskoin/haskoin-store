@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.17.1
+### Changed
+- When posting a transaction to the network, timeout is now five seconds.
+- Improve error message when transaction post timeout reached.
+- Remove obsolete `not found` error for transaction post.
+- Endpoints for retrieving blocks now do streaming for better performance.
+- Improve Swagger API documentation.
+
 ## 0.17.0
 ### Added
 - Endpoints for retrieving block transactions.

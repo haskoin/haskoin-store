@@ -111,7 +111,6 @@ data PubExcept
     = PubNoPeers
     | PubReject RejectCode
     | PubTimeout
-    | PubNotFound
     | PubPeerDisconnected
     deriving Eq
 
@@ -128,8 +127,7 @@ instance Show PubExcept where
             RejectDust            -> "dust"
             RejectInsufficientFee -> "insufficient fee"
             RejectCheckpoint      -> "checkpoint"
-    show PubTimeout = "timeout"
-    show PubNotFound = "not found"
+    show PubTimeout = "peer timeout or silent rejection"
     show PubPeerDisconnected = "peer disconnected"
 
 instance Exception PubExcept
