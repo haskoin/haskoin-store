@@ -107,12 +107,12 @@ getTransaction h = runMaybeT $ do
     return $ toTransaction d sm
 
 class StoreStream m where
-    getMempool :: Maybe UnixTime -> ConduitT () (UnixTime, TxHash) m ()
-    getOrphans :: ConduitT () (UnixTime, Tx) m ()
-    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT () Unspent m ()
-    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT () BlockTx m ()
-    getAddressBalances :: ConduitT () Balance m ()
-    getUnspents :: ConduitT () Unspent m ()
+    getMempool :: Maybe UnixTime -> ConduitT i (UnixTime, TxHash) m ()
+    getOrphans :: ConduitT i (UnixTime, Tx) m ()
+    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
+    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()
+    getAddressBalances :: ConduitT i Balance m ()
+    getUnspents :: ConduitT i Unspent m ()
 
 -- | Serialize such that ordering is inverted.
 putUnixTime w = putWord64be $ maxBound - w

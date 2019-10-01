@@ -455,8 +455,10 @@ scottyXpubBalances net = do
     xpub <- parseXpub net
     proto <- setupBin
     db <- askDB
-    res <- liftIO . runResourceT . withLayeredDB db $ xpubBals xpub
-    protoSerial net proto res
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            xpubBals xpub .| streamAny net proto io
+        flush'
 
 scottyXpubTxs ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
@@ -466,7 +468,9 @@ scottyXpubTxs net full = do
     (l, s) <- parseLimits
     proto <- setupBin
     db <- askDB
-    bs <- liftIO . runResourceT . withLayeredDB db $ xpubBals x
+    bs <-
+        liftIO . runResourceT . withLayeredDB db $
+        runConduit $ xpubBals x .| sinkList
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $ f proto l s bs io
         flush'
@@ -777,12 +781,12 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 }
 
 xpubBals ::
-       (MonadResource m, MonadUnliftIO m, StoreRead m) => XPubKey -> m [XPubBal]
-xpubBals xpub = (<>) <$> go 0 <*> go 1
+       (MonadResource m, MonadUnliftIO m, StoreRead m)
+    => XPubKey
+    -> ConduitT i XPubBal m ()
+xpubBals xpub = go 0 >> go 1
   where
-    go m =
-        runConduit $
-        yieldMany (addrs m) .| mapMC (uncurry bal) .| gap 20 .| sinkList
+    go m = yieldMany (addrs m) .| mapMC (uncurry bal) .| gap 20
     bal a p =
         getBalance a >>= \case
             Nothing -> return Nothing
@@ -807,16 +811,13 @@ xpubUnspent ::
     => Network
     -> Maybe BlockRef
     -> XPubKey
-    -> ConduitT () XPubUnspent m ()
-xpubUnspent net mbr xpub = do
-    xs <- do
-        bs <- lift $ xpubBals xpub
-        return $ map g bs
-    mergeSourcesBy (flip compare `on` (unspentBlock . xPubUnspent)) xs
+    -> ConduitT i XPubUnspent m ()
+xpubUnspent net mbr xpub = xpubBals xpub .| go
   where
-    f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
-    g XPubBal {xPubBalPath = p, xPubBal = b} =
-        getAddressUnspents (balanceAddress b) mbr .| mapC (f p)
+    go =
+        awaitForever $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
+            getAddressUnspents (balanceAddress b) mbr .|
+            mapC (\t -> XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
 
 xpubUnspentLimit ::
        ( MonadResource m
@@ -828,7 +829,7 @@ xpubUnspentLimit ::
     -> Maybe Word32
     -> StartFrom
     -> XPubKey
-    -> ConduitT () XPubUnspent m ()
+    -> ConduitT i XPubUnspent m ()
 xpubUnspentLimit net l s x =
     xpubUnspent net (mbr s) x .| (offset s >> limit l)
 
@@ -839,7 +840,7 @@ xpubSummary ::
     -> XPubKey
     -> m XPubSummary
 xpubSummary l s x = do
-    bs <- xpubBals x
+    bs <- runConduit $ xpubBals x .| sinkList
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs
@@ -946,7 +947,7 @@ getMempoolLimit ::
        (Monad m, StoreStream m)
     => Maybe Word32
     -> StartFrom
-    -> ConduitT () TxHash m ()
+    -> ConduitT i TxHash m ()
 getMempoolLimit _ StartBlock {} = return ()
 getMempoolLimit l (StartMem t) =
     getMempool (Just t) .| mapC snd .| limit l
@@ -958,7 +959,7 @@ getAddressTxsLimit ::
     => Maybe Word32
     -> StartFrom
     -> Address
-    -> ConduitT () BlockTx m ()
+    -> ConduitT i BlockTx m ()
 getAddressTxsLimit l s a =
     getAddressTxs a (mbr s) .| (offset s >> limit l)
 
@@ -967,7 +968,7 @@ getAddressTxsFull ::
     => Maybe Word32
     -> StartFrom
     -> Address
-    -> ConduitT () Transaction m ()
+    -> ConduitT i Transaction m ()
 getAddressTxsFull l s a =
     getAddressTxsLimit l s a .| concatMapMC (getTransaction . blockTxHash)
 
@@ -976,7 +977,7 @@ getAddressesTxsLimit ::
     => Maybe Word32
     -> StartFrom
     -> [Address]
-    -> ConduitT () BlockTx m ()
+    -> ConduitT i BlockTx m ()
 getAddressesTxsLimit l s as =
     mergeSourcesBy (flip compare `on` blockTxBlock) xs .| dedup .|
     (offset s >> limit l)
@@ -988,7 +989,7 @@ getAddressesTxsFull ::
     => Maybe Word32
     -> StartFrom
     -> [Address]
-    -> ConduitT () Transaction m ()
+    -> ConduitT i Transaction m ()
 getAddressesTxsFull l s as =
     getAddressesTxsLimit l s as .| concatMapMC (getTransaction . blockTxHash)
 
@@ -997,7 +998,7 @@ getAddressUnspentsLimit ::
     => Maybe Word32
     -> StartFrom
     -> Address
-    -> ConduitT () Unspent m ()
+    -> ConduitT i Unspent m ()
 getAddressUnspentsLimit l s a =
     getAddressUnspents a (mbr s) .| (offset s >> limit l)
 
@@ -1006,7 +1007,7 @@ getAddressesUnspentsLimit ::
     => Maybe Word32
     -> StartFrom
     -> [Address]
-    -> ConduitT () Unspent m ()
+    -> ConduitT i Unspent m ()
 getAddressesUnspentsLimit l s as =
     mergeSourcesBy
         (flip compare `on` unspentBlock)
@@ -1032,7 +1033,7 @@ conduitToQueue q =
         Just x -> atomically (writeTBQueue q (Just x)) >> conduitToQueue q
         Nothing -> atomically $ writeTBQueue q Nothing
 
-queueToConduit :: MonadIO m => TBQueue (Maybe a) -> ConduitT () a m ()
+queueToConduit :: MonadIO m => TBQueue (Maybe a) -> ConduitT i a m ()
 queueToConduit q =
     atomically (readTBQueue q) >>= \case
         Just x -> yield x >> queueToConduit q
