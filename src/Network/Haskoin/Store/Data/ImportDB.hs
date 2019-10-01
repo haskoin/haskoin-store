@@ -318,7 +318,7 @@ getMempoolI ::
        MonadIO m
     => Maybe UnixTime
     -> ImportDB
-    -> ConduitT () (UnixTime, TxHash) m ()
+    -> ConduitT i (UnixTime, TxHash) m ()
 getMempoolI mpu ImportDB {importHashMap = hm, importLayeredDB = db} = do
     h <- hMempool <$> readTVarIO hm
     let hmap =

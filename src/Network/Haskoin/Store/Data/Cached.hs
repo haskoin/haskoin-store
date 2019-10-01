@@ -74,27 +74,27 @@ getUnspentC op LayeredDB {layeredCache = Just db} = getUnspentDB op db
 getUnspentC op LayeredDB {layeredDB = db}         = getUnspentDB op db
 
 getUnspentsC ::
-       (MonadResource m, MonadIO m) => LayeredDB -> ConduitT () Unspent m ()
+       (MonadResource m, MonadIO m) => LayeredDB -> ConduitT i Unspent m ()
 getUnspentsC LayeredDB {layeredDB = db} = getUnspentsDB db
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)
     => Maybe UnixTime
     -> LayeredDB
-    -> ConduitT () (UnixTime, TxHash) m ()
+    -> ConduitT i (UnixTime, TxHash) m ()
 getMempoolC mpu LayeredDB {layeredCache = Just db} = getMempoolDB mpu db
 getMempoolC mpu LayeredDB {layeredDB = db}         = getMempoolDB mpu db
 
 getOrphansC ::
        (MonadUnliftIO m, MonadResource m)
     => LayeredDB
-    -> ConduitT () (UnixTime, Tx) m ()
+    -> ConduitT i (UnixTime, Tx) m ()
 getOrphansC LayeredDB {layeredDB = db} = getOrphansDB db
 
 getAddressBalancesC ::
        (MonadUnliftIO m, MonadResource m)
     => LayeredDB
-    -> ConduitT () Balance m ()
+    -> ConduitT i Balance m ()
 getAddressBalancesC LayeredDB {layeredDB = db} = getAddressBalancesDB db
 
 getAddressUnspentsC ::
@@ -102,7 +102,7 @@ getAddressUnspentsC ::
     => Address
     -> Maybe BlockRef
     -> LayeredDB
-    -> ConduitT () Unspent m ()
+    -> ConduitT i Unspent m ()
 getAddressUnspentsC addr mbr LayeredDB {layeredDB = db} =
     getAddressUnspentsDB addr mbr db
 
@@ -111,7 +111,7 @@ getAddressTxsC ::
     => Address
     -> Maybe BlockRef
     -> LayeredDB
-    -> ConduitT () BlockTx m ()
+    -> ConduitT i BlockTx m ()
 getAddressTxsC addr mbr LayeredDB {layeredDB = db} =
     getAddressTxsDB addr mbr db
 

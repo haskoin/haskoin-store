@@ -70,7 +70,7 @@ getMempoolDB ::
        (MonadIO m, MonadResource m)
     => Maybe UnixTime
     -> BlockDB
-    -> ConduitT () (UnixTime, TxHash) m ()
+    -> ConduitT i (UnixTime, TxHash) m ()
 getMempoolDB mpu BlockDB {blockDBopts = opts, blockDB = db} =
     x .| mapC (uncurry f)
   where
@@ -84,7 +84,7 @@ getMempoolDB mpu BlockDB {blockDBopts = opts, blockDB = db} =
 getOrphansDB ::
        (MonadIO m, MonadResource m)
     => BlockDB
-    -> ConduitT () (UnixTime, Tx) m ()
+    -> ConduitT i (UnixTime, Tx) m ()
 getOrphansDB BlockDB {blockDBopts = opts, blockDB = db} =
     matching db opts OrphanKeyS .| mapC snd
 
@@ -97,7 +97,7 @@ getAddressTxsDB ::
     => Address
     -> Maybe BlockRef
     -> BlockDB
-    -> ConduitT () BlockTx m ()
+    -> ConduitT i BlockTx m ()
 getAddressTxsDB a mbr BlockDB {blockDBopts = opts, blockDB = db} =
     x .| mapC (uncurry f)
   where
@@ -111,14 +111,14 @@ getAddressTxsDB a mbr BlockDB {blockDBopts = opts, blockDB = db} =
 getAddressBalancesDB ::
        (MonadIO m, MonadResource m)
     => BlockDB
-    -> ConduitT () Balance m ()
+    -> ConduitT i Balance m ()
 getAddressBalancesDB BlockDB {blockDBopts = opts, blockDB = db} =
     matching db opts BalKeyS .| mapC (\(BalKey a, b) -> balValToBalance a b)
 
 getUnspentsDB ::
        (MonadIO m, MonadResource m)
     => BlockDB
-    -> ConduitT () Unspent m ()
+    -> ConduitT i Unspent m ()
 getUnspentsDB BlockDB {blockDBopts = opts, blockDB = db} =
     matching db opts UnspentKeyB .|
     mapC (\(UnspentKey k, v) -> unspentFromDB k v)
@@ -132,7 +132,7 @@ getAddressUnspentsDB ::
     => Address
     -> Maybe BlockRef
     -> BlockDB
-    -> ConduitT () Unspent m ()
+    -> ConduitT i Unspent m ()
 getAddressUnspentsDB a mbr BlockDB {blockDBopts = opts, blockDB = db} =
     x .| mapC (uncurry f)
   where

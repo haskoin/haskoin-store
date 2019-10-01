@@ -87,7 +87,7 @@ getMempoolH ::
        Monad m
     => Maybe UnixTime
     -> BlockMem
-    -> ConduitT () (UnixTime, TxHash) m ()
+    -> ConduitT i (UnixTime, TxHash) m ()
 getMempoolH mpu db =
     let f ts =
             case mpu of
@@ -99,13 +99,13 @@ getMempoolH mpu db =
             hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
 
-getOrphansH :: Monad m => BlockMem -> ConduitT () (UnixTime, Tx) m ()
+getOrphansH :: Monad m => BlockMem -> ConduitT i (UnixTime, Tx) m ()
 getOrphansH = yieldMany . catMaybes . M.elems . hOrphans
 
 getOrphanTxH :: TxHash -> BlockMem -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
 
-getUnspentsH :: Monad m => BlockMem -> ConduitT () Unspent m ()
+getUnspentsH :: Monad m => BlockMem -> ConduitT i Unspent m ()
 getUnspentsH BlockMem {hUnspent = us} =
     yieldMany
         [ u
@@ -133,7 +133,7 @@ getAddressTxsH a mbr db =
             Nothing -> False
             Just br -> b > br
 
-getAddressBalancesH :: Monad m => BlockMem -> ConduitT () Balance m ()
+getAddressBalancesH :: Monad m => BlockMem -> ConduitT i Balance m ()
 getAddressBalancesH BlockMem {hBalance = bm} =
     yieldMany (M.toList bm) .| mapC (uncurry balValToBalance)
 
