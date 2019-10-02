@@ -637,7 +637,7 @@ runWeb WebConfig { webDB = db
         S.get "/health" $ scottyHealth net st
         notFound $ raise ThingNotFound
   where
-    opts runner = def {settings = setOnOpen f defaultSettings}
+    opts runner = def {settings = setPort port (setOnOpen f defaultSettings)}
       where
         f s = runner $ do
             $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
