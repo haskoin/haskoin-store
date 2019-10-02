@@ -50,6 +50,7 @@ import           Network.Wai
 import           Network.Wai.Handler.Warp
 import           NQE
 import qualified Paths_haskoin_store               as P
+import           Text.Printf
 import           Text.Read                         (readMaybe)
 import           UnliftIO
 import           UnliftIO.Resource
@@ -1133,7 +1134,7 @@ fmtReq req =
         method <> " " <> path <> query <> " " <> cs (show version)
 
 fmtDiff :: NominalDiffTime -> Text
-fmtDiff d = cs (show (realToFrac (d * 1000) :: Double)) <> " ms"
+fmtDiff d = cs (printf "%0.3f" (realToFrac (d * 1000) :: Double) :: String) <> " ms"
 
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
