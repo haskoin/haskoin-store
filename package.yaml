@@ -41,6 +41,7 @@ dependencies:
   - unliftio
   - unordered-containers
   - wai
+  - warp
 library:
   source-dirs: src
   generated-exposed-modules:
@@ -55,6 +56,7 @@ executables:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
+      - -O2
     dependencies:
       - haskoin-store
       - filepath
@@ -70,6 +72,7 @@ tests:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
+      - -O2
     dependencies:
       - hspec
       - haskoin-store

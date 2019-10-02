@@ -24,6 +24,7 @@ import           Data.ByteString.Builder
 import qualified Data.ByteString.Lazy              as L
 import qualified Data.ByteString.Lazy.Char8        as C
 import           Data.Char
+import           Data.Default
 import           Data.Foldable
 import           Data.Function
 import qualified Data.HashMap.Strict               as H
@@ -46,6 +47,7 @@ import           Network.Haskoin.Store.Data.Cached
 import           Network.Haskoin.Store.Messages
 import           Network.HTTP.Types
 import           Network.Wai
+import           Network.Wai.Handler.Warp
 import           NQE
 import qualified Paths_haskoin_store               as P
 import           Text.Read                         (readMaybe)
@@ -596,8 +598,9 @@ runWeb WebConfig { webDB = db
                  , webPublisher = pub
                  } = do
     runner <- askRunInIO
+    logger <- askRunInIO
     l <- logIt
-    scottyT port (runner . withLayeredDB db) $ do
+    scottyOptsT (opts logger) (runner . withLayeredDB db) $ do
         middleware l
         defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
@@ -633,6 +636,12 @@ runWeb WebConfig { webDB = db
         S.get "/peers" $ scottyPeers net st
         S.get "/health" $ scottyHealth net st
         notFound $ raise ThingNotFound
+  where
+    opts runner = def {settings = setOnOpen f defaultSettings}
+      where
+        f s = runner $ do
+            $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
+            return True
 
 parseLimits :: (ScottyError e, Monad m) => ActionT e m (Maybe Word32, StartFrom)
 parseLimits = do

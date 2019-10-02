@@ -41,7 +41,7 @@ import           System.IO.Unsafe
 import           Text.Read                  (readMaybe)
 import           UnliftIO
 import           UnliftIO.Directory
-import           Web.Scotty.Trans           as S
+import           Web.Scotty.Trans
 
 data Config = Config
     { configDir      :: !FilePath
