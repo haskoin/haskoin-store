@@ -1133,7 +1133,7 @@ fmtReq req =
         method <> " " <> path <> query <> " " <> cs (show version)
 
 fmtDiff :: NominalDiffTime -> Text
-fmtDiff d = cs (show (d * 1000)) <> " ms"
+fmtDiff d = cs (show (realToFrac (d * 1000) :: Double)) <> " ms"
 
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
