@@ -83,18 +83,9 @@ getSpendersH t = M.lookupDefault I.empty t . hSpender
 getBalanceH :: Address -> BlockMem -> Maybe Balance
 getBalanceH a = fmap (balValToBalance a) . M.lookup a . hBalance
 
-getMempoolH ::
-       Monad m
-    => Maybe UnixTime
-    -> BlockMem
-    -> ConduitT i (UnixTime, TxHash) m ()
-getMempoolH mpu db =
-    let f ts =
-            case mpu of
-                Nothing -> False
-                Just pu -> ts > pu
-        ls =
-            dropWhile (f . fst) .
+getMempoolH :: Monad m => BlockMem -> ConduitT i (UnixTime, TxHash) m ()
+getMempoolH db =
+    let ls =
             sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
             hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
@@ -328,9 +319,9 @@ instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where
         return $ getBalanceH a v
 
 instance MonadIO m => StoreStream (ReaderT (TVar BlockMem) m) where
-    getMempool m = do
+    getMempool = do
         v <- R.ask >>= readTVarIO
-        getMempoolH m v
+        getMempoolH v
     getOrphans = do
         v <- R.ask >>= readTVarIO
         getOrphansH v

@@ -107,7 +107,7 @@ getTransaction h = runMaybeT $ do
     return $ toTransaction d sm
 
 class StoreStream m where
-    getMempool :: Maybe UnixTime -> ConduitT i (UnixTime, TxHash) m ()
+    getMempool :: ConduitT i (UnixTime, TxHash) m ()
     getOrphans :: ConduitT i (UnixTime, Tx) m ()
     getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()

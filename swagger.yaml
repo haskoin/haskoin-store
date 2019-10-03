@@ -7,7 +7,7 @@ servers:
   - url: 'https://bchtest.haskoin.com/api/'
 
 info:
-  version: '0.17.2'
+  version: '0.17.3'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
@@ -791,10 +791,6 @@ paths:
         - Transaction
       operationId: getMempool
       summary: Mempool transactions.
-      parameters:
-        - $ref: '#/components/parameters/limitParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: List of transaction identifiers from mempool.

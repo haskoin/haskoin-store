@@ -68,16 +68,12 @@ getBalanceDB a BlockDB {blockDBopts = opts, blockDB = db} =
 
 getMempoolDB ::
        (MonadIO m, MonadResource m)
-    => Maybe UnixTime
-    -> BlockDB
+    => BlockDB
     -> ConduitT i (UnixTime, TxHash) m ()
-getMempoolDB mpu BlockDB {blockDBopts = opts, blockDB = db} =
+getMempoolDB BlockDB {blockDBopts = opts, blockDB = db} =
     x .| mapC (uncurry f)
   where
-    x =
-        case mpu of
-            Nothing -> matching db opts MemKeyS
-            Just pu -> matchingSkip db opts MemKeyS (MemKeyT pu)
+    x = matching db opts MemKeyS
     f (MemKey u t) () = (u, t)
     f _ _             = undefined
 

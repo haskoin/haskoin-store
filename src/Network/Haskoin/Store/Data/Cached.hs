@@ -79,11 +79,10 @@ getUnspentsC LayeredDB {layeredDB = db} = getUnspentsDB db
 
 getMempoolC ::
        (MonadResource m, MonadUnliftIO m)
-    => Maybe UnixTime
-    -> LayeredDB
+    => LayeredDB
     -> ConduitT i (UnixTime, TxHash) m ()
-getMempoolC mpu LayeredDB {layeredCache = Just db} = getMempoolDB mpu db
-getMempoolC mpu LayeredDB {layeredDB = db}         = getMempoolDB mpu db
+getMempoolC LayeredDB {layeredCache = Just db} = getMempoolDB db
+getMempoolC LayeredDB {layeredDB = db}         = getMempoolDB db
 
 getOrphansC ::
        (MonadUnliftIO m, MonadResource m)
@@ -148,9 +147,9 @@ bulkCopy opts db cdb k =
 
 instance (MonadUnliftIO m, MonadResource m) =>
          StoreStream (ReaderT LayeredDB m) where
-    getMempool x = do
+    getMempool = do
         c <- R.ask
-        getMempoolC x c
+        getMempoolC c
     getOrphans = do
         c <- R.ask
         getOrphansC c

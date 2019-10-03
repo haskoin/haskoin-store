@@ -135,7 +135,7 @@ instance MonadIO m => StoreRead (WebT m) where
 
 instance (MonadResource m, MonadUnliftIO m) =>
          StoreStream (WebT (ReaderT LayeredDB m)) where
-    getMempool = transPipe lift . getMempool
+    getMempool = transPipe lift getMempool
     getOrphans = transPipe lift getOrphans
     getAddressUnspents a x = transPipe lift $ getAddressUnspents a x
     getAddressTxs a x = transPipe lift $ getAddressTxs a x
@@ -265,16 +265,14 @@ scottyBlocks net = do
             streamAny net proto io
         flush'
 
-scottyMempool ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
-scottyMempool net max_count = do
+scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+scottyMempool net = do
     cors
-    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $
-            getMempoolLimit l s .| streamAny net proto io
+            getMempoolStream .| streamAny net proto io
         flush'
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
@@ -622,7 +620,7 @@ runWeb WebConfig { webDB = db
         S.get "/block/heights" $ scottyBlockHeights net
         S.get "/block/latest" $ scottyBlockLatest net
         S.get "/blocks" $ scottyBlocks net
-        S.get "/mempool" $ scottyMempool net max_count
+        S.get "/mempool" $ scottyMempool net
         S.get "/transaction/:txid" $ scottyTransaction net
         S.get "/transaction/:txid/raw" $ scottyRawTransaction net
         S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
@@ -975,16 +973,10 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
                     Just b  -> (b, src2) : sources1
         go sources2
 
-getMempoolLimit ::
+getMempoolStream ::
        (Monad m, StoreStream m)
-    => Maybe Word32
-    -> StartFrom
-    -> ConduitT i TxHash m ()
-getMempoolLimit _ StartBlock {} = return ()
-getMempoolLimit l (StartMem t) =
-    getMempool (Just t) .| mapC snd .| limit l
-getMempoolLimit l s =
-    getMempool Nothing .| mapC snd .| (offset s >> limit l)
+    => ConduitT i TxHash m ()
+getMempoolStream = getMempool .| mapC snd
 
 getAddressTxsLimit ::
        (Monad m, StoreStream m)

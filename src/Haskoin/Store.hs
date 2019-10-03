@@ -53,7 +53,6 @@ module Haskoin.Store
     , toTransaction
     , getBalance
     , getMempool
-    , getMempoolLimit
     , getAddressUnspents
     , getAddressUnspentsLimit
     , getAddressesUnspentsLimit

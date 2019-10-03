@@ -81,7 +81,7 @@ instance MonadIO m => StoreRead (ReaderT BlockRead m) where
 
 instance (MonadResource m, MonadUnliftIO m) =>
          StoreStream (ReaderT BlockRead m) where
-    getMempool = transPipe runLayered . getMempool
+    getMempool = transPipe runLayered getMempool
     getOrphans = transPipe runLayered getOrphans
     getAddressUnspents a x = transPipe runLayered $ getAddressUnspents a x
     getAddressTxs a x = transPipe runLayered $ getAddressTxs a x

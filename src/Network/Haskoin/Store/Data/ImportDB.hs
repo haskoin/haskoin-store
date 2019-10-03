@@ -316,26 +316,20 @@ deleteUnspentI p ImportDB {importHashMap = hm} =
 
 getMempoolI ::
        MonadIO m
-    => Maybe UnixTime
-    -> ImportDB
+    => ImportDB
     -> ConduitT i (UnixTime, TxHash) m ()
-getMempoolI mpu ImportDB {importHashMap = hm, importLayeredDB = db} = do
+getMempoolI ImportDB {importHashMap = hm, importLayeredDB = db} = do
     h <- hMempool <$> readTVarIO hm
     let hmap =
-            M.fromList . filter tfilter $
+            M.fromList $
             concatMap
                 (\(u, l) -> map (\(t, b) -> ((u, t), b)) (M.toList l))
                 (M.toList h)
     dmap <-
         fmap M.fromList . liftIO . runResourceT . withLayeredDB db . runConduit $
-        getMempool mpu .| mapC (, True) .| sinkList
+        getMempool .| mapC (, True) .| sinkList
     let rmap = M.filter id (M.union hmap dmap)
     yieldMany $ sortBy (flip compare) (M.keys rmap)
-  where
-    tfilter =
-        case mpu of
-            Just x -> (<= x) . fst . fst
-            Nothing -> const True
 
 instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     isInitialized = R.ask >>= isInitializedI
@@ -370,7 +364,7 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setBalance b = R.ask >>= setBalanceI b
 
 instance MonadIO m => StoreStream (ReaderT ImportDB m) where
-    getMempool m = R.ask >>= getMempoolI m
+    getMempool = R.ask >>= getMempoolI
     getOrphans = undefined
     getAddressUnspents a m = undefined
     getAddressTxs a m = undefined

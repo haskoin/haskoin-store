@@ -232,7 +232,7 @@ importBlock ::
 importBlock net b n = do
     mp <-
         runConduit $
-        getMempool Nothing .| mapC snd .| filterC (`elem` bths) .| sinkList
+        getMempool .| mapC snd .| filterC (`elem` bths) .| sinkList
     getBestBlock >>= \case
         Nothing
             | isGenesis n -> do
