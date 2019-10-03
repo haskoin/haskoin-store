@@ -658,10 +658,7 @@ runWeb WebConfig { webDB = db
                 $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
                 return True
 
-parseLimits ::
-       (ScottyError e, Monad m)
-    => Word32
-    -> ActionT e m (Maybe Word32, StartFrom)
+parseLimits :: Monad m => Word32 -> ActionT Except m (Maybe Word32, StartFrom)
 parseLimits max_count = do
     let b = do
             height <- param "height"
@@ -672,11 +669,18 @@ parseLimits max_count = do
             return $ StartMem time
         o = do
             o <- param "offset" `rescue` const (return 0)
-            let o' = if max_count == 0 then o else min o max_count
-            return $ StartOffset o'
-    l <- runMaybeT $ do
-        l <- MaybeT $ (Just <$> param "limit") `rescue` const (return Nothing)
-        return $ if max_count == 0 then l else min l max_count
+            when (max_count > 0 && o > max_count) . raise . UserError $
+                "offset exceeded: " <> show o <> " > " <> show max_count
+            return $ StartOffset o
+    l <-
+        runMaybeT $ do
+            l <-
+                MaybeT $
+                (Just <$> param "limit") `rescue` const (return Nothing)
+            return $
+                if max_count == 0
+                    then l
+                    else min l max_count
     s <- b <|> m <|> o
     return (l, s)
 

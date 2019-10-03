@@ -7,7 +7,7 @@ servers:
   - url: 'https://bchtest.haskoin.com/api/'
 
 info:
-  version: '0.17.3'
+  version: '0.18.0'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
