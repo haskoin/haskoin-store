@@ -6,7 +6,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.17.2
 ### Changed
-- Stream xpub balances and unspent outputs.
+- Stream address balances and unspent outputs.
+- Add configurable max value for limit and offset which defaults at 10000.
 
 ## 0.17.1
 ### Changed

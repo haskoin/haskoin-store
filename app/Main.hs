@@ -27,6 +27,7 @@ import           Data.Serialize             as Serialize
 import           Data.String.Conversions
 import qualified Data.Text.Lazy             as T
 import           Data.Version
+import           Data.Word                  (Word32)
 import           Database.RocksDB           as R
 import           Haskoin
 import           Haskoin.Node
@@ -52,6 +53,7 @@ data Config = Config
     , configVersion  :: !Bool
     , configCache    :: !FilePath
     , configDebug    :: !Bool
+    , configMaxCount :: !Word32
     }
 
 defPort :: Int
@@ -62,6 +64,9 @@ defNetwork = btc
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
+
+defMaxCount :: Word32
+defMaxCount = 10000
 
 config :: Parser Config
 config = do
@@ -81,9 +86,7 @@ config = do
         help "Network to connect to" <>
         showDefault <>
         value defNetwork
-    configDiscover <-
-        switch $
-        long "auto" <> short 'a' <> help "Peer discovery"
+    configDiscover <- switch $ long "auto" <> short 'a' <> help "Peer discovery"
     configPeers <-
         many . option (eitherReader peerReader) $
         metavar "HOST" <> long "peer" <> short 'p' <>
@@ -92,10 +95,14 @@ config = do
         option str $
         long "cache" <> short 'c' <> help "Memory mapped disk for cache" <>
         value ""
-    configVersion <-
-        switch $ long "version" <> short 'v' <> help "Show version"
-    configDebug <-
-        switch $ long "debug" <> help "Show debug messages"
+    configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
+    configDebug <- switch $ long "debug" <> help "Show debug messages"
+    configMaxCount <-
+        option auto $
+        metavar "INT" <> long "max" <> short 'x' <>
+        help "Max offset or length (0 for no limit)" <>
+        showDefault <>
+        value defMaxCount
     return Config {..}
 
 networkReader :: String -> Either String Network
@@ -154,6 +161,7 @@ run Config { configPort = port
            , configCache = cache_path
            , configDir = db_dir
            , configDebug = deb
+           , configMaxCount = max_count
            } =
     runStderrLoggingT . filterLogger l . flip finally clear $ do
         $(logInfoS) "Main" $
@@ -209,6 +217,7 @@ run Config { configPort = port
                                 , webDB = ldb
                                 , webPublisher = pub
                                 , webStore = str
+                                , webMaxCount = max_count
                                 }
                      in runWeb wcfg
   where

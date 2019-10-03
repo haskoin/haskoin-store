@@ -110,6 +110,7 @@ data WebConfig =
         , webDB        :: !LayeredDB
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
+        , webMaxCount  :: !Word32
         }
 
 instance Parsable BlockHash where
@@ -264,10 +265,11 @@ scottyBlocks net = do
             streamAny net proto io
         flush'
 
-scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyMempool net = do
+scottyMempool ::
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
+scottyMempool net max_count = do
     cors
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -357,11 +359,11 @@ scottyRawBlockTransactions net = do
             raise ThingNotFound
 
 scottyAddressTxs ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
-scottyAddressTxs net full = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> Bool -> WebT m ()
+scottyAddressTxs net max_count full = do
     cors
     a <- parseAddress net
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -373,11 +375,11 @@ scottyAddressTxs net full = do
         | otherwise = getAddressTxsLimit l s a .| streamAny net proto io
 
 scottyAddressesTxs ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
-scottyAddressesTxs net full = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> Bool -> WebT m ()
+scottyAddressesTxs net max_count full = do
     cors
     as <- parseAddresses net
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -389,11 +391,11 @@ scottyAddressesTxs net full = do
         | otherwise = getAddressesTxsLimit l s as .| streamAny net proto io
 
 scottyAddressUnspent ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyAddressUnspent net = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
+scottyAddressUnspent net max_count = do
     cors
     a <- parseAddress net
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -402,11 +404,11 @@ scottyAddressUnspent net = do
         flush'
 
 scottyAddressesUnspent ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyAddressesUnspent net = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
+scottyAddressesUnspent net max_count = do
     cors
     as <- parseAddresses net
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -439,6 +441,7 @@ scottyAddressesBalances net = do
     cors
     as <- parseAddresses net
     proto <- setupBin
+    db <- askDB
     let f a Nothing =
             Balance
                 { balanceAddress = a
@@ -449,8 +452,11 @@ scottyAddressesBalances net = do
                 , balanceTotalReceived = 0
                 }
         f _ (Just b) = b
-    res <- mapM (\a -> f a <$> getBalance a) as
-    protoSerial net proto res
+    stream $ \io flush' -> do
+        runResourceT . withLayeredDB db . runConduit $
+            yieldMany as .| mapMC (\a -> f a <$> getBalance a) .|
+            streamAny net proto io
+        flush'
 
 scottyXpubBalances :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> WebT m ()
 scottyXpubBalances net = do
@@ -464,11 +470,15 @@ scottyXpubBalances net = do
         flush'
 
 scottyXpubTxs ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
-scottyXpubTxs net full = do
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => Network
+    -> Word32
+    -> Bool
+    -> WebT m ()
+scottyXpubTxs net max_count full = do
     cors
     x <- parseXpub net
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     bs <-
@@ -486,23 +496,24 @@ scottyXpubTxs net full = do
             getAddressesTxsLimit l s (map (balanceAddress . xPubBal) bs) .|
             streamAny net proto io
 
-scottyXpubUnspents :: MonadLoggerIO m => Network -> WebT m ()
-scottyXpubUnspents net = do
+scottyXpubUnspents :: MonadLoggerIO m => Network -> Word32 -> WebT m ()
+scottyXpubUnspents net max_count = do
     cors
     x <- parseXpub net
     proto <- setupBin
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $
             xpubUnspentLimit net l s x .| streamAny net proto io
         flush'
 
-scottyXpubSummary :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyXpubSummary net = do
+scottyXpubSummary ::
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
+scottyXpubSummary net max_count = do
     cors
     x <- parseXpub net
-    (l, s) <- parseLimits
+    (l, s) <- parseLimits max_count
     proto <- setupBin
     db <- askDB
     res <- liftIO . runResourceT . withLayeredDB db $ xpubSummary l s x
@@ -597,6 +608,7 @@ runWeb WebConfig { webDB = db
                  , webNetwork = net
                  , webStore = st
                  , webPublisher = pub
+                 , webMaxCount = max_count
                  } = do
     runner <- askRunInIO
     logger <- askRunInIO
@@ -610,7 +622,7 @@ runWeb WebConfig { webDB = db
         S.get "/block/heights" $ scottyBlockHeights net
         S.get "/block/latest" $ scottyBlockLatest net
         S.get "/blocks" $ scottyBlocks net
-        S.get "/mempool" $ scottyMempool net
+        S.get "/mempool" $ scottyMempool net max_count
         S.get "/transaction/:txid" $ scottyTransaction net
         S.get "/transaction/:txid/raw" $ scottyRawTransaction net
         S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
@@ -618,19 +630,22 @@ runWeb WebConfig { webDB = db
         S.get "/transactions/raw" $ scottyRawTransactions net
         S.get "/transactions/block/:block" $ scottyBlockTransactions net
         S.get "/transactions/block/:block/raw" $ scottyRawBlockTransactions net
-        S.get "/address/:address/transactions" $ scottyAddressTxs net False
-        S.get "/address/:address/transactions/full" $ scottyAddressTxs net True
-        S.get "/address/transactions" $ scottyAddressesTxs net False
-        S.get "/address/transactions/full" $ scottyAddressesTxs net True
-        S.get "/address/:address/unspent" $ scottyAddressUnspent net
-        S.get "/address/unspent" $ scottyAddressesUnspent net
+        S.get "/address/:address/transactions" $
+            scottyAddressTxs net max_count False
+        S.get "/address/:address/transactions/full" $
+            scottyAddressTxs net max_count True
+        S.get "/address/transactions" $ scottyAddressesTxs net max_count False
+        S.get "/address/transactions/full" $
+            scottyAddressesTxs net max_count True
+        S.get "/address/:address/unspent" $ scottyAddressUnspent net max_count
+        S.get "/address/unspent" $ scottyAddressesUnspent net max_count
         S.get "/address/:address/balance" $ scottyAddressBalance net
         S.get "/address/balances" $ scottyAddressesBalances net
         S.get "/xpub/:xpub/balances" $ scottyXpubBalances net
-        S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net False
-        S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net True
-        S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net
-        S.get "/xpub/:xpub" $ scottyXpubSummary net
+        S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net max_count False
+        S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net max_count True
+        S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net max_count
+        S.get "/xpub/:xpub" $ scottyXpubSummary net max_count
         S.post "/transactions" $ scottyPostTx net st pub
         S.get "/dbstats" scottyDbStats
         S.get "/events" $ scottyEvents net pub
@@ -640,12 +655,16 @@ runWeb WebConfig { webDB = db
   where
     opts runner = def {settings = setPort port (setOnOpen f defaultSettings)}
       where
-        f s = runner $ do
-            $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
-            return True
+        f s =
+            runner $ do
+                $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
+                return True
 
-parseLimits :: (ScottyError e, Monad m) => ActionT e m (Maybe Word32, StartFrom)
-parseLimits = do
+parseLimits ::
+       (ScottyError e, Monad m)
+    => Word32
+    -> ActionT e m (Maybe Word32, StartFrom)
+parseLimits max_count = do
     let b = do
             height <- param "height"
             pos <- param "pos" `rescue` const (return maxBound)
@@ -655,8 +674,11 @@ parseLimits = do
             return $ StartMem time
         o = do
             o <- param "offset" `rescue` const (return 0)
-            return $ StartOffset o
-    l <- (Just <$> param "limit") `rescue` const (return Nothing)
+            let o' = if max_count == 0 then o else min o max_count
+            return $ StartOffset o'
+    l <- runMaybeT $ do
+        l <- MaybeT $ (Just <$> param "limit") `rescue` const (return Nothing)
+        return $ if max_count == 0 then l else min l max_count
     s <- b <|> m <|> o
     return (l, s)
 
