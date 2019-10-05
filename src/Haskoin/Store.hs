@@ -32,13 +32,14 @@ module Haskoin.Store
     , BinSerial(..)
     , Except(..)
     , TxId(..)
-    , StartFrom(..)
     , UnixTime
     , BlockPos
     , BlockDB(..)
     , LayeredDB(..)
     , WebConfig(..)
     , MaxLimits(..)
+    , Offset
+    , Limit
     , newLayeredDB
     , withStore
     , runWeb

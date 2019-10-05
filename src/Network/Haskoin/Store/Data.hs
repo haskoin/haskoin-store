@@ -106,6 +106,24 @@ getTransaction h = runMaybeT $ do
     sm <- lift $ getSpenders h
     return $ toTransaction d sm
 
+blockAtOrBefore :: (Monad m, StoreRead m) => UnixTime -> m (Maybe BlockData)
+blockAtOrBefore q = runMaybeT $ do
+    a <- g 0
+    b <- MaybeT getBestBlock >>= MaybeT . getBlock
+    f a b
+  where
+    f a b
+        | t b <= q = return b
+        | t a > q = mzero
+        | h a - h b == 1 = return a
+        | otherwise = do
+              let x = h a + (h b - h a) `div` 2
+              m <- g x
+              if t m > q then f a m else f m b
+    g x = MaybeT (listToMaybe <$> getBlocksAtHeight x) >>= MaybeT . getBlock
+    h = blockDataHeight
+    t = fromIntegral . blockTimestamp . blockDataHeader
+
 class StoreStream m where
     getMempool :: ConduitT i (UnixTime, TxHash) m ()
     getOrphans :: ConduitT i (UnixTime, Tx) m ()
@@ -1063,12 +1081,6 @@ instance JsonSerial TxId where
 instance BinSerial TxId where
     binSerial _ (TxId th) = put th
     binDeserial _ = TxId <$> get
-
-data StartFrom
-    = StartBlock !BlockHeight !BlockPos
-    | StartMem !UnixTime
-    | StartOffset !Word32
-    deriving (Show, Eq, Generic)
 
 data BalVal = BalVal
     { balValAmount        :: !Word64

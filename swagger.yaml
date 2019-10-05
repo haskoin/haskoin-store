@@ -72,11 +72,9 @@ paths:
       operationId: getAddressTxs
       parameters:
         - $ref: '#/components/parameters/addressParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
         - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of transactions.
@@ -118,11 +116,9 @@ paths:
       operationId: getAddressTxsFull
       parameters:
         - $ref: '#/components/parameters/addressParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
         - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of transactions.
@@ -155,11 +151,8 @@ paths:
       operationId: getMultipleAddressTxs
       parameters:
         - $ref: '#/components/parameters/addressesParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of full transactions.
@@ -201,11 +194,9 @@ paths:
       operationId: getMultipleAddressTxsFull
       parameters:
         - $ref: '#/components/parameters/addressesParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
         - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of full transactions.
@@ -304,11 +295,9 @@ paths:
       operationId: getAddressUnspent
       parameters:
         - $ref: '#/components/parameters/addressParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
         - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of unspent outputs.
@@ -341,11 +330,8 @@ paths:
       operationId: getMultipleAddressUnspent
       parameters:
         - $ref: '#/components/parameters/addressesParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of unspent outputs.
@@ -679,11 +665,13 @@ paths:
           description: >
             This error is returned if:
 
-            - No network peers are connected to node at the time.
 
-            - Timeout was reached while publishing. This is most likely a silent rejection.
 
-            - Selected network peer disconnected while publishing transaction.
+            * No network peers are connected to node at the time.
+
+            * Timeout was reached while publishing. This is most likely a silent rejection.
+
+            * Selected network peer disconnected while publishing transaction.
           content:
             application/json:
               schema:
@@ -898,11 +886,8 @@ paths:
       summary: Transaction data relevant to an extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of transaction objects.
@@ -935,11 +920,8 @@ paths:
       summary: Transactions relevant to an extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of transactions.
@@ -1042,11 +1024,8 @@ paths:
       summary: Unspent outputs from extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
-        - $ref: '#/components/parameters/limitParam'
         - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
+        - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
           description: List of unspent outputs.
@@ -1707,29 +1686,20 @@ components:
       schema:
         type: integer
       description: >
-        Highest block to return objects from.
-        Do not use in conjuction with `offset` or `time` parameters.
+        Return transactions or unspent outputs up to this height.
 
-    posParam:
-      name: pos
-      in: query
-      required: false
-      schema:
-        type: integer
-      description: >
-        Highest transaction position at block specified by height parameter to return objects from.
-        Specify `height` too.
 
-    timeParam:
-      name: time
-      in: query
-      required: false
-      schema:
-        type: integer
-        format: int64
-      description: >
-        Highest unix timestamp from where to start returning mempool objects.
-        Do not use in conjunction with `height`, `pos` or `offset` parameters
+
+        * If a block hash is specified, that block's height is used.
+
+        * If a transaction id is specified, that tranasction's height and
+        relative position in the block is used.
+
+        * If a unix timestamp is used, start returning transactions from
+        the mempool at or below that timestamp.
+
+        * If a unix timestamp is used and there are no eligible transactions
+        from the mempool, start from the block at or below the specified timestamp.
 
     offsetParam:
       name: offset
@@ -1738,8 +1708,7 @@ components:
       schema:
         type: integer
       description: >
-        Skip this many objects at the beginning.
-        Do not use in conjunction with `height`, `pos` or `offset` parameters.
+        Skip this many entries from the beginning of the result set.
 
     notxParam:
       name: notx

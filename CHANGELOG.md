@@ -5,12 +5,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## 0.18.0
+### Changed
+- Simplified significantly limit and start point handling on web API.
+
 ### Added
-- Fine-grained control for limits.
+- Fine-grained control for maximum limits via command line options.
+- Web API now allows to specify a transaction as a start parameter.
+- Web API now allows to specify a block as a start point, both by height or hash.
+- Web API now allows to specify a unix time on the blockchain as a start point.
 
 ### Removed
-- No more limits in mempool endpoint.
-- No transaction list in xpub summary output.
+- Mempool endpoint now has no limits or offsets and always returns the full mempool list.
+- Extended public key summary output no longer includes any transactions.
+- Offsets not allowed for transaction lists involving multiple addresses or extended public keys.
+- Confusing block position parameter no longer part of web API.
 
 ## 0.17.2
 ### Changed
