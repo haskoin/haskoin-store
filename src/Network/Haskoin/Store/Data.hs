@@ -914,8 +914,7 @@ instance BinSerial XPubUnspent where
 
 data XPubSummary =
     XPubSummary
-        { xPubSummaryReceived  :: !Word64
-        , xPubSummaryConfirmed :: !Word64
+        { xPubSummaryConfirmed :: !Word64
         , xPubSummaryZero      :: !Word64
         , xPubExternalIndex    :: !Word32
         , xPubChangeIndex      :: !Word32
@@ -924,15 +923,13 @@ data XPubSummary =
     deriving (Eq, Show, Generic)
 
 xPubSummaryPairs :: A.KeyValue kv => Network -> XPubSummary -> [kv]
-xPubSummaryPairs net XPubSummary { xPubSummaryReceived = r
-                                 , xPubSummaryConfirmed = c
+xPubSummaryPairs net XPubSummary { xPubSummaryConfirmed = c
                                  , xPubSummaryZero = z
                                  , xPubSummaryPaths = ps
                                  , xPubExternalIndex = ext
                                  , xPubChangeIndex = ch
                                  } =
-    [ "balance" .=
-      object ["received" .= r, "confirmed" .= c, "unconfirmed" .= z]
+    [ "balance" .= object ["confirmed" .= c, "unconfirmed" .= z]
     , "indices" .= object ["change" .= ch, "external" .= ext]
     , "paths" .= object (mapMaybe (uncurry f) (M.toList ps))
     ]
@@ -950,14 +947,12 @@ instance JsonSerial XPubSummary where
     jsonValue = xPubSummaryToJSON
 
 instance BinSerial XPubSummary where
-    binSerial net XPubSummary { xPubSummaryReceived = r
-                              , xPubSummaryConfirmed = c
+    binSerial net XPubSummary { xPubSummaryConfirmed = c
                               , xPubSummaryZero = z
                               , xPubExternalIndex = ext
                               , xPubChangeIndex = ch
                               , xPubSummaryPaths = ps
                               } = do
-        put r
         put c
         put z
         put ext
@@ -965,7 +960,6 @@ instance BinSerial XPubSummary where
         put (map (first (runPut . binSerial net)) (M.toList ps))
 
     binDeserial net = do
-      r <- get
       c <- get
       z <- get
       ext <- get
@@ -975,7 +969,7 @@ instance BinSerial XPubSummary where
       ys <- forM xs $ \(k, v) -> case k of
         Right a -> return (a, v)
         Left _  -> mzero
-      return $ XPubSummary r c z ext ch (M.fromList ys)
+      return $ XPubSummary c z ext ch (M.fromList ys)
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)

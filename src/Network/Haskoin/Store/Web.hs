@@ -1004,9 +1004,7 @@ xpubSummary x = do
         ch = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 1]
     return
         XPubSummary
-            { xPubSummaryReceived =
-                  sum (map (balanceTotalReceived . xPubBal) bs)
-            , xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
+            { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
             , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
             , xPubSummaryPaths = pm
             , xPubChangeIndex = ch

@@ -1149,15 +1149,9 @@ components:
           type: object
           description: Aggregate balance for all addresses in extended public key.
           required:
-            - received
             - confirmed
             - unconfirmed
           properties:
-            recived:
-              description: >
-                Total funds received by all addresses in extended public key.
-                Includes funds already spent.
-              type: integer
             confirmed:
               description: Confirmed balance for all addresses in extended public key.
               type: integer

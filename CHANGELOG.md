@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Removed
 - Mempool endpoint now has no limits or offsets and always returns the full mempool list.
 - Extended public key summary output no longer includes any transactions.
+- Extended public key summary output no longer includes received total.
 - Offsets not allowed for transaction lists involving multiple addresses or extended public keys.
 - Confusing block position parameter no longer part of web API.
 
