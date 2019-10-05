@@ -868,11 +868,6 @@ paths:
       summary: Extended public key aggregate balance and transactions.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
-        - $ref: '#/components/parameters/limitParam'
-        - $ref: '#/components/parameters/heightParam'
-        - $ref: '#/components/parameters/posParam'
-        - $ref: '#/components/parameters/timeParam'
-        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: Summary object for extended public key.
@@ -1170,7 +1165,6 @@ components:
         - balance
         - indices
         - paths
-        - txs
       properties:
         balance:
           type: object
@@ -1216,11 +1210,6 @@ components:
             'bchtest:qrmaylmr0t7ad0sg80nwdfw2ft5ysn3hccvhk5rp89': [1, 8]
             'bchtest:qrta9zrumx2x9xlkj3ecxurpkv0zspv9xy7tlreccv': [1, 9]
             'bchtest:qquvk7vrffk7m76x24tnr572mjpykghhg5fjptsjs6': [1, 10]
-        txs:
-          type: array
-          description: Transactions relevant to provided extended public key.
-          items:
-            $ref: '#/components/schemas/Transaction'
 
     BlockTx:
       type: object
