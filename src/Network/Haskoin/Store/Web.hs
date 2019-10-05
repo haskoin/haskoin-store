@@ -524,14 +524,13 @@ scottyXpubUnspents net limits = do
         flush'
 
 scottyXpubSummary ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
-scottyXpubSummary net limits = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+scottyXpubSummary net = do
     cors
     x <- parseXpub net
-    (l, s) <- parseLimits limits True
     proto <- setupBin
     db <- askDB
-    res <- liftIO . runResourceT . withLayeredDB db $ xpubSummary l s x
+    res <- liftIO . runResourceT . withLayeredDB db $ xpubSummary x
     protoSerial net proto res
 
 scottyPostTx ::
@@ -659,7 +658,7 @@ runWeb WebConfig { webDB = db
         S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net limits False
         S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net limits True
         S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net limits
-        S.get "/xpub/:xpub" $ scottyXpubSummary net limits
+        S.get "/xpub/:xpub" $ scottyXpubSummary net
         S.post "/transactions" $ scottyPostTx net st pub
         S.get "/dbstats" scottyDbStats
         S.get "/events" $ scottyEvents net pub
@@ -899,35 +898,13 @@ xpubUnspentLimit net l s x =
 
 xpubSummary ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
-    => Maybe Word32
-    -> StartFrom
-    -> XPubKey
+    => XPubKey
     -> m XPubSummary
-xpubSummary l s x = do
+xpubSummary x = do
     bs <- runConduit $ xpubBals x .| sinkList
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs
-    txs <-
-        runConduit $
-        getAddressesTxsFull l s (map (balanceAddress . xPubBal) bs) .| sinkList
-    let as =
-            nub
-                [ a
-                | t <- txs
-                , let is = transactionInputs t
-                , let os = transactionOutputs t
-                , let ais =
-                          mapMaybe
-                              (eitherToMaybe . scriptToAddressBS . inputPkScript)
-                              is
-                , let aos =
-                          mapMaybe
-                              (eitherToMaybe . scriptToAddressBS . outputScript)
-                              os
-                , a <- ais ++ aos
-                ]
-        ps = H.fromList $ mapMaybe (\a -> (a, ) <$> H.lookup a pm) as
         ex = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 0]
         ch = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 1]
     return
@@ -936,8 +913,7 @@ xpubSummary l s x = do
                   sum (map (balanceTotalReceived . xPubBal) bs)
             , xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
             , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
-            , xPubSummaryPaths = ps
-            , xPubSummaryTxs = txs
+            , xPubSummaryPaths = pm
             , xPubChangeIndex = ch
             , xPubExternalIndex = ex
             }

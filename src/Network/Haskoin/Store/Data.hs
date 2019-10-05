@@ -902,7 +902,6 @@ data XPubSummary =
         , xPubExternalIndex    :: !Word32
         , xPubChangeIndex      :: !Word32
         , xPubSummaryPaths     :: !(HashMap Address [KeyIndex])
-        , xPubSummaryTxs       :: ![Transaction]
         }
     deriving (Eq, Show, Generic)
 
@@ -911,7 +910,6 @@ xPubSummaryPairs net XPubSummary { xPubSummaryReceived = r
                                  , xPubSummaryConfirmed = c
                                  , xPubSummaryZero = z
                                  , xPubSummaryPaths = ps
-                                 , xPubSummaryTxs = ts
                                  , xPubExternalIndex = ext
                                  , xPubChangeIndex = ch
                                  } =
@@ -919,7 +917,6 @@ xPubSummaryPairs net XPubSummary { xPubSummaryReceived = r
       object ["received" .= r, "confirmed" .= c, "unconfirmed" .= z]
     , "indices" .= object ["change" .= ch, "external" .= ext]
     , "paths" .= object (mapMaybe (uncurry f) (M.toList ps))
-    , "txs" .= map (transactionToJSON net) ts
     ]
   where
     f a p = (.= p) <$> addrToString net a
@@ -941,7 +938,6 @@ instance BinSerial XPubSummary where
                               , xPubExternalIndex = ext
                               , xPubChangeIndex = ch
                               , xPubSummaryPaths = ps
-                              , xPubSummaryTxs = ts
                               } = do
         put r
         put c
@@ -949,7 +945,6 @@ instance BinSerial XPubSummary where
         put ext
         put ch
         put (map (first (runPut . binSerial net)) (M.toList ps))
-        put $ map (runPut . binSerial net) ts
 
     binDeserial net = do
       r <- get
@@ -962,12 +957,7 @@ instance BinSerial XPubSummary where
       ys <- forM xs $ \(k, v) -> case k of
         Right a -> return (a, v)
         Left _  -> mzero
-      ts <- get
-      let txs = map (runGet (binDeserial net)) ts
-      tys <- forM txs $ \case
-        Right a -> return a
-        Left _ -> mzero
-      return $ XPubSummary r c z ext ch (M.fromList ys) tys
+      return $ XPubSummary r c z ext ch (M.fromList ys)
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)

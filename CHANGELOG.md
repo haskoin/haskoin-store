@@ -5,8 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## 0.18.0
+### Added
+- Fine-grained control for limits.
+
 ### Removed
 - No more limits in mempool endpoint.
+- No transaction list in xpub summary output.
 
 ## 0.17.2
 ### Changed
