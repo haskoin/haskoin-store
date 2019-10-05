@@ -45,15 +45,15 @@ import           UnliftIO.Directory
 import           Web.Scotty.Trans
 
 data Config = Config
-    { configDir      :: !FilePath
-    , configPort     :: !Int
-    , configNetwork  :: !Network
-    , configDiscover :: !Bool
-    , configPeers    :: ![(Host, Maybe Port)]
-    , configVersion  :: !Bool
-    , configCache    :: !FilePath
-    , configDebug    :: !Bool
-    , configMaxCount :: !Word32
+    { configDir       :: !FilePath
+    , configPort      :: !Int
+    , configNetwork   :: !Network
+    , configDiscover  :: !Bool
+    , configPeers     :: ![(Host, Maybe Port)]
+    , configVersion   :: !Bool
+    , configCache     :: !FilePath
+    , configDebug     :: !Bool
+    , configMaxLimits :: !MaxLimits
     }
 
 defPort :: Int
@@ -65,8 +65,20 @@ defNetwork = btc
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
 
+defMaxLimits :: MaxLimits
+defMaxLimits =
+    MaxLimits
+        { maxLimitCount = 10000
+        , maxLimitFull = 500
+        , maxLimitOffset = 50000
+        , maxLimitDefault = 100
+        }
+
 defMaxCount :: Word32
 defMaxCount = 10000
+
+defMaxFull :: Word32
+defMaxFull = 1000
 
 config :: Parser Config
 config = do
@@ -97,13 +109,28 @@ config = do
         value ""
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
-    configMaxCount <-
+    maxLimitCount <-
         option auto $
-        metavar "INT" <> long "max" <> short 'x' <>
-        help "Max offset or length (0 for no limit)" <>
+        metavar "INT" <> long "maxlimit" <>
+        help "Max limt count for tx list queries (0 for unlimited)" <>
         showDefault <>
-        value defMaxCount
-    return Config {..}
+        value (maxLimitCount defMaxLimits)
+    maxLimitFull <-
+        option auto $
+        metavar "INT" <> long "maxfull" <>
+        help "Max limit for full tx queries (0 for unlimited)" <>
+        showDefault <>
+        value (maxLimitFull defMaxLimits)
+    maxLimitOffset <-
+        option auto $
+        metavar "INT" <> long "maxoffset" <> help "Max offset parameter" <>
+        showDefault <>
+        value (maxLimitOffset defMaxLimits)
+    maxLimitDefault <-
+        option auto $
+        metavar "INT" <> long "deflimit" <> help "Default limit" <> showDefault <>
+        value (maxLimitDefault defMaxLimits)
+    return Config {configMaxLimits = MaxLimits {..}, ..}
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -161,7 +188,7 @@ run Config { configPort = port
            , configCache = cache_path
            , configDir = db_dir
            , configDebug = deb
-           , configMaxCount = max_count
+           , configMaxLimits = limits
            } =
     runStderrLoggingT . filterLogger l . flip finally clear $ do
         $(logInfoS) "Main" $
@@ -217,7 +244,7 @@ run Config { configPort = port
                                 , webDB = ldb
                                 , webPublisher = pub
                                 , webStore = str
-                                , webMaxCount = max_count
+                                , webMaxLimits = limits
                                 }
                      in runWeb wcfg
   where

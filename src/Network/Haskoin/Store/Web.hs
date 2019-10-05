@@ -110,8 +110,17 @@ data WebConfig =
         , webDB        :: !LayeredDB
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
-        , webMaxCount  :: !Word32
+        , webMaxLimits :: !MaxLimits
         }
+
+data MaxLimits =
+    MaxLimits
+        { maxLimitCount   :: !Word32
+        , maxLimitFull    :: !Word32
+        , maxLimitOffset  :: !Word32
+        , maxLimitDefault :: !Word32
+        }
+    deriving (Eq, Show)
 
 instance Parsable BlockHash where
     parseParam =
@@ -357,11 +366,15 @@ scottyRawBlockTransactions net = do
             raise ThingNotFound
 
 scottyAddressTxs ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> Bool -> WebT m ()
-scottyAddressTxs net max_count full = do
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => Network
+    -> MaxLimits
+    -> Bool
+    -> WebT m ()
+scottyAddressTxs net limits full = do
     cors
     a <- parseAddress net
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits full
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -373,11 +386,15 @@ scottyAddressTxs net max_count full = do
         | otherwise = getAddressTxsLimit l s a .| streamAny net proto io
 
 scottyAddressesTxs ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> Bool -> WebT m ()
-scottyAddressesTxs net max_count full = do
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => Network
+    -> MaxLimits
+    -> Bool
+    -> WebT m ()
+scottyAddressesTxs net limits full = do
     cors
     as <- parseAddresses net
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits full
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -389,11 +406,11 @@ scottyAddressesTxs net max_count full = do
         | otherwise = getAddressesTxsLimit l s as .| streamAny net proto io
 
 scottyAddressUnspent ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
-scottyAddressUnspent net max_count = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
+scottyAddressUnspent net limits = do
     cors
     a <- parseAddress net
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits False
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -402,11 +419,11 @@ scottyAddressUnspent net max_count = do
         flush'
 
 scottyAddressesUnspent ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
-scottyAddressesUnspent net max_count = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
+scottyAddressesUnspent net limits = do
     cors
     as <- parseAddresses net
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits False
     proto <- setupBin
     db <- askDB
     stream $ \io flush' -> do
@@ -470,13 +487,13 @@ scottyXpubBalances net = do
 scottyXpubTxs ::
        (MonadLoggerIO m, MonadUnliftIO m)
     => Network
-    -> Word32
+    -> MaxLimits
     -> Bool
     -> WebT m ()
-scottyXpubTxs net max_count full = do
+scottyXpubTxs net limits full = do
     cors
     x <- parseXpub net
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits full
     proto <- setupBin
     db <- askDB
     bs <-
@@ -494,12 +511,12 @@ scottyXpubTxs net max_count full = do
             getAddressesTxsLimit l s (map (balanceAddress . xPubBal) bs) .|
             streamAny net proto io
 
-scottyXpubUnspents :: MonadLoggerIO m => Network -> Word32 -> WebT m ()
-scottyXpubUnspents net max_count = do
+scottyXpubUnspents :: MonadLoggerIO m => Network -> MaxLimits -> WebT m ()
+scottyXpubUnspents net limits = do
     cors
     x <- parseXpub net
     proto <- setupBin
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits False
     db <- askDB
     stream $ \io flush' -> do
         runResourceT . withLayeredDB db . runConduit $
@@ -507,11 +524,11 @@ scottyXpubUnspents net max_count = do
         flush'
 
 scottyXpubSummary ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Word32 -> WebT m ()
-scottyXpubSummary net max_count = do
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
+scottyXpubSummary net limits = do
     cors
     x <- parseXpub net
-    (l, s) <- parseLimits max_count
+    (l, s) <- parseLimits limits True
     proto <- setupBin
     db <- askDB
     res <- liftIO . runResourceT . withLayeredDB db $ xpubSummary l s x
@@ -606,7 +623,7 @@ runWeb WebConfig { webDB = db
                  , webNetwork = net
                  , webStore = st
                  , webPublisher = pub
-                 , webMaxCount = max_count
+                 , webMaxLimits = limits
                  } = do
     runner <- askRunInIO
     logger <- askRunInIO
@@ -629,21 +646,20 @@ runWeb WebConfig { webDB = db
         S.get "/transactions/block/:block" $ scottyBlockTransactions net
         S.get "/transactions/block/:block/raw" $ scottyRawBlockTransactions net
         S.get "/address/:address/transactions" $
-            scottyAddressTxs net max_count False
+            scottyAddressTxs net limits False
         S.get "/address/:address/transactions/full" $
-            scottyAddressTxs net max_count True
-        S.get "/address/transactions" $ scottyAddressesTxs net max_count False
-        S.get "/address/transactions/full" $
-            scottyAddressesTxs net max_count True
-        S.get "/address/:address/unspent" $ scottyAddressUnspent net max_count
-        S.get "/address/unspent" $ scottyAddressesUnspent net max_count
+            scottyAddressTxs net limits True
+        S.get "/address/transactions" $ scottyAddressesTxs net limits False
+        S.get "/address/transactions/full" $ scottyAddressesTxs net limits True
+        S.get "/address/:address/unspent" $ scottyAddressUnspent net limits
+        S.get "/address/unspent" $ scottyAddressesUnspent net limits
         S.get "/address/:address/balance" $ scottyAddressBalance net
         S.get "/address/balances" $ scottyAddressesBalances net
         S.get "/xpub/:xpub/balances" $ scottyXpubBalances net
-        S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net max_count False
-        S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net max_count True
-        S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net max_count
-        S.get "/xpub/:xpub" $ scottyXpubSummary net max_count
+        S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net limits False
+        S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net limits True
+        S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net limits
+        S.get "/xpub/:xpub" $ scottyXpubSummary net limits
         S.post "/transactions" $ scottyPostTx net st pub
         S.get "/dbstats" scottyDbStats
         S.get "/events" $ scottyEvents net pub
@@ -658,8 +674,12 @@ runWeb WebConfig { webDB = db
                 $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
                 return True
 
-parseLimits :: Monad m => Word32 -> ActionT Except m (Maybe Word32, StartFrom)
-parseLimits max_count = do
+parseLimits ::
+       Monad m
+    => MaxLimits
+    -> Bool
+    -> ActionT Except m (Maybe Word32, StartFrom)
+parseLimits limits full = do
     let b = do
             height <- param "height"
             pos <- param "pos" `rescue` const (return maxBound)
@@ -669,17 +689,28 @@ parseLimits max_count = do
             return $ StartMem time
         o = do
             o <- param "offset" `rescue` const (return 0)
-            when (max_count > 0 && o > max_count) . raise . UserError $
-                "offset exceeded: " <> show o <> " > " <> show max_count
+            when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) .
+                raise . UserError $
+                "offset exceeded: " <> show o <> " > " <>
+                show (maxLimitOffset limits)
             return $ StartOffset o
     l <-
         do l <- (Just <$> param "limit") `rescue` const (return Nothing)
+           let lim =
+                   if full
+                       then maxLimitFull limits
+                       else maxLimitCount limits
+           let dfl = maxLimitDefault limits
            return $
-               if max_count > 0
-                   then case l of
-                            Nothing -> Just max_count
-                            Just n  -> Just (min n max_count)
-                   else l
+               case l of
+                   Nothing ->
+                       if dfl > 0 || lim > 0
+                           then Just (min lim dfl)
+                           else Nothing
+                   Just n ->
+                       if lim > 0
+                           then Just (min lim n)
+                           else Just n
     s <- b <|> m <|> o
     return (l, s)
 

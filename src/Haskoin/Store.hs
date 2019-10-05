@@ -38,6 +38,7 @@ module Haskoin.Store
     , BlockDB(..)
     , LayeredDB(..)
     , WebConfig(..)
+    , MaxLimits(..)
     , newLayeredDB
     , withStore
     , runWeb
