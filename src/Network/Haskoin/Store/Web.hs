@@ -1078,6 +1078,16 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
                     Just b  -> (b, src2) : sources1
         go sources2
 
+getAndSort ::
+       (Monad m, Eq a)
+    => (a -> a -> Ordering)
+    -> Maybe Limit
+    -> [ConduitT i a m ()]
+    -> ConduitT i a m ()
+getAndSort f limit cs = do
+    ls <- concat <$> forM cs (\c -> c .| applyOffsetLimit 0 limit .| sinkList)
+    yieldMany (sortBy f ls) .| dedup .| applyOffsetLimit 0 limit
+
 getMempoolStream ::
        (Monad m, StoreStream m)
     => ConduitT i TxHash m ()
@@ -1111,8 +1121,7 @@ getAddressesTxsLimit ::
     -> [Address]
     -> ConduitT i BlockTx m ()
 getAddressesTxsLimit limit start addrs =
-    mergeSourcesBy (flip compare `on` blockTxBlock) xs .| dedup .|
-    applyOffsetLimit 0 limit
+    getAndSort (flip compare `on` blockTxBlock) limit xs
   where
     xs = map (`getAddressTxs` start) addrs
 
@@ -1143,10 +1152,10 @@ getAddressesUnspentsLimit ::
     -> [Address]
     -> ConduitT i Unspent m ()
 getAddressesUnspentsLimit limit start addrs =
-    mergeSourcesBy
+    getAndSort
         (flip compare `on` unspentBlock)
-        (map (`getAddressUnspents` start) addrs) .|
-    applyOffsetLimit 0 limit
+        limit
+        (map (`getAddressUnspents` start) addrs)
 
 applyOffsetLimit :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
 applyOffsetLimit offset Nothing      = applyOffset offset
