@@ -673,14 +673,13 @@ parseLimits max_count = do
                 "offset exceeded: " <> show o <> " > " <> show max_count
             return $ StartOffset o
     l <-
-        runMaybeT $ do
-            l <-
-                MaybeT $
-                (Just <$> param "limit") `rescue` const (return Nothing)
-            return $
-                if max_count == 0
-                    then l
-                    else min l max_count
+        do l <- (Just <$> param "limit") `rescue` const (return Nothing)
+           return $
+               if max_count > 0
+                   then case l of
+                            Nothing -> Just max_count
+                            Just n  -> Just (min n max_count)
+                   else l
     s <- b <|> m <|> o
     return (l, s)
 
