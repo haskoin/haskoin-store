@@ -991,7 +991,7 @@ xpubUnspentLimit ::
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
 xpubUnspentLimit net limit start xpub =
-    xpubUnspent net start xpub .| applyOffsetLimit 0 limit
+    xpubUnspent net start xpub .| applyLimit limit
 
 xpubSummary ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
@@ -1066,17 +1066,38 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
   where
     mergeSealed sources = do
         prefetchedSources <- lift $ traverse ($$++ await) sources
-        go [(a, s) | (s, Just a) <- prefetchedSources]
+        go $ sortBy (f `on` fst) [(a, s) | (s, Just a) <- prefetchedSources]
     go [] = pure ()
     go sources = do
-        let (a, src1):sources1 = sortBy (f `on` fst) sources
+        let (a, src1):sources1 = sources
         yield a
         (src2, mb) <- lift $ src1 $$++ await
         let sources2 =
                 case mb of
                     Nothing -> sources1
-                    Just b  -> (b, src2) : sources1
+                    Just b  -> insertNubInSortedBy (f `on` fst) (b, src2) sources1
         go sources2
+
+insertNubInSortedBy :: (a -> a -> Ordering) -> a -> [a] -> [a]
+insertNubInSortedBy f x xs =
+    case find_idx 0 (length xs - 1) of
+        Nothing -> xs
+        Just i ->
+            let (xs1, xs2) = splitAt i xs
+             in xs1 ++ x : xs2
+  where
+    find_idx a b
+        | f (xs !! a) x == EQ = Nothing
+        | f (xs !! b) x == EQ = Nothing
+        | f (xs !! b) x == LT = Just (b + 1)
+        | f (xs !! a) x == GT = Just a
+        | b - a == 1 = Just b
+        | otherwise =
+            let c = a + (b - a) `div` 2
+                z = xs !! c
+             in if f z x == GT
+                    then find_idx a c
+                    else find_idx c b
 
 getAndSort ::
        (Monad m, Eq a)
@@ -1088,8 +1109,8 @@ getAndSort f limit cs = h cs
   where
     g xs = do
         ls <-
-            concat <$> forM xs (\c -> c .| applyOffsetLimit 0 limit .| sinkList)
-        yieldMany (sortBy f ls) .| dedup .| applyOffsetLimit 0 limit
+            concat <$> forM xs (\c -> c .| applyLimit limit .| sinkList)
+        yieldMany (sortBy f ls) .| dedup .| applyLimit limit
     h xs = do
         let (ys, zs) = splitAt 1000 xs
         if null zs then g ys else h (g ys : zs)
@@ -1127,7 +1148,7 @@ getAddressesTxsLimit ::
     -> [Address]
     -> ConduitT i BlockTx m ()
 getAddressesTxsLimit limit start addrs =
-    getAndSort (flip compare `on` blockTxBlock) limit xs
+    mergeSourcesBy (flip compare `on` blockTxBlock) xs .| applyLimit limit
   where
     xs = map (`getAddressTxs` start) addrs
 
@@ -1158,20 +1179,20 @@ getAddressesUnspentsLimit ::
     -> [Address]
     -> ConduitT i Unspent m ()
 getAddressesUnspentsLimit limit start addrs =
-    getAndSort
+    mergeSourcesBy
         (flip compare `on` unspentBlock)
-        limit
-        (map (`getAddressUnspents` start) addrs)
+        (map (`getAddressUnspents` start) addrs) .|
+    applyLimit limit
 
 applyOffsetLimit :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
-applyOffsetLimit offset Nothing      = applyOffset offset
-applyOffsetLimit offset (Just limit) = applyOffset offset >> applyLimit limit
+applyOffsetLimit offset limit = applyOffset offset >> applyLimit limit
 
 applyOffset :: Monad m => Offset -> ConduitT i i m ()
 applyOffset = dropC . fromIntegral
 
-applyLimit :: Monad m => Limit -> ConduitT i i m ()
-applyLimit = takeC . fromIntegral
+applyLimit :: Monad m => Maybe Limit -> ConduitT i i m ()
+applyLimit Nothing = mapC id
+applyLimit (Just l) = takeC (fromIntegral l)
 
 conduitToQueue :: MonadIO m => TBQueue (Maybe a) -> ConduitT a Void m ()
 conduitToQueue q =

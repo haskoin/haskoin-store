@@ -76,6 +76,7 @@ module Haskoin.Store
     , healthCheck
     , withBlockMem
     , withLayeredDB
+    , insertNubInSortedBy
     ) where
 
 import           Conduit
