@@ -702,10 +702,9 @@ runWeb WebConfig { webDB = db
                  , webPublisher = pub
                  , webMaxLimits = limits
                  } = do
-    o <- opts
     l <- logIt
     runner <- askRunInIO
-    scottyOptsT o (runner . withLayeredDB db) $ do
+    scottyT port (runner . withLayeredDB db) $ do
         middleware l
         defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
@@ -743,14 +742,6 @@ runWeb WebConfig { webDB = db
         S.get "/peers" $ scottyPeers net st
         S.get "/health" $ scottyHealth net st
         notFound $ raise ThingNotFound
-  where
-    opts = do
-        runner <- askRunInIO
-        let f s =
-                runner $ do
-                    $(logDebugS) "Web" $ "Incoming connection: " <> cs (show s)
-                    return True
-        return def {settings = setPort port (setOnOpen f defaultSettings)}
 
 getStart :: (MonadResource m, MonadUnliftIO m) => WebT m (Maybe BlockRef)
 getStart =
