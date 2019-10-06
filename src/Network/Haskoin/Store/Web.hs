@@ -1084,15 +1084,22 @@ getAndSort ::
     -> Maybe Limit
     -> [ConduitT i a m ()]
     -> ConduitT i a m ()
-getAndSort f limit cs = h cs
+getAndSort f limit cs = h cs (return ())
   where
-    g xs = do
-        ls <-
-            concat <$> forM xs (\c -> c .| applyOffsetLimit 0 limit .| sinkList)
-        yieldMany (sortBy f ls) .| dedup .| applyOffsetLimit 0 limit
-    h xs = do
-        let (ys, zs) = splitAt 50 xs
-        if null zs then g ys else h (g ys : zs)
+    g x a = do
+        xs <- (lc x >> a) .| sinkList
+        yieldMany (ll (sortBy f (nub xs)))
+    h [] a = a
+    h (x:xs) a = do
+        h xs (g x a)
+    lc c =
+        case limit of
+            Nothing -> c
+            Just l -> c .| applyLimit l
+    ll =
+        case limit of
+            Nothing -> id
+            Just l -> take (fromIntegral l)
 
 getMempoolStream ::
        (Monad m, StoreStream m)
