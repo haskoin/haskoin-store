@@ -1084,26 +1084,15 @@ getAndSort ::
     -> Maybe Limit
     -> [ConduitT i a m ()]
     -> ConduitT i a m ()
-getAndSort f limit cs = g (map lc cs) []
+getAndSort f limit cs = h cs
   where
-    g [] a = yieldMany $ ll (sortBy f (nub a))
-    g (x:xs) a = do
-        ys <- x .| sinkList
-        if fromIntegral mx * 10 <= length a
-            then g xs (ll (sortBy f (nub (a ++ ys))))
-            else g xs (a ++ ys)
-    mx =
-        case limit of
-            Just l -> l
-            Nothing -> 10000
-    lc c =
-        case limit of
-            Nothing -> c
-            Just l -> c .| applyLimit l
-    ll =
-        case limit of
-            Nothing -> id
-            Just l -> take (fromIntegral l)
+    g xs = do
+        ls <-
+            concat <$> forM xs (\c -> c .| applyOffsetLimit 0 limit .| sinkList)
+        yieldMany (sortBy f ls) .| dedup .| applyOffsetLimit 0 limit
+    h xs = do
+        let (ys, zs) = splitAt 1000 xs
+        if null zs then g ys else h (g ys : zs)
 
 getMempoolStream ::
        (Monad m, StoreStream m)
