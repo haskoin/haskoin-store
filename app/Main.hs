@@ -72,13 +72,8 @@ defMaxLimits =
         , maxLimitFull = 500
         , maxLimitOffset = 50000
         , maxLimitDefault = 100
+        , maxLimitGap = 20
         }
-
-defMaxCount :: Word32
-defMaxCount = 10000
-
-defMaxFull :: Word32
-defMaxFull = 1000
 
 config :: Parser Config
 config = do
@@ -105,32 +100,39 @@ config = do
         help "Network peer (as many as required)"
     configCache <-
         option str $
-        long "cache" <> short 'c' <> help "Memory mapped disk for cache" <>
+        long "cache" <> short 'c' <> help "RAM drive directory for acceleration" <>
         value ""
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
     maxLimitCount <-
         option auto $
         metavar "INT" <> long "maxlimit" <>
-        help "Max limt count for tx list queries (0 for unlimited)" <>
+        help "Max limit for listings (0 for no limit)" <>
         showDefault <>
         value (maxLimitCount defMaxLimits)
     maxLimitFull <-
         option auto $
         metavar "INT" <> long "maxfull" <>
-        help "Max limit for full tx queries (0 for unlimited)" <>
+        help "Max limit for full listings (0 for no limit)" <>
         showDefault <>
         value (maxLimitFull defMaxLimits)
     maxLimitOffset <-
         option auto $
-        metavar "INT" <> long "maxoffset" <> help "Max offset parameter" <>
+        metavar "INT" <> long "maxoffset" <>
+        help "Max offset (0 for no limit)" <>
         showDefault <>
         value (maxLimitOffset defMaxLimits)
     maxLimitDefault <-
         option auto $
-        metavar "INT" <> long "deflimit" <> help "Default limit" <> showDefault <>
+        metavar "INT" <> long "deflimit" <> help "Default limit (0 for max)" <>
+        showDefault <>
         value (maxLimitDefault defMaxLimits)
-    return Config {configMaxLimits = MaxLimits {..}, ..}
+    maxLimitGap <-
+        option auto $
+        metavar "INT" <> long "gap" <> help "Extended public key gap" <>
+        showDefault <>
+        value (maxLimitGap defMaxLimits)
+    pure Config {configMaxLimits = MaxLimits {..}, ..}
 
 networkReader :: String -> Either String Network
 networkReader s

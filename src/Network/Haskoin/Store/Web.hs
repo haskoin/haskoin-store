@@ -127,6 +127,7 @@ data MaxLimits =
         , maxLimitFull    :: !Word32
         , maxLimitOffset  :: !Word32
         , maxLimitDefault :: !Word32
+        , maxLimitGap     :: !Word32
         }
     deriving (Eq, Show)
 
@@ -547,15 +548,16 @@ scottyAddressesBalances net = do
 scottyXpubBalances ::
        (MonadUnliftIO m, MonadLoggerIO m, MonadResource m)
     => Network
+    -> MaxLimits
     -> WebT m ()
-scottyXpubBalances net = do
+scottyXpubBalances net max_limits = do
     cors
     xpub <- parseXpub net
     proto <- setupBin
     runner <- lift askRunInIO
     stream $ \io flush' -> do
         runner . runConduit $
-            xpubBals xpub .| streamAny net proto io
+            xpubBals max_limits xpub .| streamAny net proto io
         flush'
 
 scottyXpubTxs ::
@@ -572,7 +574,7 @@ scottyXpubTxs net limits full = do
     proto <- setupBin
     as <-
         lift . runConduit $
-        xpubBals x .| mapC (balanceAddress . xPubBal) .| sinkList
+        xpubBals limits x .| mapC (balanceAddress . xPubBal) .| sinkList
     runner <- lift askRunInIO
     stream $ \io flush' -> do
         runner . runConduit $ f proto l s as io
@@ -596,18 +598,19 @@ scottyXpubUnspents net limits = do
     runner <- lift askRunInIO
     stream $ \io flush' -> do
         runner . runConduit $
-            xpubUnspentLimit net l s x .| streamAny net proto io
+            xpubUnspentLimit net limits l s x .| streamAny net proto io
         flush'
 
 scottyXpubSummary ::
        (MonadLoggerIO m, MonadUnliftIO m, MonadResource m)
     => Network
+    -> MaxLimits
     -> WebT m ()
-scottyXpubSummary net = do
+scottyXpubSummary net max_limits = do
     cors
     x <- parseXpub net
     proto <- setupBin
-    res <- lift $ xpubSummary x
+    res <- lift $ xpubSummary max_limits x
     protoSerial net proto res
 
 scottyPostTx ::
@@ -731,11 +734,11 @@ runWeb WebConfig { webDB = db
         S.get "/address/unspent" $ scottyAddressesUnspent net limits
         S.get "/address/:address/balance" $ scottyAddressBalance net
         S.get "/address/balances" $ scottyAddressesBalances net
-        S.get "/xpub/:xpub/balances" $ scottyXpubBalances net
+        S.get "/xpub/:xpub/balances" $ scottyXpubBalances net limits
         S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net limits False
         S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net limits True
         S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net limits
-        S.get "/xpub/:xpub" $ scottyXpubSummary net
+        S.get "/xpub/:xpub" $ scottyXpubSummary net limits
         S.post "/transactions" $ scottyPostTx net st pub
         S.get "/dbstats" scottyDbStats
         S.get "/events" $ scottyEvents net pub
@@ -789,7 +792,9 @@ getLimit limits full = do
     l <- (Just <$> param "limit") `rescue` const (return Nothing)
     let m =
             if full
-                then maxLimitFull limits
+                then if maxLimitFull limits > 0
+                         then maxLimitFull limits
+                         else maxLimitCount limits
                 else maxLimitCount limits
     let d = maxLimitDefault limits
     return $
@@ -935,11 +940,13 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 
 xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m)
-    => XPubKey
+    => MaxLimits
+    -> XPubKey
     -> ConduitT i XPubBal m ()
-xpubBals xpub = go 0 >> go 1
+xpubBals limits xpub = go 0 >> go 1
   where
-    go m = yieldMany (addrs m) .| mapMC (uncurry bal) .| gap 20
+    go m =
+        yieldMany (addrs m) .| mapMC (uncurry bal) .| gap (maxLimitGap limits)
     bal a p =
         getBalance a >>= \case
             Nothing -> return Nothing
@@ -962,10 +969,11 @@ xpubUnspent ::
        , StoreRead m
        )
     => Network
+    -> MaxLimits
     -> Maybe BlockRef
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
-xpubUnspent net start xpub = xpubBals xpub .| go
+xpubUnspent net max_limits start xpub = xpubBals max_limits xpub .| go
   where
     go =
         awaitForever $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
@@ -979,19 +987,21 @@ xpubUnspentLimit ::
        , StoreRead m
        )
     => Network
+    -> MaxLimits
     -> Maybe Limit
     -> Maybe BlockRef
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
-xpubUnspentLimit net limit start xpub =
-    xpubUnspent net start xpub .| applyLimit limit
+xpubUnspentLimit net max_limits limit start xpub =
+    xpubUnspent net max_limits start xpub .| applyLimit limit
 
 xpubSummary ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
-    => XPubKey
+    => MaxLimits
+    -> XPubKey
     -> m XPubSummary
-xpubSummary x = do
-    bs <- runConduit $ xpubBals x .| sinkList
+xpubSummary max_limits x = do
+    bs <- runConduit $ xpubBals max_limits x .| sinkList
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs
