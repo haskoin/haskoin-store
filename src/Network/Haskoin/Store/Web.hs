@@ -1084,14 +1084,15 @@ getAndSort ::
     -> Maybe Limit
     -> [ConduitT i a m ()]
     -> ConduitT i a m ()
-getAndSort f limit cs = h cs (return ())
+getAndSort f limit cs = h cs []
   where
     g x a = do
-        xs <- (lc x >> a) .| sinkList
-        yieldMany (ll (sortBy f (nub xs)))
-    h [] a = a
+        xs <- (lc x) .| sinkList
+        return (ll (sortBy f (nub (a ++ xs))))
+    h [] a = yieldMany a
     h (x:xs) a = do
-        h xs (g x a)
+        b <- g x a
+        h xs b
     lc c =
         case limit of
             Nothing -> c
