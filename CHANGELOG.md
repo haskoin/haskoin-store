@@ -6,19 +6,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.18.0
 ### Changed
-- Simplified significantly limit and start point handling on web API.
+- Simplified limits and start point handling on web API.
+- Made transaction streaming algorithm faster for xpub transactions.
 
 ### Added
 - Fine-grained control for maximum limits via command line options.
-- Web API now allows to specify a transaction as a start parameter.
-- Web API now allows to specify a block as a start point, both by height or hash.
-- Web API now allows to specify a unix time on the blockchain as a start point.
+- Transaction hash as starting point.
+- Block hash as starting point.
+- Timestamp as starting point.
 
 ### Removed
-- Mempool endpoint now has no limits or offsets and always returns the full mempool list.
+- Mempool endpoint now has no limits or offsets and always returns full list.
 - Extended public key summary output no longer includes any transactions.
 - Extended public key summary output no longer includes received total.
-- Offsets not allowed for transaction lists involving multiple addresses or extended public keys.
+- Offsets not allowed for transaction lists involving multiple addresses or xpubs.
 - Confusing block position parameter no longer part of web API.
 
 ## 0.17.2

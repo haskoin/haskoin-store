@@ -1098,22 +1098,6 @@ insertNubInSortedBy f x xs
                     then find_idx a c
                     else find_idx c b
 
-getAndSort ::
-       (Monad m, Eq a)
-    => (a -> a -> Ordering)
-    -> Maybe Limit
-    -> [ConduitT i a m ()]
-    -> ConduitT i a m ()
-getAndSort f limit cs = h cs
-  where
-    g xs = do
-        ls <-
-            concat <$> forM xs (\c -> c .| applyLimit limit .| sinkList)
-        yieldMany (sortBy f ls) .| dedup .| applyLimit limit
-    h xs = do
-        let (ys, zs) = splitAt 1000 xs
-        if null zs then g ys else h (g ys : zs)
-
 getMempoolStream ::
        (Monad m, StoreStream m)
     => ConduitT i TxHash m ()
