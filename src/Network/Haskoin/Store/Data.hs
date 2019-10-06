@@ -115,7 +115,7 @@ blockAtOrBefore q = runMaybeT $ do
     f a b
         | t b <= q = return b
         | t a > q = mzero
-        | h a - h b == 1 = return a
+        | h b - h a == 1 = return a
         | otherwise = do
               let x = h a + (h b - h a) `div` 2
               m <- g x
