@@ -1084,15 +1084,18 @@ getAndSort ::
     -> Maybe Limit
     -> [ConduitT i a m ()]
     -> ConduitT i a m ()
-getAndSort f limit cs = h cs []
+getAndSort f limit cs = g (map lc cs) []
   where
-    g x a = do
-        xs <- (lc x) .| sinkList
-        return (ll (sortBy f (nub (a ++ xs))))
-    h [] a = yieldMany a
-    h (x:xs) a = do
-        b <- g x a
-        h xs b
+    g [] a = yieldMany $ ll (sortBy f (nub a))
+    g (x:xs) a = do
+        ys <- x .| sinkList
+        if fromIntegral mx * 10 <= length a
+            then g xs (ll (sortBy f (nub (a ++ ys))))
+            else g xs (a ++ ys)
+    mx =
+        case limit of
+            Just l -> l
+            Nothing -> 10000
     lc c =
         case limit of
             Nothing -> c
