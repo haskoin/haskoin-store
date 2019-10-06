@@ -39,6 +39,8 @@ import qualified Data.Text                         as T
 import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
 import           Data.Time.Clock
+import           Data.Vector                       (Vector)
+import qualified Data.Vector                       as V
 import           Data.Version
 import           Data.Word
 import           Database.RocksDB                  as R
@@ -1066,35 +1068,39 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
   where
     mergeSealed sources = do
         prefetchedSources <- lift $ traverse ($$++ await) sources
-        go $ sortBy (f `on` fst) [(a, s) | (s, Just a) <- prefetchedSources]
-    go [] = pure ()
-    go sources = do
-        let (a, src1):sources1 = sources
+        go . V.fromList $
+            sortBy (f `on` fst) [(a, s) | (s, Just a) <- prefetchedSources]
+    go sources
+      | V.null sources = pure ()
+      | otherwise = do
+        let (a, src1) = V.head sources
+            sources1 = V.tail sources
         yield a
         (src2, mb) <- lift $ src1 $$++ await
         let sources2 =
                 case mb of
                     Nothing -> sources1
-                    Just b  -> insertNubInSortedBy (f `on` fst) (b, src2) sources1
+                    Just b ->
+                        insertNubInSortedBy (f `on` fst) (b, src2) sources1
         go sources2
 
-insertNubInSortedBy :: (a -> a -> Ordering) -> a -> [a] -> [a]
+insertNubInSortedBy :: (a -> a -> Ordering) -> a -> Vector a -> Vector a
 insertNubInSortedBy f x xs =
     case find_idx 0 (length xs - 1) of
         Nothing -> xs
         Just i ->
-            let (xs1, xs2) = splitAt i xs
-             in xs1 ++ x : xs2
+            let (xs1, xs2) = V.splitAt i xs
+             in xs1 <> x `V.cons` xs2
   where
     find_idx a b
-        | f (xs !! a) x == EQ = Nothing
-        | f (xs !! b) x == EQ = Nothing
-        | f (xs !! b) x == LT = Just (b + 1)
-        | f (xs !! a) x == GT = Just a
+        | f (xs V.! a) x == EQ = Nothing
+        | f (xs V.! b) x == EQ = Nothing
+        | f (xs V.! b) x == LT = Just (b + 1)
+        | f (xs V.! a) x == GT = Just a
         | b - a == 1 = Just b
         | otherwise =
             let c = a + (b - a) `div` 2
-                z = xs !! c
+                z = xs V.! c
              in if f z x == GT
                     then find_idx a c
                     else find_idx c b
@@ -1191,7 +1197,7 @@ applyOffset :: Monad m => Offset -> ConduitT i i m ()
 applyOffset = dropC . fromIntegral
 
 applyLimit :: Monad m => Maybe Limit -> ConduitT i i m ()
-applyLimit Nothing = mapC id
+applyLimit Nothing  = mapC id
 applyLimit (Just l) = takeC (fromIntegral l)
 
 conduitToQueue :: MonadIO m => TBQueue (Maybe a) -> ConduitT a Void m ()
