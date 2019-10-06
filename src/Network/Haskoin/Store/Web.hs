@@ -1068,21 +1068,21 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
   where
     mergeSealed sources = do
         prefetchedSources <- lift $ traverse ($$++ await) sources
-        go . V.fromList $
+        go . V.fromList . nubBy (\a b -> f (fst a) (fst b) == EQ) $
             sortBy (f `on` fst) [(a, s) | (s, Just a) <- prefetchedSources]
     go sources
-      | V.null sources = pure ()
-      | otherwise = do
-        let (a, src1) = V.head sources
-            sources1 = V.tail sources
-        yield a
-        (src2, mb) <- lift $ src1 $$++ await
-        let sources2 =
-                case mb of
-                    Nothing -> sources1
-                    Just b ->
-                        insertNubInSortedBy (f `on` fst) (b, src2) sources1
-        go sources2
+        | V.null sources = pure ()
+        | otherwise = do
+            let (a, src1) = V.head sources
+                sources1 = V.tail sources
+            yield a
+            (src2, mb) <- lift $ src1 $$++ await
+            let sources2 =
+                    case mb of
+                        Nothing -> sources1
+                        Just b ->
+                            insertNubInSortedBy (f `on` fst) (b, src2) sources1
+            go sources2
 
 insertNubInSortedBy :: (a -> a -> Ordering) -> a -> Vector a -> Vector a
 insertNubInSortedBy f x xs =
