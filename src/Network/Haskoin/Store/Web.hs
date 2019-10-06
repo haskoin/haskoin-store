@@ -39,7 +39,7 @@ import qualified Data.Text                         as T
 import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
 import           Data.Time.Clock
-import           Data.Vector                       (Vector)
+import           Data.Vector                       (Vector, cons, (!))
 import qualified Data.Vector                       as V
 import           Data.Version
 import           Data.Word
@@ -1076,22 +1076,24 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
             go sources2
 
 insertNubInSortedBy :: (a -> a -> Ordering) -> a -> Vector a -> Vector a
-insertNubInSortedBy f x xs =
-    case find_idx 0 (length xs - 1) of
-        Nothing -> xs
-        Just i ->
-            let (xs1, xs2) = V.splitAt i xs
-             in xs1 <> x `V.cons` xs2
+insertNubInSortedBy f x xs
+    | null xs = xs
+    | otherwise =
+        case find_idx 0 (length xs - 1) of
+            Nothing -> xs
+            Just i ->
+                let (xs1, xs2) = V.splitAt i xs
+                 in xs1 <> x `cons` xs2
   where
     find_idx a b
-        | f (xs V.! a) x == EQ = Nothing
-        | f (xs V.! b) x == EQ = Nothing
-        | f (xs V.! b) x == LT = Just (b + 1)
-        | f (xs V.! a) x == GT = Just a
+        | f (xs ! a) x == EQ = Nothing
+        | f (xs ! b) x == EQ = Nothing
+        | f (xs ! b) x == LT = Just (b + 1)
+        | f (xs ! a) x == GT = Just a
         | b - a == 1 = Just b
         | otherwise =
             let c = a + (b - a) `div` 2
-                z = xs V.! c
+                z = xs ! c
              in if f z x == GT
                     then find_idx a c
                     else find_idx c b
