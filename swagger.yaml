@@ -1162,13 +1162,35 @@ components:
               description: Mempool balance for all addresses in extended public key.
               type: integer
             received:
-              description: Total received on external addresses.
+              description: >
+                Total received on external addresses.
+
+
+
+                Note: this number may be smaller than the total confirmed plus
+                unconfirmed if an address from the change chain has been used to
+                receive funds from an external source.
               type: integer
             utxo:
               description: Number of unconfirmed transaction outputs.
               type: integer
             txs:
-              description: Number of transaction received on external addresses.
+              description: >
+                Total number of transactions. The same transaction will count as many
+                times as it affects a _different_ address within the xpub.
+
+
+
+                For example: a transaction spending two outputs from different addresses,
+                both deriving from the xpub, and creating an output to a change address
+                also deriving from the xpub will count as three transactions. Any other
+                inputs or outputs from that transaction do not add to this count.
+
+
+
+                Another example: a transaction spending four outputs from the same
+                address derived from the xpub will only count as one as long as it has
+                no other inputs or outputs spending to/from an address within the xpub.
               type: integer
         indices:
           type: object
