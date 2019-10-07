@@ -170,7 +170,7 @@ main = do
         exitSuccess
     when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
         die "ERROR: Specify peers to connect or enable peer discovery."
-    runResourceT $ run conf
+    run conf
   where
     opts =
         info (helper <*> config) $
@@ -182,7 +182,7 @@ cacheDir :: Network -> FilePath -> Maybe FilePath
 cacheDir net "" = Nothing
 cacheDir net ch = Just (ch </> getNetworkName net </> "cache")
 
-run :: (MonadUnliftIO m, MonadResource m) => Config -> m ()
+run :: MonadUnliftIO m => Config -> m ()
 run Config { configPort = port
            , configNetwork = net
            , configDiscover = disc
