@@ -765,15 +765,13 @@ getStart =
         t <- MaybeT $ getTxData (TxHash h)
         return $ txDataBlock t
     start_time q = do
-        p <-
-            MaybeT . fmap Just . runConduit $
-            getMempool .| mapC fst .| anyC (<= q)
-        if p
-            then return $ MemRef q
-            else do
+        b <- MaybeT getBestBlock >>= MaybeT . getBlock
+        if q <= fromIntegral (blockTimestamp (blockDataHeader b))
+            then do
                 b <- MaybeT $ blockAtOrBefore q
                 let g = blockDataHeight b
                 return $ BlockRef g maxBound
+            else return $ MemRef q
 
 getOffset :: Monad m => MaxLimits -> ActionT Except m Offset
 getOffset limits = do
