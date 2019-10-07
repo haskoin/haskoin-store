@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Simplified limits and start point handling on web API.
 - Made transaction streaming algorithm faster for xpub transactions.
+- Extended public key summary output contains all addresses that have received transactions.
 
 ### Added
 - Fine-grained control for maximum limits via command line options.
