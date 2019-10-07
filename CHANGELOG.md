@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.18.1
+### Removed
+- Remove transaction count from xpub summary object.
+
 ## 0.18.0
 ### Changed
 - Simplified limits and start point handling on web API.
@@ -16,8 +20,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Block hash as starting point.
 - Timestamp as starting point.
 - Configurable xpub gap limit.
-- Transaction count added to XPub Summary.
-- UTXO count added to XPub Summary.
+- Transaction count added to xpub summary.
+- UTXO count added to xpub summary.
 
 ### Removed
 - Mempool endpoint now has no limits or offsets and always returns full list.
@@ -103,15 +107,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.15.0
 ### Removed
-- `PreciseUnixTime` data type no longer exists.
+- Removed `PreciseUnixTime` data type.
 
 ### Changed
-- Use `Word64` for Unix time representation.
+- Use 64 bits for Unix time representation.
 - Data model now uses simplified Unix time representation.
 
 ## 0.14.9
 ### Added
-- Last external/change index information to `XPubSummary` object.
+- Last external/change index information to xpub summary object.
 
 ## 0.14.8
 ### Added
@@ -164,7 +168,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Extra debug logging.
 
 ### Changed
-- Bump `haskoin-core` nad `haskoin-node`.
+- Bump `haskoin-core` and `haskoin-node`.
 
 ## 0.13.1
 ### Changed

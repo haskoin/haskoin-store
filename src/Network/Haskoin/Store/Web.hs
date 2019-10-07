@@ -1010,7 +1010,6 @@ xpubSummary max_limits x = do
                 [ c
                 | XPubBal {xPubBal = Balance {balanceUnspentCount = c}} <- bs
                 ]
-        ct = sum [c | XPubBal {xPubBal = Balance {balanceTxCount = c}} <- bs]
         xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
         rx =
             sum
@@ -1023,7 +1022,6 @@ xpubSummary max_limits x = do
             , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
             , xPubSummaryReceived = rx
             , xPubUnspentCount = uc
-            , xPubTxCount = ct
             , xPubSummaryPaths = pm
             , xPubChangeIndex = ch
             , xPubExternalIndex = ex

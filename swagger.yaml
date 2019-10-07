@@ -7,7 +7,7 @@ servers:
   - url: 'https://bchtest.haskoin.com/api/'
 
 info:
-  version: '0.18.0'
+  version: '0.18.1'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
@@ -1153,7 +1153,6 @@ components:
             - unconfirmed
             - received
             - utxo
-            - txs
           properties:
             confirmed:
               description: Confirmed balance for all addresses in extended public key.
@@ -1173,24 +1172,6 @@ components:
               type: integer
             utxo:
               description: Number of unconfirmed transaction outputs.
-              type: integer
-            txs:
-              description: >
-                Total number of transactions. The same transaction will count as many
-                times as it affects a _different_ address within the xpub.
-
-
-
-                For example: a transaction spending two outputs from different addresses,
-                both deriving from the xpub, and creating an output to a change address
-                also deriving from the xpub will count as three transactions. Any other
-                inputs or outputs from that transaction do not add to this count.
-
-
-
-                Another example: a transaction spending four outputs from the same
-                address derived from the xpub will only count as one as long as it has
-                no other inputs or outputs spending to/from an address within the xpub.
               type: integer
         indices:
           type: object
