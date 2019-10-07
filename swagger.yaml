@@ -1680,21 +1680,18 @@ components:
       schema:
         type: integer
       description: >
-        Return transactions or unspent outputs up to this height.
+        If a block height is specified, only elements at or below that
+        height on the block chain are returned.
 
+        If a block hash is specified, only entries at or below that block
+        are returned.
 
+        If a transaction id is specified, only entries at on below that
+        transaction's relative position on the blockchain are returned.
 
-        * If a block hash is specified, that block's height is used.
-
-        * If a transaction id is specified, that tranasction's height and
-        relative position in the block is used.
-
-        * If a unix timestamp is used, start returning transactions from
-        the mempool at or below that timestamp.
-
-        * If a unix timestamp is used and there are no eligible transactions
-        from the mempool, start from the block at or below the specified timestamp.
-
+        If a unix timestamp is specified, return transactions that were
+        received (mempool) or confirmed (block chain) at or below that
+        time.
     offsetParam:
       name: offset
       in: query
