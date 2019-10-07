@@ -1680,16 +1680,16 @@ components:
       schema:
         type: integer
       description: >
-        If a block height is specified, only elements at or below that
+        * If a block height is specified, only elements at or below that
         height on the block chain are returned.
 
-        If a block hash is specified, only entries at or below that block
+        * If a block hash is specified, only entries at or below that block
         are returned.
 
-        If a transaction id is specified, only entries at on below that
+        * If a transaction id is specified, only entries at on below that
         transaction's relative position on the blockchain are returned.
 
-        If a unix timestamp is specified, return transactions that were
+        * If a unix timestamp is specified, return transactions that were
         received (mempool) or confirmed (block chain) at or below that
         time.
     offsetParam:
