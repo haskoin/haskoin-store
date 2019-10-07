@@ -1151,12 +1151,24 @@ components:
           required:
             - confirmed
             - unconfirmed
+            - received
+            - utxo
+            - txs
           properties:
             confirmed:
               description: Confirmed balance for all addresses in extended public key.
               type: integer
             unconfirmed:
               description: Mempool balance for all addresses in extended public key.
+              type: integer
+            received:
+              description: Total received on external addresses.
+              type: integer
+            utxo:
+              description: Number of unconfirmed transaction outputs.
+              type: integer
+            txs:
+              description: Number of transaction received on external addresses.
               type: integer
         indices:
           type: object

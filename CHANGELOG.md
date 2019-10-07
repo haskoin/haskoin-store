@@ -16,11 +16,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Block hash as starting point.
 - Timestamp as starting point.
 - Configurable xpub gap limit.
+- Transaction count added to XPub Summary.
+- UTXO count added to XPub Summary.
 
 ### Removed
 - Mempool endpoint now has no limits or offsets and always returns full list.
 - Extended public key summary output no longer includes any transactions.
-- Extended public key summary output no longer includes received total.
 - Offsets not allowed for transaction lists involving multiple addresses or xpubs.
 - Confusing block position parameter no longer part of web API.
 

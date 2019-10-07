@@ -916,6 +916,9 @@ data XPubSummary =
     XPubSummary
         { xPubSummaryConfirmed :: !Word64
         , xPubSummaryZero      :: !Word64
+        , xPubSummaryReceived  :: !Word64
+        , xPubUnspentCount     :: !Word64
+        , xPubTxCount          :: !Word64
         , xPubExternalIndex    :: !Word32
         , xPubChangeIndex      :: !Word32
         , xPubSummaryPaths     :: !(HashMap Address [KeyIndex])
@@ -925,11 +928,21 @@ data XPubSummary =
 xPubSummaryPairs :: A.KeyValue kv => Network -> XPubSummary -> [kv]
 xPubSummaryPairs net XPubSummary { xPubSummaryConfirmed = c
                                  , xPubSummaryZero = z
+                                 , xPubSummaryReceived = r
+                                 , xPubUnspentCount = u
+                                 , xPubTxCount = t
                                  , xPubSummaryPaths = ps
                                  , xPubExternalIndex = ext
                                  , xPubChangeIndex = ch
                                  } =
-    [ "balance" .= object ["confirmed" .= c, "unconfirmed" .= z]
+    [ "balance" .=
+      object
+          [ "confirmed" .= c
+          , "unconfirmed" .= z
+          , "received" .= r
+          , "utxo" .= u
+          , "txs" .= t
+          ]
     , "indices" .= object ["change" .= ch, "external" .= ext]
     , "paths" .= object (mapMaybe (uncurry f) (M.toList ps))
     ]
@@ -949,27 +962,37 @@ instance JsonSerial XPubSummary where
 instance BinSerial XPubSummary where
     binSerial net XPubSummary { xPubSummaryConfirmed = c
                               , xPubSummaryZero = z
+                              , xPubSummaryReceived = r
+                              , xPubUnspentCount = u
+                              , xPubTxCount = t
                               , xPubExternalIndex = ext
                               , xPubChangeIndex = ch
                               , xPubSummaryPaths = ps
                               } = do
         put c
         put z
+        put r
+        put u
+        put t
         put ext
         put ch
         put (map (first (runPut . binSerial net)) (M.toList ps))
-
     binDeserial net = do
-      c <- get
-      z <- get
-      ext <- get
-      ch <- get
-      ps <- get
-      let xs = map (first (runGet (binDeserial net))) ps
-      ys <- forM xs $ \(k, v) -> case k of
-        Right a -> return (a, v)
-        Left _  -> mzero
-      return $ XPubSummary c z ext ch (M.fromList ys)
+        c <- get
+        z <- get
+        r <- get
+        u <- get
+        t <- get
+        ext <- get
+        ch <- get
+        ps <- get
+        let xs = map (first (runGet (binDeserial net))) ps
+        ys <-
+            forM xs $ \(k, v) ->
+                case k of
+                    Right a -> return (a, v)
+                    Left _ -> mzero
+        return $ XPubSummary c z r u t ext ch (M.fromList ys)
 
 data HealthCheck = HealthCheck
     { healthHeaderBest   :: !(Maybe BlockHash)

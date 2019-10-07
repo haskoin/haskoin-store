@@ -1003,12 +1003,27 @@ xpubSummary max_limits x = do
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs
-        ex = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 0]
-        ch = foldl max 0 [i | XPubBal {xPubBalPath = [x, i]} <- bs, x == 1]
+        ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
+        ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
+        uc =
+            sum
+                [ c
+                | XPubBal {xPubBal = Balance {balanceUnspentCount = c}} <- bs
+                ]
+        xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
+        ct = sum [c | XPubBal {xPubBal = Balance {balanceTxCount = c}} <- xt]
+        rx =
+            sum
+                [ r
+                | XPubBal {xPubBal = Balance {balanceTotalReceived = r}} <- xt
+                ]
     return
         XPubSummary
             { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
             , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
+            , xPubSummaryReceived = rx
+            , xPubUnspentCount = uc
+            , xPubTxCount = ct
             , xPubSummaryPaths = pm
             , xPubChangeIndex = ch
             , xPubExternalIndex = ex
