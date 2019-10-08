@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.18.4
 ### Changed
-- Bump Haskoin Node.
+- Bump Haskoin Node to fix peers not stored and excessively verbose logging.
 
 ## 0.18.3
 ### Changed
