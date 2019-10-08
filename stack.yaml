@@ -7,5 +7,5 @@ nix:
     - zlib
 extra-deps:
   - haskoin-core-0.9.1
-  - haskoin-node-0.9.11
+  - haskoin-node-0.9.12
   - rocksdb-query-0.3.0
