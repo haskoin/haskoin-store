@@ -119,6 +119,7 @@ data WebConfig =
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
         , webMaxLimits :: !MaxLimits
+        , webReqLog    :: !Bool
         }
 
 data MaxLimits =
@@ -658,11 +659,17 @@ runWeb WebConfig { webDB = db
                  , webStore = st
                  , webPublisher = pub
                  , webMaxLimits = limits
+                 , webReqLog = reqlog
                  } = do
-    l <- logIt
+    req_logger <-
+        if reqlog
+            then Just <$> logIt
+            else return Nothing
     runner <- askRunInIO
     scottyT port (runner . withLayeredDB db) $ do
-        middleware l
+        case req_logger of
+            Just m -> middleware m
+            Nothing -> return ()
         defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
         S.get "/block/:block" $ scottyBlock net

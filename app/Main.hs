@@ -53,6 +53,7 @@ data Config = Config
     , configVersion   :: !Bool
     , configCache     :: !FilePath
     , configDebug     :: !Bool
+    , configReqLog    :: !Bool
     , configMaxLimits :: !MaxLimits
     }
 
@@ -104,6 +105,7 @@ config = do
         value ""
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
+    configReqLog <- switch $ long "reqlog" <> help "HTTP request logging"
     maxLimitCount <-
         option auto $
         metavar "INT" <> long "maxlimit" <>
@@ -191,6 +193,7 @@ run Config { configPort = port
            , configDir = db_dir
            , configDebug = deb
            , configMaxLimits = limits
+           , configReqLog = reqlog
            } =
     runStderrLoggingT . filterLogger l . flip finally clear $ do
         $(logInfoS) "Main" $
@@ -247,6 +250,7 @@ run Config { configPort = port
                                 , webPublisher = pub
                                 , webStore = str
                                 , webMaxLimits = limits
+                                , webReqLog = reqlog
                                 }
                      in runWeb wcfg
   where
