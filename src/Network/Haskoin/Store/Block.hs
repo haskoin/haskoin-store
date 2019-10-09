@@ -308,6 +308,7 @@ checkTime =
             if n > t + 60
                 then do
                     $(logErrorS) "Block" "Peer timeout"
+                    resetPeer
                     killPeer PeerTimeout p
                 else $(logDebugS) "Block" "Peer timeout not reached"
 
