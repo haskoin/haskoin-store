@@ -83,7 +83,7 @@ class StoreWrite m where
     setInit :: m ()
     setBest :: BlockHash -> m ()
     insertBlock :: BlockData -> m ()
-    insertAtHeight :: BlockHash -> BlockHeight -> m ()
+    setBlocksAtHeight :: [BlockHash] -> BlockHeight -> m ()
     insertTx :: TxData -> m ()
     insertSpender :: OutPoint -> Spender -> m ()
     deleteSpender :: OutPoint -> m ()

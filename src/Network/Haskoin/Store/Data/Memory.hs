@@ -160,10 +160,8 @@ insertBlockH :: BlockData -> BlockMem -> BlockMem
 insertBlockH bd db =
     db {hBlock = M.insert (headerHash (blockDataHeader bd)) bd (hBlock db)}
 
-insertAtHeightH :: BlockHash -> BlockHeight -> BlockMem -> BlockMem
-insertAtHeightH h g db = db {hHeight = M.insertWith f g [h] (hHeight db)}
-  where
-    f xs ys = nub $ xs <> ys
+setBlocksAtHeightH :: [BlockHash] -> BlockHeight -> BlockMem -> BlockMem
+setBlocksAtHeightH hs g db = db {hHeight = M.insert g hs (hHeight db)}
 
 insertTxH :: TxData -> BlockMem -> BlockMem
 insertTxH tx db = db {hTx = M.insert (txHash (txData tx)) tx (hTx db)}
@@ -348,9 +346,9 @@ instance (MonadIO m) => StoreWrite (ReaderT (TVar BlockMem) m) where
     insertBlock b = do
         v <- R.ask
         atomically $ modifyTVar v (insertBlockH b)
-    insertAtHeight h g = do
+    setBlocksAtHeight h g = do
         v <- R.ask
-        atomically $ modifyTVar v (insertAtHeightH h g)
+        atomically $ modifyTVar v (setBlocksAtHeightH h g)
     insertTx t = do
         v <- R.ask
         atomically $ modifyTVar v (insertTxH t)

@@ -192,9 +192,9 @@ insertBlockI :: MonadIO m => BlockData -> ImportDB -> m ()
 insertBlockI b ImportDB {importHashMap = hm} =
     withBlockMem hm $ insertBlock b
 
-insertAtHeightI :: MonadIO m => BlockHash -> BlockHeight -> ImportDB -> m ()
-insertAtHeightI b h ImportDB {importHashMap = hm} =
-    withBlockMem hm $ insertAtHeight b h
+setBlocksAtHeightI :: MonadIO m => [BlockHash] -> BlockHeight -> ImportDB -> m ()
+setBlocksAtHeightI hs g ImportDB {importHashMap = hm} =
+    withBlockMem hm $ setBlocksAtHeight hs g
 
 insertTxI :: MonadIO m => TxData -> ImportDB -> m ()
 insertTxI t ImportDB {importHashMap = hm} =
@@ -347,7 +347,7 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setInit = R.ask >>= setInitI
     setBest h = R.ask >>= setBestI h
     insertBlock b = R.ask >>= insertBlockI b
-    insertAtHeight b h = R.ask >>= insertAtHeightI b h
+    setBlocksAtHeight hs g = R.ask >>= setBlocksAtHeightI hs g
     insertTx t = R.ask >>= insertTxI t
     insertSpender p s = R.ask >>= insertSpenderI p s
     deleteSpender p = R.ask >>= deleteSpenderI p

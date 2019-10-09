@@ -268,7 +268,8 @@ importBlock net b n = do
             , blockDataFees = cb_out_val - subsidy (nodeHeight n)
             , blockDataOutputs = ts_out_val
             }
-    insertAtHeight (headerHash (nodeHeader n)) (nodeHeight n)
+    bs <- getBlocksAtHeight (nodeHeight n)
+    setBlocksAtHeight (nub (headerHash (nodeHeader n) : bs)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
     $(logDebugS) "Block" "Importing or confirming block transactions..."
     mapM_ (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
