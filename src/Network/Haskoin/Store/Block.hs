@@ -310,6 +310,7 @@ checkTime =
                     $(logErrorS) "Block" "Peer timeout"
                     resetPeer
                     killPeer PeerTimeout p
+                    syncMe
                 else $(logDebugS) "Block" "Peer timeout not reached"
 
 processDisconnect ::
