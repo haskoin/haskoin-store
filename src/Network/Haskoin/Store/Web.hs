@@ -240,9 +240,9 @@ scottyBlockHeight net = do
     n <- parseNoTx
     proto <- setupBin
     hs <- getBlocksAtHeight height
-    runner <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        runner . runConduit $
+        runStream db . runConduit $
             yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .|
             streamAny net proto io
         flush'
@@ -254,9 +254,9 @@ scottyBlockHeights net = do
     n <- parseNoTx
     proto <- setupBin
     bs <- concat <$> mapM getBlocksAtHeight (nub heights)
-    runner <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        runner . runConduit $
+        runStream db . runConduit $
             yieldMany (nub heights) .| concatMapMC getBlocksAtHeight .|
             concatMapMC getBlock .|
             mapC (pruneTx n) .|
@@ -268,11 +268,11 @@ scottyBlockLatest net = do
     cors
     n <- parseNoTx
     proto <- setupBin
-    runner <- lift askRunInIO
+    db <- askDB
     getBestBlock >>= \case
         Just h ->
             stream $ \io flush' -> do
-                runner . runConduit $ f n h 100 .| streamAny net proto io
+                runStream db . runConduit $ f n h 100 .| streamAny net proto io
                 flush'
         Nothing -> raise ThingNotFound
   where
@@ -293,9 +293,9 @@ scottyBlocks net = do
     blocks <- param "blocks"
     n <- parseNoTx
     proto <- setupBin
-    runner <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        runner . runConduit $
+        runStream db . runConduit $
             yieldMany (nub blocks) .| concatMapMC getBlock .| mapC (pruneTx n) .|
             streamAny net proto io
         flush'
@@ -340,9 +340,9 @@ scottyTransactions net = do
     cors
     txids <- param "txids"
     proto <- setupBin
-    runner <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        runner . runConduit $
+        runStream db . runConduit $
             yieldMany (nub txids) .| concatMapMC getTransaction .|
             streamAny net proto io
         flush'
@@ -353,11 +353,11 @@ scottyBlockTransactions net = do
     cors
     h <- param "block"
     proto <- setupBin
-    runner <- lift askRunInIO
+    db <- askDB
     getBlock h >>= \case
         Just b ->
             stream $ \io flush' -> do
-                runner . runConduit $
+                runStream db . runConduit $
                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
                     streamAny net proto io
                 flush'
@@ -369,9 +369,9 @@ scottyRawTransactions net = do
     cors
     txids <- param "txids"
     proto <- setupBin
-    runner <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        runner . runConduit $
+        runStream db . runConduit $
             yieldMany (nub txids) .| concatMapMC getTransaction .|
             mapC transactionData .|
             streamAny net proto io
@@ -383,11 +383,11 @@ scottyRawBlockTransactions net = do
     cors
     h <- param "block"
     proto <- setupBin
-    runner <- lift askRunInIO
+    db <- askDB
     getBlock h >>= \case
         Just b ->
             stream $ \io flush' -> do
-                runner . runConduit $
+                runStream db . runConduit $
                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
                     mapC transactionData .|
                     streamAny net proto io
@@ -502,9 +502,9 @@ scottyAddressesBalances net = do
                 , balanceTotalReceived = 0
                 }
         f _ (Just b) = b
-    runner <- lift askRunInIO
+    db <- askDB
     stream $ \io flush' -> do
-        runner . runConduit $
+        runStream db . runConduit $
             yieldMany as .| mapMC (\a -> f a <$> getBalance a) .|
             streamAny net proto io
         flush'
