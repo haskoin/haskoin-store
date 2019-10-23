@@ -64,6 +64,8 @@ import           Web.Scotty.Trans                  as S
 
 type WebT m = ActionT Except (ReaderT LayeredDB m)
 
+type DeriveAddrs = XPubKey -> KeyIndex -> [(Address, PubKey, KeyIndex)]
+
 type Offset = Word32
 type Limit = Word32
 
@@ -510,15 +512,19 @@ scottyAddressesBalances net = do
         flush'
 
 scottyXpubBalances ::
-       (MonadUnliftIO m, MonadLoggerIO m) => Network -> MaxLimits -> WebT m ()
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Network
+    -> MaxLimits
+    -> WebT m ()
 scottyXpubBalances net max_limits = do
     cors
     xpub <- parseXpub net
     proto <- setupBin
+    derive <- parseDeriveAddrs net
     db <- askDB
     stream $ \io flush' -> do
         runStream db . runConduit $
-            xpubBals max_limits xpub .| streamAny net proto io
+            xpubBals max_limits derive xpub .| streamAny net proto io
         flush'
 
 scottyXpubTxs ::
@@ -532,11 +538,12 @@ scottyXpubTxs net limits full = do
     x <- parseXpub net
     s <- getStart
     l <- getLimit limits full
+    derive <- parseDeriveAddrs net
     proto <- setupBin
     db <- askDB
     as <-
         liftIO . runStream db . runConduit $
-        xpubBals limits x .| mapC (balanceAddress . xPubBal) .| sinkList
+        xpubBals limits derive x .| mapC (balanceAddress . xPubBal) .| sinkList
     stream $ \io flush' -> do
         runStream db . runConduit $ f proto l s as io
         flush'
@@ -553,10 +560,11 @@ scottyXpubUnspents net limits = do
     proto <- setupBin
     s <- getStart
     l <- getLimit limits False
+    derive <- parseDeriveAddrs net
     db <- askDB
     stream $ \io flush' -> do
         runStream db . runConduit $
-            xpubUnspentLimit net limits l s x .| streamAny net proto io
+            xpubUnspentLimit net limits l s derive x .| streamAny net proto io
         flush'
 
 scottyXpubSummary ::
@@ -564,9 +572,10 @@ scottyXpubSummary ::
 scottyXpubSummary net max_limits = do
     cors
     x <- parseXpub net
+    derive <- parseDeriveAddrs net
     proto <- setupBin
     db <- askDB
-    res <- liftIO . runStream db $ xpubSummary max_limits x
+    res <- liftIO . runStream db $ xpubSummary max_limits derive x
     protoSerial net proto res
 
 scottyPostTx ::
@@ -786,6 +795,16 @@ parseXpub net = do
         Nothing -> next
         Just x  -> return x
 
+parseDeriveAddrs :: (Monad m, ScottyError e) => Network -> ActionT e m DeriveAddrs
+parseDeriveAddrs net
+    | getSegWit net = do
+          t <- param "derive" `rescue` const (return "standard")
+          return $ case (t :: Text) of
+            "segwit" -> deriveWitnessAddrs
+            "compat" -> deriveCompatWitnessAddrs
+            _ -> deriveAddrs
+    | otherwise = return deriveAddrs
+
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
 parseNoTx = param "notx" `rescue` const (return False)
 
@@ -900,9 +919,10 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 xpubBals ::
        (MonadResource m, MonadUnliftIO m, StoreRead m)
     => MaxLimits
+    -> DeriveAddrs
     -> XPubKey
     -> ConduitT i XPubBal m ()
-xpubBals limits xpub = go 0 >> go 1
+xpubBals limits derive xpub = go 0 >> go 1
   where
     go m =
         yieldMany (addrs m) .| mapMC (uncurry bal) .| gap (maxLimitGap limits)
@@ -911,7 +931,7 @@ xpubBals limits xpub = go 0 >> go 1
             Nothing -> return Nothing
             Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
     addrs m =
-        map (\(a, _, n') -> (a, [m, n'])) (deriveAddrs (pubSubKey xpub m) 0)
+        map (\(a, _, n') -> (a, [m, n'])) (derive (pubSubKey xpub m) 0)
     gap n =
         let r 0 = return ()
             r i =
@@ -930,9 +950,11 @@ xpubUnspent ::
     => Network
     -> MaxLimits
     -> Maybe BlockRef
+    -> DeriveAddrs
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
-xpubUnspent net max_limits start xpub = xpubBals max_limits xpub .| go
+xpubUnspent net max_limits start derive xpub =
+    xpubBals max_limits derive xpub .| go
   where
     go =
         awaitForever $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
@@ -949,18 +971,20 @@ xpubUnspentLimit ::
     -> MaxLimits
     -> Maybe Limit
     -> Maybe BlockRef
+    -> DeriveAddrs
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
-xpubUnspentLimit net max_limits limit start xpub =
-    xpubUnspent net max_limits start xpub .| applyLimit limit
+xpubUnspentLimit net max_limits limit start derive xpub =
+    xpubUnspent net max_limits start derive xpub .| applyLimit limit
 
 xpubSummary ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
     => MaxLimits
+    -> DeriveAddrs
     -> XPubKey
     -> m XPubSummary
-xpubSummary max_limits x = do
-    bs <- runConduit $ xpubBals max_limits x .| sinkList
+xpubSummary max_limits derive x = do
+    bs <- runConduit $ xpubBals max_limits derive x .| sinkList
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs

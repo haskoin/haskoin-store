@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.18.6
+version: 0.18.5
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
 category: Bitcoin, Finance, Network
@@ -22,7 +22,7 @@ dependencies:
   - conduit
   - data-default
   - hashable
-  - haskoin-core
+  - haskoin-core >= 0.9.5
   - haskoin-node
   - http-types
   - monad-logger

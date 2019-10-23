@@ -7,7 +7,7 @@ servers:
   - url: 'https://bchtest.haskoin.com/api/'
 
 info:
-  version: '0.18.6'
+  version: '0.18.5'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
@@ -856,6 +856,7 @@ paths:
       summary: Extended public key aggregate balance and transactions.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
       responses:
         '200':
           description: Summary object for extended public key.
@@ -886,6 +887,7 @@ paths:
       summary: Transaction data relevant to an extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
       responses:
@@ -920,6 +922,7 @@ paths:
       summary: Transactions relevant to an extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
       responses:
@@ -967,6 +970,7 @@ paths:
       summary: Extended public key balances.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
       responses:
         '200':
           description: List of address balances for extended public key provided.
@@ -1024,6 +1028,7 @@ paths:
       summary: Unspent outputs from extended public key.
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
       responses:
@@ -1452,7 +1457,6 @@ components:
           type: boolean
           example: true
         spender:
-          description: Input spending this output.
           $ref: '#/components/schemas/Spender'
 
     Transaction:
@@ -1789,3 +1793,15 @@ components:
       schema:
         type: string
         example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+
+    xpubDerive:
+      name: derive
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [segwit, compat, standard]
+      description: >
+        Use `segwit` for P2WPKH addresses, `compat` for P2SH-P2WPKH
+        backwards-compatible addresses, or `standard` for regular non-SegWit
+        addresses. Has no effect on non-SegWit networks (i.e. Bitcoin Cash).

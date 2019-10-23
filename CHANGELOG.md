@@ -4,13 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## 0.18.6
-### Changed
-- Use simpler monad for streaming data.
-
 ## 0.18.5
+### Added
+- Compatibility with SegWit on extended public key endpoints.
+
 ### Changed
 - Fix syncing peer not reset after timeout.
+- Use simpler monad for streaming data.
 
 ## 0.18.4
 ### Changed
