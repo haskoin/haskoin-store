@@ -1083,10 +1083,10 @@ mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
 
 insertNubInSortedBy :: (a -> a -> Ordering) -> a -> Vector a -> Vector a
 insertNubInSortedBy f x xs
-    | null xs = xs
+    | null xs = x `cons` xs
     | otherwise =
         case find_idx 0 (length xs - 1) of
-            Nothing -> xs
+            Nothing -> x `cons` xs
             Just i ->
                 let (xs1, xs2) = V.splitAt i xs
                  in xs1 <> x `cons` xs2
