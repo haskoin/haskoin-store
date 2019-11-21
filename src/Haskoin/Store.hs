@@ -38,6 +38,7 @@ module Haskoin.Store
     , LayeredDB(..)
     , WebConfig(..)
     , MaxLimits(..)
+    , Timeouts(..)
     , Offset
     , Limit
     , newLayeredDB

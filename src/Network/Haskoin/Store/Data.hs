@@ -985,19 +985,23 @@ instance BinSerial XPubSummary where
             forM xs $ \(k, v) ->
                 case k of
                     Right a -> return (a, v)
-                    Left _ -> mzero
+                    Left _  -> mzero
         return $ XPubSummary c z r u ext ch (M.fromList ys)
 
-data HealthCheck = HealthCheck
-    { healthHeaderBest   :: !(Maybe BlockHash)
-    , healthHeaderHeight :: !(Maybe BlockHeight)
-    , healthBlockBest    :: !(Maybe BlockHash)
-    , healthBlockHeight  :: !(Maybe BlockHeight)
-    , healthPeers        :: !(Maybe Int)
-    , healthNetwork      :: !String
-    , healthOK           :: !Bool
-    , healthSynced       :: !Bool
-    } deriving (Show, Eq, Generic, Serialize)
+data HealthCheck =
+    HealthCheck
+        { healthHeaderBest :: !(Maybe BlockHash)
+        , healthHeaderHeight :: !(Maybe BlockHeight)
+        , healthBlockBest :: !(Maybe BlockHash)
+        , healthBlockHeight :: !(Maybe BlockHeight)
+        , healthPeers :: !(Maybe Int)
+        , healthNetwork :: !String
+        , healthOK :: !Bool
+        , healthSynced :: !Bool
+        , healthBlockTimeDelta :: !(Maybe Word64)
+        , healthTxTimeDelta :: !(Maybe Word64)
+        }
+    deriving (Show, Eq, Generic, Serialize)
 
 healthCheckPairs :: A.KeyValue kv => HealthCheck -> [kv]
 healthCheckPairs h =
@@ -1010,6 +1014,8 @@ healthCheckPairs h =
     , "ok" .= healthOK h
     , "synced" .= healthSynced h
     , "version" .= P.version
+    , "blocktimedelta" .= healthBlockTimeDelta h
+    , "txtimedelta" .= healthTxTimeDelta h
     ]
 
 instance ToJSON HealthCheck where
@@ -1029,6 +1035,8 @@ instance BinSerial HealthCheck where
                             , healthNetwork = net
                             , healthOK = ok
                             , healthSynced = synced
+                            , healthBlockTimeDelta = btd
+                            , healthTxTimeDelta = ttd
                             } = do
         put hbest
         put hheight
@@ -1038,8 +1046,13 @@ instance BinSerial HealthCheck where
         put net
         put ok
         put synced
-
-    binDeserial _ = HealthCheck <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*> get
+        put btd
+        put ttd
+    binDeserial _ =
+        HealthCheck <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*>
+        get <*>
+        get <*>
+        get
 
 data Event
     = EventBlock BlockHash

@@ -39,6 +39,7 @@ import qualified Data.Text                         as T
 import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
 import           Data.Time.Clock
+import           Data.Time.Clock.System
 import           Data.Vector                       (Vector, cons, (!))
 import qualified Data.Vector                       as V
 import           Data.Version
@@ -122,6 +123,7 @@ data WebConfig =
         , webStore     :: !Store
         , webMaxLimits :: !MaxLimits
         , webReqLog    :: !Bool
+        , webTimeouts  :: !Timeouts
         }
 
 data MaxLimits =
@@ -131,6 +133,13 @@ data MaxLimits =
         , maxLimitOffset  :: !Word32
         , maxLimitDefault :: !Word32
         , maxLimitGap     :: !Word32
+        }
+    deriving (Eq, Show)
+
+data Timeouts =
+    Timeouts
+        { txTimeout    :: !Word64
+        , blockTimeout :: !Word64
         }
     deriving (Eq, Show)
 
@@ -653,11 +662,18 @@ scottyPeers net st = do
     protoSerial net proto ps
 
 scottyHealth ::
-       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Store -> WebT m ()
-scottyHealth net st = do
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => Network
+    -> Store
+    -> Timeouts
+    -> WebT m ()
+scottyHealth net st tos = do
     cors
     proto <- setupBin
-    h <- lift $ healthCheck net (storeManager st) (storeChain st)
+    db <- askDB
+    h <-
+        liftIO . runStream db $
+        healthCheck net (storeManager st) (storeChain st) tos
     when (not (healthOK h) || not (healthSynced h)) $ status status503
     protoSerial net proto h
 
@@ -669,6 +685,7 @@ runWeb WebConfig { webDB = db
                  , webPublisher = pub
                  , webMaxLimits = limits
                  , webReqLog = reqlog
+                 , webTimeouts = tos
                  } = do
     req_logger <-
         if reqlog
@@ -677,7 +694,7 @@ runWeb WebConfig { webDB = db
     runner <- askRunInIO
     scottyT port (runner . withLayeredDB db) $ do
         case req_logger of
-            Just m -> middleware m
+            Just m  -> middleware m
             Nothing -> return ()
         defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
@@ -713,7 +730,7 @@ runWeb WebConfig { webDB = db
         S.get "/dbstats" scottyDbStats
         S.get "/events" $ scottyEvents net pub
         S.get "/peers" $ scottyPeers net st
-        S.get "/health" $ scottyHealth net st
+        S.get "/health" $ scottyHealth net st tos
         notFound $ raise ThingNotFound
 
 getStart :: MonadUnliftIO m => WebT m (Maybe BlockRef)
@@ -802,7 +819,7 @@ parseDeriveAddrs net
           return $ case (t :: Text) of
             "segwit" -> deriveWitnessAddrs
             "compat" -> deriveCompatWitnessAddrs
-            _ -> deriveAddrs
+            _        -> deriveAddrs
     | otherwise = return deriveAddrs
 
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
@@ -866,34 +883,47 @@ instance MonadLogger m => MonadLogger (WebT m) where
     monadLoggerLog loc src lvl = lift . monadLoggerLog loc src lvl
 
 healthCheck ::
-       (MonadUnliftIO m, StoreRead m)
+       (MonadUnliftIO m, StoreRead m, StoreStream m)
     => Network
     -> Manager
     -> Chain
+    -> Timeouts
     -> m HealthCheck
-healthCheck net mgr ch = do
-    n <- timeout (5 * 1000 * 1000) $ chainGetBest ch
-    b <-
-        runMaybeT $ do
-            h <- MaybeT getBestBlock
-            MaybeT $ getBlock h
-    p <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
-    let k = isNothing n || isNothing b || maybe False (not . Data.List.null) p
-        s =
+healthCheck net mgr ch tos = do
+    maybe_chain_best <- timeout (5 * 1000 * 1000) $ chainGetBest ch
+    maybe_block_best <- runMaybeT $ MaybeT . getBlock =<< MaybeT getBestBlock
+    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    peers <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
+    maybe_mempool_last <- runConduit $ getMempool .| mapC fst .| headC
+    let maybe_block_time_delta =
+            (now -) . fromIntegral . blockTimestamp . blockDataHeader <$>
+            maybe_block_best
+        maybe_tx_time_delta =
+            (now -) <$> maybe_mempool_last <|> maybe_block_time_delta
+        status_ok =
+            (isNothing maybe_chain_best ||
+             isNothing maybe_block_best ||
+             maybe False (not . Data.List.null) peers) &&
+            maybe False (<= blockTimeout tos) maybe_block_time_delta &&
+            maybe False (<= txTimeout tos) maybe_tx_time_delta
+        synced =
             isJust $ do
-                x <- n
-                y <- b
+                x <- maybe_chain_best
+                y <- maybe_block_best
                 guard $ nodeHeight x - blockDataHeight y <= 1
     return
         HealthCheck
-            { healthBlockBest = headerHash . blockDataHeader <$> b
-            , healthBlockHeight = blockDataHeight <$> b
-            , healthHeaderBest = headerHash . nodeHeader <$> n
-            , healthHeaderHeight = nodeHeight <$> n
-            , healthPeers = length <$> p
+            { healthBlockBest =
+                  headerHash . blockDataHeader <$> maybe_block_best
+            , healthBlockHeight = blockDataHeight <$> maybe_block_best
+            , healthHeaderBest = headerHash . nodeHeader <$> maybe_chain_best
+            , healthHeaderHeight = nodeHeight <$> maybe_chain_best
+            , healthPeers = length <$> peers
             , healthNetwork = getNetworkName net
-            , healthOK = k
-            , healthSynced = s
+            , healthOK = status_ok
+            , healthSynced = synced
+            , healthBlockTimeDelta = maybe_block_time_delta
+            , healthTxTimeDelta = maybe_tx_time_delta
             }
 
 -- | Obtain information about connected peers from peer manager process.

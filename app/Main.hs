@@ -7,6 +7,8 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+module Main where
+
 import           Conduit
 import           Control.Arrow
 import           Control.Exception          ()
@@ -55,6 +57,7 @@ data Config = Config
     , configDebug     :: !Bool
     , configReqLog    :: !Bool
     , configMaxLimits :: !MaxLimits
+    , configTimeouts  :: !Timeouts
     }
 
 defPort :: Int
@@ -75,6 +78,9 @@ defMaxLimits =
         , maxLimitDefault = 100
         , maxLimitGap = 20
         }
+
+defTimeouts :: Timeouts
+defTimeouts = Timeouts {blockTimeout = 7200, txTimeout = 600}
 
 config :: Parser Config
 config = do
@@ -120,8 +126,7 @@ config = do
         value (maxLimitFull defMaxLimits)
     maxLimitOffset <-
         option auto $
-        metavar "INT" <> long "maxoffset" <>
-        help "Max offset (0 for no limit)" <>
+        metavar "INT" <> long "maxoffset" <> help "Max offset (0 for no limit)" <>
         showDefault <>
         value (maxLimitOffset defMaxLimits)
     maxLimitDefault <-
@@ -134,7 +139,24 @@ config = do
         metavar "INT" <> long "gap" <> help "Extended public key gap" <>
         showDefault <>
         value (maxLimitGap defMaxLimits)
-    pure Config {configMaxLimits = MaxLimits {..}, ..}
+    blockTimeout <-
+        option auto $
+        metavar "INT" <> long "blocktimeout" <>
+        help "Unhealthy if no block for this many seconds" <>
+        showDefault <>
+        value (blockTimeout defTimeouts)
+    txTimeout <-
+        option auto $
+        metavar "INT" <> long "txtimeout" <>
+        help "Unhealthy if no new tx in this many seconds" <>
+        showDefault <>
+        value (txTimeout defTimeouts)
+    pure
+        Config
+            { configMaxLimits = MaxLimits {..}
+            , configTimeouts = Timeouts {..}
+            , ..
+            }
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -194,6 +216,7 @@ run Config { configPort = port
            , configDebug = deb
            , configMaxLimits = limits
            , configReqLog = reqlog
+           , configTimeouts = tos
            } =
     runStderrLoggingT . filterLogger l . flip finally clear $ do
         $(logInfoS) "Main" $
@@ -251,6 +274,7 @@ run Config { configPort = port
                                 , webStore = str
                                 , webMaxLimits = limits
                                 , webReqLog = reqlog
+                                , webTimeouts = tos
                                 }
                      in runWeb wcfg
   where
