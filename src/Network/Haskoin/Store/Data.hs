@@ -990,16 +990,16 @@ instance BinSerial XPubSummary where
 
 data HealthCheck =
     HealthCheck
-        { healthHeaderBest :: !(Maybe BlockHash)
+        { healthHeaderBest   :: !(Maybe BlockHash)
         , healthHeaderHeight :: !(Maybe BlockHeight)
-        , healthBlockBest :: !(Maybe BlockHash)
-        , healthBlockHeight :: !(Maybe BlockHeight)
-        , healthPeers :: !(Maybe Int)
-        , healthNetwork :: !String
-        , healthOK :: !Bool
-        , healthSynced :: !Bool
-        , healthBlockTimeDelta :: !(Maybe Word64)
-        , healthTxTimeDelta :: !(Maybe Word64)
+        , healthBlockBest    :: !(Maybe BlockHash)
+        , healthBlockHeight  :: !(Maybe BlockHeight)
+        , healthPeers        :: !(Maybe Int)
+        , healthNetwork      :: !String
+        , healthOK           :: !Bool
+        , healthSynced       :: !Bool
+        , healthLastBlock    :: !(Maybe Word64)
+        , healthLastTx       :: !(Maybe Word64)
         }
     deriving (Show, Eq, Generic, Serialize)
 
@@ -1014,8 +1014,8 @@ healthCheckPairs h =
     , "ok" .= healthOK h
     , "synced" .= healthSynced h
     , "version" .= P.version
-    , "blocktimedelta" .= healthBlockTimeDelta h
-    , "txtimedelta" .= healthTxTimeDelta h
+    , "lastblock" .= healthLastBlock h
+    , "lasttx" .= healthLastTx h
     ]
 
 instance ToJSON HealthCheck where
@@ -1035,8 +1035,8 @@ instance BinSerial HealthCheck where
                             , healthNetwork = net
                             , healthOK = ok
                             , healthSynced = synced
-                            , healthBlockTimeDelta = btd
-                            , healthTxTimeDelta = ttd
+                            , healthLastBlock = lbk
+                            , healthLastTx = ltx
                             } = do
         put hbest
         put hheight
@@ -1046,8 +1046,8 @@ instance BinSerial HealthCheck where
         put net
         put ok
         put synced
-        put btd
-        put ttd
+        put lbk
+        put ltx
     binDeserial _ =
         HealthCheck <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*>
         get <*>

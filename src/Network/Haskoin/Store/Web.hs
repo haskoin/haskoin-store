@@ -922,8 +922,8 @@ healthCheck net mgr ch tos = do
             , healthNetwork = getNetworkName net
             , healthOK = status_ok
             , healthSynced = synced
-            , healthBlockTimeDelta = maybe_block_time_delta
-            , healthTxTimeDelta = maybe_tx_time_delta
+            , healthLastBlock = maybe_block_time_delta
+            , healthLastTx = maybe_tx_time_delta
             }
 
 -- | Obtain information about connected peers from peer manager process.
