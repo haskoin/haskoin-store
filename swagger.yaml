@@ -1709,7 +1709,7 @@ components:
         transaction's relative position on the blockchain are returned.
 
         * If a unix timestamp is specified, return transactions that were
-        received (mempool) or confirmed (block chain) at or below that
+        received (mempool) or confirmed (block chain) at or before that
         time.
     offsetParam:
       name: offset
