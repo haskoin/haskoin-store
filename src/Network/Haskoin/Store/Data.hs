@@ -793,6 +793,14 @@ instance BinSerial Tx where
     binSerial _ = put
     binDeserial _ = get
 
+instance JsonSerial Block where
+    jsonSerial _ = toEncoding
+    jsonValue _ = toJSON
+
+instance BinSerial Block where
+    binSerial _ = put
+    binDeserial _ = get
+
 -- | Information about a connected peer.
 data PeerInformation
     = PeerInformation { peerUserAgent :: !ByteString

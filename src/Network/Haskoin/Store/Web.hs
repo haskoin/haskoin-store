@@ -220,43 +220,57 @@ protoSerial ::
     -> WebT m ()
 protoSerial net proto = S.raw . serialAny net proto
 
-scottyBestBlock :: MonadLoggerIO m => Network -> WebT m ()
-scottyBestBlock net = do
+scottyBestBlock :: MonadUnliftIO m => Network -> Bool -> WebT m ()
+scottyBestBlock net raw = do
     cors
     n <- parseNoTx
     proto <- setupBin
-    res <-
+    bm <-
         runMaybeT $ do
             h <- MaybeT getBestBlock
-            b <- MaybeT $ getBlock h
-            return $ pruneTx n b
-    maybeSerial net proto res
+            MaybeT $ getBlock h
+    b <-
+        case bm of
+            Nothing -> raise ThingNotFound
+            Just b -> return b
+    if raw
+        then rawBlock b >>= protoSerial net proto
+        else protoSerial net proto (pruneTx n b)
 
-scottyBlock :: MonadLoggerIO m => Network -> WebT m ()
-scottyBlock net = do
+scottyBlock :: MonadUnliftIO m => Network -> Bool -> WebT m ()
+scottyBlock net raw = do
     cors
     block <- param "block"
     n <- parseNoTx
     proto <- setupBin
-    res <-
-        runMaybeT $ do
-            b <- MaybeT $ getBlock block
-            return $ pruneTx n b
-    maybeSerial net proto res
+    b <-
+        getBlock block >>= \case
+            Nothing -> raise ThingNotFound
+            Just b -> return b
+    if raw
+        then rawBlock b >>= protoSerial net proto
+        else protoSerial net proto (pruneTx n b)
 
-scottyBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyBlockHeight net = do
+scottyBlockHeight ::
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
+scottyBlockHeight net raw = do
     cors
     height <- param "height"
     n <- parseNoTx
     proto <- setupBin
     hs <- getBlocksAtHeight height
     db <- askDB
-    stream $ \io flush' -> do
-        runStream db . runConduit $
-            yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .|
-            streamAny net proto io
-        flush'
+    if raw
+        then stream $ \io flush' -> do
+                 runStream db . runConduit $
+                     yieldMany hs .| concatMapMC getBlock .| mapMC rawBlock .|
+                     streamAny net proto io
+                 flush'
+        else stream $ \io flush' -> do
+                 runStream db . runConduit $
+                     yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .|
+                     streamAny net proto io
+                 flush'
 
 scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeights net = do
@@ -387,6 +401,16 @@ scottyRawTransactions net = do
             mapC transactionData .|
             streamAny net proto io
         flush'
+
+rawBlock :: (Monad m, StoreRead m) => BlockData -> m Block
+rawBlock b = do
+    let h = blockDataHeader b
+    txs <-
+        runConduit $
+        yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
+        mapC transactionData .|
+        sinkList
+    return Block {blockHeader = h, blockTxns = txs}
 
 scottyRawBlockTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
@@ -697,9 +721,12 @@ runWeb WebConfig { webDB = db
             Just m  -> middleware m
             Nothing -> return ()
         defaultHandler (defHandler net)
-        S.get "/block/best" $ scottyBestBlock net
-        S.get "/block/:block" $ scottyBlock net
-        S.get "/block/height/:height" $ scottyBlockHeight net
+        S.get "/block/best" $ scottyBestBlock net False
+        S.get "/block/best/raw" $ scottyBestBlock net True
+        S.get "/block/:block" $ scottyBlock net False
+        S.get "/block/:block/raw" $ scottyBlock net True
+        S.get "/block/height/:height" $ scottyBlockHeight net False
+        S.get "/block/height/:height/raw" $ scottyBlockHeight net True
         S.get "/block/heights" $ scottyBlockHeights net
         S.get "/block/latest" $ scottyBlockLatest net
         S.get "/blocks" $ scottyBlocks net

@@ -6,6 +6,6 @@ nix:
     - secp256k1
     - zlib
 extra-deps:
-  - haskoin-core-0.9.5
+  - haskoin-core-0.9.7
   - haskoin-node-0.9.13
   - rocksdb-query-0.3.0

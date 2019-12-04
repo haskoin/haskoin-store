@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.18.8
 ### Added
 - Transaction and block timeouts for health check.
+- Raw blocks.
 
 ## 0.18.7
 ### Fixed

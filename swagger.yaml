@@ -375,7 +375,25 @@ paths:
               schema:
                 type: string
                 format: binary
-                
+
+  '/block/best/raw':
+    get:
+      tags:
+        - Block
+      summary: Raw head of block chain.
+      operationId: getRawBlockHead
+      responses:
+        '200':
+          description: Best raw block.
+          content:
+            application/json:
+              schema:
+                type: string
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/block/latest':
     get:
       tags:
@@ -414,6 +432,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlockData'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                
+  '/block/{block}/raw':
+    get:
+      tags:
+        - Block
+      operationId: getRawBlock
+      summary: Raw block data.
+      parameters:
+        - $ref: '#/components/parameters/blockParam'
+      responses:
+        '200':
+          description: Block data.
+          content:
+            application/json:
+              schema:
+                type: string
             application/octet-stream:
               schema:
                 type: string
@@ -475,6 +523,31 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  '/block/height/{height}/raw':
+    get:
+      tags:
+        - Block
+      operationId: getRawBlocksAtHeight
+      summary: Raw blocks at specific height.
+      parameters:
+        - $ref: '#/components/parameters/blockHeightParam'
+      responses:
+        '200':
+          description: >
+            List of block data objects at specified height.
+            First one in list is on the main block chain.
+            If height is beyond block chain head the list will be empty.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
             application/octet-stream:
               schema:
                 type: string
