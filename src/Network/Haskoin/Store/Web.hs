@@ -272,6 +272,21 @@ scottyBlockHeight net raw = do
                      streamAny net proto io
                  flush'
 
+scottyBlockTime ::
+       (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
+scottyBlockTime net raw = do
+    cors
+    q <- param "time"
+    n <- parseNoTx
+    proto <- setupBin
+    m <- blockAtOrBefore q
+    if raw
+        then maybeSerial net proto =<<
+             case m of
+                 Nothing -> return Nothing
+                 Just d -> Just <$> rawBlock d
+        else maybeSerial net proto m
+
 scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeights net = do
     cors
@@ -727,6 +742,8 @@ runWeb WebConfig { webDB = db
         S.get "/block/:block/raw" $ scottyBlock net True
         S.get "/block/height/:height" $ scottyBlockHeight net False
         S.get "/block/height/:height/raw" $ scottyBlockHeight net True
+        S.get "/block/time/:time" $ scottyBlockTime net False
+        S.get "/block/time/:time/raw" $ scottyBlockTime net True
         S.get "/block/heights" $ scottyBlockHeights net
         S.get "/block/latest" $ scottyBlockLatest net
         S.get "/blocks" $ scottyBlocks net
