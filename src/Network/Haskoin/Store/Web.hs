@@ -919,9 +919,9 @@ healthCheck ::
 healthCheck net mgr ch tos = do
     maybe_chain_best <- timeout (5 * 1000 * 1000) $ chainGetBest ch
     maybe_block_best <- runMaybeT $ MaybeT . getBlock =<< MaybeT getBestBlock
-    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     peers <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
     maybe_mempool_last <- runConduit $ getMempool .| mapC fst .| headC
+    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     let maybe_block_time_delta =
             (now -) . fromIntegral . blockTimestamp . blockDataHeader <$>
             maybe_block_best
