@@ -568,7 +568,8 @@ paths:
             Last block mined at or before the specified unix timestamp.
           content:
             application/json:
-              $ref: '#/components/schemas/BlockData'
+              schema:
+                $ref: '#/components/schemas/BlockData'
             application/octet-stream:
               schema:
                 type: string
