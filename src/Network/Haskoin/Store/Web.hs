@@ -944,12 +944,21 @@ healthCheck net mgr ch tos = do
             maybe_block_best
         maybe_tx_time_delta =
             (now -) <$> maybe_mempool_last <|> maybe_block_time_delta
-        status_ok =
-            (isNothing maybe_chain_best ||
-             isNothing maybe_block_best ||
-             maybe False (not . Data.List.null) peers) &&
-            maybe False (<= blockTimeout tos) maybe_block_time_delta &&
+        peers_ok = maybe False (not . Data.List.null) peers
+        block_timeout_ok =
+            getAllowMinDifficultyBlocks net ||
+            blockTimeout tos == 0 ||
+            maybe False (<= blockTimeout tos) maybe_block_time_delta
+        tx_timeout_ok =
+            getAllowMinDifficultyBlocks net ||
+            txTimeout tos == 0 ||
             maybe False (<= txTimeout tos) maybe_tx_time_delta
+        status_ok =
+            isJust maybe_chain_best &&
+            isJust maybe_block_best &&
+            peers_ok &&
+            block_timeout_ok &&
+            tx_timeout_ok
         synced =
             isJust $ do
                 x <- maybe_chain_best

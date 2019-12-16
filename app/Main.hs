@@ -86,12 +86,12 @@ config :: Parser Config
 config = do
     configDir <-
         option str $
-        metavar "DIR" <> long "dir" <> short 'd' <> help "Data directory" <>
+        metavar "WORKDIR" <> long "dir" <> short 'd' <> help "Data directory" <>
         showDefault <>
         value myDirectory
     configPort <-
         option auto $
-        metavar "INT" <> long "listen" <> short 'l' <> help "Listening port" <>
+        metavar "PORT" <> long "listen" <> short 'l' <> help "Listening port" <>
         showDefault <>
         value defPort
     configNetwork <-
@@ -107,48 +107,49 @@ config = do
         help "Network peer (as many as required)"
     configCache <-
         option str $
-        long "cache" <> short 'c' <> help "RAM drive directory for acceleration" <>
+        metavar "CACHEDIR" <> long "cache" <> short 'c' <>
+        help "RAM drive directory for acceleration" <>
         value ""
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
     configReqLog <- switch $ long "reqlog" <> help "HTTP request logging"
     maxLimitCount <-
         option auto $
-        metavar "INT" <> long "maxlimit" <>
+        metavar "MAXLIMIT" <> long "maxlimit" <>
         help "Max limit for listings (0 for no limit)" <>
         showDefault <>
         value (maxLimitCount defMaxLimits)
     maxLimitFull <-
         option auto $
-        metavar "INT" <> long "maxfull" <>
+        metavar "MAXLIMITFULL" <> long "maxfull" <>
         help "Max limit for full listings (0 for no limit)" <>
         showDefault <>
         value (maxLimitFull defMaxLimits)
     maxLimitOffset <-
         option auto $
-        metavar "INT" <> long "maxoffset" <> help "Max offset (0 for no limit)" <>
+        metavar "MAXOFFSET" <> long "maxoffset" <> help "Max offset (0 for no limit)" <>
         showDefault <>
         value (maxLimitOffset defMaxLimits)
     maxLimitDefault <-
         option auto $
-        metavar "INT" <> long "deflimit" <> help "Default limit (0 for max)" <>
+        metavar "LIMITDEFAULT" <> long "deflimit" <> help "Default limit (0 for max)" <>
         showDefault <>
         value (maxLimitDefault defMaxLimits)
     maxLimitGap <-
         option auto $
-        metavar "INT" <> long "gap" <> help "Extended public key gap" <>
+        metavar "GAP" <> long "gap" <> help "Extended public key gap" <>
         showDefault <>
         value (maxLimitGap defMaxLimits)
     blockTimeout <-
         option auto $
-        metavar "INT" <> long "blocktimeout" <>
-        help "Unhealthy if no block for this many seconds" <>
+        metavar "BLOCKSECONDS" <> long "blocktimeout" <>
+        help "Last block mined timeout (0 for infinite)" <>
         showDefault <>
         value (blockTimeout defTimeouts)
     txTimeout <-
         option auto $
-        metavar "INT" <> long "txtimeout" <>
-        help "Unhealthy if no new tx in this many seconds" <>
+        metavar "TXSECONDS" <> long "txtimeout" <>
+        help "Last transaction broadcast timeout (0 for infinite)" <>
         showDefault <>
         value (txTimeout defTimeouts)
     pure
