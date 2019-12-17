@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE TupleSections        #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TupleSections     #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Network.Haskoin.Store.Data.Memory where
 
@@ -16,6 +16,7 @@ import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
+import           Data.Tuple                          (swap)
 import           Haskoin
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
@@ -35,7 +36,7 @@ data BlockMem = BlockMem
     , hBalance :: !(HashMap Address BalVal)
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
-    , hMempool :: !(HashMap UnixTime (HashMap TxHash Bool))
+    , hMempool :: !(Maybe [(UnixTime, TxHash)])
     , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
     , hInit :: !Bool
     } deriving (Eq, Show)
@@ -52,7 +53,7 @@ emptyBlockMem =
         , hBalance = M.empty
         , hAddrTx = M.empty
         , hAddrOut = M.empty
-        , hMempool = M.empty
+        , hMempool = Nothing
         , hOrphans = M.empty
         , hInit = False
         }
@@ -83,12 +84,8 @@ getSpendersH t = M.lookupDefault I.empty t . hSpender
 getBalanceH :: Address -> BlockMem -> Maybe Balance
 getBalanceH a = fmap (balValToBalance a) . M.lookup a . hBalance
 
-getMempoolH :: Monad m => BlockMem -> ConduitT i (UnixTime, TxHash) m ()
-getMempoolH db =
-    let ls =
-            sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
-            hMempool db
-     in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
+getMempoolH :: BlockMem -> Maybe [(UnixTime, TxHash)]
+getMempoolH = hMempool
 
 getOrphansH :: Monad m => BlockMem -> ConduitT i (UnixTime, Tx) m ()
 getOrphansH = yieldMany . catMaybes . M.elems . hOrphans
@@ -238,15 +235,8 @@ deleteAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-insertMempoolTxH :: TxHash -> UnixTime -> BlockMem -> BlockMem
-insertMempoolTxH h u db =
-    let s = M.singleton u (M.singleton h True)
-     in db {hMempool = M.unionWith M.union s (hMempool db)}
-
-deleteMempoolTxH :: TxHash -> UnixTime -> BlockMem -> BlockMem
-deleteMempoolTxH h u db =
-    let s = M.singleton u (M.singleton h False)
-     in db {hMempool = M.unionWith M.union s (hMempool db)}
+setMempoolH :: [(UnixTime, TxHash)] -> BlockMem -> BlockMem
+setMempoolH xs db = db {hMempool = Just xs}
 
 insertOrphanTxH :: Tx -> UnixTime -> BlockMem -> BlockMem
 insertOrphanTxH tx u db =
@@ -315,11 +305,11 @@ instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where
     getBalance a = do
         v <- R.ask >>= readTVarIO
         return $ getBalanceH a v
-
-instance MonadIO m => StoreStream (ReaderT (TVar BlockMem) m) where
     getMempool = do
         v <- R.ask >>= readTVarIO
-        getMempoolH v
+        return . fromMaybe [] $ getMempoolH v
+
+instance MonadIO m => StoreStream (ReaderT (TVar BlockMem) m) where
     getOrphans = do
         v <- R.ask >>= readTVarIO
         getOrphansH v
@@ -370,12 +360,9 @@ instance (MonadIO m) => StoreWrite (ReaderT (TVar BlockMem) m) where
     deleteAddrUnspent a u = do
         v <- R.ask
         atomically $ modifyTVar v (deleteAddrUnspentH a u)
-    insertMempoolTx h t = do
+    setMempool xs = do
         v <- R.ask
-        atomically $ modifyTVar v (insertMempoolTxH h t)
-    deleteMempoolTx h t = do
-        v <- R.ask
-        atomically $ modifyTVar v (deleteMempoolTxH h t)
+        atomically $ modifyTVar v (setMempoolH xs)
     insertOrphanTx t u = do
         v <- R.ask
         atomically $ modifyTVar v (insertOrphanTxH t u)

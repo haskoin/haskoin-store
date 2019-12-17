@@ -185,6 +185,7 @@ instance MonadIO m => StoreRead (WebT m) where
     getOrphanTx = lift . getOrphanTx
     getUnspent = lift . getUnspent
     getBalance = lift . getBalance
+    getMempool = lift getMempool
 
 askDB :: Monad m => WebT m LayeredDB
 askDB = lift R.ask
@@ -344,8 +345,7 @@ scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyMempool net = do
     cors
     proto <- setupBin
-    db <- askDB
-    txs <- liftIO . runStream db $ runConduit $ getMempoolStream .| sinkList
+    txs <- map snd <$> getMempool
     protoSerial net proto txs
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
@@ -935,7 +935,7 @@ healthCheck net mgr ch tos = do
     maybe_chain_best <- timeout (5 * 1000 * 1000) $ chainGetBest ch
     maybe_block_best <- runMaybeT $ MaybeT . getBlock =<< MaybeT getBestBlock
     peers <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
-    maybe_mempool_last <- runConduit $ getMempool .| mapC fst .| headC
+    maybe_mempool_last <- fmap fst . listToMaybe <$> getMempool
     now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     let maybe_block_time_delta =
             (now -) . fromIntegral . blockTimestamp . blockDataHeader <$>
@@ -1184,11 +1184,6 @@ insertNubInSortedBy f x xs
              in if f z x == GT
                     then find_idx a c
                     else find_idx c b
-
-getMempoolStream ::
-       (Monad m, StoreStream m)
-    => ConduitT i TxHash m ()
-getMempoolStream = getMempool .| mapC snd
 
 getAddressTxsLimit ::
        (Monad m, StoreStream m)

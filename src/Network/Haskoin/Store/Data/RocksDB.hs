@@ -9,6 +9,7 @@ import qualified Control.Monad.Reader                as R
 import qualified Data.ByteString.Short               as B.Short
 import           Data.IntMap                         (IntMap)
 import qualified Data.IntMap.Strict                  as I
+import           Data.Maybe                          (fromMaybe)
 import           Data.Word
 import           Database.RocksDB                    (DB, ReadOptions)
 import           Database.RocksDB.Query
@@ -18,7 +19,7 @@ import           Network.Haskoin.Store.Data.KeyValue
 import           UnliftIO
 
 dataVersion :: Word32
-dataVersion = 15
+dataVersion = 16
 
 isInitializedDB :: MonadIO m => BlockDB -> m (Either InitException Bool)
 isInitializedDB BlockDB {blockDBopts = opts, blockDB = db} =
@@ -66,16 +67,9 @@ getBalanceDB :: MonadIO m => Address -> BlockDB -> m (Maybe Balance)
 getBalanceDB a BlockDB {blockDBopts = opts, blockDB = db} =
     fmap (balValToBalance a) <$> retrieve db opts (BalKey a)
 
-getMempoolDB ::
-       (MonadIO m, MonadResource m)
-    => BlockDB
-    -> ConduitT i (UnixTime, TxHash) m ()
+getMempoolDB :: MonadIO m => BlockDB -> m [(UnixTime, TxHash)]
 getMempoolDB BlockDB {blockDBopts = opts, blockDB = db} =
-    x .| mapC (uncurry f)
-  where
-    x = matching db opts MemKeyS
-    f (MemKey u t) () = (u, t)
-    f _ _             = undefined
+    fromMaybe [] <$> retrieve db opts MemKey
 
 getOrphansDB ::
        (MonadIO m, MonadResource m)

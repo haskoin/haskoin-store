@@ -32,7 +32,7 @@ newLayeredDB blocks Nothing =
 newLayeredDB blocks (Just cache) = do
     bulkCopy opts db cdb BalKeyS
     bulkCopy opts db cdb UnspentKeyB
-    bulkCopy opts db cdb MemKeyS
+    bulkCopy opts db cdb MemKey
     return LayeredDB {layeredDB = blocks, layeredCache = Just cache}
   where
     BlockDB {blockDBopts = opts, blockDB = db} = blocks
@@ -77,10 +77,7 @@ getUnspentsC ::
        (MonadResource m, MonadIO m) => LayeredDB -> ConduitT i Unspent m ()
 getUnspentsC LayeredDB {layeredDB = db} = getUnspentsDB db
 
-getMempoolC ::
-       (MonadResource m, MonadUnliftIO m)
-    => LayeredDB
-    -> ConduitT i (UnixTime, TxHash) m ()
+getMempoolC :: MonadIO m => LayeredDB -> m [(UnixTime, TxHash)]
 getMempoolC LayeredDB {layeredCache = Just db} = getMempoolDB db
 getMempoolC LayeredDB {layeredDB = db}         = getMempoolDB db
 
@@ -147,9 +144,6 @@ bulkCopy opts db cdb k =
 
 instance (MonadUnliftIO m, MonadResource m) =>
          StoreStream (ReaderT LayeredDB m) where
-    getMempool = do
-        c <- R.ask
-        getMempoolC c
     getOrphans = do
         c <- R.ask
         getOrphansC c
@@ -197,3 +191,6 @@ instance MonadIO m => StoreRead (ReaderT LayeredDB m) where
     getBalance a = do
         c <- R.ask
         getBalanceC a c
+    getMempool = do
+        c <- R.ask
+        getMempoolC c

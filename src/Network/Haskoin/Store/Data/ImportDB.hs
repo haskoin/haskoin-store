@@ -71,13 +71,14 @@ hashMapOps db =
     balOps (hBalance db) <>
     addrTxOps (hAddrTx db) <>
     addrOutOps (hAddrOut db) <>
-    mempoolOps (hMempool db) <>
+    maybeToList (mempoolOp <$> hMempool db) <>
     orphanOps (hOrphans db) <>
     unspentOps (hUnspent db)
 
 cacheMapOps :: BlockMem -> [BatchOp]
 cacheMapOps db =
-    balOps (hBalance db) <> mempoolOps (hMempool db) <> unspentOps (hUnspent db)
+    balOps (hBalance db) <> maybeToList (mempoolOp <$> hMempool db) <>
+    unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
 bestBlockOp Nothing  = []
@@ -152,13 +153,8 @@ addrOutOps = concat . concatMap (uncurry f) . M.toList
     h a b p Nothing =
         deleteOp AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p}
 
-mempoolOps ::
-       HashMap UnixTime (HashMap TxHash Bool) -> [BatchOp]
-mempoolOps = concatMap (uncurry f) . M.toList
-  where
-    f u = map (uncurry (g u)) . M.toList
-    g u t True  = insertOp (MemKey u t) ()
-    g u t False = deleteOp (MemKey u t)
+mempoolOp :: [(UnixTime, TxHash)] -> BatchOp
+mempoolOp = insertOp MemKey
 
 orphanOps :: HashMap TxHash (Maybe (UnixTime, Tx)) -> [BatchOp]
 orphanOps = map (uncurry f) . M.toList
@@ -224,13 +220,8 @@ deleteAddrUnspentI :: MonadIO m => Address -> Unspent -> ImportDB -> m ()
 deleteAddrUnspentI a u ImportDB {importHashMap = hm} =
     withBlockMem hm $ deleteAddrUnspent a u
 
-insertMempoolTxI :: MonadIO m => TxHash -> UnixTime -> ImportDB -> m ()
-insertMempoolTxI t p ImportDB {importHashMap = hm} =
-    withBlockMem hm $ insertMempoolTx t p
-
-deleteMempoolTxI :: MonadIO m => TxHash -> UnixTime -> ImportDB -> m ()
-deleteMempoolTxI t p ImportDB {importHashMap = hm} =
-    withBlockMem hm $ deleteMempoolTx t p
+setMempoolI :: MonadIO m => [(UnixTime, TxHash)] -> ImportDB -> m ()
+setMempoolI xs ImportDB {importHashMap = hm} = withBlockMem hm $ setMempool xs
 
 insertOrphanTxI :: MonadIO m => Tx -> UnixTime -> ImportDB -> m ()
 insertOrphanTxI t p ImportDB {importHashMap = hm} =
@@ -317,19 +308,11 @@ deleteUnspentI p ImportDB {importHashMap = hm} =
 getMempoolI ::
        MonadIO m
     => ImportDB
-    -> ConduitT i (UnixTime, TxHash) m ()
-getMempoolI ImportDB {importHashMap = hm, importLayeredDB = db} = do
-    h <- hMempool <$> readTVarIO hm
-    let hmap =
-            M.fromList $
-            concatMap
-                (\(u, l) -> map (\(t, b) -> ((u, t), b)) (M.toList l))
-                (M.toList h)
-    dmap <-
-        fmap M.fromList . liftIO . runResourceT . withLayeredDB db . runConduit $
-        getMempool .| mapC (, True) .| sinkList
-    let rmap = M.filter id (M.union hmap dmap)
-    yieldMany $ sortBy (flip compare) (M.keys rmap)
+    -> m [(UnixTime, TxHash)]
+getMempoolI ImportDB {importHashMap = hm, importLayeredDB = db} =
+    getMempoolH <$> readTVarIO hm >>= \case
+      Just xs -> return xs
+      Nothing -> withLayeredDB db getMempool
 
 instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     isInitialized = R.ask >>= isInitializedI
@@ -342,6 +325,7 @@ instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     getOrphanTx h = R.ask >>= getOrphanTxI h
     getUnspent a = R.ask >>= getUnspentI a
     getBalance a = R.ask >>= getBalanceI a
+    getMempool = R.ask >>= getMempoolI
 
 instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setInit = R.ask >>= setInitI
@@ -355,8 +339,7 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     deleteAddrTx a t = R.ask >>= deleteAddrTxI a t
     insertAddrUnspent a u = R.ask >>= insertAddrUnspentI a u
     deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentI a u
-    insertMempoolTx t p = R.ask >>= insertMempoolTxI t p
-    deleteMempoolTx t p = R.ask >>= deleteMempoolTxI t p
+    setMempool xs = R.ask >>= setMempoolI xs
     insertOrphanTx t p = R.ask >>= insertOrphanTxI t p
     deleteOrphanTx t = R.ask >>= deleteOrphanTxI t
     insertUnspent u = R.ask >>= insertUnspentI u
@@ -364,7 +347,6 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setBalance b = R.ask >>= setBalanceI b
 
 instance MonadIO m => StoreStream (ReaderT ImportDB m) where
-    getMempool = R.ask >>= getMempoolI
     getOrphans = undefined
     getAddressUnspents a m = undefined
     getAddressTxs a m = undefined

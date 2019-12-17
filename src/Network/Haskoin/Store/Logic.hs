@@ -230,9 +230,7 @@ importBlock ::
     -> BlockNode
     -> m ()
 importBlock net b n = do
-    mp <-
-        runConduit $
-        getMempool .| mapC snd .| filterC (`elem` bths) .| sinkList
+    mp <- filter (`elem` bths) . map snd <$> getMempool
     getBestBlock >>= \case
         Nothing
             | isGenesis n -> do
@@ -374,7 +372,7 @@ importTx net br tt tx = do
     let (d, _) = fromTransaction t
     insertTx d
     updateAddressCounts net (txAddresses t) (+ 1)
-    unless (confirmed br) $ insertMempoolTx (txHash tx) (memRefTime br)
+    unless (confirmed br) $ insertIntoMempool (txHash tx) (memRefTime br)
   where
     uns op =
         getUnspent op >>= \case
@@ -507,7 +505,7 @@ confirmTx net t br tx = do
                     reduceBalance net False False a (outValue o)
                     increaseBalance True False a (outValue o)
     insertTx t {txDataBlock = br}
-    deleteMempoolTx (txHash tx) (memRefTime (txDataBlock t))
+    deleteFromMempool (txHash tx)
 
 getRecursiveTx ::
        (Monad m, StoreRead m, MonadLogger m) => TxHash -> m [Transaction]
@@ -520,6 +518,16 @@ getRecursiveTx th =
             fmap (t :) $ do
                 let ss = nub . map spenderHash $ I.elems sm
                 concat <$> mapM getRecursiveTx ss
+
+deleteFromMempool :: (Monad m, StoreRead m, StoreWrite m) => TxHash -> m ()
+deleteFromMempool th = do
+    mp <- getMempool
+    setMempool $ filter ((/= th) . snd) mp
+
+insertIntoMempool :: (Monad m, StoreRead m, StoreWrite m) => TxHash -> UnixTime -> m ()
+insertIntoMempool th unixtime = do
+    mp <- getMempool
+    setMempool $ sortBy (flip compare) ((unixtime, th) : mp)
 
 deleteTx ::
        ( StoreRead m
@@ -556,8 +564,7 @@ deleteTx net mo h = do
             delOutput net (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
         mapM_ (unspendOutput net) ps
-        unless (confirmed (txDataBlock t)) $
-            deleteMempoolTx h (memRefTime (txDataBlock t))
+        unless (confirmed (txDataBlock t)) $ deleteFromMempool h
         insertTx t {txDataDeleted = True}
         updateAddressCounts net (txDataAddresses t) (subtract 1)
 

@@ -78,6 +78,7 @@ class StoreRead m where
     getSpender :: OutPoint -> m (Maybe Spender)
     getBalance :: Address -> m (Maybe Balance)
     getUnspent :: OutPoint -> m (Maybe Unspent)
+    getMempool :: m [(UnixTime, TxHash)]
 
 class StoreWrite m where
     setInit :: m ()
@@ -91,8 +92,7 @@ class StoreWrite m where
     deleteAddrTx :: Address -> BlockTx -> m ()
     insertAddrUnspent :: Address -> Unspent -> m ()
     deleteAddrUnspent :: Address -> Unspent -> m ()
-    insertMempoolTx :: TxHash -> UnixTime -> m ()
-    deleteMempoolTx :: TxHash -> UnixTime -> m ()
+    setMempool :: [(UnixTime, TxHash)] -> m ()
     insertOrphanTx :: Tx -> UnixTime -> m ()
     deleteOrphanTx :: TxHash -> m ()
     setBalance :: Balance -> m ()
@@ -125,7 +125,6 @@ blockAtOrBefore q = runMaybeT $ do
     t = fromIntegral . blockTimestamp . blockDataHeader
 
 class StoreStream m where
-    getMempool :: ConduitT i (UnixTime, TxHash) m ()
     getOrphans :: ConduitT i (UnixTime, Tx) m ()
     getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()

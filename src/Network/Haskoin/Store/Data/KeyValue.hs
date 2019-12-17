@@ -186,35 +186,23 @@ instance Serialize UnspentKey
         return $ UnspentKey OutPoint {outPointHash = h, outPointIndex = i}
 
 instance R.Key UnspentKey
-
 instance R.KeyValue UnspentKey UnspentVal
 
 -- | Mempool transaction database key.
-data MemKey
-    = MemKey { memTime :: !UnixTime
-             , memKey  :: !TxHash }
-    | MemKeyT { memTime :: !UnixTime }
-    | MemKeyS
-    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+data MemKey =
+    MemKey
+    deriving (Show, Read)
 
 instance Serialize MemKey where
-    -- 0x07 · UnixTime · TxHash
-    put (MemKey t h) = do
-        putWord8 0x07
-        putUnixTime t
-        put h
-    -- 0x07 · UnixTime
-    put (MemKeyT t) = do
-        putWord8 0x07
-        putUnixTime t
     -- 0x07
-    put MemKeyS = putWord8 0x07
+    put MemKey = do
+        putWord8 0x07
     get = do
         guard . (== 0x07) =<< getWord8
-        MemKey <$> getUnixTime <*> get
+        return MemKey
 
 instance R.Key MemKey
-instance R.KeyValue MemKey ()
+instance R.KeyValue MemKey [(UnixTime, TxHash)]
 
 -- | Orphan pool transaction database key.
 data OrphanKey
