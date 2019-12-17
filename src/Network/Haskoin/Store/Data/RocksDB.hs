@@ -22,12 +22,21 @@ dataVersion :: Word32
 dataVersion = 16
 
 isInitializedDB :: MonadIO m => BlockDB -> m (Either InitException Bool)
-isInitializedDB BlockDB {blockDBopts = opts, blockDB = db} =
+isInitializedDB bdb@BlockDB {blockDBopts = opts, blockDB = db} =
     retrieve db opts VersionKey >>= \case
         Just v
             | v == dataVersion -> return (Right True)
+            | v == 15 -> migrate15to16 bdb
             | otherwise -> return (Left (IncorrectVersion v))
         Nothing -> return (Right False)
+
+migrate15to16 :: MonadIO m => BlockDB -> m (Either InitException Bool)
+migrate15to16 bdb@BlockDB {blockDBopts = opts, blockDB = db} = do
+    xs <- liftIO $ matchingAsList db opts OldMemKeyS
+    let ys = map (\(OldMemKey t h, ()) -> (t, h)) xs
+    insert db MemKey ys
+    insert db VersionKey (16 :: Word32)
+    isInitializedDB bdb
 
 setInitDB :: MonadIO m => DB -> m ()
 setInitDB db = insert db VersionKey dataVersion

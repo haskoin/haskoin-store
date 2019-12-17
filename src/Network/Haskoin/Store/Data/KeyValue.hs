@@ -69,7 +69,6 @@ instance Serialize AddrTxKey
                 }
 
 instance R.Key AddrTxKey
-
 instance R.KeyValue AddrTxKey ()
 
 -- | Database key for an address output.
@@ -133,7 +132,6 @@ instance Serialize TxKey where
         TxKey <$> get
 
 instance R.Key TxKey
-
 instance R.KeyValue TxKey TxData
 
 data SpenderKey
@@ -156,7 +154,6 @@ instance Serialize SpenderKey where
         return $ SpenderKey op
 
 instance R.Key SpenderKey
-
 instance R.KeyValue SpenderKey Spender
 
 -- | Unspent output database key.
@@ -258,7 +255,6 @@ instance Serialize HeightKey where
         HeightKey <$> get
 
 instance R.Key HeightKey
-
 instance R.KeyValue HeightKey [BlockHash]
 
 -- | Address balance database key.
@@ -281,7 +277,6 @@ instance Serialize BalKey where
         BalKey <$> get
 
 instance R.Key BalKey
-
 instance R.KeyValue BalKey BalVal
 
 -- | Key for best block in database.
@@ -297,7 +292,6 @@ instance Serialize BestKey where
         return BestKey
 
 instance R.Key BestKey
-
 instance R.KeyValue BestKey BlockHash
 
 -- | Key for database version.
@@ -313,5 +307,36 @@ instance Serialize VersionKey where
         return VersionKey
 
 instance R.Key VersionKey
-
 instance R.KeyValue VersionKey Word32
+
+
+-- | Old mempool transaction database key.
+data OldMemKey
+    = OldMemKey
+          { memTime :: !UnixTime
+          , memKey  :: !TxHash
+          }
+    | OldMemKeyT
+          { memTime :: !UnixTime
+          }
+    | OldMemKeyS
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+
+instance Serialize OldMemKey where
+    -- 0x07 · UnixTime · TxHash
+    put (OldMemKey t h) = do
+        putWord8 0x07
+        putUnixTime t
+        put h
+    -- 0x07 · UnixTime
+    put (OldMemKeyT t) = do
+        putWord8 0x07
+        putUnixTime t
+    -- 0x07
+    put OldMemKeyS = putWord8 0x07
+    get = do
+        guard . (== 0x07) =<< getWord8
+        OldMemKey <$> getUnixTime <*> get
+
+instance R.Key OldMemKey
+instance R.KeyValue OldMemKey ()
