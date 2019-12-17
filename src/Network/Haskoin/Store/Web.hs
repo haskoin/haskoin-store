@@ -345,10 +345,8 @@ scottyMempool net = do
     cors
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
-        runStream db . runConduit $
-            getMempoolStream .| streamAny net proto io
-        flush'
+    txs <- liftIO . runStream db $ runConduit $ getMempoolStream .| sinkList
+    protoSerial net proto txs
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyTransaction net = do
