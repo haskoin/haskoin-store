@@ -223,7 +223,7 @@ protoSerial net proto = S.raw . serialAny net proto
 
 scottyBestBlock :: MonadUnliftIO m => Network -> Bool -> WebT m ()
 scottyBestBlock net raw = do
-    cors
+    setHeaders
     n <- parseNoTx
     proto <- setupBin
     bm <-
@@ -240,7 +240,7 @@ scottyBestBlock net raw = do
 
 scottyBlock :: MonadUnliftIO m => Network -> Bool -> WebT m ()
 scottyBlock net raw = do
-    cors
+    setHeaders
     block <- param "block"
     n <- parseNoTx
     proto <- setupBin
@@ -255,7 +255,7 @@ scottyBlock net raw = do
 scottyBlockHeight ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
 scottyBlockHeight net raw = do
-    cors
+    setHeaders
     height <- param "height"
     n <- parseNoTx
     proto <- setupBin
@@ -276,7 +276,7 @@ scottyBlockHeight net raw = do
 scottyBlockTime ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
 scottyBlockTime net raw = do
-    cors
+    setHeaders
     q <- param "time"
     n <- parseNoTx
     proto <- setupBin
@@ -290,7 +290,7 @@ scottyBlockTime net raw = do
 
 scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeights net = do
-    cors
+    setHeaders
     heights <- param "heights"
     n <- parseNoTx
     proto <- setupBin
@@ -306,7 +306,7 @@ scottyBlockHeights net = do
 
 scottyBlockLatest :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockLatest net = do
-    cors
+    setHeaders
     n <- parseNoTx
     proto <- setupBin
     db <- askDB
@@ -330,7 +330,7 @@ scottyBlockLatest net = do
 
 scottyBlocks :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlocks net = do
-    cors
+    setHeaders
     blocks <- param "blocks"
     n <- parseNoTx
     proto <- setupBin
@@ -343,14 +343,14 @@ scottyBlocks net = do
 
 scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyMempool net = do
-    cors
+    setHeaders
     proto <- setupBin
     txs <- map snd <$> getMempool
     protoSerial net proto txs
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyTransaction net = do
-    cors
+    setHeaders
     txid <- param "txid"
     proto <- setupBin
     res <- getTransaction txid
@@ -358,7 +358,7 @@ scottyTransaction net = do
 
 scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyRawTransaction net = do
-    cors
+    setHeaders
     txid <- param "txid"
     proto <- setupBin
     res <- fmap transactionData <$> getTransaction txid
@@ -366,7 +366,7 @@ scottyRawTransaction net = do
 
 scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
 scottyTxAfterHeight net = do
-    cors
+    setHeaders
     txid <- param "txid"
     height <- param "height"
     proto <- setupBin
@@ -375,7 +375,7 @@ scottyTxAfterHeight net = do
 
 scottyTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyTransactions net = do
-    cors
+    setHeaders
     txids <- param "txids"
     proto <- setupBin
     db <- askDB
@@ -388,7 +388,7 @@ scottyTransactions net = do
 scottyBlockTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockTransactions net = do
-    cors
+    setHeaders
     h <- param "block"
     proto <- setupBin
     db <- askDB
@@ -404,7 +404,7 @@ scottyBlockTransactions net = do
 scottyRawTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyRawTransactions net = do
-    cors
+    setHeaders
     txids <- param "txids"
     proto <- setupBin
     db <- askDB
@@ -428,7 +428,7 @@ rawBlock b = do
 scottyRawBlockTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyRawBlockTransactions net = do
-    cors
+    setHeaders
     h <- param "block"
     proto <- setupBin
     db <- askDB
@@ -449,7 +449,7 @@ scottyAddressTxs ::
     -> Bool
     -> WebT m ()
 scottyAddressTxs net limits full = do
-    cors
+    setHeaders
     a <- parseAddress net
     s <- getStart
     o <- getOffset limits
@@ -471,7 +471,7 @@ scottyAddressesTxs ::
     -> Bool
     -> WebT m ()
 scottyAddressesTxs net limits full = do
-    cors
+    setHeaders
     as <- parseAddresses net
     s <- getStart
     l <- getLimit limits full
@@ -488,7 +488,7 @@ scottyAddressesTxs net limits full = do
 scottyAddressUnspent ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
 scottyAddressUnspent net limits = do
-    cors
+    setHeaders
     a <- parseAddress net
     s <- getStart
     o <- getOffset limits
@@ -503,7 +503,7 @@ scottyAddressUnspent net limits = do
 scottyAddressesUnspent ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
 scottyAddressesUnspent net limits = do
-    cors
+    setHeaders
     as <- parseAddresses net
     s <- getStart
     l <- getLimit limits False
@@ -516,7 +516,7 @@ scottyAddressesUnspent net limits = do
 
 scottyAddressBalance :: MonadLoggerIO m => Network -> WebT m ()
 scottyAddressBalance net = do
-    cors
+    setHeaders
     a <- parseAddress net
     proto <- setupBin
     res <-
@@ -537,7 +537,7 @@ scottyAddressBalance net = do
 scottyAddressesBalances ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyAddressesBalances net = do
-    cors
+    setHeaders
     as <- parseAddresses net
     proto <- setupBin
     let f a Nothing =
@@ -563,7 +563,7 @@ scottyXpubBalances ::
     -> MaxLimits
     -> WebT m ()
 scottyXpubBalances net max_limits = do
-    cors
+    setHeaders
     xpub <- parseXpub net
     proto <- setupBin
     derive <- parseDeriveAddrs net
@@ -580,7 +580,7 @@ scottyXpubTxs ::
     -> Bool
     -> WebT m ()
 scottyXpubTxs net limits full = do
-    cors
+    setHeaders
     x <- parseXpub net
     s <- getStart
     l <- getLimit limits full
@@ -601,7 +601,7 @@ scottyXpubTxs net limits full = do
 scottyXpubUnspents ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
 scottyXpubUnspents net limits = do
-    cors
+    setHeaders
     x <- parseXpub net
     proto <- setupBin
     s <- getStart
@@ -616,7 +616,7 @@ scottyXpubUnspents net limits = do
 scottyXpubSummary ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
 scottyXpubSummary net max_limits = do
-    cors
+    setHeaders
     x <- parseXpub net
     derive <- parseDeriveAddrs net
     proto <- setupBin
@@ -631,7 +631,7 @@ scottyPostTx ::
     -> Publisher StoreEvent
     -> WebT m ()
 scottyPostTx net st pub = do
-    cors
+    setHeaders
     proto <- setupBin
     b <- body
     let bin = eitherToMaybe . Serialize.decode
@@ -654,7 +654,7 @@ scottyPostTx net st pub = do
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
-    cors
+    setHeaders
     LayeredDB {layeredDB = BlockDB {blockDB = db}} <- askDB
     stats <- lift (getProperty db Stats)
     case stats of
@@ -669,7 +669,7 @@ scottyEvents ::
     -> Publisher StoreEvent
     -> WebT m ()
 scottyEvents net pub = do
-    cors
+    setHeaders
     proto <- setupBin
     stream $ \io flush' ->
         withSubscription pub $ \sub ->
@@ -693,7 +693,7 @@ scottyEvents net pub = do
 
 scottyPeers :: MonadLoggerIO m => Network -> Store -> WebT m ()
 scottyPeers net st = do
-    cors
+    setHeaders
     proto <- setupBin
     ps <- getPeersInformation (storeManager st)
     protoSerial net proto ps
@@ -705,7 +705,7 @@ scottyHealth ::
     -> Timeouts
     -> WebT m ()
 scottyHealth net st tos = do
-    cors
+    setHeaders
     proto <- setupBin
     db <- askDB
     h <-
@@ -870,8 +870,10 @@ parseNoTx = param "notx" `rescue` const (return False)
 pruneTx False b = b
 pruneTx True b  = b {blockDataTxs = take 1 (blockDataTxs b)}
 
-cors :: Monad m => ActionT e m ()
-cors = setHeader "Access-Control-Allow-Origin" "*"
+setHeaders :: (Monad m, ScottyError e) => ActionT e m ()
+setHeaders = do
+    setHeader "Access-Control-Allow-Origin" "*"
+    setHeader "Cache-Control" "no-cache"
 
 serialAny ::
        (JsonSerial a, BinSerial a)
