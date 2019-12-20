@@ -10,23 +10,20 @@
 module Network.Haskoin.Store.Web where
 import           Conduit                           hiding (runResourceT)
 import           Control.Applicative               ((<|>))
-import           Control.Arrow
 import           Control.Exception                 ()
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Reader              (MonadReader, ReaderT)
+import           Control.Monad.Reader              (ReaderT)
 import qualified Control.Monad.Reader              as R
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson                        (ToJSON (..), object, (.=))
 import           Data.Aeson.Encoding               (encodingToLazyByteString,
                                                     fromEncoding)
-import           Data.Bits
 import qualified Data.ByteString                   as B
 import           Data.ByteString.Builder
 import qualified Data.ByteString.Lazy              as L
 import qualified Data.ByteString.Lazy.Char8        as C
 import           Data.Char
-import           Data.Default
 import           Data.Foldable
 import           Data.Function
 import qualified Data.HashMap.Strict               as H
@@ -42,10 +39,8 @@ import           Data.Time.Clock
 import           Data.Time.Clock.System
 import           Data.Vector                       (Vector, cons, (!))
 import qualified Data.Vector                       as V
-import           Data.Version
 import           Data.Word
 import           Database.RocksDB                  as R
-import           GHC.Generics
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Data
@@ -53,15 +48,14 @@ import           Network.Haskoin.Store.Data.Cached
 import           Network.Haskoin.Store.Messages
 import           Network.HTTP.Types
 import           Network.Wai
-import           Network.Wai.Handler.Warp
 import           NQE
-import qualified Paths_haskoin_store               as P
 import           Text.Printf
 import           Text.Read                         (readMaybe)
 import           UnliftIO
 import           UnliftIO.Resource
-import           Web.Scotty.Internal.Types         (ActionT (ActionT, runAM))
-import           Web.Scotty.Trans                  as S
+import           Web.Scotty.Internal.Types         (ActionT)
+import           Web.Scotty.Trans                  (Parsable, ScottyError)
+import qualified Web.Scotty.Trans                  as S
 
 type WebT m = ActionT Except (ReaderT LayeredDB m)
 
@@ -83,7 +77,7 @@ instance Show Except where
     show ServerError     = "you made me kill a unicorn"
     show BadRequest      = "bad request"
     show (UserError s)   = s
-    show (StringError s) = "you killed the dragon with your bare hands"
+    show (StringError _) = "you killed the dragon with your bare hands"
 
 instance Exception Except
 
@@ -113,6 +107,7 @@ instance BinSerial Except where
             2 -> return BadRequest
             3 -> UserError <$> Serialize.get
             4 -> StringError <$> Serialize.get
+            _ -> mzero
 
 data WebConfig =
     WebConfig
@@ -143,13 +138,16 @@ data Timeouts =
         }
     deriving (Eq, Show)
 
-instance Parsable BlockHash where
-    parseParam =
-        maybe (Left "could not decode block hash") Right . hexToBlockHash . cs
+newtype MyBlockHash = MyBlockHash {myBlockHash :: BlockHash}
+newtype MyTxHash = MyTxHash {myTxHash :: TxHash}
 
-instance Parsable TxHash where
+instance Parsable MyBlockHash where
     parseParam =
-        maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
+        maybe (Left "could not decode block hash") (Right . MyBlockHash) . hexToBlockHash . cs
+
+instance Parsable MyTxHash where
+    parseParam =
+        maybe (Left "could not decode tx hash") (Right . MyTxHash) . hexToTxHash . cs
 
 data StartParam
     = StartParamHash
@@ -197,11 +195,11 @@ defHandler :: Monad m => Network -> Except -> WebT m ()
 defHandler net e = do
     proto <- setupBin
     case e of
-        ThingNotFound -> status status404
-        BadRequest    -> status status400
-        UserError _   -> status status400
-        StringError _ -> status status400
-        ServerError   -> status status500
+        ThingNotFound -> S.status status404
+        BadRequest    -> S.status status400
+        UserError _   -> S.status status400
+        StringError _ -> S.status status400
+        ServerError   -> S.status status500
     protoSerial net proto e
 
 maybeSerial ::
@@ -210,7 +208,7 @@ maybeSerial ::
     -> Bool -- ^ binary
     -> Maybe a
     -> WebT m ()
-maybeSerial _ _ Nothing        = raise ThingNotFound
+maybeSerial _ _ Nothing        = S.raise ThingNotFound
 maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
 
 protoSerial ::
@@ -232,8 +230,8 @@ scottyBestBlock net raw = do
             MaybeT $ getBlock h
     b <-
         case bm of
-            Nothing -> raise ThingNotFound
-            Just b -> return b
+            Nothing -> S.raise ThingNotFound
+            Just b  -> return b
     if raw
         then rawBlock b >>= protoSerial net proto
         else protoSerial net proto (pruneTx n b)
@@ -241,12 +239,12 @@ scottyBestBlock net raw = do
 scottyBlock :: MonadUnliftIO m => Network -> Bool -> WebT m ()
 scottyBlock net raw = do
     setHeaders
-    block <- param "block"
+    block <- myBlockHash <$> S.param "block"
     n <- parseNoTx
     proto <- setupBin
     b <-
         getBlock block >>= \case
-            Nothing -> raise ThingNotFound
+            Nothing -> S.raise ThingNotFound
             Just b -> return b
     if raw
         then rawBlock b >>= protoSerial net proto
@@ -256,18 +254,18 @@ scottyBlockHeight ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
 scottyBlockHeight net raw = do
     setHeaders
-    height <- param "height"
+    height <- S.param "height"
     n <- parseNoTx
     proto <- setupBin
     hs <- getBlocksAtHeight height
     db <- askDB
     if raw
-        then stream $ \io flush' -> do
+        then S.stream $ \io flush' -> do
                  runStream db . runConduit $
                      yieldMany hs .| concatMapMC getBlock .| mapMC rawBlock .|
                      streamAny net proto io
                  flush'
-        else stream $ \io flush' -> do
+        else S.stream $ \io flush' -> do
                  runStream db . runConduit $
                      yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .|
                      streamAny net proto io
@@ -277,26 +275,25 @@ scottyBlockTime ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> Bool -> WebT m ()
 scottyBlockTime net raw = do
     setHeaders
-    q <- param "time"
+    q <- S.param "time"
     n <- parseNoTx
     proto <- setupBin
-    m <- blockAtOrBefore q
+    m <- fmap (pruneTx n) <$> blockAtOrBefore q
     if raw
         then maybeSerial net proto =<<
              case m of
                  Nothing -> return Nothing
-                 Just d -> Just <$> rawBlock d
+                 Just d  -> Just <$> rawBlock d
         else maybeSerial net proto m
 
 scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeights net = do
     setHeaders
-    heights <- param "heights"
+    heights <- S.param "heights"
     n <- parseNoTx
     proto <- setupBin
-    bs <- concat <$> mapM getBlocksAtHeight (nub heights)
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub heights) .| concatMapMC getBlocksAtHeight .|
             concatMapMC getBlock .|
@@ -312,12 +309,17 @@ scottyBlockLatest net = do
     db <- askDB
     getBestBlock >>= \case
         Just h ->
-            stream $ \io flush' -> do
+            S.stream $ \io flush' -> do
                 runStream db . runConduit $ f n h 100 .| streamAny net proto io
                 flush'
-        Nothing -> raise ThingNotFound
+        Nothing -> S.raise ThingNotFound
   where
-    f n h 0 = return ()
+    f :: (Monad m, StoreRead m)
+      => Bool
+      -> BlockHash
+      -> Int
+      -> ConduitT () BlockData m ()
+    f _ _ 0 = return ()
     f n h i =
         lift (getBlock h) >>= \case
             Nothing -> return ()
@@ -331,11 +333,11 @@ scottyBlockLatest net = do
 scottyBlocks :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlocks net = do
     setHeaders
-    blocks <- param "blocks"
+    blocks <- map myBlockHash <$> S.param "blocks"
     n <- parseNoTx
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub blocks) .| concatMapMC getBlock .| mapC (pruneTx n) .|
             streamAny net proto io
@@ -351,7 +353,7 @@ scottyMempool net = do
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyTransaction net = do
     setHeaders
-    txid <- param "txid"
+    txid <- myTxHash <$> S.param "txid"
     proto <- setupBin
     res <- getTransaction txid
     maybeSerial net proto res
@@ -359,7 +361,7 @@ scottyTransaction net = do
 scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyRawTransaction net = do
     setHeaders
-    txid <- param "txid"
+    txid <- myTxHash <$> S.param "txid"
     proto <- setupBin
     res <- fmap transactionData <$> getTransaction txid
     maybeSerial net proto res
@@ -367,8 +369,8 @@ scottyRawTransaction net = do
 scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
 scottyTxAfterHeight net = do
     setHeaders
-    txid <- param "txid"
-    height <- param "height"
+    txid <- myTxHash <$> S.param "txid"
+    height <- S.param "height"
     proto <- setupBin
     res <- cbAfterHeight 10000 height txid
     protoSerial net proto res
@@ -376,10 +378,10 @@ scottyTxAfterHeight net = do
 scottyTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyTransactions net = do
     setHeaders
-    txids <- param "txids"
+    txids <- map myTxHash <$> S.param "txids"
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub txids) .| concatMapMC getTransaction .|
             streamAny net proto io
@@ -389,26 +391,26 @@ scottyBlockTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockTransactions net = do
     setHeaders
-    h <- param "block"
+    h <- myBlockHash <$> S.param "block"
     proto <- setupBin
     db <- askDB
     getBlock h >>= \case
         Just b ->
-            stream $ \io flush' -> do
+            S.stream $ \io flush' -> do
                 runStream db . runConduit $
                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
                     streamAny net proto io
                 flush'
-        Nothing -> raise ThingNotFound
+        Nothing -> S.raise ThingNotFound
 
 scottyRawTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyRawTransactions net = do
     setHeaders
-    txids <- param "txids"
+    txids <- map myTxHash <$> S.param "txids"
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub txids) .| concatMapMC getTransaction .|
             mapC transactionData .|
@@ -429,18 +431,18 @@ scottyRawBlockTransactions ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyRawBlockTransactions net = do
     setHeaders
-    h <- param "block"
+    h <- myBlockHash <$> S.param "block"
     proto <- setupBin
     db <- askDB
     getBlock h >>= \case
         Just b ->
-            stream $ \io flush' -> do
+            S.stream $ \io flush' -> do
                 runStream db . runConduit $
                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .|
                     mapC transactionData .|
                     streamAny net proto io
                 flush'
-        Nothing -> raise ThingNotFound
+        Nothing -> S.raise ThingNotFound
 
 scottyAddressTxs ::
        (MonadLoggerIO m, MonadUnliftIO m)
@@ -456,7 +458,7 @@ scottyAddressTxs net limits full = do
     l <- getLimit limits full
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ f proto o l s a io
         flush'
   where
@@ -477,7 +479,7 @@ scottyAddressesTxs net limits full = do
     l <- getLimit limits full
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ f proto l s as io
         flush'
   where
@@ -495,7 +497,7 @@ scottyAddressUnspent net limits = do
     l <- getLimit limits False
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             getAddressUnspentsLimit o l s a .| streamAny net proto io
         flush'
@@ -509,7 +511,7 @@ scottyAddressesUnspent net limits = do
     l <- getLimit limits False
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             getAddressesUnspentsLimit l s as .| streamAny net proto io
         flush'
@@ -551,7 +553,7 @@ scottyAddressesBalances net = do
                 }
         f _ (Just b) = b
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany as .| mapMC (\a -> f a <$> getBalance a) .|
             streamAny net proto io
@@ -568,7 +570,7 @@ scottyXpubBalances net max_limits = do
     proto <- setupBin
     derive <- parseDeriveAddrs net
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             xpubBals max_limits derive xpub .| streamAny net proto io
         flush'
@@ -590,7 +592,7 @@ scottyXpubTxs net limits full = do
     as <-
         liftIO . runStream db . runConduit $
         xpubBals limits derive x .| mapC (balanceAddress . xPubBal) .| sinkList
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ f proto l s as io
         flush'
   where
@@ -608,7 +610,7 @@ scottyXpubUnspents net limits = do
     l <- getLimit limits False
     derive <- parseDeriveAddrs net
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             xpubUnspentLimit net limits l s derive x .| streamAny net proto io
         flush'
@@ -633,24 +635,24 @@ scottyPostTx ::
 scottyPostTx net st pub = do
     setHeaders
     proto <- setupBin
-    b <- body
+    b <- S.body
     let bin = eitherToMaybe . Serialize.decode
         hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
     tx <-
         case hex b <|> bin (L.toStrict b) of
-            Nothing -> raise $ UserError "decode tx fail"
+            Nothing -> S.raise $ UserError "decode tx fail"
             Just x  -> return x
     lift (publishTx net pub st tx) >>= \case
         Right () -> do
             protoSerial net proto (TxId (txHash tx))
         Left e -> do
             case e of
-                PubNoPeers          -> status status500
-                PubTimeout          -> status status500
-                PubPeerDisconnected -> status status500
-                PubReject _         -> status status400
+                PubNoPeers          -> S.status status500
+                PubTimeout          -> S.status status500
+                PubPeerDisconnected -> S.status status500
+                PubReject _         -> S.status status400
             protoSerial net proto (UserError (show e))
-            finish
+            S.finish
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
@@ -659,9 +661,9 @@ scottyDbStats = do
     stats <- lift (getProperty db Stats)
     case stats of
       Nothing -> do
-          text "Could not get stats"
+          S.text "Could not get stats"
       Just txt -> do
-          text $ cs txt
+          S.text $ cs txt
 
 scottyEvents ::
        (MonadLoggerIO m, MonadUnliftIO m)
@@ -671,7 +673,7 @@ scottyEvents ::
 scottyEvents net pub = do
     setHeaders
     proto <- setupBin
-    stream $ \io flush' ->
+    S.stream $ \io flush' ->
         withSubscription pub $ \sub ->
             forever $
             flush' >> receive sub >>= \se -> do
@@ -711,7 +713,7 @@ scottyHealth net st tos = do
     h <-
         liftIO . runStream db $
         healthCheck net (storeManager st) (storeChain st) tos
-    when (not (healthOK h) || not (healthSynced h)) $ status status503
+    when (not (healthOK h) || not (healthSynced h)) $ S.status status503
     protoSerial net proto h
 
 runWeb :: (MonadLoggerIO m, MonadUnliftIO m) => WebConfig -> m ()
@@ -729,11 +731,11 @@ runWeb WebConfig { webDB = db
             then Just <$> logIt
             else return Nothing
     runner <- askRunInIO
-    scottyT port (runner . withLayeredDB db) $ do
+    S.scottyT port (runner . withLayeredDB db) $ do
         case req_logger of
-            Just m  -> middleware m
+            Just m  -> S.middleware m
             Nothing -> return ()
-        defaultHandler (defHandler net)
+        S.defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net False
         S.get "/block/best/raw" $ scottyBestBlock net True
         S.get "/block/:block" $ scottyBlock net False
@@ -773,12 +775,12 @@ runWeb WebConfig { webDB = db
         S.get "/events" $ scottyEvents net pub
         S.get "/peers" $ scottyPeers net st
         S.get "/health" $ scottyHealth net st tos
-        notFound $ raise ThingNotFound
+        S.notFound $ S.raise ThingNotFound
 
 getStart :: MonadUnliftIO m => WebT m (Maybe BlockRef)
 getStart =
     runMaybeT $ do
-        s <- MaybeT $ (Just <$> param "height") `rescue` const (return Nothing)
+        s <- MaybeT $ (Just <$> S.param "height") `S.rescue` const (return Nothing)
         do case s of
                StartParamHash {startParamHash = h} ->
                    start_tx h <|> start_block h
@@ -794,8 +796,8 @@ getStart =
         t <- MaybeT $ getTxData (TxHash h)
         return $ txDataBlock t
     start_time q = do
-        b <- MaybeT getBestBlock >>= MaybeT . getBlock
-        if q <= fromIntegral (blockTimestamp (blockDataHeader b))
+        d <- MaybeT getBestBlock >>= MaybeT . getBlock
+        if q <= fromIntegral (blockTimestamp (blockDataHeader d))
             then do
                 b <- MaybeT $ blockAtOrBefore q
                 let g = blockDataHeight b
@@ -804,9 +806,9 @@ getStart =
 
 getOffset :: Monad m => MaxLimits -> ActionT Except m Offset
 getOffset limits = do
-    o <- param "offset" `rescue` const (return 0)
+    o <- S.param "offset" `S.rescue` const (return 0)
     when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) .
-        raise . UserError $
+        S.raise . UserError $
         "offset exceeded: " <> show o <> " > " <> show (maxLimitOffset limits)
     return o
 
@@ -816,7 +818,7 @@ getLimit ::
     -> Bool
     -> ActionT Except m (Maybe Limit)
 getLimit limits full = do
-    l <- (Just <$> param "limit") `rescue` const (return Nothing)
+    l <- (Just <$> S.param "limit") `S.rescue` const (return Nothing)
     let m =
             if full
                 then if maxLimitFull limits > 0
@@ -835,29 +837,31 @@ getLimit limits full = do
                     then Just (min m n)
                     else Just n
 
+parseAddress :: (Monad m, ScottyError e) => Network -> ActionT e m Address
 parseAddress net = do
-    address <- param "address"
+    address <- S.param "address"
     case stringToAddr net address of
-        Nothing -> next
+        Nothing -> S.next
         Just a  -> return a
 
+parseAddresses :: (Monad m, ScottyError e) => Network -> ActionT e m [Address]
 parseAddresses net = do
-    addresses <- param "addresses"
+    addresses <- S.param "addresses"
     let as = mapMaybe (stringToAddr net) addresses
-    unless (length as == length addresses) next
+    unless (length as == length addresses) S.next
     return as
 
 parseXpub :: (Monad m, ScottyError e) => Network -> ActionT e m XPubKey
 parseXpub net = do
-    t <- param "xpub"
+    t <- S.param "xpub"
     case xPubImport net t of
-        Nothing -> next
+        Nothing -> S.next
         Just x  -> return x
 
 parseDeriveAddrs :: (Monad m, ScottyError e) => Network -> ActionT e m DeriveAddrs
 parseDeriveAddrs net
     | getSegWit net = do
-          t <- param "derive" `rescue` const (return "standard")
+          t <- S.param "derive" `S.rescue` const (return "standard")
           return $ case (t :: Text) of
             "segwit" -> deriveWitnessAddrs
             "compat" -> deriveCompatWitnessAddrs
@@ -865,15 +869,15 @@ parseDeriveAddrs net
     | otherwise = return deriveAddrs
 
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
-parseNoTx = param "notx" `rescue` const (return False)
+parseNoTx = S.param "notx" `S.rescue` const (return False)
 
+pruneTx :: Bool -> BlockData -> BlockData
 pruneTx False b = b
 pruneTx True b  = b {blockDataTxs = take 1 (blockDataTxs b)}
 
 setHeaders :: (Monad m, ScottyError e) => ActionT e m ()
 setHeaders = do
-    setHeader "Access-Control-Allow-Origin" "*"
-    setHeader "Cache-Control" "no-cache"
+    S.setHeader "Access-Control-Allow-Origin" "*"
 
 serialAny ::
        (JsonSerial a, BinSerial a)
@@ -906,10 +910,10 @@ streamConduit io = mapM_C (liftIO . io)
 setupBin :: Monad m => ActionT Except m Bool
 setupBin =
     let p = do
-            setHeader "Content-Type" "application/octet-stream"
+            S.setHeader "Content-Type" "application/octet-stream"
             return True
         j = do
-            setHeader "Content-Type" "application/json"
+            S.setHeader "Content-Type" "application/json"
             return False
      in S.header "accept" >>= \case
             Nothing -> j
@@ -1036,7 +1040,7 @@ xpubUnspent ::
     -> DeriveAddrs
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
-xpubUnspent net max_limits start derive xpub =
+xpubUnspent _net max_limits start derive xpub =
     xpubBals max_limits derive xpub .| go
   where
     go =
@@ -1308,14 +1312,14 @@ publishTx net pub st tx =
     go s =
         managerGetPeers (storeManager st) >>= \case
             [] -> return $ Left PubNoPeers
-            OnlinePeer {onlinePeerMailbox = p, onlinePeerAddress = a}:_ -> do
+            OnlinePeer {onlinePeerMailbox = p}:_ -> do
                 MTx tx `sendMessage` p
-                let t =
+                let v =
                         if getSegWit net
                             then InvWitnessTx
                             else InvTx
                 sendMessage
-                    (MGetData (GetData [InvVector t (getTxHash (txHash tx))]))
+                    (MGetData (GetData [InvVector v (getTxHash (txHash tx))]))
                     p
                 f p s
     t = 5 * 1000 * 1000
@@ -1350,12 +1354,11 @@ logIt = do
 
 fmtReq :: Request -> Text
 fmtReq req =
-    let method = requestMethod req
-        version = httpVersion req
-        path = rawPathInfo req
-        query = rawQueryString req
-     in T.decodeUtf8 $
-        method <> " " <> path <> query <> " " <> cs (show version)
+    let m = requestMethod req
+        v = httpVersion req
+        p = rawPathInfo req
+        q = rawQueryString req
+     in T.decodeUtf8 $ m <> " " <> p <> q <> " " <> cs (show v)
 
 fmtDiff :: NominalDiffTime -> Text
 fmtDiff d = cs (printf "%0.3f" (realToFrac (d * 1000) :: Double) :: String) <> " ms"
