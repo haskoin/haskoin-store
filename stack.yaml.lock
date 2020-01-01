@@ -5,12 +5,12 @@
 
 packages:
 - completed:
-    hackage: haskoin-core-0.9.7@sha256:1bd5f7b7983bc20603f1427956f8f980ac7e6c62ef5ea2b0c894c489e85ab324,4114
+    hackage: haskoin-core-0.9.8@sha256:68cc9081e9d889c0d16b244d938c358b4c267e6165cf845ecfea2d969561298f,4114
     pantry-tree:
       size: 4894
-      sha256: 1a9eaa5b5bba570c02f4061ab0c368392fb0d21a164a547717e3cc76971a7723
+      sha256: 3e5e05698092e5a29726fb538220d3ba0e5adbfc827d55de06a2cb09d56a3ab1
   original:
-    hackage: haskoin-core-0.9.7
+    hackage: haskoin-core-0.9.8
 - completed:
     hackage: haskoin-node-0.9.14@sha256:40c7f69dc9a733c444127e49a2955243cc3a6815660aed259cc8149b4b376a38,2280
     pantry-tree:
@@ -27,7 +27,7 @@ packages:
     hackage: rocksdb-query-0.3.0
 snapshots:
 - completed:
-    size: 525662
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/14/15.yaml
-    sha256: c5e673e5723931b64ef2eb5004f6d9ea3c95b58d48388dbc4de6f66b97c81f7a
-  original: lts-14.15
+    size: 524155
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/14/19.yaml
+    sha256: 9f79f6494473c9b46911364b94c4b5ef19ca8d35ebf62e46697cf651f198ee19
+  original: lts-14.19
