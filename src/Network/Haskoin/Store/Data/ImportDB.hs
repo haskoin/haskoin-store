@@ -13,14 +13,12 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
 import           Control.Monad.Trans.Maybe
-import qualified Data.ByteString.Short               as B.Short
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
 import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
-import           Data.String.Conversions             (cs)
 import           Database.RocksDB                    as R
 import           Database.RocksDB.Query              as R
 import           Haskoin
@@ -78,6 +76,7 @@ hashMapOps db =
 cacheMapOps :: BlockMem -> [BatchOp]
 cacheMapOps db =
     balOps (hBalance db) <> maybeToList (mempoolOp <$> hMempool db) <>
+    addrTxOps (hAddrTx db) <>
     unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
@@ -348,7 +347,7 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
 
 instance MonadIO m => StoreStream (ReaderT ImportDB m) where
     getOrphans = undefined
-    getAddressUnspents a m = undefined
-    getAddressTxs a m = undefined
+    getAddressUnspents _ _ = undefined
+    getAddressTxs _ _ = undefined
     getAddressBalances = undefined
     getUnspents = undefined

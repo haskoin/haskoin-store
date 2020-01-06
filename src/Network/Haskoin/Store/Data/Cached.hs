@@ -4,26 +4,16 @@
 module Network.Haskoin.Store.Data.Cached where
 
 import           Conduit
-import           Control.Applicative
-import           Control.Monad.Except
-import           Control.Monad.Logger
-import           Control.Monad.Reader                (MonadReader, ReaderT)
+import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
-import           Control.Monad.Trans.Maybe
 import qualified Data.ByteString                     as B
-import qualified Data.ByteString.Short               as B.Short
 import           Data.IntMap.Strict                  (IntMap)
-import           Data.List
-import           Data.Maybe
 import           Data.Serialize                      (Serialize, encode)
-import           Data.String.Conversions             (cs)
 import           Database.RocksDB                    as R
-import           Database.RocksDB.Query              as R
 import           Haskoin
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
 import           Network.Haskoin.Store.Data.RocksDB
-import           NQE                                 (query)
 import           UnliftIO
 
 newLayeredDB :: MonadUnliftIO m => BlockDB -> Maybe BlockDB -> m LayeredDB
@@ -33,6 +23,7 @@ newLayeredDB blocks (Just cache) = do
     bulkCopy opts db cdb BalKeyS
     bulkCopy opts db cdb UnspentKeyB
     bulkCopy opts db cdb MemKey
+    bulkCopy opts db cdb AddrTxKeyS
     return LayeredDB {layeredDB = blocks, layeredCache = Just cache}
   where
     BlockDB {blockDBopts = opts, blockDB = db} = blocks
@@ -108,19 +99,21 @@ getAddressTxsC ::
     -> Maybe BlockRef
     -> LayeredDB
     -> ConduitT i BlockTx m ()
+getAddressTxsC addr mbr LayeredDB {layeredCache = Just db} =
+    getAddressTxsDB addr mbr db
 getAddressTxsC addr mbr LayeredDB {layeredDB = db} =
     getAddressTxsDB addr mbr db
 
 bulkCopy ::
        (Serialize k, MonadUnliftIO m) => ReadOptions -> DB -> DB -> k -> m ()
-bulkCopy opts db cdb k =
+bulkCopy opts db cdb b =
     runResourceT $ do
         ch <- newTBQueueIO 1000000
-        withAsync (iterate ch) $ \a -> write_batch ch [] 0
+        withAsync (iter ch) $ \_ -> write_batch ch [] (0 :: Int)
   where
-    iterate ch =
+    iter ch =
         withIterator db opts $ \it -> do
-            iterSeek it (encode k)
+            iterSeek it (encode b)
             recurse it ch
     write_batch ch acc l
         | l >= 10000 = do
@@ -128,16 +121,16 @@ bulkCopy opts db cdb k =
             write_batch ch [] 0
         | otherwise =
             atomically (readTBQueue ch) >>= \case
-                Just (key, val) -> write_batch ch (Put key val : acc) (l + 1)
+                Just (k, v) -> write_batch ch (Put k v : acc) (l + 1)
                 Nothing -> write cdb defaultWriteOptions acc
     recurse it ch =
         iterEntry it >>= \case
             Nothing -> atomically $ writeTBQueue ch Nothing
-            Just (key, val) ->
-                let pfx = B.take (B.length (encode k)) key
+            Just (k, v) ->
+                let pfx = B.take (B.length (encode k)) k
                  in if pfx == encode k
                         then do
-                            atomically . writeTBQueue ch $ Just (key, val)
+                            atomically . writeTBQueue ch $ Just (k, v)
                             iterNext it
                             recurse it ch
                         else atomically $ writeTBQueue ch Nothing

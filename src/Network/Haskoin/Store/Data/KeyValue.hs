@@ -7,7 +7,6 @@ module Network.Haskoin.Store.Data.KeyValue where
 import           Control.Monad.Reader
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString            as B
-import           Data.Default
 import           Data.Hashable
 import           Data.Serialize             as S
 import           Data.Word
