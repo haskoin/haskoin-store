@@ -11,30 +11,19 @@ module Main where
 
 import           Conduit
 import           Control.Arrow
+import           Control.Concurrent         (threadDelay)
 import           Control.Exception          ()
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Trans.Maybe
-import           Data.Aeson.Encoding        (encodingToLazyByteString,
-                                             fromEncoding)
 import           Data.Bits
-import           Data.ByteString.Builder
-import qualified Data.ByteString.Lazy       as L
-import qualified Data.ByteString.Lazy.Char8 as C
-import           Data.Char
-import           Data.Function
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize             as Serialize
 import           Data.String.Conversions
-import qualified Data.Text.Lazy             as T
 import           Data.Version
-import           Data.Word                  (Word32)
 import           Database.RocksDB           as R
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
-import           Network.HTTP.Types
 import           NQE
 import           Options.Applicative
 import           Paths_haskoin_store        as P
@@ -44,7 +33,6 @@ import           System.IO.Unsafe
 import           Text.Read                  (readMaybe)
 import           UnliftIO
 import           UnliftIO.Directory
-import           Web.Scotty.Trans
 
 data Config = Config
     { configDir       :: !FilePath
@@ -204,7 +192,7 @@ main = do
             ("haskoin-store version " <> showVersion P.version)
 
 cacheDir :: Network -> FilePath -> Maybe FilePath
-cacheDir net "" = Nothing
+cacheDir _ "" = Nothing
 cacheDir net ch = Just (ch </> getNetworkName net </> "cache")
 
 run :: MonadUnliftIO m => Config -> m ()
@@ -240,8 +228,10 @@ run Config { configPort = port
                 Just ch -> do
                     $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
                     removePathForcibly ch
+                    liftIO $ threadDelay 1000000
                     $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
                     createDirectoryIfMissing True ch
+                    liftIO $ threadDelay 1000000
                     dbh <-
                         open
                             ch
@@ -273,14 +263,14 @@ run Config { configPort = port
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` pub) . Event
                         }
-             in withStore scfg $ \str ->
+             in withStore scfg $ \st ->
                     let wcfg =
                             WebConfig
                                 { webPort = port
                                 , webNetwork = net
                                 , webDB = ldb
                                 , webPublisher = pub
-                                , webStore = str
+                                , webStore = st
                                 , webMaxLimits = limits
                                 , webReqLog = reqlog
                                 , webTimeouts = tos
