@@ -242,7 +242,15 @@ run Config { configPort = port
                     removePathForcibly ch
                     $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
                     createDirectoryIfMissing True ch
-                    dbh <- open ch R.defaultOptions {createIfMissing = True}
+                    dbh <-
+                        open
+                            ch
+                            R.defaultOptions
+                                { createIfMissing = True
+                                , compression = SnappyCompression
+                                , maxOpenFiles = -1
+                                , writeBufferSize = 2 `shift` 30
+                                }
                     return $
                         Just
                             BlockDB
