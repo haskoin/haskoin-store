@@ -589,16 +589,45 @@ scottyXpubTxs net limits full = do
     derive <- parseDeriveAddrs net
     proto <- setupBin
     db <- askDB
-    as <-
-        liftIO . runStream db . runConduit $
-        xpubBals limits derive x .| mapC (balanceAddress . xPubBal) .| sinkList
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $ f proto l s as io
-        flush'
+    txs <- liftIO $ runStream db $ xpubTxs limits s l derive x
+    if full
+        then protoSerial net proto txs
+        else do
+            fts <- catMaybes <$> mapM (getTransaction . blockTxHash) txs
+            protoSerial net proto fts
+
+xpubTxs ::
+       (Functor m, Monad m, StoreRead m, StoreStream m)
+    => MaxLimits
+    -> Maybe BlockRef
+    -> Maybe Limit
+    -> DeriveAddrs
+    -> XPubKey
+    -> m [BlockTx]
+xpubTxs max_limits start limit derive xpub = do
+    ts <-
+        fmap (sortBy (flip compare `on` blockTxBlock)) . runConduit $
+        (go 0 >> go 1) .| concatC .| sinkList
+    case limit of
+        Nothing -> return ts
+        Just l  -> return $ take (fromIntegral l) ts
   where
-    f proto l s as io
-        | full = getAddressesTxsFull l s as .| streamAny net proto io
-        | otherwise = getAddressesTxsLimit l s as .| streamAny net proto io
+    go m = yieldMany (addrs m) .| mapMC txs .| gap (maxLimitGap max_limits)
+    addrs m = map (\(a, _, _) -> a) (derive (pubSubKey xpub m) 0)
+    txs a =
+        case limit of
+            Just l ->
+                runConduit $
+                getAddressTxs a start .| takeC (fromIntegral l) .| sinkList
+            Nothing -> runConduit $ getAddressTxs a start .| sinkList
+    gap n =
+        let r 0 = return ()
+            r i =
+                await >>= \case
+                    Just [] -> r (i - 1)
+                    Just xs -> yield xs >> r n
+                    Nothing -> return ()
+         in r n
 
 scottyXpubUnspents ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
