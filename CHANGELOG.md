@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.19.3
 ### Changed
 - Add address transactions to cache.
+- Improve multi-address transaction retrieval algorithms.
 
 ## 0.19.2
 ### Removed

@@ -614,21 +614,19 @@ xpubTxs max_limits start limit derive xpub = do
     go m = yieldMany (addrs m) .| txs .| gap (maxLimitGap max_limits)
     addrs m = map (\(a, _, _) -> a) (derive (pubSubKey xpub m) 0)
     txs =
-        awaitForever $ \a ->
-            getAddressTxs a start .| mapC (a, ) .| applyLimit limit
+        await >>= \case
+            Nothing -> return ()
+            Just a -> do
+                ts <- getAddressTxs a start .| applyLimit limit .| sinkList
+                yield ts
     gap n =
-        let r _ 0 = return ()
-            r Nothing _ =
+        let r 0 = return ()
+            r i =
                 await >>= \case
                     Nothing -> return ()
-                    Just (a, t) -> yield t >> r (Just a) n
-            r (Just a) i =
-                await >>= \case
-                    Nothing -> return ()
-                    Just (a', t)
-                        | a == a' -> yield t >> r (Just a) (i - 1)
-                        | otherwise -> yield t >> r (Just a') n
-         in r Nothing n
+                    Just [] -> r (i - 1)
+                    Just xs -> yieldMany xs >> r n
+         in r n
 
 scottyXpubUnspents ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
