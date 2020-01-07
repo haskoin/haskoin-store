@@ -24,7 +24,6 @@ import           Data.ByteString.Builder
 import qualified Data.ByteString.Lazy              as L
 import qualified Data.ByteString.Lazy.Char8        as C
 import           Data.Char
-import           Data.Foldable
 import           Data.Function
 import qualified Data.HashMap.Strict               as H
 import           Data.List
@@ -37,8 +36,6 @@ import qualified Data.Text.Encoding                as T
 import qualified Data.Text.Lazy                    as T.Lazy
 import           Data.Time.Clock
 import           Data.Time.Clock.System
-import           Data.Vector                       (Vector, cons, (!))
-import qualified Data.Vector                       as V
 import           Data.Word
 import           Database.RocksDB                  as R
 import           Haskoin
@@ -589,45 +586,49 @@ scottyXpubTxs net limits full = do
     derive <- parseDeriveAddrs net
     proto <- setupBin
     db <- askDB
-    txs <- liftIO $ runStream db $ xpubTxs limits s l derive x
-    if full
-        then protoSerial net proto txs
-        else do
-            fts <- catMaybes <$> mapM (getTransaction . blockTxHash) txs
-            protoSerial net proto fts
+    S.stream $ \io flush' -> do
+        runStream db . runConduit $ f proto l s derive io x
+        flush'
+  where
+    f proto l s derive io x
+        | full =
+            xpubTxs limits s l derive x .|
+            concatMapMC (getTransaction . blockTxHash) .|
+            streamAny net proto io
+        | otherwise = xpubTxs limits s l derive x .| streamAny net proto io
 
 xpubTxs ::
-       (Functor m, Monad m, StoreRead m, StoreStream m)
+       (Monad m, StoreRead m, StoreStream m)
     => MaxLimits
     -> Maybe BlockRef
     -> Maybe Limit
     -> DeriveAddrs
     -> XPubKey
-    -> m [BlockTx]
+    -> ConduitT i BlockTx m ()
 xpubTxs max_limits start limit derive xpub = do
     ts <-
-        fmap (nub . sortBy (flip compare `on` blockTxBlock)) . runConduit $
-        (go 0 >> go 1) .| concatC .| sinkList
-    case limit of
-        Nothing -> return ts
-        Just l -> return $ take (fromIntegral l) ts
+        fmap (nub . sortBy (flip compare `on` blockTxBlock)) $
+        (go 0 >> go 1) .| sinkList
+    forM_ ts yield .| applyLimit limit
   where
-    go m = yieldMany (addrs m) .| mapMC txs .| gap (maxLimitGap max_limits)
+    go m = yieldMany (addrs m) .| txs .| gap (maxLimitGap max_limits)
     addrs m = map (\(a, _, _) -> a) (derive (pubSubKey xpub m) 0)
-    txs a =
-        case limit of
-            Just l ->
-                runConduit $
-                getAddressTxs a start .| takeC (fromIntegral l) .| sinkList
-            Nothing -> runConduit $ getAddressTxs a start .| sinkList
+    txs =
+        awaitForever $ \a ->
+            getAddressTxs a start .| mapC (a, ) .| applyLimit limit
     gap n =
-        let r 0 = return ()
-            r i =
+        let r _ 0 = return ()
+            r Nothing _ =
                 await >>= \case
-                    Just [] -> r (i - 1)
-                    Just xs -> yield xs >> r n
                     Nothing -> return ()
-         in r n
+                    Just (a, t) -> yield t >> r (Just a) n
+            r (Just a) i =
+                await >>= \case
+                    Nothing -> return ()
+                    Just (a', t)
+                        | a == a' -> yield t >> r (Just a) (i - 1)
+                        | otherwise -> yield t >> r (Just a') n
+         in r Nothing n
 
 scottyXpubUnspents ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
@@ -1170,56 +1171,6 @@ cbAfterHeight d h t
                     then return $ Just (e', True)
                     else r e' ns
 
--- Snatched from:
--- https://github.com/cblp/conduit-merge/blob/master/src/Data/Conduit/Merge.hs
-mergeSourcesBy ::
-       (Foldable f, Monad m)
-    => (a -> a -> Ordering)
-    -> f (ConduitT () a m ())
-    -> ConduitT i a m ()
-mergeSourcesBy f = mergeSealed . fmap sealConduitT . toList
-  where
-    mergeSealed sources = do
-        prefetchedSources <- lift $ traverse ($$++ await) sources
-        go . V.fromList . nubBy (\a b -> f (fst a) (fst b) == EQ) $
-            sortBy (f `on` fst) [(a, s) | (s, Just a) <- prefetchedSources]
-    go sources
-        | V.null sources = pure ()
-        | otherwise = do
-            let (a, src1) = V.head sources
-                sources1 = V.tail sources
-            yield a
-            (src2, mb) <- lift $ src1 $$++ await
-            let sources2 =
-                    case mb of
-                        Nothing -> sources1
-                        Just b ->
-                            insertNubInSortedBy (f `on` fst) (b, src2) sources1
-            go sources2
-
-insertNubInSortedBy :: (a -> a -> Ordering) -> a -> Vector a -> Vector a
-insertNubInSortedBy f x xs
-    | null xs = x `cons` xs
-    | otherwise =
-        case find_idx 0 (length xs - 1) of
-            Nothing -> x `cons` xs
-            Just i ->
-                let (xs1, xs2) = V.splitAt i xs
-                 in xs1 <> x `cons` xs2
-  where
-    find_idx a b
-        | f (xs ! a) x == EQ = Nothing
-        | f (xs ! b) x == EQ = Nothing
-        | f (xs ! b) x == LT = Just (b + 1)
-        | f (xs ! a) x == GT = Just a
-        | b - a == 1 = Just b
-        | otherwise =
-            let c = a + (b - a) `div` 2
-                z = xs ! c
-             in if f z x == GT
-                    then find_idx a c
-                    else find_idx c b
-
 getAddressTxsLimit ::
        (Monad m, StoreStream m)
     => Offset
@@ -1247,10 +1198,13 @@ getAddressesTxsLimit ::
     -> Maybe BlockRef
     -> [Address]
     -> ConduitT i BlockTx m ()
-getAddressesTxsLimit limit start addrs =
-    mergeSourcesBy (flip compare `on` blockTxBlock) xs .| applyLimit limit
+getAddressesTxsLimit limit start addrs = do
+    ts <-
+        fmap (nub . sortBy (flip compare `on` blockTxBlock)) $
+        get_txs .| sinkList
+    forM_ ts yield .| applyLimit limit
   where
-    xs = map (`getAddressTxs` start) addrs
+    get_txs = mapM_ (\a -> getAddressTxs a start .| applyLimit limit) addrs
 
 getAddressesTxsFull ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
@@ -1278,11 +1232,13 @@ getAddressesUnspentsLimit ::
     -> Maybe BlockRef
     -> [Address]
     -> ConduitT i Unspent m ()
-getAddressesUnspentsLimit limit start addrs =
-    mergeSourcesBy
-        (flip compare `on` unspentBlock)
-        (map (`getAddressUnspents` start) addrs) .|
-    applyLimit limit
+getAddressesUnspentsLimit limit start addrs = do
+    uns <-
+        fmap (nub . sortBy (flip compare `on` unspentBlock)) $
+        get_uns .| sinkList
+    forM_ uns yield .| applyLimit limit
+  where
+    get_uns = mapM_ (\a -> getAddressUnspents a start .| applyLimit limit) addrs
 
 applyOffsetLimit :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
 applyOffsetLimit offset limit = applyOffset offset >> applyLimit limit
