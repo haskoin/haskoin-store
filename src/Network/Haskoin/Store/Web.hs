@@ -606,11 +606,11 @@ xpubTxs ::
     -> m [BlockTx]
 xpubTxs max_limits start limit derive xpub = do
     ts <-
-        fmap (sortBy (flip compare `on` blockTxBlock)) . runConduit $
+        fmap (nub . sortBy (flip compare `on` blockTxBlock)) . runConduit $
         (go 0 >> go 1) .| concatC .| sinkList
     case limit of
         Nothing -> return ts
-        Just l  -> return $ take (fromIntegral l) ts
+        Just l -> return $ take (fromIntegral l) ts
   where
     go m = yieldMany (addrs m) .| mapMC txs .| gap (maxLimitGap max_limits)
     addrs m = map (\(a, _, _) -> a) (derive (pubSubKey xpub m) 0)
