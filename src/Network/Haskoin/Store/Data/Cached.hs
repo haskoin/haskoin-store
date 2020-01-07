@@ -127,8 +127,8 @@ bulkCopy opts db cdb b =
         iterEntry it >>= \case
             Nothing -> atomically $ writeTBQueue ch Nothing
             Just (k, v) ->
-                let pfx = B.take (B.length (encode k)) k
-                 in if pfx == encode k
+                let pfx = B.take (B.length (encode b)) k
+                 in if pfx == encode b
                         then do
                             atomically . writeTBQueue ch $ Just (k, v)
                             iterNext it
