@@ -11,7 +11,6 @@ module Main where
 
 import           Conduit
 import           Control.Arrow
-import           Control.Concurrent         (threadDelay)
 import           Control.Exception          ()
 import           Control.Monad
 import           Control.Monad.Logger
@@ -228,10 +227,8 @@ run Config { configPort = port
                 Just ch -> do
                     $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
                     removePathForcibly ch
-                    liftIO $ threadDelay 1000000
                     $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
                     createDirectoryIfMissing True ch
-                    liftIO $ threadDelay 1000000
                     dbh <-
                         open
                             ch
