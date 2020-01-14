@@ -973,7 +973,7 @@ healthCheck net mgr ch tos = do
         bk = block_ok bb
         pk = peer_count_ok pc
         bd = block_time_delta tm cb
-        td = tx_time_delta tm cb ml
+        td = tx_time_delta tm bd ml
         lk = timeout_ok (blockTimeout tos) bd
         tk = timeout_ok (txTimeout tos) td
         ok = ck && bk && pk && lk && tk
@@ -1007,9 +1007,10 @@ healthCheck net mgr ch tos = do
     block_time_delta tm cb = do
         bt <- node_timestamp <$> cb
         return $ compute_delta bt tm
-    tx_time_delta tm cb ml = do
-        tt <- fst <$> ml <|> node_timestamp <$> cb
-        return $ compute_delta tt tm
+    tx_time_delta tm bd ml = do
+        bd' <- bd
+        tt <- fst <$> ml <|> bd
+        return $ min (compute_delta tt tm) bd'
     timeout_ok to td = fromMaybe False $ do
         td' <- td
         return $

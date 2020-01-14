@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.19.5
 ### Changed
 - Minor refactor to block import code.
+- Minor fix to transaction timeout check.
 
 ## 0.19.4
 ### Changed
