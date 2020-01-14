@@ -964,50 +964,64 @@ healthCheck ::
     -> Timeouts
     -> m HealthCheck
 healthCheck net mgr ch tos = do
-    maybe_chain_best <- timeout (5 * 1000 * 1000) $ chainGetBest ch
-    maybe_block_best <- runMaybeT $ MaybeT . getBlock =<< MaybeT getBestBlock
-    peers <- timeout (5 * 1000 * 1000) $ managerGetPeers mgr
-    maybe_mempool_last <- fmap fst . listToMaybe <$> getMempool
-    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-    let maybe_block_time_delta =
-            (now -) . fromIntegral . blockTimestamp . blockDataHeader <$>
-            maybe_block_best
-        maybe_tx_time_delta =
-            (now -) <$> maybe_mempool_last <|> maybe_block_time_delta
-        peers_ok = maybe False (not . Data.List.null) peers
-        block_timeout_ok =
-            getAllowMinDifficultyBlocks net ||
-            blockTimeout tos == 0 ||
-            maybe False (<= blockTimeout tos) maybe_block_time_delta
-        tx_timeout_ok =
-            getAllowMinDifficultyBlocks net ||
-            txTimeout tos == 0 ||
-            maybe False (<= txTimeout tos) maybe_tx_time_delta
-        status_ok =
-            isJust maybe_chain_best &&
-            isJust maybe_block_best &&
-            peers_ok &&
-            block_timeout_ok &&
-            tx_timeout_ok
-        synced =
-            isJust $ do
-                x <- maybe_chain_best
-                y <- maybe_block_best
-                guard $ nodeHeight x - blockDataHeight y <= 1
+    cb <- chain_best
+    bb <- block_best
+    pc <- peer_count
+    tm <- get_current_time
+    ml <- get_mempool_last
+    let ck = block_ok cb
+        bk = block_ok bb
+        pk = peer_count_ok pc
+        bd = block_time_delta tm cb
+        td = tx_time_delta tm cb ml
+        lk = timeout_ok (blockTimeout tos) bd
+        tk = timeout_ok (txTimeout tos) td
+        ok = ck && bk && pk && lk && tk
     return
         HealthCheck
-            { healthBlockBest =
-                  headerHash . blockDataHeader <$> maybe_block_best
-            , healthBlockHeight = blockDataHeight <$> maybe_block_best
-            , healthHeaderBest = headerHash . nodeHeader <$> maybe_chain_best
-            , healthHeaderHeight = nodeHeight <$> maybe_chain_best
-            , healthPeers = length <$> peers
+            { healthBlockBest = block_hash <$> bb
+            , healthBlockHeight = block_height <$> bb
+            , healthHeaderBest = node_hash <$> cb
+            , healthHeaderHeight = node_height <$> cb
+            , healthPeers = pc
             , healthNetwork = getNetworkName net
-            , healthOK = status_ok
-            , healthSynced = synced
-            , healthLastBlock = maybe_block_time_delta
-            , healthLastTx = maybe_tx_time_delta
+            , healthOK = ok
+            , healthSynced = in_sync bb cb
+            , healthLastBlock = bd
+            , healthLastTx = td
             }
+  where
+    block_hash = headerHash . blockDataHeader
+    block_height = blockDataHeight
+    node_hash = headerHash . nodeHeader
+    node_height = nodeHeight
+    get_mempool_last = listToMaybe <$> getMempool
+    get_current_time = fromIntegral . systemSeconds <$> liftIO getSystemTime
+    peer_count_ok pc = fromMaybe 0 pc > 0
+    block_ok = isJust
+    node_timestamp = fromIntegral . blockTimestamp . nodeHeader
+    in_sync bb cb = fromMaybe False $ do
+        bh <- blockDataHeight <$> bb
+        nh <- nodeHeight <$> cb
+        return $ compute_delta bh nh <= 1
+    block_time_delta tm cb = do
+        bt <- node_timestamp <$> cb
+        return $ compute_delta bt tm
+    tx_time_delta tm cb ml = do
+        tt <- fst <$> ml <|> node_timestamp <$> cb
+        return $ compute_delta tt tm
+    timeout_ok to td = fromMaybe False $ do
+        td' <- td
+        return $
+          getAllowMinDifficultyBlocks net ||
+          to == 0 ||
+          td' <= to
+    peer_count = fmap length <$> timeout 500000 (managerGetPeers mgr)
+    block_best = runMaybeT $ do
+        h <- MaybeT getBestBlock
+        MaybeT $ getBlock h
+    chain_best = timeout 500000 $ chainGetBest ch
+    compute_delta a b = if b > a then b - a else 0
 
 -- | Obtain information about connected peers from peer manager process.
 getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
