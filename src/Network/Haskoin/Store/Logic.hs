@@ -21,7 +21,6 @@ import           Data.String
 import           Data.String.Conversions             (cs)
 import           Data.Text                           (Text)
 import           Data.Word
-import           Database.RocksDB
 import           Haskoin
 import           Network.Haskoin.Block.Headers       (computeSubsidy)
 import           Network.Haskoin.Store.Data
@@ -640,7 +639,7 @@ newOutput ::
     -> OutPoint
     -> TxOut
     -> m ()
-newOutput net br op to = do
+newOutput _ br op to = do
     insertUnspent u
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
@@ -770,7 +769,7 @@ unspendOutput ::
     => Network
     -> OutPoint
     -> m ()
-unspendOutput net op = do
+unspendOutput _ op = do
         t <- getImportTx (outPointHash op)
         o <- getTxOutput (outPointIndex op) t
         s <-
@@ -868,7 +867,6 @@ reduceBalance net c t a v =
         if c
             then "confirmed"
             else "unconfirmed"
-    addr = fromMaybe "???" (addrToString net a)
 
 increaseBalance ::
        ( StoreRead m
@@ -913,11 +911,6 @@ increaseBalance c t a v = do
                       then v
                       else 0
             }
-  where
-    conf =
-        if c
-            then "confirmed"
-            else "unconfirmed"
 
 updateAddressCounts ::
        (StoreWrite m, StoreRead m, Monad m, MonadError ImportException m)

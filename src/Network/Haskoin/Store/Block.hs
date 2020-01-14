@@ -11,17 +11,14 @@ module Network.Haskoin.Store.Block
       ) where
 
 import           Conduit
-import           Control.Arrow
 import           Control.Monad.Except
 import           Control.Monad.Logger
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Maybe
-import qualified Data.HashMap.Strict                 as M
 import           Data.Maybe
 import           Data.String
 import           Data.String.Conversions
 import           Data.Time.Clock.System
-import           Database.RocksDB
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Data
@@ -112,9 +109,9 @@ blockStore cfg inbox = do
     run =
         withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
             $(logDebugS) "Block" "Awaiting message..."
-            receive inbox >>= \msg ->
+            receive inbox >>= \x ->
                 ReaderT $ \r ->
-                    runResourceT (runReaderT (processBlockMessage msg) r)
+                    runResourceT (runReaderT (processBlockMessage x) r)
 
 isSynced :: (MonadLoggerIO m, MonadUnliftIO m) => ReaderT BlockRead m Bool
 isSynced = do
@@ -246,7 +243,7 @@ processOrphans =
         False -> $(logDebugS) "Block" "Not importing orphans as not yet in sync"
         True -> do
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            (ldb, net) <- asks ((blockConfDB &&& blockConfNet) . myConfig)
+            net <- asks (blockConfNet . myConfig)
             $(logDebugS) "Block" "Getting expired orphan transactions..."
             old <- runConduit $ getOldOrphans now .| sinkList
             case old of
@@ -256,8 +253,7 @@ processOrphans =
                     $(logDebugS) "Block" $
                         "Removing " <> cs (show (length old)) <>
                         "expired orphan transactions..."
-                    runImport $ mapM_ deleteOrphanTx old
-                    return ()
+                    void . runImport $ mapM_ deleteOrphanTx old
             $(logDebugS) "Block" "Selecting orphan transactions to import..."
             orphans <- runConduit $ getOrphans .| sinkList
             case orphans of
