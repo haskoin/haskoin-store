@@ -22,24 +22,19 @@ import           Data.Default
 import           Data.Hashable
 import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as M
-import           Data.Int
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
 import           Data.Maybe
 import           Data.Serialize            as S
 import           Data.String.Conversions
-import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as T
-import qualified Data.Text.Lazy            as T.Lazy
 import           Data.Word
 import           Database.RocksDB          (DB, ReadOptions)
 import           GHC.Generics
 import           Haskoin                   as H
-import           Network.Socket            (SockAddr (SockAddrUnix))
+import           Network.Socket            (SockAddr)
 import           Paths_haskoin_store       as P
 import           UnliftIO
-import           UnliftIO.Exception
-import qualified Web.Scotty.Trans          as Scotty
 
 encodeShort :: Serialize a => a -> ShortByteString
 encodeShort = B.Short.toShort . S.encode
@@ -132,7 +127,10 @@ class StoreStream m where
     getUnspents :: ConduitT i Unspent m ()
 
 -- | Serialize such that ordering is inverted.
+putUnixTime :: Word64 -> Put
 putUnixTime w = putWord64be $ maxBound - w
+
+getUnixTime :: Get Word64
 getUnixTime = (maxBound -) <$> getWord64be
 
 class JsonSerial a where
