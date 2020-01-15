@@ -16,7 +16,8 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader              (ReaderT)
 import qualified Control.Monad.Reader              as R
 import           Control.Monad.Trans.Maybe
-import           Control.Parallel.Strategies       (parMap, rpar)
+import           Control.Parallel.Strategies       (parBuffer, rseq,
+                                                    withStrategy)
 import           Data.Aeson                        (ToJSON (..), object, (.=))
 import           Data.Aeson.Encoding               (encodingToLazyByteString,
                                                     fromEncoding)
@@ -1044,12 +1045,8 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 }
 
 deriveAccel :: DeriveAddr -> XPubKey -> [Address]
-deriveAccel derive xpub = concat $ go 50 [0 ..]
-  where
-    go n ls =
-        let (xs, ys) = splitAt n ls
-         in do_par xs : go n ys
-    do_par = parMap rpar (derive xpub)
+deriveAccel derive xpub =
+    withStrategy (parBuffer 20 rseq) (map (derive xpub) [0 ..])
 
 xpubBals ::
        (MonadUnliftIO m, StoreRead m)
