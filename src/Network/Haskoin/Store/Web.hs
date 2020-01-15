@@ -1044,7 +1044,12 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 }
 
 deriveAccel :: DeriveAddr -> XPubKey -> [Address]
-deriveAccel derive xpub = parMap rpar (derive xpub) [0 ..]
+deriveAccel derive xpub = concat $ go 50 [0 ..]
+  where
+    go n ls =
+        let (xs, ys) = splitAt n ls
+         in do_par xs : go n ys
+    do_par = parMap rpar (derive xpub)
 
 xpubBals ::
        (MonadUnliftIO m, StoreRead m)
