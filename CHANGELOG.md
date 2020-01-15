@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Do not fail health check upon transaction timeout while syncing.
 
 ### Changed
-- Minor refactor.
+- Do not use conduits for xpub balance streams.
+- Multiple minor refactorings.
 
 ## 0.19.5
 ### Changed

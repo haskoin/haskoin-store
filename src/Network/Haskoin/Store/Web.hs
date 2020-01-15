@@ -566,11 +566,8 @@ scottyXpubBalances net max_limits = do
     xpub <- parseXpub net
     proto <- setupBin
     derive <- parseDeriveAddrs net
-    db <- askDB
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $
-            xpubBals max_limits derive xpub .| streamAny net proto io
-        flush'
+    res <- xpubBals max_limits derive xpub
+    protoSerial net proto res
 
 scottyXpubTxs ::
        (MonadLoggerIO m, MonadUnliftIO m)
@@ -1046,29 +1043,29 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 }
 
 xpubBals ::
-       (MonadResource m, MonadUnliftIO m, StoreRead m)
+       (Monad m, StoreRead m)
     => MaxLimits
     -> DeriveAddrs
     -> XPubKey
-    -> ConduitT i XPubBal m ()
-xpubBals limits derive xpub = go 0 >> go 1
+    -> m [XPubBal]
+xpubBals limits derive xpub = do
+    ext <- derive_until_gap (derive_addresses 0) 0
+    chg <- derive_until_gap (derive_addresses 1) 0
+    return (ext ++ chg)
   where
-    go m =
-        yieldMany (addrs m) .| mapMC (uncurry bal) .| gap (maxLimitGap limits)
-    bal a p =
+    derive_addresses m =
+        map (\(a, _, n') -> (a, [m, n'])) (derive (pubSubKey xpub m) 0)
+    get_balance a p =
         getBalance a >>= \case
             Nothing -> return Nothing
-            Just b' -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b'}
-    addrs m =
-        map (\(a, _, n') -> (a, [m, n'])) (derive (pubSubKey xpub m) 0)
-    gap n =
-        let r 0 = return ()
-            r i =
-                await >>= \case
-                    Just (Just b) -> yield b >> r n
-                    Just Nothing -> r (i - 1)
-                    Nothing -> return ()
-         in r n
+            Just b -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b}
+    derive_until_gap [] _ = return []
+    derive_until_gap (a:as) n
+        | n > maxLimitGap limits = return []
+        | otherwise = do
+            uncurry get_balance a >>= \case
+                Nothing -> derive_until_gap as (n + 1)
+                Just b -> (b :) <$> derive_until_gap as 0
 
 xpubUnspent ::
        ( MonadResource m
@@ -1082,8 +1079,9 @@ xpubUnspent ::
     -> DeriveAddrs
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
-xpubUnspent _net max_limits start derive xpub =
-    xpubBals max_limits derive xpub .| go
+xpubUnspent _net max_limits start derive xpub = do
+    xs <- lift $ xpubBals max_limits derive xpub
+    yieldMany xs .| go
   where
     go =
         awaitForever $ \XPubBal {xPubBalPath = p, xPubBal = b} ->
@@ -1113,7 +1111,7 @@ xpubSummary ::
     -> XPubKey
     -> m XPubSummary
 xpubSummary max_limits derive x = do
-    bs <- runConduit $ xpubBals max_limits derive x .| sinkList
+    bs <- xpubBals max_limits derive x
     let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
             (a, p)
         pm = H.fromList $ map f bs
