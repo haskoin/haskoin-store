@@ -207,10 +207,10 @@ processNoBlocks ::
     -> [BlockHash]
     -> ReaderT BlockRead m ()
 processNoBlocks p _bs = do
-    $(logErrorS) "Block" "We do not like peers that cannot find them blocks"
-    killPeer
-        (PeerMisbehaving "We do not like peers that cannot find them blocks")
-        p
+    $(logErrorS) "Block" (cs m)
+    killPeer (PeerMisbehaving m) p
+  where
+    m = "We do not like peers that cannot find them blocks"
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
 processTx _p tx =

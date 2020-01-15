@@ -81,30 +81,18 @@ module Haskoin.Store
 
 import           Conduit
 import           Control.Monad
-import qualified Control.Monad.Except               as E
 import           Control.Monad.Logger
-import           Control.Monad.Trans.Maybe
-import           Data.Foldable
-import           Data.Function
-import qualified Data.HashMap.Strict                as H
-import           Data.List
-import           Data.Maybe
 import           Data.Serialize                     (decode)
-import qualified Data.Text                          as T
-import           Data.Word                          (Word32)
-import           Database.RocksDB                   as R
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.Cached
 import           Network.Haskoin.Store.Data.Memory
-import           Network.Haskoin.Store.Data.RocksDB
 import           Network.Haskoin.Store.Messages
 import           Network.Haskoin.Store.Web
 import           Network.Socket                     (SockAddr (..))
 import           NQE
-import           System.Random
 import           UnliftIO
 
 withStore ::

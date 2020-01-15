@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Fixed
 - Do not fail health check upon transaction timeout while syncing.
 
+### Changed
+- Minor refactor.
+
 ## 0.19.5
 ### Changed
 - Minor refactor to block import code.
