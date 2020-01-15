@@ -976,7 +976,8 @@ healthCheck net mgr ch tos = do
         td = tx_time_delta tm bd ml
         lk = timeout_ok (blockTimeout tos) bd
         tk = timeout_ok (txTimeout tos) td
-        ok = ck && bk && pk && lk && tk
+        sy = in_sync bb cb
+        ok = ck && bk && pk && lk && (tk || not sy)
     return
         HealthCheck
             { healthBlockBest = block_hash <$> bb
@@ -986,7 +987,7 @@ healthCheck net mgr ch tos = do
             , healthPeers = pc
             , healthNetwork = getNetworkName net
             , healthOK = ok
-            , healthSynced = in_sync bb cb
+            , healthSynced = sy
             , healthLastBlock = bd
             , healthLastTx = td
             }

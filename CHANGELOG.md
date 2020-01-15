@@ -4,13 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.19.6
+### Fixed
+- Do not fail health check upon transaction timeout while syncing.
+
 ## 0.19.5
 ### Changed
 - Minor refactor to block import code.
+
+### Fixed
 - Minor fix to transaction timeout check.
 
 ## 0.19.4
-### Changed
+### Fixed
 - Clarify and correct health check algorithm.
 
 ## 0.19.3
