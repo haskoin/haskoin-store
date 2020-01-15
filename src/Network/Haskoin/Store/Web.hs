@@ -56,7 +56,7 @@ import qualified Web.Scotty.Trans                  as S
 
 type WebT m = ActionT Except (ReaderT LayeredDB m)
 
-type DeriveAddrs = XPubKey -> KeyIndex -> [(Address, PubKey, KeyIndex)]
+type DeriveAddr = XPubKey -> KeyIndex -> Address
 
 type Offset = Word32
 type Limit = Word32
@@ -566,7 +566,7 @@ scottyXpubBalances net max_limits = do
     xpub <- parseXpub net
     proto <- setupBin
     derive <- parseDeriveAddrs net
-    res <- xpubBals max_limits derive xpub
+    res <- lift $ xpubBals max_limits derive xpub
     protoSerial net proto res
 
 scottyXpubTxs ::
@@ -599,7 +599,7 @@ xpubTxs ::
     => MaxLimits
     -> Maybe BlockRef
     -> Maybe Limit
-    -> DeriveAddrs
+    -> DeriveAddr
     -> XPubKey
     -> ConduitT i BlockTx m ()
 xpubTxs max_limits start limit derive xpub = do
@@ -609,7 +609,7 @@ xpubTxs max_limits start limit derive xpub = do
     forM_ ts yield .| applyLimit limit
   where
     go m = yieldMany (addrs m) .| txs .| gap
-    addrs m = map (\(a, _, _) -> a) (derive (pubSubKey xpub m) 0)
+    addrs m = map (derive (pubSubKey xpub m)) [0 ..]
     txs =
         awaitForever $ \a -> do
             ts <- getAddressTxs a start .| applyLimit limit .| sinkList
@@ -881,15 +881,15 @@ parseXpub net = do
         Nothing -> S.next
         Just x  -> return x
 
-parseDeriveAddrs :: (Monad m, ScottyError e) => Network -> ActionT e m DeriveAddrs
+parseDeriveAddrs :: (Monad m, ScottyError e) => Network -> ActionT e m DeriveAddr
 parseDeriveAddrs net
     | getSegWit net = do
           t <- S.param "derive" `S.rescue` const (return "standard")
           return $ case (t :: Text) of
-            "segwit" -> deriveWitnessAddrs
-            "compat" -> deriveCompatWitnessAddrs
-            _        -> deriveAddrs
-    | otherwise = return deriveAddrs
+            "segwit" -> \i -> fst . deriveWitnessAddr i
+            "compat" -> \i -> fst . deriveCompatWitnessAddr i
+            _        -> \i -> fst . deriveAddr i
+    | otherwise = return (\i -> fst . deriveAddr i)
 
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
 parseNoTx = S.param "notx" `S.rescue` const (return False)
@@ -1042,30 +1042,49 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-xpubBals ::
-       (Monad m, StoreRead m)
+deriveAccel ::
+       MonadUnliftIO m
     => MaxLimits
-    -> DeriveAddrs
+    -> DeriveAddr
+    -> XPubKey
+    -> TBQueue Address
+    -> m ()
+deriveAccel limits derive xpub queue = do
+    ch <- newTBQueueIO (fromIntegral (maxLimitGap limits))
+    withAsync (promise_stream ch) $ \_ -> do
+      y <- receive ch
+      a <- wait y
+      a `send` queue
+  where
+    derive_promise i = async (return (derive xpub i))
+    promise_stream ch = mapM_ (\i -> derive_promise i >>= (`send` ch)) [0..]
+
+xpubBals ::
+       (MonadUnliftIO m, StoreRead m)
+    => MaxLimits
+    -> DeriveAddr
     -> XPubKey
     -> m [XPubBal]
 xpubBals limits derive xpub = do
-    ext <- derive_until_gap (derive_addresses 0) 0
-    chg <- derive_until_gap (derive_addresses 1) 0
-    return (ext ++ chg)
+    ch_ext <- newTBQueueIO (fromIntegral (maxLimitGap limits))
+    ch_int <- newTBQueueIO (fromIntegral (maxLimitGap limits))
+    withAsync (deriveAccel limits derive (pubSubKey xpub 0) ch_ext) $ \_ ->
+        withAsync (deriveAccel limits derive (pubSubKey xpub 1) ch_int) $ \_ -> do
+            ext <- derive_until_gap ch_ext 0 0 0
+            chg <- derive_until_gap ch_int 1 0 0
+            return (ext ++ chg)
   where
-    derive_addresses m =
-        map (\(a, _, n') -> (a, [m, n'])) (derive (pubSubKey xpub m) 0)
     get_balance a p =
         getBalance a >>= \case
             Nothing -> return Nothing
             Just b -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b}
-    derive_until_gap [] _ = return []
-    derive_until_gap (a:as) n
-        | n > maxLimitGap limits = return []
+    derive_until_gap ch m n c
+        | c > maxLimitGap limits = return []
         | otherwise = do
-            uncurry get_balance a >>= \case
-                Nothing -> derive_until_gap as (n + 1)
-                Just b -> (b :) <$> derive_until_gap as 0
+            a <- receive ch
+            get_balance a [m, n] >>= \case
+                Nothing -> derive_until_gap ch m (n + 1) (c + 1)
+                Just b -> (b :) <$> derive_until_gap ch m (n + 1) 0
 
 xpubUnspent ::
        ( MonadResource m
@@ -1076,7 +1095,7 @@ xpubUnspent ::
     => Network
     -> MaxLimits
     -> Maybe BlockRef
-    -> DeriveAddrs
+    -> DeriveAddr
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
 xpubUnspent _net max_limits start derive xpub = do
@@ -1098,7 +1117,7 @@ xpubUnspentLimit ::
     -> MaxLimits
     -> Maybe Limit
     -> Maybe BlockRef
-    -> DeriveAddrs
+    -> DeriveAddr
     -> XPubKey
     -> ConduitT i XPubUnspent m ()
 xpubUnspentLimit net max_limits limit start derive xpub =
@@ -1107,7 +1126,7 @@ xpubUnspentLimit net max_limits limit start derive xpub =
 xpubSummary ::
        (MonadResource m, MonadUnliftIO m, StoreStream m, StoreRead m)
     => MaxLimits
-    -> DeriveAddrs
+    -> DeriveAddr
     -> XPubKey
     -> m XPubSummary
 xpubSummary max_limits derive x = do
