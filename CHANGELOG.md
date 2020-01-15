@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## 0.19.6
+### Added
+- Use a parallel strategy to compute key derivations.
+
 ### Fixed
 - Do not fail health check upon transaction timeout while syncing.
 

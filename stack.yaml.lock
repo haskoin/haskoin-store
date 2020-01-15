@@ -5,29 +5,36 @@
 
 packages:
 - completed:
-    hackage: haskoin-core-0.9.8@sha256:68cc9081e9d889c0d16b244d938c358b4c267e6165cf845ecfea2d969561298f,4114
+    hackage: secp256k1-haskell-0.1.8@sha256:07de14b5ced34f09b595ccd2926e1756a83aaa596bd722f5b7e6d616b5682781,2060
+    pantry-tree:
+      size: 603
+      sha256: d88f0c3ef572f5125cd7f9bfd461f03100e2b3b1566dbc86b60547b06e42d5d0
+  original:
+    hackage: secp256k1-haskell-0.1.8
+- completed:
+    hackage: haskoin-core-0.10.0@sha256:aa65fab408e7c2b6931ac76ddcf9f919a0adc54dddb56e1140d1d59826e7ab17,4143
     pantry-tree:
       size: 4894
-      sha256: 3e5e05698092e5a29726fb538220d3ba0e5adbfc827d55de06a2cb09d56a3ab1
+      sha256: 3deb1b52aeefd9551c3299b78eadb002aeb626ad24d1eec31672366fc9fd1dd4
   original:
-    hackage: haskoin-core-0.9.8
+    hackage: haskoin-core-0.10.0
 - completed:
-    hackage: haskoin-node-0.9.14@sha256:40c7f69dc9a733c444127e49a2955243cc3a6815660aed259cc8149b4b376a38,2280
+    hackage: rocksdb-query-0.3.1@sha256:9212c84d593afd30449e5491786cef27b46d62a8e93fb98ea15eb10fea3e7182,1571
+    pantry-tree:
+      size: 383
+      sha256: b7be4a316a4779a76b8d19213cd4c1120acec59d838b8af01251b8ad24d3f027
+  original:
+    hackage: rocksdb-query-0.3.1
+- completed:
+    hackage: haskoin-node-0.9.15@sha256:39da0b793914cf28b21fc8225ae5c9d432a20c3a0364e497962a2e5d0628b593,2280
     pantry-tree:
       size: 736
-      sha256: 49b389de043a426eef14d08fff7415864c080eb65bcb55caf6984f7c1cf4e569
+      sha256: 564be20ac52fee1bd1551267168e63cba415cf5aa88c1b108da43d881585069a
   original:
-    hackage: haskoin-node-0.9.14
-- completed:
-    hackage: rocksdb-query-0.3.0@sha256:9d402bab5a911c19f2bae36f79e49941ca152c8eb8a06792c90cbcb6f33cc20c,1567
-    pantry-tree:
-      size: 382
-      sha256: 21cfc1656aba2ab01ae36c687aec84b3e2441f0e21418d89d67a8073c6a45328
-  original:
-    hackage: rocksdb-query-0.3.0
+    hackage: haskoin-node-0.9.15
 snapshots:
 - completed:
-    size: 524155
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/14/19.yaml
-    sha256: 9f79f6494473c9b46911364b94c4b5ef19ca8d35ebf62e46697cf651f198ee19
-  original: lts-14.19
+    size: 524154
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/14/20.yaml
+    sha256: 2f5099f69ddb6abfe64400fe1e6a604e8e628f55e6837211cd70a81eb0a8fa4d
+  original: lts-14.20

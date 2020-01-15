@@ -841,14 +841,14 @@ instance BinSerial PeerInformation where
         putWord32be v
         put b
         put u
-        put $ NetworkAddress s a
+        put $ NetworkAddress s (sockToHostAddress a)
 
     binDeserial _ = do
       v <- getWord32be
       b <- get
       u <- get
       NetworkAddress { naServices = s, naAddress = a } <- get
-      return $ PeerInformation u a v s b
+      return $ PeerInformation u (hostToSockAddr a) v s b
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal

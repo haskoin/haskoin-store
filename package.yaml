@@ -29,6 +29,7 @@ dependencies:
   - mtl
   - network
   - nqe
+  - parallel
   - random
   - resourcet
   - rocksdb-haskell

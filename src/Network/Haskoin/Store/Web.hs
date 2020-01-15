@@ -16,6 +16,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader              (ReaderT)
 import qualified Control.Monad.Reader              as R
 import           Control.Monad.Trans.Maybe
+import           Control.Parallel.Strategies       (parMap, rpar)
 import           Data.Aeson                        (ToJSON (..), object, (.=))
 import           Data.Aeson.Encoding               (encodingToLazyByteString,
                                                     fromEncoding)
@@ -1042,22 +1043,8 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
                 , peerRelay = rl
                 }
 
-deriveAccel ::
-       MonadUnliftIO m
-    => MaxLimits
-    -> DeriveAddr
-    -> XPubKey
-    -> TBQueue Address
-    -> m ()
-deriveAccel limits derive xpub queue = do
-    ch <- newTBQueueIO (fromIntegral (maxLimitGap limits))
-    withAsync (promise_stream ch) $ \_ -> do
-      y <- receive ch
-      a <- wait y
-      a `send` queue
-  where
-    derive_promise i = async (return (derive xpub i))
-    promise_stream ch = mapM_ (\i -> derive_promise i >>= (`send` ch)) [0..]
+deriveAccel :: DeriveAddr -> XPubKey -> [Address]
+deriveAccel derive xpub = parMap rpar (derive xpub) [0 ..]
 
 xpubBals ::
        (MonadUnliftIO m, StoreRead m)
@@ -1066,25 +1053,21 @@ xpubBals ::
     -> XPubKey
     -> m [XPubBal]
 xpubBals limits derive xpub = do
-    ch_ext <- newTBQueueIO (fromIntegral (maxLimitGap limits))
-    ch_int <- newTBQueueIO (fromIntegral (maxLimitGap limits))
-    withAsync (deriveAccel limits derive (pubSubKey xpub 0) ch_ext) $ \_ ->
-        withAsync (deriveAccel limits derive (pubSubKey xpub 1) ch_int) $ \_ -> do
-            ext <- derive_until_gap ch_ext 0 0 0
-            chg <- derive_until_gap ch_int 1 0 0
-            return (ext ++ chg)
+    ext <- derive_until_gap (deriveAccel derive (pubSubKey xpub 0)) 0 0 0
+    chg <- derive_until_gap (deriveAccel derive (pubSubKey xpub 1)) 1 0 0
+    return (ext ++ chg)
   where
     get_balance a p =
         getBalance a >>= \case
             Nothing -> return Nothing
             Just b -> return $ Just XPubBal {xPubBalPath = p, xPubBal = b}
-    derive_until_gap ch m n c
+    derive_until_gap [] _ _ _ = return []
+    derive_until_gap (a:as) m n c
         | c > maxLimitGap limits = return []
         | otherwise = do
-            a <- receive ch
             get_balance a [m, n] >>= \case
-                Nothing -> derive_until_gap ch m (n + 1) (c + 1)
-                Just b -> (b :) <$> derive_until_gap ch m (n + 1) 0
+                Nothing -> derive_until_gap as m (n + 1) (c + 1)
+                Just b -> (b :) <$> derive_until_gap as m (n + 1) 0
 
 xpubUnspent ::
        ( MonadResource m

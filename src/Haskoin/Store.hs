@@ -129,7 +129,7 @@ store cfg mgri chi bsi = do
                 , nodeConfPeers = storeConfInitPeers cfg
                 , nodeConfDiscover = storeConfDiscover cfg
                 , nodeConfEvents = storeDispatch b l
-                , nodeConfNetAddr = NetworkAddress 0 (SockAddrInet 0 0)
+                , nodeConfNetAddr = NetworkAddress 0 (sockToHostAddress (SockAddrInet 0 0))
                 , nodeConfNet = storeConfNetwork cfg
                 , nodeConfTimeout = 10
                 }
