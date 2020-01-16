@@ -9,31 +9,32 @@ module Network.Haskoin.Store.Data where
 
 import           Conduit
 import           Control.Applicative
-import           Control.Arrow             (first)
+import           Control.Arrow               (first)
+import           Control.DeepSeq
 import           Control.Monad
 import           Control.Monad.Trans.Maybe
-import           Data.Aeson                as A
-import qualified Data.Aeson.Encoding       as A
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString           as B
-import           Data.ByteString.Short     (ShortByteString)
-import qualified Data.ByteString.Short     as B.Short
+import           Control.Parallel.Strategies
+import           Data.Aeson                  as A
+import qualified Data.Aeson.Encoding         as A
+import           Data.ByteString             (ByteString)
+import qualified Data.ByteString             as B
+import           Data.ByteString.Short       (ShortByteString)
+import qualified Data.ByteString.Short       as B.Short
 import           Data.Default
 import           Data.Hashable
-import           Data.HashMap.Strict       (HashMap)
-import qualified Data.HashMap.Strict       as M
-import qualified Data.IntMap               as I
-import           Data.IntMap.Strict        (IntMap)
+import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as M
+import qualified Data.IntMap                 as I
+import           Data.IntMap.Strict          (IntMap)
 import           Data.Maybe
-import           Data.Serialize            as S
+import           Data.Serialize              as S
 import           Data.String.Conversions
-import qualified Data.Text.Encoding        as T
+import qualified Data.Text.Encoding          as T
 import           Data.Word
-import           Database.RocksDB          (DB, ReadOptions)
+import           Database.RocksDB            (DB, ReadOptions)
 import           GHC.Generics
-import           Haskoin                   as H
-import           Network.Socket            (SockAddr)
-import           Paths_haskoin_store       as P
+import           Haskoin                     as H
+import           Paths_haskoin_store         as P
 import           UnliftIO
 
 encodeShort :: Serialize a => a -> ShortByteString
@@ -60,7 +61,7 @@ type UnixTime = Word64
 type BlockPos = Word32
 
 newtype InitException = IncorrectVersion Word32
-    deriving (Show, Read, Eq, Ord, Exception)
+    deriving (Show, Read, Eq, Ord, Exception, Generic, NFData)
 
 class StoreRead m where
     isInitialized :: m (Either InitException Bool)
@@ -138,8 +139,8 @@ class JsonSerial a where
     jsonValue :: Network -> a -> Value
 
 instance JsonSerial a => JsonSerial [a] where
-    jsonSerial net = A.list (jsonSerial net)
-    jsonValue net = toJSON . map (jsonValue net)
+    jsonSerial net = A.list id . parMap rseq (jsonSerial net)
+    jsonValue net = toJSON . parMap rdeepseq (jsonValue net)
 
 instance JsonSerial TxHash where
     jsonSerial _ = toEncoding
@@ -181,7 +182,7 @@ data BlockRef
       -- ^ position of transaction within the block
                 }
     | MemRef { memRefTime :: !UnixTime }
-    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+    deriving (Show, Read, Eq, Ord, Generic, Hashable, NFData)
 
 -- | Serialized entities will sort in reverse order.
 instance Serialize BlockRef where
@@ -238,7 +239,7 @@ data BlockTx = BlockTx
       -- ^ block information
     , blockTxHash  :: !TxHash
       -- ^ transaction hash
-    } deriving (Show, Eq, Ord, Generic, Serialize, Hashable)
+    } deriving (Show, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 -- | JSON serialization for 'AddressTx'.
 blockTxPairs :: A.KeyValue kv => BlockTx -> [kv]
@@ -276,7 +277,7 @@ data Balance = Balance
       -- ^ number of transactions
     , balanceTotalReceived :: !Word64
       -- ^ total amount from all outputs in this address
-    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
+    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 -- | JSON serialization for 'Balance'.
 balancePairs :: A.KeyValue kv => Network -> Balance -> [kv]
@@ -333,7 +334,7 @@ data Unspent = Unspent
       -- ^ value of output in satoshi
     , unspentScript :: !ShortByteString
       -- ^ pubkey (output) script
-    } deriving (Show, Eq, Ord, Generic, Hashable)
+    } deriving (Show, Eq, Ord, Generic, Hashable, NFData)
 
 instance Serialize Unspent where
     put u = do
@@ -408,7 +409,7 @@ data BlockData = BlockData
       -- ^ sum of all transaction fees
     , blockDataSubsidy   :: !Word64
       -- ^ block subsidy
-    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
+    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 -- | JSON serialization for 'BlockData'.
 blockDataPairs :: A.KeyValue kv => Network -> BlockData -> [kv]
@@ -501,7 +502,7 @@ data StoreInput
               -- ^ witness data for this input (only segwit)
                   }
     -- ^ input details
-    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
+    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 isCoinbase :: StoreInput -> Bool
 isCoinbase StoreCoinbase {} = True
@@ -554,7 +555,7 @@ data Spender = Spender
       -- ^ input transaction hash
     , spenderIndex :: !Word32
       -- ^ input position in transaction
-    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
+    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 -- | JSON serialization for 'Spender'.
 spenderPairs :: A.KeyValue kv => Spender -> [kv]
@@ -573,7 +574,7 @@ data StoreOutput = StoreOutput
       -- ^ pubkey (output) script
     , outputSpender :: !(Maybe Spender)
       -- ^ input spending this transaction
-    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable)
+    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 outputPairs :: A.KeyValue kv => Network -> StoreOutput -> [kv]
 outputPairs net d =
@@ -594,7 +595,7 @@ outputToEncoding net = pairs . mconcat . outputPairs net
 data Prev = Prev
     { prevScript :: !ByteString
     , prevAmount :: !Word64
-    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize)
+    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 toInput :: TxIn -> Maybe Prev -> Maybe WitnessStack -> StoreInput
 toInput i Nothing w =
@@ -629,7 +630,7 @@ data TxData = TxData
     , txDataDeleted :: !Bool
     , txDataRBF     :: !Bool
     , txDataTime    :: !Word64
-    } deriving (Show, Eq, Ord, Generic, Serialize)
+    } deriving (Show, Eq, Ord, Generic, Serialize, NFData)
 
 instance BinSerial TxData where
   binSerial _ TxData
@@ -717,7 +718,7 @@ data Transaction = Transaction
       -- ^ this transaction can be replaced in the mempool
     , transactionTime     :: !Word64
       -- ^ time the transaction was first seen or time of block
-    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize)
+    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 transactionData :: Transaction -> Tx
 transactionData t =
@@ -802,7 +803,7 @@ instance BinSerial Block where
 data PeerInformation
     = PeerInformation { peerUserAgent :: !ByteString
                         -- ^ user agent string
-                      , peerAddress   :: !SockAddr
+                      , peerAddress   :: !HostAddress
                         -- ^ network address
                       , peerVersion   :: !Word32
                         -- ^ version number
@@ -811,13 +812,13 @@ data PeerInformation
                       , peerRelay     :: !Bool
                         -- ^ will relay transactions
                       }
-    deriving (Show, Eq, Ord, Generic)
+    deriving (Show, Eq, Ord, Generic, NFData)
 
 -- | JSON serialization for 'PeerInformation'.
 peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
 peerInformationPairs p =
     [ "useragent"   .= String (cs (peerUserAgent p))
-    , "address"     .= String (cs (show (peerAddress p)))
+    , "address"     .= String (cs (show (hostToSockAddr (peerAddress p))))
     , "version"     .= peerVersion p
     , "services"    .= String (encodeHex (S.encode (peerServices p)))
     , "relay"       .= peerRelay p
@@ -841,20 +842,20 @@ instance BinSerial PeerInformation where
         putWord32be v
         put b
         put u
-        put $ NetworkAddress s (sockToHostAddress a)
+        put $ NetworkAddress s a
 
     binDeserial _ = do
       v <- getWord32be
       b <- get
       u <- get
       NetworkAddress { naServices = s, naAddress = a } <- get
-      return $ PeerInformation u (hostToSockAddr a) v s b
+      return $ PeerInformation u a v s b
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
     { xPubBalPath :: ![KeyIndex]
     , xPubBal     :: !Balance
-    } deriving (Show, Eq, Generic)
+    } deriving (Show, Eq, Generic, NFData)
 
 -- | JSON serialization for 'XPubBal'.
 xPubBalPairs :: A.KeyValue kv => Network -> XPubBal -> [kv]
@@ -886,7 +887,7 @@ instance BinSerial XPubBal where
 data XPubUnspent = XPubUnspent
     { xPubUnspentPath :: ![KeyIndex]
     , xPubUnspent     :: !Unspent
-    } deriving (Show, Eq, Generic)
+    } deriving (Show, Eq, Generic, NFData)
 
 -- | JSON serialization for 'XPubUnspent'.
 xPubUnspentPairs :: A.KeyValue kv => Network -> XPubUnspent -> [kv]
@@ -927,7 +928,7 @@ data XPubSummary =
         , xPubChangeIndex      :: !Word32
         , xPubSummaryPaths     :: !(HashMap Address [KeyIndex])
         }
-    deriving (Eq, Show, Generic)
+    deriving (Eq, Show, Generic, NFData)
 
 xPubSummaryPairs :: A.KeyValue kv => Network -> XPubSummary -> [kv]
 xPubSummaryPairs net XPubSummary { xPubSummaryConfirmed = c
@@ -1006,7 +1007,7 @@ data HealthCheck =
         , healthLastBlock    :: !(Maybe Word64)
         , healthLastTx       :: !(Maybe Word64)
         }
-    deriving (Show, Eq, Generic, Serialize)
+    deriving (Show, Eq, Generic, Serialize, NFData)
 
 healthCheckPairs :: A.KeyValue kv => HealthCheck -> [kv]
 healthCheckPairs h =
@@ -1085,7 +1086,7 @@ instance BinSerial Event where
 
 newtype TxAfterHeight = TxAfterHeight
     { txAfterHeight :: Maybe Bool
-    } deriving (Show, Eq, Generic)
+    } deriving (Show, Eq, Generic, NFData)
 
 instance ToJSON TxAfterHeight where
     toJSON (TxAfterHeight b) = object ["result" .= b]
@@ -1098,7 +1099,7 @@ instance BinSerial TxAfterHeight where
     binSerial _ TxAfterHeight {txAfterHeight = a} = put a
     binDeserial _ = TxAfterHeight <$> get
 
-newtype TxId = TxId TxHash deriving (Show, Eq, Generic)
+newtype TxId = TxId TxHash deriving (Show, Eq, Generic, NFData)
 
 instance ToJSON TxId where
     toJSON (TxId h) = object ["txid" .= h]
@@ -1117,7 +1118,7 @@ data BalVal = BalVal
     , balValUnspentCount  :: !Word64
     , balValTxCount       :: !Word64
     , balValTotalReceived :: !Word64
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 balValToBalance :: Address -> BalVal -> Balance
 balValToBalance a BalVal { balValAmount = v
@@ -1167,7 +1168,7 @@ data UnspentVal = UnspentVal
     { unspentValBlock  :: !BlockRef
     , unspentValAmount :: !Word64
     , unspentValScript :: !ShortByteString
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 unspentToUnspentVal :: Unspent -> (OutPoint, UnspentVal)
 unspentToUnspentVal Unspent { unspentBlock = b

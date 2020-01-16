@@ -21,6 +21,7 @@ dependencies:
   - containers
   - conduit
   - data-default
+  - deepseq
   - hashable
   - haskoin-core >= 0.9.7
   - haskoin-node

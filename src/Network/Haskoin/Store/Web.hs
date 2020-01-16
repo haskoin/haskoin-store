@@ -605,8 +605,8 @@ xpubTxs ::
     -> XPubKey
     -> ConduitT i BlockTx m ()
 xpubTxs max_limits start limit derive xpub = do
-    ext <- concat <$> derive_until_gap (deriveAccel derive (pubSubKey xpub 0)) 0
-    chg <- concat <$> derive_until_gap (deriveAccel derive (pubSubKey xpub 1)) 0
+    ext <- concat <$> derive_until_gap (parDerive derive (pubSubKey xpub 0)) 0
+    chg <- concat <$> derive_until_gap (parDerive derive (pubSubKey xpub 1)) 0
     let ts = nub $ sortBy (flip compare `on` blockTxBlock) (ext ++ chg)
     forM_ ts yield .| applyLimit limit
   where
@@ -1032,15 +1032,15 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
         return
             PeerInformation
                 { peerUserAgent = ua
-                , peerAddress = as
+                , peerAddress = sockToHostAddress as
                 , peerVersion = vs
                 , peerServices = sv
                 , peerRelay = rl
                 }
 
-deriveAccel :: DeriveAddr -> XPubKey -> [Address]
-deriveAccel derive xpub =
-    withStrategy (parBuffer 100 rdeepseq) (map (derive xpub) [0 ..])
+parDerive :: DeriveAddr -> XPubKey -> [Address]
+parDerive derive xpub =
+    withStrategy (parBuffer 20 rdeepseq) (map (derive xpub) [0 ..])
 
 xpubBals ::
        (MonadUnliftIO m, StoreRead m)
@@ -1049,8 +1049,8 @@ xpubBals ::
     -> XPubKey
     -> m [XPubBal]
 xpubBals limits derive xpub = do
-    ext <- derive_until_gap (deriveAccel derive (pubSubKey xpub 0)) 0 0 0
-    chg <- derive_until_gap (deriveAccel derive (pubSubKey xpub 1)) 1 0 0
+    ext <- derive_until_gap (parDerive derive (pubSubKey xpub 0)) 0 0 0
+    chg <- derive_until_gap (parDerive derive (pubSubKey xpub 1)) 1 0 0
     return (ext ++ chg)
   where
     get_balance a p =
