@@ -13,7 +13,6 @@ import           Control.Arrow               (first)
 import           Control.DeepSeq
 import           Control.Monad
 import           Control.Monad.Trans.Maybe
-import           Control.Parallel.Strategies
 import           Data.Aeson                  as A
 import qualified Data.Aeson.Encoding         as A
 import           Data.ByteString             (ByteString)
@@ -139,8 +138,8 @@ class JsonSerial a where
     jsonValue :: Network -> a -> Value
 
 instance JsonSerial a => JsonSerial [a] where
-    jsonSerial net = A.list id . parMap rseq (jsonSerial net)
-    jsonValue net = toJSON . parMap rdeepseq (jsonValue net)
+    jsonSerial net = A.list (jsonSerial net)
+    jsonValue net = toJSON . (jsonValue net)
 
 instance JsonSerial TxHash where
     jsonSerial _ = toEncoding
