@@ -16,7 +16,7 @@ import           Control.Monad.Logger
 import           Control.Monad.Reader              (ReaderT)
 import qualified Control.Monad.Reader              as R
 import           Control.Monad.Trans.Maybe
-import           Control.Parallel.Strategies       (parBuffer, rseq,
+import           Control.Parallel.Strategies       (parBuffer, rdeepseq,
                                                     withStrategy)
 import           Data.Aeson                        (ToJSON (..), object, (.=))
 import           Data.Aeson.Encoding               (encodingToLazyByteString,
@@ -605,25 +605,19 @@ xpubTxs ::
     -> XPubKey
     -> ConduitT i BlockTx m ()
 xpubTxs max_limits start limit derive xpub = do
-    ts <-
-        fmap (nub . sortBy (flip compare `on` blockTxBlock)) $
-        (go 0 >> go 1) .| sinkList
+    ext <- concat <$> derive_until_gap (deriveAccel derive (pubSubKey xpub 0)) 0
+    chg <- concat <$> derive_until_gap (deriveAccel derive (pubSubKey xpub 1)) 0
+    let ts = nub $ sortBy (flip compare `on` blockTxBlock) (ext ++ chg)
     forM_ ts yield .| applyLimit limit
   where
-    go m = yieldMany (addrs m) .| txs .| gap
-    addrs m = map (derive (pubSubKey xpub m)) [0 ..]
-    txs =
-        awaitForever $ \a -> do
-            ts <- getAddressTxs a start .| applyLimit limit .| sinkList
-            yield ts
-    gap =
-        let r 0 = return ()
-            r i =
-                await >>= \case
-                    Nothing -> return ()
-                    Just [] -> r (i - 1)
-                    Just xs -> yieldMany xs >> r (maxLimitGap max_limits)
-         in r (maxLimitGap max_limits)
+    get_txs a = getAddressTxs a start .| applyLimit limit .| sinkList
+    derive_until_gap [] _ = return []
+    derive_until_gap (a:as) c
+        | c > maxLimitGap max_limits = return []
+        | otherwise = do
+            get_txs a >>= \case
+                [] -> derive_until_gap as (c + 1)
+                xs -> (xs :) <$> derive_until_gap as 0
 
 scottyXpubUnspents ::
        (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> WebT m ()
@@ -1046,7 +1040,7 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
 
 deriveAccel :: DeriveAddr -> XPubKey -> [Address]
 deriveAccel derive xpub =
-    withStrategy (parBuffer 20 rseq) (map (derive xpub) [0 ..])
+    withStrategy (parBuffer 100 rdeepseq) (map (derive xpub) [0 ..])
 
 xpubBals ::
        (MonadUnliftIO m, StoreRead m)
