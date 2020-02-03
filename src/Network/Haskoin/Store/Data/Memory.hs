@@ -6,21 +6,18 @@ module Network.Haskoin.Store.Data.Memory where
 
 import           Conduit
 import           Control.Monad
-import           Control.Monad.Reader                (MonadReader, ReaderT)
+import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
 import qualified Data.ByteString.Short               as B.Short
-import           Data.Function
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
 import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
-import           Data.Tuple                          (swap)
 import           Haskoin
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
-import           Network.Haskoin.Store.Messages
 import           UnliftIO
 
 withBlockMem :: MonadIO m => TVar BlockMem -> ReaderT (TVar BlockMem) m a -> m a

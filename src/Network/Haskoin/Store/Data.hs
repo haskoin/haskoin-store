@@ -9,31 +9,34 @@ module Network.Haskoin.Store.Data where
 
 import           Conduit
 import           Control.Applicative
-import           Control.Arrow               (first)
+import           Control.Arrow                  (first)
 import           Control.DeepSeq
 import           Control.Monad
 import           Control.Monad.Trans.Maybe
-import           Data.Aeson                  as A
-import qualified Data.Aeson.Encoding         as A
-import           Data.ByteString             (ByteString)
-import qualified Data.ByteString             as B
-import           Data.ByteString.Short       (ShortByteString)
-import qualified Data.ByteString.Short       as B.Short
+import           Data.Aeson                     as A
+import qualified Data.Aeson.Encoding            as A
+import           Data.ByteString                (ByteString)
+import qualified Data.ByteString                as B
+import           Data.ByteString.Short          (ShortByteString)
+import qualified Data.ByteString.Short          as B.Short
 import           Data.Default
 import           Data.Hashable
-import           Data.HashMap.Strict         (HashMap)
-import qualified Data.HashMap.Strict         as M
-import qualified Data.IntMap                 as I
-import           Data.IntMap.Strict          (IntMap)
+import           Data.HashMap.Strict            (HashMap)
+import qualified Data.HashMap.Strict            as M
+import qualified Data.IntMap                    as I
+import           Data.IntMap.Strict             (IntMap)
 import           Data.Maybe
-import           Data.Serialize              as S
+import           Data.Serialize                 as S
 import           Data.String.Conversions
-import qualified Data.Text.Encoding          as T
+import qualified Data.Text.Encoding             as T
 import           Data.Word
-import           Database.RocksDB            (DB, ReadOptions)
+import           Database.RocksDB               (DB, ReadOptions)
 import           GHC.Generics
-import           Haskoin                     as H
-import           Paths_haskoin_store         as P
+import           Haskoin                        as H
+import           Haskoin.Node
+import           Network.Socket                 (SockAddr)
+import           NQE
+import           Paths_haskoin_store            as P
 import           UnliftIO
 
 encodeShort :: Serialize a => a -> ShortByteString
@@ -44,16 +47,56 @@ decodeShort bs = case S.decode (B.Short.fromShort bs) of
     Left e  -> error e
     Right a -> a
 
+-- | Mailbox for block store.
+type BlockStore = Mailbox BlockMessage
+
+-- | Store mailboxes.
+data Store =
+    Store
+        { storeManager :: !Manager
+      -- ^ peer manager mailbox
+        , storeChain   :: !Chain
+      -- ^ chain header process mailbox
+        , storeBlock   :: !BlockStore
+      -- ^ block storage mailbox
+        }
+
+-- | Configuration for a 'Store'.
+data StoreConfig =
+    StoreConfig
+        { storeConfMaxPeers  :: !Int
+      -- ^ max peers to connect to
+        , storeConfInitPeers :: ![HostPort]
+      -- ^ static set of peers to connect to
+        , storeConfDiscover  :: !Bool
+      -- ^ discover new peers?
+        , storeConfDB        :: !BlockDB
+      -- ^ RocksDB database handler
+        , storeConfNetwork   :: !Network
+      -- ^ network constants
+        , storeConfListen    :: !(Listen StoreEvent)
+      -- ^ listen to store events
+        }
+
+-- | Configuration for a block store.
+data BlockConfig =
+    BlockConfig
+        { blockConfManager  :: !Manager
+      -- ^ peer manager from running node
+        , blockConfChain    :: !Chain
+      -- ^ chain from a running node
+        , blockConfListener :: !(Listen StoreEvent)
+      -- ^ listener for store events
+        , blockConfDB       :: !BlockDB
+      -- ^ RocksDB database handle
+        , blockConfNet      :: !Network
+      -- ^ network constants
+        }
+
 data BlockDB =
     BlockDB
         { blockDB     :: !DB
         , blockDBopts :: !ReadOptions
-        }
-
-data LayeredDB =
-    LayeredDB
-        { layeredDB    :: !BlockDB
-        , layeredCache :: !(Maybe BlockDB)
         }
 
 type UnixTime = Word64
@@ -1190,3 +1233,73 @@ unspentValToUnspent p UnspentVal { unspentValBlock = b
         , unspentAmount = v
         , unspentScript = s
         }
+
+-- | Messages that a 'BlockStore' can accept.
+data BlockMessage
+    = BlockNewBest !BlockNode
+      -- ^ new block header in chain
+    | BlockPeerConnect !Peer !SockAddr
+      -- ^ new peer connected
+    | BlockPeerDisconnect !Peer !SockAddr
+      -- ^ peer disconnected
+    | BlockReceived !Peer !Block
+      -- ^ new block received from a peer
+    | BlockNotFound !Peer ![BlockHash]
+      -- ^ block not found
+    | BlockTxReceived !Peer !Tx
+      -- ^ transaction received from peer
+    | BlockTxAvailable !Peer ![TxHash]
+      -- ^ peer has transactions available
+    | BlockPing !(Listen ())
+      -- ^ internal housekeeping ping
+    | PurgeMempool
+      -- ^ purge mempool transactions
+
+-- | Events that the store can generate.
+data StoreEvent
+    = StoreBestBlock !BlockHash
+      -- ^ new best block
+    | StoreMempoolNew !TxHash
+      -- ^ new mempool transaction
+    | StorePeerConnected !Peer
+                         !SockAddr
+      -- ^ new peer connected
+    | StorePeerDisconnected !Peer
+                            !SockAddr
+      -- ^ peer has disconnected
+    | StorePeerPong !Peer
+                    !Word64
+      -- ^ peer responded 'Ping'
+    | StoreTxAvailable !Peer
+                       ![TxHash]
+      -- ^ peer inv transactions
+    | StoreTxReject !Peer
+                    !TxHash
+                    !RejectCode
+                    !ByteString
+      -- ^ peer rejected transaction
+
+data PubExcept
+    = PubNoPeers
+    | PubReject RejectCode
+    | PubTimeout
+    | PubPeerDisconnected
+    deriving Eq
+
+instance Show PubExcept where
+    show PubNoPeers = "no peers"
+    show (PubReject c) =
+        "rejected: " <>
+        case c of
+            RejectMalformed       -> "malformed"
+            RejectInvalid         -> "invalid"
+            RejectObsolete        -> "obsolete"
+            RejectDuplicate       -> "duplicate"
+            RejectNonStandard     -> "not standard"
+            RejectDust            -> "dust"
+            RejectInsufficientFee -> "insufficient fee"
+            RejectCheckpoint      -> "checkpoint"
+    show PubTimeout = "peer timeout or silent rejection"
+    show PubPeerDisconnected = "peer disconnected"
+
+instance Exception PubExcept

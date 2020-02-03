@@ -8,55 +8,53 @@
 {-# LANGUAGE TupleSections     #-}
 
 module Network.Haskoin.Store.Web where
-import           Conduit                           hiding (runResourceT)
-import           Control.Applicative               ((<|>))
-import           Control.Exception                 ()
+import           Conduit                            hiding (runResourceT)
+import           Control.Applicative                ((<|>))
+import           Control.Exception                  ()
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Reader              (ReaderT)
-import qualified Control.Monad.Reader              as R
+import           Control.Monad.Reader               (ReaderT, ask, runReaderT)
 import           Control.Monad.Trans.Maybe
-import           Control.Parallel.Strategies       (parBuffer, rdeepseq,
-                                                    withStrategy)
-import           Data.Aeson                        (ToJSON (..), object, (.=))
-import           Data.Aeson.Encoding               (encodingToLazyByteString,
-                                                    fromEncoding)
-import qualified Data.ByteString                   as B
+import           Control.Parallel.Strategies        (parBuffer, rdeepseq,
+                                                     withStrategy)
+import           Data.Aeson                         (ToJSON (..), object, (.=))
+import           Data.Aeson.Encoding                (encodingToLazyByteString,
+                                                     fromEncoding)
+import qualified Data.ByteString                    as B
 import           Data.ByteString.Builder
-import qualified Data.ByteString.Lazy              as L
-import qualified Data.ByteString.Lazy.Char8        as C
+import qualified Data.ByteString.Lazy               as L
+import qualified Data.ByteString.Lazy.Char8         as C
 import           Data.Char
 import           Data.Function
-import qualified Data.HashMap.Strict               as H
+import qualified Data.HashMap.Strict                as H
 import           Data.List
 import           Data.Maybe
-import           Data.Serialize                    as Serialize
+import           Data.Serialize                     as Serialize
 import           Data.String.Conversions
-import           Data.Text                         (Text)
-import qualified Data.Text                         as T
-import qualified Data.Text.Encoding                as T
-import qualified Data.Text.Lazy                    as T.Lazy
+import           Data.Text                          (Text)
+import qualified Data.Text                          as T
+import qualified Data.Text.Encoding                 as T
+import qualified Data.Text.Lazy                     as T.Lazy
 import           Data.Time.Clock
 import           Data.Time.Clock.System
 import           Data.Word
-import           Database.RocksDB                  as R
+import           Database.RocksDB                   as R
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Data
-import           Network.Haskoin.Store.Data.Cached
-import           Network.Haskoin.Store.Messages
+import           Network.Haskoin.Store.Data.RocksDB ()
 import           Network.HTTP.Types
 import           Network.Wai
 import           NQE
 import           Text.Printf
-import           Text.Read                         (readMaybe)
+import           Text.Read                          (readMaybe)
 import           UnliftIO
 import           UnliftIO.Resource
-import           Web.Scotty.Internal.Types         (ActionT)
-import           Web.Scotty.Trans                  (Parsable, ScottyError)
-import qualified Web.Scotty.Trans                  as S
+import           Web.Scotty.Internal.Types          (ActionT)
+import           Web.Scotty.Trans                   (Parsable, ScottyError)
+import qualified Web.Scotty.Trans                   as S
 
-type WebT m = ActionT Except (ReaderT LayeredDB m)
+type WebT m = ActionT Except (ReaderT BlockDB m)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
@@ -112,7 +110,7 @@ data WebConfig =
     WebConfig
         { webPort      :: !Int
         , webNetwork   :: !Network
-        , webDB        :: !LayeredDB
+        , webDB        :: !BlockDB
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
         , webMaxLimits :: !MaxLimits
@@ -184,11 +182,11 @@ instance MonadIO m => StoreRead (WebT m) where
     getBalance = lift . getBalance
     getMempool = lift getMempool
 
-askDB :: Monad m => WebT m LayeredDB
-askDB = lift R.ask
+askDB :: Monad m => WebT m BlockDB
+askDB = lift ask
 
 runStream :: MonadUnliftIO m => s -> ReaderT s (ResourceT m) a -> m a
-runStream s f = runResourceT (R.runReaderT f s)
+runStream s f = runResourceT (runReaderT f s)
 
 defHandler :: Monad m => Network -> Except -> WebT m ()
 defHandler net e = do
@@ -676,7 +674,7 @@ scottyPostTx net st pub = do
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
     setHeaders
-    LayeredDB {layeredDB = BlockDB {blockDB = db}} <- askDB
+    BlockDB {blockDB = db} <- askDB
     stats <- lift (getProperty db Stats)
     case stats of
       Nothing -> do
@@ -750,7 +748,7 @@ runWeb WebConfig { webDB = db
             then Just <$> logIt
             else return Nothing
     runner <- askRunInIO
-    S.scottyT port (runner . withLayeredDB db) $ do
+    S.scottyT port (runner . flip runReaderT db) $ do
         case req_logger of
             Just m  -> S.middleware m
             Nothing -> return ()

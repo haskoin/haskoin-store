@@ -11,7 +11,7 @@ module Main where
 
 import           Conduit
 import           Control.Arrow
-import           Control.Exception          ()
+import           Control.Exception       ()
 import           Control.Monad
 import           Control.Monad.Logger
 import           Data.Bits
@@ -19,17 +19,17 @@ import           Data.List
 import           Data.Maybe
 import           Data.String.Conversions
 import           Data.Version
-import           Database.RocksDB           as R
+import           Database.RocksDB        as R
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
 import           NQE
 import           Options.Applicative
-import           Paths_haskoin_store        as P
+import           Paths_haskoin_store     as P
 import           System.Exit
 import           System.FilePath
 import           System.IO.Unsafe
-import           Text.Read                  (readMaybe)
+import           Text.Read               (readMaybe)
 import           UnliftIO
 import           UnliftIO.Directory
 
@@ -40,7 +40,6 @@ data Config = Config
     , configDiscover  :: !Bool
     , configPeers     :: ![(Host, Maybe Port)]
     , configVersion   :: !Bool
-    , configCache     :: !FilePath
     , configDebug     :: !Bool
     , configReqLog    :: !Bool
     , configMaxLimits :: !MaxLimits
@@ -92,11 +91,6 @@ config = do
         many . option (eitherReader peerReader) $
         metavar "HOST" <> long "peer" <> short 'p' <>
         help "Network peer (as many as required)"
-    configCache <-
-        option str $
-        metavar "CACHEDIR" <> long "cache" <> short 'c' <>
-        help "RAM drive directory for acceleration" <>
-        value ""
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
     configReqLog <- switch $ long "reqlog" <> help "HTTP request logging"
@@ -190,23 +184,18 @@ main = do
         Options.Applicative.header
             ("haskoin-store version " <> showVersion P.version)
 
-cacheDir :: Network -> FilePath -> Maybe FilePath
-cacheDir _ "" = Nothing
-cacheDir net ch = Just (ch </> getNetworkName net </> "cache")
-
 run :: MonadUnliftIO m => Config -> m ()
 run Config { configPort = port
            , configNetwork = net
            , configDiscover = disc
            , configPeers = peers
-           , configCache = cache_path
            , configDir = db_dir
            , configDebug = deb
            , configMaxLimits = limits
            , configReqLog = reqlog
            , configTimeouts = tos
            } =
-    runStderrLoggingT . filterLogger l . flip finally clear $ do
+    runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
@@ -221,32 +210,6 @@ run Config { configPort = port
                            , writeBufferSize = 2 `shift` 30
                            }
                return BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
-        cdb <-
-            case cd of
-                Nothing -> return Nothing
-                Just ch -> do
-                    $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
-                    removePathForcibly ch
-                    $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
-                    createDirectoryIfMissing True ch
-                    dbh <-
-                        open
-                            ch
-                            R.defaultOptions
-                                { createIfMissing = True
-                                , compression = SnappyCompression
-                                , maxOpenFiles = -1
-                                , writeBufferSize = 2 `shift` 30
-                                }
-                    return $
-                        Just
-                            BlockDB
-                                { blockDB = dbh
-                                , blockDBopts = defaultReadOptions
-                                }
-        $(logInfoS) "Main" "Populating cache (if active)..."
-        ldb <- newLayeredDB db cdb
-        $(logInfoS) "Main" "Finished populating cache"
         withPublisher $ \pub ->
             let scfg =
                     StoreConfig
@@ -256,7 +219,7 @@ run Config { configPort = port
                                   (second (fromMaybe (getDefaultPort net)))
                                   peers
                         , storeConfDiscover = disc
-                        , storeConfDB = ldb
+                        , storeConfDB = db
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` pub) . Event
                         }
@@ -265,7 +228,7 @@ run Config { configPort = port
                             WebConfig
                                 { webPort = port
                                 , webNetwork = net
-                                , webDB = ldb
+                                , webDB = db
                                 , webPublisher = pub
                                 , webStore = st
                                 , webMaxLimits = limits
@@ -277,14 +240,4 @@ run Config { configPort = port
     l _ lvl
         | deb = True
         | otherwise = LevelInfo <= lvl
-    clear =
-        case cd of
-            Nothing -> return ()
-            Just ch -> do
-                $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
-                removePathForcibly ch
     wd = db_dir </> getNetworkName net
-    cd =
-        case cache_path of
-            "" -> Nothing
-            ch -> Just (ch </> getNetworkName net </> "cache")

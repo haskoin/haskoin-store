@@ -1,25 +1,27 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE LambdaCase     #-}
+{-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Network.Haskoin.Store.Data.RocksDB where
 
 import           Conduit
-import           Control.Monad.Reader                (MonadReader, ReaderT)
-import qualified Control.Monad.Reader                as R
+import           Control.Monad.Reader                (ReaderT, ask, runReaderT)
 import qualified Data.ByteString.Short               as B.Short
 import           Data.IntMap                         (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.Maybe                          (fromMaybe)
 import           Data.Word
-import           Database.RocksDB                    (DB, ReadOptions)
+import           Database.RocksDB                    (DB)
 import           Database.RocksDB.Query
 import           Haskoin
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
-import           UnliftIO
 
 dataVersion :: Word32
 dataVersion = 16
+
+withRocksDB :: MonadIO m => BlockDB -> ReaderT BlockDB m a -> m a
+withRocksDB = flip runReaderT
 
 isInitializedDB :: MonadIO m => BlockDB -> m (Either InitException Bool)
 isInitializedDB bdb@BlockDB {blockDBopts = opts, blockDB = db} =
@@ -161,3 +163,23 @@ unspentFromDB p UnspentVal { unspentValBlock = b
         , unspentPoint = p
         , unspentScript = s
         }
+
+instance MonadIO m => StoreRead (ReaderT BlockDB m) where
+    isInitialized = ask >>= isInitializedDB
+    getBestBlock = ask >>= getBestBlockDB
+    getBlocksAtHeight h = ask >>= getBlocksAtHeightDB h
+    getBlock b = ask >>= getBlockDB b
+    getTxData t = ask >>= getTxDataDB t
+    getSpender p = ask >>= getSpenderDB p
+    getSpenders t = ask >>= getSpendersDB t
+    getOrphanTx h = ask >>= getOrphanTxDB h
+    getUnspent a = ask >>= getUnspentDB a
+    getBalance a = ask >>= getBalanceDB a
+    getMempool = ask >>= getMempoolDB
+
+instance (MonadResource m, MonadIO m) => StoreStream (ReaderT BlockDB m) where
+    getOrphans = ask >>= getOrphansDB
+    getAddressUnspents a b = ask >>= getAddressUnspentsDB a b
+    getAddressTxs a b = ask >>= getAddressTxsDB a b
+    getAddressBalances = ask >>= getAddressBalancesDB
+    getUnspents = ask >>= getUnspentsDB

@@ -8,8 +8,7 @@ import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Maybe
-import           Database.RocksDB     (DB)
-import           Database.RocksDB     as R
+import           Database.RocksDB
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
@@ -18,7 +17,7 @@ import           Test.Hspec
 import           UnliftIO
 
 data TestStore = TestStore
-    { testStoreDB         :: !LayeredDB
+    { testStoreDB         :: !BlockDB
     , testStoreBlockStore :: !BlockStore
     , testStoreChain      :: !Chain
     , testStoreEvents     :: !(Inbox StoreEvent)
@@ -42,7 +41,7 @@ spec = do
                 bestHeight `shouldBe` 8
         it "get a block and its transactions" $
             withTestStore net "get-block-txs" $ \TestStore {..} ->
-                withLayeredDB testStoreDB $ do
+                withRocksDB testStoreDB $ do
                     let h1 =
                             "e8588129e146eeb0aa7abdc3590f8c5920cc5ff42daf05c23b29d4ae5b51fc22"
                         h2 =
@@ -83,21 +82,13 @@ withTestStore net t f =
                         , errorIfExists = True
                         , compression = SnappyCompression
                         }
-            let ldb =
-                    LayeredDB
-                        { layeredDB =
-                              BlockDB
-                                  { blockDB = db
-                                  , blockDBopts = defaultReadOptions
-                                  }
-                        , layeredCache = Nothing
-                        }
+            let bdb = BlockDB {blockDB = db, blockDBopts = defaultReadOptions}
             let cfg =
                     StoreConfig
                         { storeConfMaxPeers = 20
                         , storeConfInitPeers = []
                         , storeConfDiscover = True
-                        , storeConfDB = ldb
+                        , storeConfDB = bdb
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` x)
                         }
@@ -105,7 +96,7 @@ withTestStore net t f =
                 lift $
                 f
                     TestStore
-                        { testStoreDB = ldb
+                        { testStoreDB = bdb
                         , testStoreBlockStore = storeBlock
                         , testStoreChain = storeChain
                         , testStoreEvents = x

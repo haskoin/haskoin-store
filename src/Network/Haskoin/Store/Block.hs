@@ -24,7 +24,6 @@ import           Haskoin.Node
 import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.ImportDB
 import           Network.Haskoin.Store.Logic
-import           Network.Haskoin.Store.Messages
 import           NQE
 import           System.Random
 import           UnliftIO
@@ -61,29 +60,31 @@ runImport ::
 runImport f =
     ReaderT $ \r -> runExceptT (runImportDB (blockConfDB (myConfig r)) f)
 
-runLayered :: ReaderT LayeredDB m a -> ReaderT BlockRead m a
-runLayered f = ReaderT $ \r -> runReaderT f (blockConfDB (myConfig r))
+runRocksDB :: ReaderT BlockDB m a -> ReaderT BlockRead m a
+runRocksDB f =
+    ReaderT $ \BlockRead {myConfig = BlockConfig {blockConfDB = db}} ->
+        runReaderT f db
 
 instance MonadIO m => StoreRead (ReaderT BlockRead m) where
-    isInitialized = runLayered isInitialized
-    getBestBlock = runLayered getBestBlock
-    getBlocksAtHeight = runLayered . getBlocksAtHeight
-    getBlock = runLayered . getBlock
-    getTxData = runLayered . getTxData
-    getSpender = runLayered . getSpender
-    getSpenders = runLayered . getSpenders
-    getOrphanTx = runLayered . getOrphanTx
-    getUnspent = runLayered . getUnspent
-    getBalance = runLayered . getBalance
-    getMempool = runLayered getMempool
+    isInitialized = runRocksDB isInitialized
+    getBestBlock = runRocksDB getBestBlock
+    getBlocksAtHeight = runRocksDB . getBlocksAtHeight
+    getBlock = runRocksDB . getBlock
+    getTxData = runRocksDB . getTxData
+    getSpender = runRocksDB . getSpender
+    getSpenders = runRocksDB . getSpenders
+    getOrphanTx = runRocksDB . getOrphanTx
+    getUnspent = runRocksDB . getUnspent
+    getBalance = runRocksDB . getBalance
+    getMempool = runRocksDB getMempool
 
 instance (MonadResource m, MonadUnliftIO m) =>
          StoreStream (ReaderT BlockRead m) where
-    getOrphans = transPipe runLayered getOrphans
-    getAddressUnspents a x = transPipe runLayered $ getAddressUnspents a x
-    getAddressTxs a x = transPipe runLayered $ getAddressTxs a x
-    getAddressBalances = transPipe runLayered getAddressBalances
-    getUnspents = transPipe runLayered getUnspents
+    getOrphans = transPipe runRocksDB getOrphans
+    getAddressUnspents a x = transPipe runRocksDB $ getAddressUnspents a x
+    getAddressTxs a x = transPipe runRocksDB $ getAddressTxs a x
+    getAddressBalances = transPipe runRocksDB getAddressBalances
+    getUnspents = transPipe runRocksDB getUnspents
 
 -- | Run block store process.
 blockStore ::

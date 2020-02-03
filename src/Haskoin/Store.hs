@@ -1,12 +1,3 @@
-{-# LANGUAGE ConstraintKinds       #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE MultiWayIf            #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE TupleSections         #-}
 module Haskoin.Store
     ( Store(..)
     , BlockStore
@@ -35,13 +26,11 @@ module Haskoin.Store
     , UnixTime
     , BlockPos
     , BlockDB(..)
-    , LayeredDB(..)
     , WebConfig(..)
     , MaxLimits(..)
     , Timeouts(..)
     , Offset
     , Limit
-    , newLayeredDB
     , withStore
     , runWeb
     , store
@@ -76,7 +65,7 @@ module Haskoin.Store
     , cbAfterHeight
     , healthCheck
     , withBlockMem
-    , withLayeredDB
+    , withRocksDB
     ) where
 
 import           Conduit
@@ -87,9 +76,8 @@ import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
 import           Network.Haskoin.Store.Data
-import           Network.Haskoin.Store.Data.Cached
 import           Network.Haskoin.Store.Data.Memory
-import           Network.Haskoin.Store.Messages
+import           Network.Haskoin.Store.Data.RocksDB
 import           Network.Haskoin.Store.Web
 import           Network.Socket                     (SockAddr (..))
 import           NQE
@@ -125,11 +113,12 @@ store cfg mgri chi bsi = do
     let ncfg =
             NodeConfig
                 { nodeConfMaxPeers = storeConfMaxPeers cfg
-                , nodeConfDB = blockDB . layeredDB $ storeConfDB cfg
+                , nodeConfDB = blockDB (storeConfDB cfg)
                 , nodeConfPeers = storeConfInitPeers cfg
                 , nodeConfDiscover = storeConfDiscover cfg
                 , nodeConfEvents = storeDispatch b l
-                , nodeConfNetAddr = NetworkAddress 0 (sockToHostAddress (SockAddrInet 0 0))
+                , nodeConfNetAddr =
+                      NetworkAddress 0 (sockToHostAddress (SockAddrInet 0 0))
                 , nodeConfNet = storeConfNetwork cfg
                 , nodeConfTimeout = 10
                 }
