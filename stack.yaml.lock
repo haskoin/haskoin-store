@@ -12,12 +12,12 @@ packages:
   original:
     hackage: secp256k1-haskell-0.1.8
 - completed:
-    hackage: haskoin-core-0.10.0@sha256:aa65fab408e7c2b6931ac76ddcf9f919a0adc54dddb56e1140d1d59826e7ab17,4143
+    hackage: haskoin-core-0.10.1@sha256:b6b87b3c8792440b1bec00776a25f68d88d3614c317402cbd1e74d7e33164084,4159
     pantry-tree:
       size: 4894
-      sha256: 3deb1b52aeefd9551c3299b78eadb002aeb626ad24d1eec31672366fc9fd1dd4
+      sha256: d5bdbd4ea37ba7956c952e4fdf8212835bcf88f093c418bd4b1564af5d43caca
   original:
-    hackage: haskoin-core-0.10.0
+    hackage: haskoin-core-0.10.1
 - completed:
     hackage: rocksdb-query-0.3.1@sha256:9212c84d593afd30449e5491786cef27b46d62a8e93fb98ea15eb10fea3e7182,1571
     pantry-tree:
@@ -26,12 +26,12 @@ packages:
   original:
     hackage: rocksdb-query-0.3.1
 - completed:
-    hackage: haskoin-node-0.9.15@sha256:39da0b793914cf28b21fc8225ae5c9d432a20c3a0364e497962a2e5d0628b593,2280
+    hackage: haskoin-node-0.9.16@sha256:9b0a42386ab067b09bbbee5bb3561a873417c78cd989128c5a01e1d8bcf02048,2314
     pantry-tree:
       size: 736
-      sha256: 564be20ac52fee1bd1551267168e63cba415cf5aa88c1b108da43d881585069a
+      sha256: 2a4d27703593427891c0815c2bc7da7e5335cb272915bb89777878923876ec92
   original:
-    hackage: haskoin-node-0.9.15
+    hackage: haskoin-node-0.9.16
 snapshots:
 - completed:
     size: 524154

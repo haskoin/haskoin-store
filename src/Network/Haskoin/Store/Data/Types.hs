@@ -5,7 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 
-module Network.Haskoin.Store.Data where
+module Network.Haskoin.Store.Data.Types where
 
 import           Conduit
 import           Control.Applicative

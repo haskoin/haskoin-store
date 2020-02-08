@@ -21,8 +21,8 @@ import           Data.String.Conversions
 import           Data.Time.Clock.System
 import           Haskoin
 import           Haskoin.Node
-import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.ImportDB
+import           Network.Haskoin.Store.Data.Types
 import           Network.Haskoin.Store.Logic
 import           NQE
 import           System.Random

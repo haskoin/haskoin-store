@@ -23,8 +23,8 @@ dependencies:
   - data-default
   - deepseq
   - hashable
-  - haskoin-core >= 0.9.7
-  - haskoin-node
+  - haskoin-core >= 0.10.1
+  - haskoin-node >= 0.9.16
   - http-types
   - monad-logger
   - mtl
@@ -34,7 +34,7 @@ dependencies:
   - random
   - resourcet
   - rocksdb-haskell
-  - rocksdb-query >= 0.3.0
+  - rocksdb-query >= 0.3.1
   - scotty
   - string-conversions
   - text

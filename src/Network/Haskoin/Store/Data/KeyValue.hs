@@ -5,15 +5,15 @@
 module Network.Haskoin.Store.Data.KeyValue where
 
 import           Control.Monad.Reader
-import           Data.ByteString            (ByteString)
-import qualified Data.ByteString            as B
+import           Data.ByteString                  (ByteString)
+import qualified Data.ByteString                  as B
 import           Data.Hashable
-import           Data.Serialize             as S
+import           Data.Serialize                   as S
 import           Data.Word
-import qualified Database.RocksDB.Query     as R
+import qualified Database.RocksDB.Query           as R
 import           GHC.Generics
 import           Haskoin
-import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Store.Data.Types
 
 -- | Database key for an address transaction.
 data AddrTxKey

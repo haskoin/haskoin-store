@@ -75,9 +75,9 @@ import           Data.Serialize                     (decode)
 import           Haskoin
 import           Haskoin.Node
 import           Network.Haskoin.Store.Block
-import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.Memory
 import           Network.Haskoin.Store.Data.RocksDB
+import           Network.Haskoin.Store.Data.Types
 import           Network.Haskoin.Store.Web
 import           Network.Socket                     (SockAddr (..))
 import           NQE

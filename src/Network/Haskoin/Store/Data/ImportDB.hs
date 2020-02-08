@@ -22,10 +22,10 @@ import           Data.Maybe
 import           Database.RocksDB                    (BatchOp)
 import           Database.RocksDB.Query
 import           Haskoin
-import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
 import           Network.Haskoin.Store.Data.Memory
 import           Network.Haskoin.Store.Data.RocksDB
+import           Network.Haskoin.Store.Data.Types
 import           UnliftIO
 
 data ImportDB = ImportDB

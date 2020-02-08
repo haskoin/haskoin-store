@@ -41,8 +41,8 @@ import           Data.Word
 import           Database.RocksDB                   as R
 import           Haskoin
 import           Haskoin.Node
-import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.RocksDB ()
+import           Network.Haskoin.Store.Data.Types
 import           Network.HTTP.Types
 import           Network.Wai
 import           NQE

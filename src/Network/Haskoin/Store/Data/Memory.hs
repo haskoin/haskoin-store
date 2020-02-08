@@ -16,8 +16,8 @@ import qualified Data.IntMap.Strict                  as I
 import           Data.List
 import           Data.Maybe
 import           Haskoin
-import           Network.Haskoin.Store.Data
 import           Network.Haskoin.Store.Data.KeyValue
+import           Network.Haskoin.Store.Data.Types
 import           UnliftIO
 
 withBlockMem :: MonadIO m => TVar BlockMem -> ReaderT (TVar BlockMem) m a -> m a

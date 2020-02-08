@@ -10,20 +10,20 @@ import           Conduit
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Logger
-import qualified Data.ByteString                     as B
-import qualified Data.ByteString.Short               as B.Short
-import           Data.Either                         (rights)
-import qualified Data.IntMap.Strict                  as I
+import qualified Data.ByteString                  as B
+import qualified Data.ByteString.Short            as B.Short
+import           Data.Either                      (rights)
+import qualified Data.IntMap.Strict               as I
 import           Data.List
 import           Data.Maybe
 import           Data.Serialize
 import           Data.String
-import           Data.String.Conversions             (cs)
-import           Data.Text                           (Text)
+import           Data.String.Conversions          (cs)
+import           Data.Text                        (Text)
 import           Data.Word
 import           Haskoin
-import           Network.Haskoin.Block.Headers       (computeSubsidy)
-import           Network.Haskoin.Store.Data
+import           Network.Haskoin.Block.Headers    (computeSubsidy)
+import           Network.Haskoin.Store.Data.Types
 import           UnliftIO
 
 data ImportException
