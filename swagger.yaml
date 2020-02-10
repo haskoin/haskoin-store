@@ -1,10 +1,10 @@
 openapi: '3.0.0'
 
 servers:
-  - url: 'https://btc.haskoin.com/api/'
-  - url: 'https://bch.haskoin.com/api/'
-  - url: 'https://btctest.haskoin.com/api/'
-  - url: 'https://bchtest.haskoin.com/api/'
+  - url: 'https://api.haskoin.com/bch/'
+  - url: 'https://api.haskoin.com/btc/'
+  - url: 'https://api.haskoin.com/bchtest/'
+  - url: 'https://api.haskoin.com/btctest/'
 
 info:
   version: '0.20.0'
