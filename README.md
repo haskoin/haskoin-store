@@ -32,4 +32,4 @@ Give `haskoin-store` the path to a directory mapped to RAM, and it will populate
 
 ## API Documentation
 
-* [Swagger API Documentation](https://btc.haskoin.com/).
+* [Swagger API Documentation](https://api.haskoin.com/).
