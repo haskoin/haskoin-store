@@ -1,37 +1,39 @@
 {-# LANGUAGE ApplicativeDo     #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Main where
 
-import           Conduit
-import           Control.Arrow
-import           Control.Exception       ()
-import           Control.Monad
-import           Control.Monad.Logger
-import           Data.Bits
-import           Data.List
-import           Data.Maybe
-import           Data.String.Conversions
-import           Data.Version
-import           Database.RocksDB        as R
-import           Haskoin
-import           Haskoin.Node
-import           Haskoin.Store
-import           NQE
-import           Options.Applicative
+import           Control.Arrow           (second)
+import           Control.Monad           (when)
+import           Control.Monad.Logger    (LogLevel (..), filterLogger, logInfoS,
+                                          runStderrLoggingT)
+import           Data.List               (intercalate)
+import           Data.Maybe              (fromMaybe)
+import           Data.String.Conversions (cs)
+import           Data.Version            (showVersion)
+import           Haskoin                 (Network (..), allNets, bch,
+                                          bchRegTest, bchTest, btc, btcRegTest,
+                                          btcTest)
+import           Haskoin.Node            (Host, Port)
+import           Haskoin.Store           (MaxLimits (..), StoreConfig (..),
+                                          Timeouts (..), WebConfig (..),
+                                          connectRocksDB, runWeb, withStore)
+import           NQE                     (PublisherMessage (..), sendSTM,
+                                          withPublisher)
+import           Options.Applicative     (Parser, auto, eitherReader,
+                                          execParser, fullDesc, header, help,
+                                          helper, info, long, many, metavar,
+                                          option, progDesc, short, showDefault,
+                                          strOption, switch, value)
 import           Paths_haskoin_store     as P
-import           System.Exit
-import           System.FilePath
-import           System.IO.Unsafe
+import           System.Exit             (die, exitSuccess)
+import           System.FilePath         ((</>))
+import           System.IO.Unsafe        (unsafePerformIO)
 import           Text.Read               (readMaybe)
-import           UnliftIO
-import           UnliftIO.Directory
+import           UnliftIO                (MonadUnliftIO, liftIO)
+import           UnliftIO.Directory      (createDirectoryIfMissing,
+                                          getAppUserDataDirectory)
 
 data Config = Config
     { configDir       :: !FilePath
@@ -62,7 +64,6 @@ defMaxLimits =
         , maxLimitFull = 500
         , maxLimitOffset = 50000
         , maxLimitDefault = 100
-        , maxLimitGap = 20
         }
 
 defTimeouts :: Timeouts
@@ -71,7 +72,7 @@ defTimeouts = Timeouts {blockTimeout = 7200, txTimeout = 600}
 config :: Parser Config
 config = do
     configDir <-
-        option str $
+        strOption $
         metavar "WORKDIR" <> long "dir" <> short 'd' <> help "Data directory" <>
         showDefault <>
         value myDirectory
@@ -108,19 +109,16 @@ config = do
         value (maxLimitFull defMaxLimits)
     maxLimitOffset <-
         option auto $
-        metavar "MAXOFFSET" <> long "maxoffset" <> help "Max offset (0 for no limit)" <>
+        metavar "MAXOFFSET" <> long "maxoffset" <>
+        help "Max offset (0 for no limit)" <>
         showDefault <>
         value (maxLimitOffset defMaxLimits)
     maxLimitDefault <-
         option auto $
-        metavar "LIMITDEFAULT" <> long "deflimit" <> help "Default limit (0 for max)" <>
+        metavar "LIMITDEFAULT" <> long "deflimit" <>
+        help "Default limit (0 for max)" <>
         showDefault <>
         value (maxLimitDefault defMaxLimits)
-    maxLimitGap <-
-        option auto $
-        metavar "GAP" <> long "gap" <> help "Extended public key gap" <>
-        showDefault <>
-        value (maxLimitGap defMaxLimits)
     blockTimeout <-
         option auto $
         metavar "BLOCKSECONDS" <> long "blocktimeout" <>
@@ -199,17 +197,7 @@ run Config { configPort = port
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
-        db <-
-            do dbh <-
-                   open
-                       (wd </> "db")
-                       R.defaultOptions
-                           { createIfMissing = True
-                           , compression = SnappyCompression
-                           , maxOpenFiles = -1
-                           , writeBufferSize = 2 `shift` 30
-                           }
-               return BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
+        db <- connectRocksDB (wd </> "db")
         withPublisher $ \pub ->
             let scfg =
                     StoreConfig

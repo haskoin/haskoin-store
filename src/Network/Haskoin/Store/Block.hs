@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
@@ -10,24 +9,70 @@ module Network.Haskoin.Store.Block
       ( blockStore
       ) where
 
-import           Conduit
-import           Control.Monad.Except
-import           Control.Monad.Logger
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Maybe
-import           Data.Maybe
-import           Data.String
-import           Data.String.Conversions
-import           Data.Time.Clock.System
-import           Haskoin
-import           Haskoin.Node
-import           Network.Haskoin.Store.Data.ImportDB
-import           Network.Haskoin.Store.Data.Types
-import           Network.Haskoin.Store.Logic
-import           NQE
-import           System.Random
-import           UnliftIO
-import           UnliftIO.Concurrent
+import           Conduit                             (MonadResource, runConduit,
+                                                      runResourceT, sinkList,
+                                                      transPipe, (.|))
+import           Control.Monad                       (forM, forever, guard,
+                                                      mzero, unless, void, when)
+import           Control.Monad.Except                (ExceptT, runExceptT)
+import           Control.Monad.Logger                (MonadLoggerIO, logDebugS,
+                                                      logErrorS, logInfoS,
+                                                      logWarnS)
+import           Control.Monad.Reader                (MonadReader, ReaderT (..),
+                                                      asks)
+import           Control.Monad.Trans                 (lift)
+import           Control.Monad.Trans.Maybe           (runMaybeT)
+import           Data.Maybe                          (catMaybes, isNothing)
+import           Data.String                         (fromString)
+import           Data.String.Conversions             (cs)
+import           Data.Time.Clock.System              (getSystemTime,
+                                                      systemSeconds)
+import           Haskoin                             (Block (..),
+                                                      BlockHash (..),
+                                                      BlockHeight,
+                                                      BlockNode (..),
+                                                      GetData (..),
+                                                      InvType (..),
+                                                      InvVector (..),
+                                                      Message (..),
+                                                      Network (..), Tx,
+                                                      TxHash (..),
+                                                      blockHashToHex,
+                                                      headerHash, txHash,
+                                                      txHashToHex)
+import           Haskoin.Node                        (OnlinePeer (..), Peer,
+                                                      PeerException (..),
+                                                      chainBlockMain,
+                                                      chainGetAncestor,
+                                                      chainGetBest,
+                                                      chainGetBlock,
+                                                      chainGetParents, killPeer,
+                                                      managerGetPeers,
+                                                      sendMessage)
+import           Network.Haskoin.Store.Data.ImportDB (ImportDB, runImportDB)
+import           Network.Haskoin.Store.Data.Types    (BlockConfig (..), BlockDB,
+                                                      BlockMessage (..),
+                                                      BlockStore,
+                                                      StoreEvent (..),
+                                                      StoreRead (..),
+                                                      StoreStream (..),
+                                                      StoreWrite (..), UnixTime)
+import           Network.Haskoin.Store.Logic         (ImportException,
+                                                      getOldOrphans,
+                                                      importBlock, importOrphan,
+                                                      initBest, newMempoolTx,
+                                                      revertBlock)
+import           NQE                                 (Inbox, Mailbox,
+                                                      inboxToMailbox, query,
+                                                      receive)
+import           System.Random                       (randomRIO)
+import           UnliftIO                            (Exception, MonadIO,
+                                                      MonadUnliftIO, TVar,
+                                                      atomically, liftIO,
+                                                      newTVarIO, readTVarIO,
+                                                      throwIO, withAsync,
+                                                      writeTVar)
+import           UnliftIO.Concurrent                 (threadDelay)
 
 data BlockException
     = BlockNotInChain !BlockHash
@@ -66,7 +111,6 @@ runRocksDB f =
         runReaderT f db
 
 instance MonadIO m => StoreRead (ReaderT BlockRead m) where
-    isInitialized = runRocksDB isInitialized
     getBestBlock = runRocksDB getBestBlock
     getBlocksAtHeight = runRocksDB . getBlocksAtHeight
     getBlock = runRocksDB . getBlock
@@ -77,6 +121,10 @@ instance MonadIO m => StoreRead (ReaderT BlockRead m) where
     getUnspent = runRocksDB . getUnspent
     getBalance = runRocksDB . getBalance
     getMempool = runRocksDB getMempool
+    getAddressesTxs addrs start limit =
+        runRocksDB (getAddressesTxs addrs start limit)
+    getAddressesUnspents addrs start limit =
+        runRocksDB (getAddressesUnspents addrs start limit)
 
 instance (MonadResource m, MonadUnliftIO m) =>
          StoreStream (ReaderT BlockRead m) where
@@ -101,7 +149,7 @@ blockStore cfg inbox = do
   where
     ini = do
         net <- asks (blockConfNet . myConfig)
-        runImport (initDB net) >>= \case
+        runImport (initBest net) >>= \case
             Left e -> do
                 $(logErrorS) "Block" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -155,14 +203,16 @@ processBlock p b = do
         upr
         net <- blockConfNet <$> asks myConfig
         lift (runImport (importBlock net b n)) >>= \case
-            Right () -> do
+            Right ths -> do
                 l <- blockConfListener <$> asks myConfig
                 $(logInfoS) "Block" $
                     "Best block indexed: " <>
                     blockHashToHex (headerHash (blockHeader b)) <>
                     " at height " <>
                     cs (show (nodeHeight n))
-                atomically $ l (StoreBestBlock (headerHash (blockHeader b)))
+                atomically $ do
+                    mapM_ (l . StoreTxDeleted) ths
+                    l (StoreBestBlock (headerHash (blockHeader b)))
                 lift $ isSynced >>= \x -> when x (mempool p)
             Left e -> do
                 $(logErrorS) "Block" $
@@ -228,12 +278,14 @@ processTx _p tx =
                     $(logWarnS) "Block" $
                     "Error importing tx: " <> txHashToHex (txHash tx) <> ": " <>
                     fromString (show e)
-                Right True -> do
+                Right (Just ths) -> do
                     l <- blockConfListener <$> asks myConfig
                     $(logDebugS) "Block" $
                         "Received mempool tx: " <> txHashToHex (txHash tx)
-                    atomically $ l (StoreMempoolNew (txHash tx))
-                Right False ->
+                    atomically $ do
+                        mapM_ (l . StoreTxDeleted) ths
+                        l (StoreMempoolNew (txHash tx))
+                Right Nothing ->
                     $(logDebugS) "Block" $
                     "Not importing mempool tx: " <> txHashToHex (txHash tx)
 
@@ -263,8 +315,22 @@ processOrphans =
                     $(logDebugS) "Block" $
                     "Importing " <> cs (show (length orphans)) <>
                     " orphan transactions"
-            forM_ orphans $ runImport . uncurry (importOrphan net)
+            ops <-
+                zip (map snd orphans) <$>
+                forM orphans (runImport . uncurry (importOrphan net))
+            let tths =
+                    [ (txHash tx, hs)
+                    | (tx, emths) <- ops
+                    , let Right (Just hs) = emths
+                    ]
+                ihs = map fst tths
+                dhs = concatMap snd tths
+            l <- blockConfListener <$> asks myConfig
+            atomically $ do
+                mapM_ (l . StoreTxDeleted) dhs
+                mapM_ (l . StoreMempoolNew) ihs
             $(logDebugS) "Block" "Finished importing orphans"
+
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -332,7 +398,13 @@ purgeMempool = $(logErrorS) "Block" "Mempool purging not implemented"
 syncMe :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 syncMe =
     void . runMaybeT $ do
-        rev
+        bths <- rev
+        l <- blockConfListener <$> asks myConfig
+        let dbs = map fst bths
+            ths = concatMap snd bths
+        atomically $ do
+            mapM_ (l . StoreTxDeleted) ths
+            mapM_ (l . StoreBlockReverted) dbs
         p <-
             gpr >>= \case
                 Nothing -> do
@@ -423,8 +495,9 @@ syncMe =
     rev = do
         d <- headerHash . nodeHeader <$> dbn
         ch <- blockConfChain <$> asks myConfig
-        chainBlockMain d ch >>= \m ->
-            unless m $ do
+        chainBlockMain d ch >>= \case
+            True -> return []
+            False -> do
                 $(logErrorS) "Block" $
                     "Reverting best block " <> blockHashToHex d <>
                     " as it is not in main chain..."
@@ -436,7 +509,7 @@ syncMe =
                             "Could not revert best block: " <>
                             fromString (show e)
                         throwIO e
-                    Right () -> rev
+                    Right ths -> ((d, ths) :) <$> rev
 
 resetPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
 resetPeer = do

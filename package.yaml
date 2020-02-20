@@ -30,7 +30,7 @@ dependencies:
   - mtl
   - network
   - nqe
-  - parallel
+  - QuickCheck
   - random
   - resourcet
   - rocksdb-haskell
@@ -65,7 +65,9 @@ executables:
 tests:
   haskoin-store-test:
     main: Spec.hs
-    source-dirs: test
+    source-dirs:
+      - test
+      - src
     verbatim:
       build-tool-depends:
         hspec-discover:hspec-discover
@@ -75,4 +77,3 @@ tests:
       - -with-rtsopts=-N
     dependencies:
       - hspec
-      - haskoin-store

@@ -4,16 +4,24 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Network.Haskoin.Store.Data.KeyValue where
 
-import           Control.Monad.Reader
+import           Control.Monad                    (guard)
 import           Data.ByteString                  (ByteString)
 import qualified Data.ByteString                  as B
-import           Data.Hashable
-import           Data.Serialize                   as S
-import           Data.Word
+import qualified Data.ByteString.Short            as B.Short
+import           Data.Hashable                    (Hashable)
+import           Data.Serialize                   (Serialize (..), getBytes,
+                                                   getWord8, putWord8)
+import           Data.Word                        (Word32, Word64)
 import qualified Database.RocksDB.Query           as R
-import           GHC.Generics
-import           Haskoin
-import           Network.Haskoin.Store.Data.Types
+import           GHC.Generics                     (Generic)
+import           Haskoin                          (Address, BlockHash,
+                                                   BlockHeight, OutPoint (..),
+                                                   Tx, TxHash)
+import           Network.Haskoin.Store.Data.Types (BalVal, BlockData, BlockRef,
+                                                   BlockTx (..), Spender,
+                                                   TxData, UnixTime,
+                                                   Unspent (..), UnspentVal,
+                                                   getUnixTime, putUnixTime)
 
 -- | Database key for an address transaction.
 data AddrTxKey
@@ -183,6 +191,18 @@ instance Serialize UnspentKey
 
 instance R.Key UnspentKey
 instance R.KeyValue UnspentKey UnspentVal
+
+toUnspent :: AddrOutKey -> OutVal -> Unspent
+toUnspent AddrOutKey {addrOutKeyB = b, addrOutKeyP = p} OutVal { outValAmount = v
+                                                               , outValScript = s
+                                                               } =
+    Unspent
+        { unspentBlock = b
+        , unspentAmount = v
+        , unspentScript = B.Short.toShort s
+        , unspentPoint = p
+        }
+toUnspent _ _ = undefined
 
 -- | Mempool transaction database key.
 data MemKey =

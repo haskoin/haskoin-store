@@ -1,43 +1,55 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-
+{-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Network.Haskoin.Store.Data.Types where
 
-import           Conduit
-import           Control.Applicative
-import           Control.Arrow                  (first)
-import           Control.DeepSeq
-import           Control.Monad
-import           Control.Monad.Trans.Maybe
-import           Data.Aeson                     as A
-import qualified Data.Aeson.Encoding            as A
-import           Data.ByteString                (ByteString)
-import qualified Data.ByteString                as B
-import           Data.ByteString.Short          (ShortByteString)
-import qualified Data.ByteString.Short          as B.Short
-import           Data.Default
-import           Data.Hashable
-import           Data.HashMap.Strict            (HashMap)
-import qualified Data.HashMap.Strict            as M
-import qualified Data.IntMap                    as I
-import           Data.IntMap.Strict             (IntMap)
-import           Data.Maybe
-import           Data.Serialize                 as S
-import           Data.String.Conversions
-import qualified Data.Text.Encoding             as T
-import           Data.Word
-import           Database.RocksDB               (DB, ReadOptions)
-import           GHC.Generics
-import           Haskoin                        as H
-import           Haskoin.Node
-import           Network.Socket                 (SockAddr)
-import           NQE
-import           Paths_haskoin_store            as P
-import           UnliftIO
+import           Conduit                   (ConduitT, dropC, mapC, takeC)
+import           Control.Applicative       ((<|>))
+import           Control.Arrow             (first)
+import           Control.DeepSeq           (NFData)
+import           Control.Exception         (Exception)
+import           Control.Monad             (forM, guard, mzero)
+import           Control.Monad.Trans       (lift)
+import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
+import           Data.Aeson                (Encoding, ToJSON (..), Value (..),
+                                            object, pairs, (.=))
+import qualified Data.Aeson                as A
+import qualified Data.Aeson.Encoding       as A
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString           as B
+import           Data.ByteString.Short     (ShortByteString)
+import qualified Data.ByteString.Short     as B.Short
+import           Data.Default              (Default (..))
+import           Data.Hashable             (Hashable)
+import           Data.HashMap.Strict       (HashMap)
+import qualified Data.HashMap.Strict       as M
+import qualified Data.IntMap               as I
+import           Data.IntMap.Strict        (IntMap)
+import           Data.Maybe                (catMaybes, isJust, listToMaybe,
+                                            mapMaybe)
+import           Data.Serialize            as S
+import           Data.String.Conversions   (cs)
+import qualified Data.Text.Encoding        as T
+import           Data.Word                 (Word32, Word64)
+import           Database.RocksDB          (DB, ReadOptions)
+import           GHC.Generics              (Generic)
+import           Haskoin                   (Address, Block, BlockHash,
+                                            BlockHeader (..), BlockHeight,
+                                            BlockNode, BlockWork, HostAddress,
+                                            KeyIndex, Network (..),
+                                            NetworkAddress (..), OutPoint (..),
+                                            RejectCode (..), Tx (..),
+                                            TxHash (..), TxIn (..), TxOut (..),
+                                            WitnessStack, addrToJSON,
+                                            addrToString, eitherToMaybe,
+                                            encodeHex, headerHash,
+                                            hostToSockAddr, scriptToAddressBS,
+                                            stringToAddr, txHash)
+import           Haskoin.Node              (Chain, HostPort, Manager, Peer)
+import           Network.Socket            (SockAddr)
+import           NQE                       (Listen, Mailbox)
+import qualified Paths_haskoin_store       as P
 
 encodeShort :: Serialize a => a -> ShortByteString
 encodeShort = B.Short.toShort . S.encode
@@ -102,11 +114,12 @@ data BlockDB =
 type UnixTime = Word64
 type BlockPos = Word32
 
-newtype InitException = IncorrectVersion Word32
-    deriving (Show, Read, Eq, Ord, Exception, Generic, NFData)
+type Offset = Word32
+type Limit = Word32
 
-class StoreRead m where
-    isInitialized :: m (Either InitException Bool)
+class Monad m =>
+      StoreRead m
+    where
     getBestBlock :: m (Maybe BlockHash)
     getBlocksAtHeight :: BlockHeight -> m [BlockHash]
     getBlock :: BlockHash -> m (Maybe BlockData)
@@ -115,11 +128,16 @@ class StoreRead m where
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
     getBalance :: Address -> m (Maybe Balance)
+    getBalance a = head <$> getBalances [a]
+    getBalances :: [Address] -> m [(Maybe Balance)]
+    getBalances as = mapM getBalance as
+    getAddressesTxs :: [Address] -> Maybe BlockRef -> Maybe Limit -> m [BlockTx]
     getUnspent :: OutPoint -> m (Maybe Unspent)
+    getAddressesUnspents ::
+           [Address] -> Maybe BlockRef -> Maybe Limit -> m [Unspent]
     getMempool :: m [(UnixTime, TxHash)]
 
 class StoreWrite m where
-    setInit :: m ()
     setBest :: BlockHash -> m ()
     insertBlock :: BlockData -> m ()
     setBlocksAtHeight :: [BlockHash] -> BlockHeight -> m ()
@@ -136,6 +154,13 @@ class StoreWrite m where
     setBalance :: Balance -> m ()
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
+
+class StoreStream m where
+    getOrphans :: ConduitT i (UnixTime, Tx) m ()
+    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
+    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()
+    getAddressBalances :: ConduitT i Balance m ()
+    getUnspents :: ConduitT i Unspent m ()
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
@@ -161,13 +186,6 @@ blockAtOrBefore q = runMaybeT $ do
     g x = MaybeT (listToMaybe <$> getBlocksAtHeight x) >>= MaybeT . getBlock
     h = blockDataHeight
     t = fromIntegral . blockTimestamp . blockDataHeader
-
-class StoreStream m where
-    getOrphans :: ConduitT i (UnixTime, Tx) m ()
-    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
-    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()
-    getAddressBalances :: ConduitT i Balance m ()
-    getUnspents :: ConduitT i Unspent m ()
 
 -- | Serialize such that ordering is inverted.
 putUnixTime :: Word64 -> Put
@@ -320,6 +338,17 @@ data Balance = Balance
     , balanceTotalReceived :: !Word64
       -- ^ total amount from all outputs in this address
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
+
+zeroBalance :: Address -> Balance
+zeroBalance a =
+    Balance
+        { balanceAddress = a
+        , balanceAmount = 0
+        , balanceUnspentCount = 0
+        , balanceZero = 0
+        , balanceTxCount = 0
+        , balanceTotalReceived = 0
+        }
 
 -- | JSON serialization for 'Balance'.
 balancePairs :: A.KeyValue kv => Network -> Balance -> [kv]
@@ -1162,13 +1191,13 @@ data BalVal = BalVal
     , balValTotalReceived :: !Word64
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
-balValToBalance :: Address -> BalVal -> Balance
-balValToBalance a BalVal { balValAmount = v
-                         , balValZero = z
-                         , balValUnspentCount = u
-                         , balValTxCount = t
-                         , balValTotalReceived = r
-                         } =
+valToBalance :: Address -> BalVal -> Balance
+valToBalance a BalVal { balValAmount = v
+                      , balValZero = z
+                      , balValUnspentCount = u
+                      , balValTxCount = t
+                      , balValTotalReceived = r
+                      } =
     Balance
         { balanceAddress = a
         , balanceAmount = v
@@ -1178,14 +1207,14 @@ balValToBalance a BalVal { balValAmount = v
         , balanceTotalReceived = r
         }
 
-balanceToBalVal :: Balance -> (Address, BalVal)
-balanceToBalVal Balance { balanceAddress = a
-                        , balanceAmount = v
-                        , balanceZero = z
-                        , balanceUnspentCount = u
-                        , balanceTxCount = t
-                        , balanceTotalReceived = r
-                        } =
+balanceToVal :: Balance -> (Address, BalVal)
+balanceToVal Balance { balanceAddress = a
+                     , balanceAmount = v
+                     , balanceZero = z
+                     , balanceUnspentCount = u
+                     , balanceTxCount = t
+                     , balanceTotalReceived = r
+                     } =
     ( a
     , BalVal
           { balValAmount = v
@@ -1212,21 +1241,21 @@ data UnspentVal = UnspentVal
     , unspentValScript :: !ShortByteString
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
-unspentToUnspentVal :: Unspent -> (OutPoint, UnspentVal)
-unspentToUnspentVal Unspent { unspentBlock = b
-                            , unspentPoint = p
-                            , unspentAmount = v
-                            , unspentScript = s
-                            } =
+unspentToVal :: Unspent -> (OutPoint, UnspentVal)
+unspentToVal Unspent { unspentBlock = b
+                     , unspentPoint = p
+                     , unspentAmount = v
+                     , unspentScript = s
+                     } =
     ( p
     , UnspentVal
           {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
 
-unspentValToUnspent :: OutPoint -> UnspentVal -> Unspent
-unspentValToUnspent p UnspentVal { unspentValBlock = b
-                                 , unspentValAmount = v
-                                 , unspentValScript = s
-                                 } =
+valToUnspent :: OutPoint -> UnspentVal -> Unspent
+valToUnspent p UnspentVal { unspentValBlock = b
+                          , unspentValAmount = v
+                          , unspentValScript = s
+                          } =
     Unspent
         { unspentBlock = b
         , unspentPoint = p
@@ -1261,23 +1290,20 @@ data StoreEvent
       -- ^ new best block
     | StoreMempoolNew !TxHash
       -- ^ new mempool transaction
-    | StorePeerConnected !Peer
-                         !SockAddr
+    | StorePeerConnected !Peer !SockAddr
       -- ^ new peer connected
-    | StorePeerDisconnected !Peer
-                            !SockAddr
+    | StorePeerDisconnected !Peer !SockAddr
       -- ^ peer has disconnected
-    | StorePeerPong !Peer
-                    !Word64
+    | StorePeerPong !Peer !Word64
       -- ^ peer responded 'Ping'
-    | StoreTxAvailable !Peer
-                       ![TxHash]
+    | StoreTxAvailable !Peer ![TxHash]
       -- ^ peer inv transactions
-    | StoreTxReject !Peer
-                    !TxHash
-                    !RejectCode
-                    !ByteString
+    | StoreTxReject !Peer !TxHash !RejectCode !ByteString
       -- ^ peer rejected transaction
+    | StoreTxDeleted !TxHash
+      -- ^ transaction deleted from store
+    | StoreBlockReverted !BlockHash
+      -- ^ block no longer head of main chain
 
 data PubExcept
     = PubNoPeers
@@ -1303,3 +1329,13 @@ instance Show PubExcept where
     show PubPeerDisconnected = "peer disconnected"
 
 instance Exception PubExcept
+
+applyOffsetLimit :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
+applyOffsetLimit offset limit = applyOffset offset >> applyLimit limit
+
+applyOffset :: Monad m => Offset -> ConduitT i i m ()
+applyOffset = dropC . fromIntegral
+
+applyLimit :: Monad m => Maybe Limit -> ConduitT i i m ()
+applyLimit Nothing  = mapC id
+applyLimit (Just l) = takeC (fromIntegral l)

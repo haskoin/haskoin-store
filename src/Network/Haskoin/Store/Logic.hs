@@ -1,30 +1,58 @@
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 module Network.Haskoin.Store.Logic where
 
-import           Conduit
-import           Control.Monad
-import           Control.Monad.Except
-import           Control.Monad.Logger
+import           Conduit                          (ConduitT, filterC, mapC,
+                                                   (.|))
+import           Control.Monad                    (forM, forM_, unless, void,
+                                                   when, zipWithM_)
+import           Control.Monad.Except             (MonadError, catchError,
+                                                   throwError)
+import           Control.Monad.Logger             (MonadLogger, logDebugS,
+                                                   logErrorS, logInfoS,
+                                                   logWarnS)
 import qualified Data.ByteString                  as B
 import qualified Data.ByteString.Short            as B.Short
 import           Data.Either                      (rights)
 import qualified Data.IntMap.Strict               as I
-import           Data.List
-import           Data.Maybe
-import           Data.Serialize
-import           Data.String
+import           Data.List                        (nub, partition, sortBy)
+import           Data.Maybe                       (fromMaybe, isNothing,
+                                                   mapMaybe)
+import           Data.Serialize                   (encode)
+import           Data.String                      (fromString)
 import           Data.String.Conversions          (cs)
 import           Data.Text                        (Text)
-import           Data.Word
-import           Haskoin
+import           Data.Word                        (Word32, Word64)
+import           Haskoin                          (Address, Block (..),
+                                                   BlockHash, BlockHeader (..),
+                                                   BlockNode (..), Network (..),
+                                                   OutPoint (..), Tx (..),
+                                                   TxHash, TxIn (..),
+                                                   TxOut (..), addrToString,
+                                                   blockHashToHex, genesisBlock,
+                                                   genesisNode, headerHash,
+                                                   isGenesis, nullOutPoint,
+                                                   scriptToAddressBS, txHash,
+                                                   txHashToHex)
 import           Network.Haskoin.Block.Headers    (computeSubsidy)
-import           Network.Haskoin.Store.Data.Types
-import           UnliftIO
+import           Network.Haskoin.Store.Data.Types (Balance (..), BlockData (..),
+                                                   BlockRef (..), BlockTx (..),
+                                                   Prev (..), Spender (..),
+                                                   StoreInput (..),
+                                                   StoreOutput (..),
+                                                   StoreRead (..),
+                                                   StoreStream (..),
+                                                   StoreWrite (..),
+                                                   Transaction (..),
+                                                   TxData (..), UnixTime,
+                                                   Unspent (..), confirmed,
+                                                   fromTransaction, isCoinbase,
+                                                   toTransaction,
+                                                   transactionData)
+import           UnliftIO                         (Exception)
 
 data ImportException
     = PrevBlockNotBest !Text
@@ -46,34 +74,22 @@ data ImportException
     | InsufficientZeroBalance !Text
     | InsufficientOutputs !Text
     | InsufficientFunds !Text
-    | InitException !InitException
     | DuplicatePrevOutput !Text
     deriving (Show, Read, Eq, Ord, Exception)
 
-initDB ::
+initBest ::
        ( StoreRead m
        , StoreWrite m
-       , StoreStream m
        , MonadLogger m
        , MonadError ImportException m
        )
     => Network
     -> m ()
-initDB net =
-    isInitialized >>= \case
-        Left e -> do
-            $(logErrorS) "BlockLogic" $
-                "Initialization exception: " <> fromString (show e)
-            throwError (InitException e)
-        Right True -> do
-            $(logDebugS) "BlockLogic" "Database is already initialized"
-            return ()
-        Right False -> do
-            $(logDebugS)
-                "BlockLogic"
-                "Initializing database by importing genesis block"
-            importBlock net (genesisBlock net) (genesisNode net)
-            setInit
+initBest net = do
+    m <- getBestBlock
+    when
+        (isNothing m)
+        (void (importBlock net (genesisBlock net) (genesisNode net)))
 
 getOldOrphans :: (Monad m, StoreStream m) => UnixTime -> ConduitT () TxHash m ()
 getOldOrphans now =
@@ -88,31 +104,37 @@ importOrphan ::
     => Network
     -> UnixTime
     -> Tx
-    -> m ()
+    -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
 importOrphan net t tx = do
     $(logDebugS) "Block" $
         "Attempting to import orphan tx " <> txHashToHex (txHash tx)
     go `catchError` ex
   where
     go = do
-        newMempoolTx net tx t >>= \case
-            True ->
-                $(logDebugS) "BlockLogic" $
-                "Succesfully imported orphan transaction: " <>
-                txHashToHex (txHash tx)
-            False ->
-                $(logDebugS) "BlockLogic" $
-                "Orphan transaction already imported: " <>
-                txHashToHex (txHash tx)
+        ret <-
+            newMempoolTx net tx t >>= \case
+                Just ths -> do
+                    $(logDebugS) "BlockLogic" $
+                        "Succesfully imported orphan transaction: " <>
+                        txHashToHex (txHash tx)
+                    return (Just ths)
+                Nothing -> do
+                    $(logDebugS) "BlockLogic" $
+                        "Orphan transaction already imported: " <>
+                        txHashToHex (txHash tx)
+                    return Nothing
         deleteOrphanTx (txHash tx)
-    ex (OrphanTx _) =
+        return ret
+    ex (OrphanTx _) = do
         $(logDebugS) "BlockLogic" $
             "Transaction still orphan: " <> txHashToHex (txHash tx)
+        return Nothing
     ex e = do
         $(logErrorS) "BlockLogic" $
             "Error importing orphan tx: " <> txHashToHex (txHash tx) <> ": " <>
             cs (show e)
         deleteOrphanTx (txHash tx)
+        return Nothing
 
 newMempoolTx ::
        ( StoreRead m
@@ -123,7 +145,7 @@ newMempoolTx ::
     => Network
     -> Tx
     -> UnixTime
-    -> m Bool
+    -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
 newMempoolTx net tx w = do
         $(logInfoS) "BlockLogic" $
             "Adding transaction to mempool: " <> txHashToHex (txHash tx)
@@ -133,7 +155,7 @@ newMempoolTx net tx w = do
                     $(logWarnS) "BlockLogic" $
                         "Transaction already exists: " <>
                         txHashToHex (txHash tx)
-                    return False
+                    return Nothing
             _ -> go
   where
     go = do
@@ -155,8 +177,8 @@ newMempoolTx net tx w = do
         let ds = map spenderHash (mapMaybe outputSpender us)
         if null ds
             then do
-                importTx net (MemRef w) w tx
-                return True
+                ths <- importTx net (MemRef w) w tx
+                return (Just ths)
             else g ds
     g ds = do
         $(logWarnS) "BlockLogic" $
@@ -171,15 +193,15 @@ newMempoolTx net tx w = do
     r ds = do
         $(logWarnS) "BlockLogic" $
             "Replacting RBF transaction with: " <> txHashToHex (txHash tx)
-        forM_ ds (deleteTx net True)
-        importTx net (MemRef w) w tx
-        return True
+        ths <- concat <$> forM ds (deleteTx net True)
+        dts <- importTx net (MemRef w) w tx
+        return (Just (nub (ths <> dts)))
     n = do
         $(logWarnS) "BlockLogic" $
             "Inserting transaction with deleted flag: " <>
             txHashToHex (txHash tx)
         insertDeletedMempoolTx tx w
-        return False
+        return Nothing
     isrbf th = transactionRBF <$> getImportTx th
 
 revertBlock ::
@@ -190,7 +212,7 @@ revertBlock ::
        )
     => Network
     -> BlockHash
-    -> m ()
+    -> m [TxHash]
 revertBlock net bh = do
         bd <-
             getBestBlock >>= \case
@@ -211,15 +233,15 @@ revertBlock net bh = do
                                 throwError (BlockNotBest (blockHashToHex bh))
         txs <-
             mapM (fmap transactionData . getImportTx) (blockDataTxs bd)
-        mapM_
+        ths <- nub . concat <$> mapM
             (deleteTx net False . txHash . snd)
             (reverse (sortTxs txs))
         setBest (prevBlock (blockDataHeader bd))
         insertBlock bd {blockDataMainChain = False}
+        return ths
 
 importBlock ::
        ( StoreRead m
-       , StoreStream m
        , StoreWrite m
        , MonadLogger m
        , MonadError ImportException m
@@ -227,7 +249,7 @@ importBlock ::
     => Network
     -> Block
     -> BlockNode
-    -> m ()
+    -> m [TxHash] -- ^ deleted transactions
 importBlock net b n = do
     mp <- filter (`elem` bths) . map snd <$> getMempool
     getBestBlock >>= \case
@@ -269,16 +291,19 @@ importBlock net b n = do
     setBlocksAtHeight (nub (headerHash (nodeHeader n) : bs)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
     $(logDebugS) "Block" "Importing or confirming block transactions..."
-    mapM_ (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
+    ths <-
+        nub . concat <$>
+        mapM (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
     $(logDebugS) "Block" $
         "Done importing transactions for block " <>
         blockHashToHex (headerHash (nodeHeader n))
+    return ths
   where
     bths = map txHash (blockTxns b)
     import_or_confirm mp x tx =
         if txHash tx `elem` mp
             then getTxData (txHash tx) >>= \case
-                     Just td -> confirmTx net td (br x) tx
+                     Just td -> confirmTx net td (br x) tx >> return []
                      Nothing -> do
                          $(logErrorS)
                              "Block"
@@ -327,7 +352,7 @@ importTx ::
     -> BlockRef
     -> Word64 -- ^ unix time
     -> Tx
-    -> m ()
+    -> m [TxHash] -- ^ deleted transactions
 importTx net br tt tx = do
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
         $(logErrorS) "BlockLogic" $
@@ -338,10 +363,12 @@ importTx net br tt tx = do
             "Attempting to import coinbase to the mempool: " <>
             txHashToHex (txHash tx)
         throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
-    us <-
+    us' <-
         if iscb
             then return []
             else forM (txIn tx) $ \TxIn {prevOutput = op} -> uns op
+    let us = map fst us'
+        ths = nub (concatMap snd us')
     when
         (not (confirmed br) &&
          sum (map unspentAmount us) < sum (map outValue (txOut tx))) $ do
@@ -372,10 +399,11 @@ importTx net br tt tx = do
     insertTx d
     updateAddressCounts net (txAddresses t) (+ 1)
     unless (confirmed br) $ insertIntoMempool (txHash tx) (memRefTime br)
+    return ths
   where
     uns op =
         getUnspent op >>= \case
-            Just u -> return u
+            Just u -> return (u, [])
             Nothing -> do
                 $(logWarnS) "BlockLogic" $
                     "No unspent output: " <> txHashToHex (outPointHash op) <>
@@ -390,7 +418,7 @@ importTx net br tt tx = do
                             fromString (show (outPointIndex op))
                         throwError (NoUnspent (cs (show op)))
                     Just Spender {spenderHash = s} -> do
-                        deleteTx net True s
+                        ths <- deleteTx net True s
                         getUnspent op >>= \case
                             Nothing -> do
                                 $(logErrorS) "BlockLogic" $
@@ -399,7 +427,7 @@ importTx net br tt tx = do
                                     " " <>
                                     fromString (show (outPointIndex op))
                                 throwError (NoUnspent (cs (show op)))
-                            Just u -> return u
+                            Just u -> return (u, ths)
     th = txHash tx
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
     ws = map Just (txWitness tx) <> repeat Nothing
@@ -537,7 +565,7 @@ deleteTx ::
     => Network
     -> Bool -- ^ only delete transaction if unconfirmed
     -> TxHash
-    -> m ()
+    -> m [TxHash] -- ^ deleted transactions
 deleteTx net mo h = do
     $(logDebugS) "BlockLogic" $ "Deleting transaction: " <> txHashToHex h
     getTxData h >>= \case
@@ -549,7 +577,7 @@ deleteTx net mo h = do
             | txDataDeleted t -> do
                 $(logWarnS) "BlockLogic" $
                     "Transaction already deleted: " <> txHashToHex h
-                return ()
+                return []
             | mo && confirmed (txDataBlock t) -> do
                 $(logErrorS) "BlockLogic" $
                     "Will not delete confirmed transaction: " <> txHashToHex h
@@ -558,7 +586,7 @@ deleteTx net mo h = do
   where
     go t = do
         ss <- nub . map spenderHash . I.elems <$> getSpenders h
-        mapM_ (deleteTx net True) ss
+        ths <- concat <$> mapM (deleteTx net True) ss
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
             delOutput net (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
@@ -566,6 +594,7 @@ deleteTx net mo h = do
         unless (confirmed (txDataBlock t)) $ deleteFromMempool h
         insertTx t {txDataDeleted = True}
         updateAddressCounts net (txDataAddresses t) (subtract 1)
+        return $ nub (h : ths)
 
 insertDeletedMempoolTx ::
        ( StoreRead m

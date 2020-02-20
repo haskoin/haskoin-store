@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.20.0
 ### Added
+- In-memory Redis-based cache.
 - Lower bounds for some dependency versions.
 
 ### Removed

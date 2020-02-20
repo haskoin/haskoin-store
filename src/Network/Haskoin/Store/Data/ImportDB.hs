@@ -3,30 +3,53 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
-{-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Store.Data.ImportDB where
 
-import           Conduit
-import           Control.Applicative
-import           Control.Monad.Except
-import           Control.Monad.Logger
+import           Control.Applicative                 ((<|>))
+import           Control.Monad                       (join)
+import           Control.Monad.Except                (MonadError)
+import           Control.Monad.Logger                (MonadLoggerIO, logDebugS)
 import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
-import           Control.Monad.Trans.Maybe
+import           Control.Monad.Trans.Maybe           (MaybeT (..), runMaybeT)
 import           Data.HashMap.Strict                 (HashMap)
 import qualified Data.HashMap.Strict                 as M
 import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
-import           Data.List
-import           Data.Maybe
+import           Data.List                           (nub)
+import           Data.Maybe                          (fromJust, isJust,
+                                                      maybeToList)
 import           Database.RocksDB                    (BatchOp)
-import           Database.RocksDB.Query
-import           Haskoin
-import           Network.Haskoin.Store.Data.KeyValue
-import           Network.Haskoin.Store.Data.Memory
-import           Network.Haskoin.Store.Data.RocksDB
-import           Network.Haskoin.Store.Data.Types
-import           UnliftIO
+import           Database.RocksDB.Query              (deleteOp, insertOp,
+                                                      writeBatch)
+import           Haskoin                             (Address, BlockHash,
+                                                      BlockHeight,
+                                                      OutPoint (..), Tx, TxHash)
+import           Network.Haskoin.Store.Data.KeyValue (AddrOutKey (..),
+                                                      AddrTxKey (..),
+                                                      BalKey (..), BestKey (..),
+                                                      BlockKey (..),
+                                                      HeightKey (..),
+                                                      MemKey (..),
+                                                      OrphanKey (..), OutVal,
+                                                      SpenderKey (..),
+                                                      TxKey (..),
+                                                      UnspentKey (..))
+import           Network.Haskoin.Store.Data.Memory   (BlockMem (..),
+                                                      emptyBlockMem,
+                                                      getMempoolH, getOrphanTxH,
+                                                      getSpenderH, getSpendersH,
+                                                      getUnspentH, withBlockMem)
+import           Network.Haskoin.Store.Data.RocksDB  (withRocksDB)
+import           Network.Haskoin.Store.Data.Types    (BalVal, Balance,
+                                                      BlockDB (..), BlockData,
+                                                      BlockRef, BlockTx (..),
+                                                      Spender, StoreRead (..),
+                                                      StoreWrite (..), TxData,
+                                                      UnixTime, Unspent,
+                                                      UnspentVal)
+import           UnliftIO                            (MonadIO, TVar, newTVarIO,
+                                                      readTVarIO)
 
 data ImportDB = ImportDB
     { importDB      :: !BlockDB
@@ -155,15 +178,6 @@ unspentOps = concatMap (uncurry f) . M.toList
     f h = map (uncurry (g h)) . I.toList
     g h i (Just u) = insertOp (UnspentKey (OutPoint h (fromIntegral i))) u
     g h i Nothing  = deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
-
-isInitializedI :: MonadIO m => ImportDB -> m (Either InitException Bool)
-isInitializedI ImportDB {importDB = db} =
-    withRocksDB db isInitialized
-
-setInitI :: MonadIO m => ImportDB -> m ()
-setInitI ImportDB {importDB = BlockDB {blockDB = db}, importHashMap = hm} = do
-    withBlockMem hm setInit
-    setInitDB db
 
 setBestI :: MonadIO m => BlockHash -> ImportDB -> m ()
 setBestI bh ImportDB {importHashMap = hm} =
@@ -300,7 +314,6 @@ getMempoolI ImportDB {importHashMap = hm, importDB = db} =
         Nothing -> withRocksDB db getMempool
 
 instance MonadIO m => StoreRead (ReaderT ImportDB m) where
-    isInitialized = R.ask >>= isInitializedI
     getBestBlock = R.ask >>= getBestBlockI
     getBlocksAtHeight h = R.ask >>= getBlocksAtHeightI h
     getBlock b = R.ask >>= getBlockI b
@@ -311,9 +324,10 @@ instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     getUnspent a = R.ask >>= getUnspentI a
     getBalance a = R.ask >>= getBalanceI a
     getMempool = R.ask >>= getMempoolI
+    getAddressesTxs = undefined
+    getAddressesUnspents = undefined
 
 instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
-    setInit = R.ask >>= setInitI
     setBest h = R.ask >>= setBestI h
     insertBlock b = R.ask >>= insertBlockI b
     setBlocksAtHeight hs g = R.ask >>= setBlocksAtHeightI hs g
@@ -330,10 +344,3 @@ instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     insertUnspent u = R.ask >>= insertUnspentI u
     deleteUnspent p = R.ask >>= deleteUnspentI p
     setBalance b = R.ask >>= setBalanceI b
-
-instance MonadIO m => StoreStream (ReaderT ImportDB m) where
-    getOrphans = undefined
-    getAddressUnspents _ _ = undefined
-    getAddressTxs _ _ = undefined
-    getAddressBalances = undefined
-    getUnspents = undefined

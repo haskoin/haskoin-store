@@ -2,11 +2,12 @@ module Haskoin.Store
     ( Store(..)
     , BlockStore
     , StoreConfig(..)
+    , StoreRead(..)
+    , StoreWrite(..)
+    , StoreStream(..)
     , StoreEvent(..)
     , BlockData(..)
     , Transaction(..)
-    , Input(..)
-    , Output(..)
     , Spender(..)
     , BlockRef(..)
     , Unspent(..)
@@ -34,21 +35,12 @@ module Haskoin.Store
     , withStore
     , runWeb
     , store
-    , getBestBlock
-    , getBlocksAtHeight
-    , getBlock
     , getTransaction
-    , getTxData
-    , getSpenders
-    , getSpender
     , fromTransaction
     , toTransaction
-    , getBalance
-    , getMempool
-    , getAddressUnspents
+    , transactionData
     , getAddressUnspentsLimit
     , getAddressesUnspentsLimit
-    , getAddressTxs
     , getAddressTxsFull
     , getAddressTxsLimit
     , getAddressesTxsFull
@@ -59,29 +51,91 @@ module Haskoin.Store
     , xpubUnspentLimit
     , xpubSummary
     , publishTx
-    , transactionData
     , isCoinbase
     , confirmed
     , cbAfterHeight
     , healthCheck
     , withBlockMem
     , withRocksDB
+    , connectRocksDB
+    , initRocksDB
     ) where
 
-import           Conduit
-import           Control.Monad
-import           Control.Monad.Logger
+import           Control.Monad                      (unless, when)
+import           Control.Monad.Logger               (MonadLoggerIO)
 import           Data.Serialize                     (decode)
-import           Haskoin
-import           Haskoin.Node
-import           Network.Haskoin.Store.Block
-import           Network.Haskoin.Store.Data.Memory
-import           Network.Haskoin.Store.Data.RocksDB
-import           Network.Haskoin.Store.Data.Types
-import           Network.Haskoin.Store.Web
+import           Haskoin                            (BlockHash (..), Inv (..),
+                                                     InvType (..),
+                                                     InvVector (..),
+                                                     Message (..),
+                                                     MessageCommand (..),
+                                                     NetworkAddress (..),
+                                                     NotFound (..), Pong (..),
+                                                     Reject (..), TxHash (..),
+                                                     VarString (..),
+                                                     sockToHostAddress)
+import           Haskoin.Node                       (ChainEvent (..),
+                                                     ChainMessage,
+                                                     ManagerMessage,
+                                                     NodeConfig (..),
+                                                     NodeEvent (..),
+                                                     PeerEvent (..), node)
+import           Network.Haskoin.Store.Block        (blockStore)
+import           Network.Haskoin.Store.Data.Memory  (withBlockMem)
+import           Network.Haskoin.Store.Data.RocksDB (connectRocksDB,
+                                                     initRocksDB, withRocksDB)
+import           Network.Haskoin.Store.Data.Types   (Balance (..),
+                                                     BinSerial (..),
+                                                     BlockConfig (..),
+                                                     BlockDB (..),
+                                                     BlockData (..),
+                                                     BlockMessage (..),
+                                                     BlockPos, BlockRef (..),
+                                                     BlockStore, BlockTx (..),
+                                                     Event (..),
+                                                     HealthCheck (..),
+                                                     JsonSerial (..), Limit,
+                                                     Offset,
+                                                     PeerInformation (..),
+                                                     PubExcept (..),
+                                                     Spender (..), Store (..),
+                                                     StoreConfig (..),
+                                                     StoreEvent (..),
+                                                     StoreRead (..),
+                                                     StoreStream (..),
+                                                     StoreWrite (..),
+                                                     Transaction (..),
+                                                     TxAfterHeight (..),
+                                                     TxId (..), UnixTime,
+                                                     Unspent (..), XPubBal (..),
+                                                     XPubUnspent (..),
+                                                     confirmed, fromTransaction,
+                                                     getTransaction, isCoinbase,
+                                                     toTransaction,
+                                                     transactionData)
+import           Network.Haskoin.Store.Web          (Except (..),
+                                                     MaxLimits (..),
+                                                     Timeouts (..),
+                                                     WebConfig (..),
+                                                     cbAfterHeight,
+                                                     getAddressTxsFull,
+                                                     getAddressTxsLimit,
+                                                     getAddressUnspentsLimit,
+                                                     getAddressesTxsFull,
+                                                     getAddressesTxsLimit,
+                                                     getAddressesUnspentsLimit,
+                                                     getPeersInformation,
+                                                     healthCheck, publishTx,
+                                                     runWeb, xpubBals,
+                                                     xpubSummary, xpubUnspent,
+                                                     xpubUnspentLimit)
 import           Network.Socket                     (SockAddr (..))
-import           NQE
-import           UnliftIO
+import           NQE                                (Inbox, Listen,
+                                                     Process (..),
+                                                     inboxToMailbox, newInbox,
+                                                     sendSTM, withProcess)
+import           UnliftIO                           (MonadUnliftIO, link,
+                                                     withAsync)
 
 withStore ::
        (MonadLoggerIO m, MonadUnliftIO m)
