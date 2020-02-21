@@ -3,38 +3,10 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages:
-- completed:
-    hackage: secp256k1-haskell-0.1.8@sha256:07de14b5ced34f09b595ccd2926e1756a83aaa596bd722f5b7e6d616b5682781,2060
-    pantry-tree:
-      size: 603
-      sha256: d88f0c3ef572f5125cd7f9bfd461f03100e2b3b1566dbc86b60547b06e42d5d0
-  original:
-    hackage: secp256k1-haskell-0.1.8
-- completed:
-    hackage: haskoin-core-0.10.1@sha256:b6b87b3c8792440b1bec00776a25f68d88d3614c317402cbd1e74d7e33164084,4159
-    pantry-tree:
-      size: 4894
-      sha256: d5bdbd4ea37ba7956c952e4fdf8212835bcf88f093c418bd4b1564af5d43caca
-  original:
-    hackage: haskoin-core-0.10.1
-- completed:
-    hackage: rocksdb-query-0.3.1@sha256:9212c84d593afd30449e5491786cef27b46d62a8e93fb98ea15eb10fea3e7182,1571
-    pantry-tree:
-      size: 383
-      sha256: b7be4a316a4779a76b8d19213cd4c1120acec59d838b8af01251b8ad24d3f027
-  original:
-    hackage: rocksdb-query-0.3.1
-- completed:
-    hackage: haskoin-node-0.9.16@sha256:9b0a42386ab067b09bbbee5bb3561a873417c78cd989128c5a01e1d8bcf02048,2314
-    pantry-tree:
-      size: 736
-      sha256: 2a4d27703593427891c0815c2bc7da7e5335cb272915bb89777878923876ec92
-  original:
-    hackage: haskoin-node-0.9.16
+packages: []
 snapshots:
 - completed:
-    size: 524154
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/14/20.yaml
-    sha256: 2f5099f69ddb6abfe64400fe1e6a604e8e628f55e6837211cd70a81eb0a8fa4d
-  original: lts-14.20
+    size: 488576
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/15/0.yaml
+    sha256: e4b6a87b47ec1cf63a7f1a0884a3b276fce2b0d174a10e8753c4f618e7983568
+  original: lts-15.0
