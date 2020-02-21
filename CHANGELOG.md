@@ -6,8 +6,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.20.0
 ### Added
-- In-memory Redis-based cache.
-- Lower bounds for some dependency versions.
+- Low version bounds for some dependencies.
+- Compatibility with GHC 8.8.
+- Faster retrieval of extended public key balances and transactions.
 
 ### Removed
 - In-memory RocksDB-based cache.
