@@ -25,6 +25,7 @@ dependencies:
   - hashable
   - haskoin-core >= 0.10.1
   - haskoin-node >= 0.9.21
+  - hedis
   - http-types
   - monad-logger
   - mtl
