@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Store.Data.Types where
+module Network.Haskoin.Store.Common where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
 import           Control.Applicative       ((<|>))
@@ -21,14 +21,22 @@ import qualified Data.ByteString           as B
 import           Data.ByteString.Short     (ShortByteString)
 import qualified Data.ByteString.Short     as B.Short
 import           Data.Default              (Default (..))
+import           Data.Function             (on)
 import           Data.Hashable             (Hashable)
 import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as M
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
+import           Data.List                 (nub, partition, sortBy)
 import           Data.Maybe                (catMaybes, isJust, listToMaybe,
                                             mapMaybe)
-import           Data.Serialize            as S
+import           Data.Serialize            (Get, Put, Putter, Serialize (..),
+                                            getListOf, getShortByteString,
+                                            getWord32be, getWord64be, getWord8,
+                                            putListOf, putShortByteString,
+                                            putWord32be, putWord64be, putWord8,
+                                            runGet, runPut)
+import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
 import qualified Data.Text.Encoding        as T
 import           Data.Word                 (Word32, Word64)
@@ -39,25 +47,62 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             BlockNode, BlockWork, HostAddress,
                                             KeyIndex, Network (..),
                                             NetworkAddress (..), OutPoint (..),
-                                            RejectCode (..), Tx (..),
-                                            TxHash (..), TxIn (..), TxOut (..),
-                                            WitnessStack, addrToJSON,
-                                            addrToString, eitherToMaybe,
+                                            PubKeyI (..), RejectCode (..),
+                                            Tx (..), TxHash (..), TxIn (..),
+                                            TxOut (..), WitnessStack,
+                                            XPubKey (..), addrToJSON,
+                                            addrToString, deriveAddr,
+                                            deriveCompatWitnessAddr,
+                                            deriveWitnessAddr, eitherToMaybe,
                                             encodeHex, headerHash,
-                                            hostToSockAddr, scriptToAddressBS,
-                                            stringToAddr, txHash)
+                                            hostToSockAddr, pubSubKey,
+                                            scriptToAddressBS, stringToAddr,
+                                            txHash, wrapPubKey, xPubAddr,
+                                            xPubCompatWitnessAddr,
+                                            xPubWitnessAddr)
 import           Haskoin.Node              (Chain, HostPort, Manager, Peer)
 import           Network.Socket            (SockAddr)
 import           NQE                       (Listen, Mailbox)
 import qualified Paths_haskoin_store       as P
 
-encodeShort :: Serialize a => a -> ShortByteString
-encodeShort = B.Short.toShort . S.encode
+data DeriveType
+    = DeriveNormal
+    | DeriveP2SH
+    | DeriveP2WPKH
+    deriving (Show, Eq, Generic, NFData, Serialize)
 
-decodeShort :: Serialize a => ShortByteString -> a
-decodeShort bs = case S.decode (B.Short.fromShort bs) of
-    Left e  -> error e
-    Right a -> a
+data XPubSpec =
+    XPubSpec
+        { xPubSpecKey    :: !XPubKey
+        , xPubDeriveType :: !DeriveType
+        } deriving (Show, Eq, Generic, NFData)
+
+instance Serialize XPubSpec where
+    put XPubSpec {xPubSpecKey = k, xPubDeriveType = t} = do
+        put (xPubDepth k)
+        put (xPubParent k)
+        put (xPubIndex k)
+        put (xPubChain k)
+        put (wrapPubKey True (xPubKey k))
+        put t
+    get = do
+        d <- get
+        p <- get
+        i <- get
+        c <- get
+        k <- get
+        t <- get
+        let x =
+                XPubKey
+                    { xPubDepth = d
+                    , xPubParent = p
+                    , xPubIndex = i
+                    , xPubChain = c
+                    , xPubKey = pubKeyPoint k
+                    }
+        return XPubSpec {xPubSpecKey = x, xPubDeriveType = t}
+
+type DeriveAddr = XPubKey -> KeyIndex -> Address
 
 -- | Mailbox for block store.
 type BlockStore = Mailbox BlockMessage
@@ -125,17 +170,110 @@ class Monad m =>
     getBlock :: BlockHash -> m (Maybe BlockData)
     getTxData :: TxHash -> m (Maybe TxData)
     getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
+    getOrphans :: m [(UnixTime, Tx)]
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
-    getBalance :: Address -> m (Maybe Balance)
+    getBalance :: Address -> m Balance
     getBalance a = head <$> getBalances [a]
-    getBalances :: [Address] -> m [(Maybe Balance)]
+    getBalances :: [Address] -> m [Balance]
     getBalances as = mapM getBalance as
     getAddressesTxs :: [Address] -> Maybe BlockRef -> Maybe Limit -> m [BlockTx]
+    getAddressTxs :: Address -> Maybe BlockRef -> Maybe Limit -> m [BlockTx]
+    getAddressTxs a = getAddressesTxs [a]
     getUnspent :: OutPoint -> m (Maybe Unspent)
+    getAddressUnspents ::
+           Address -> Maybe BlockRef -> Maybe Limit -> m [Unspent]
+    getAddressUnspents a = getAddressesUnspents [a]
     getAddressesUnspents ::
            [Address] -> Maybe BlockRef -> Maybe Limit -> m [Unspent]
-    getMempool :: m [(UnixTime, TxHash)]
+    getMempool :: m [BlockTx]
+    xPubBals :: XPubSpec -> m [XPubBal]
+    xPubBals xpub = do
+        ext <-
+            derive_until_gap
+                0
+                (deriveAddresses
+                     (deriveFunction (xPubDeriveType xpub))
+                     (pubSubKey (xPubSpecKey xpub) 0)
+                     0)
+        chg <-
+            derive_until_gap
+                1
+                (deriveAddresses
+                     (deriveFunction (xPubDeriveType xpub))
+                     (pubSubKey (xPubSpecKey xpub) 1)
+                     0)
+        return (ext ++ chg)
+      where
+        xbalance m b n = XPubBal {xPubBalPath = [m, n], xPubBal = b}
+        derive_until_gap _ [] = return []
+        derive_until_gap m as = do
+            let n = 32
+            let (as1, as2) = splitAt n as
+            bs <- getBalances (map snd as1)
+            let xbs = zipWith (xbalance m) bs (map fst as1)
+            if all nullBalance bs
+                then return xbs
+                else (xbs <>) <$> derive_until_gap m as2
+    xPubSummary :: XPubSpec -> m XPubSummary
+    xPubSummary xpub = do
+        bs <- xPubBals xpub
+        let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
+                (a, p)
+            pm = M.fromList $ map f bs
+            ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
+            ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
+            uc =
+                sum
+                    [ c
+                    | XPubBal {xPubBal = Balance {balanceUnspentCount = c}} <-
+                          bs
+                    ]
+            xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
+            rx =
+                sum
+                    [ r
+                    | XPubBal {xPubBal = Balance {balanceTotalReceived = r}} <-
+                          xt
+                    ]
+        return
+            XPubSummary
+                { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
+                , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
+                , xPubSummaryReceived = rx
+                , xPubUnspentCount = uc
+                , xPubSummaryPaths = pm
+                , xPubChangeIndex = ch
+                , xPubExternalIndex = ex
+                }
+    xPubUnspents ::
+           XPubSpec
+        -> Maybe BlockRef
+        -> Offset
+        -> Maybe Limit
+        -> m [XPubUnspent]
+    xPubUnspents xpub start offset limit = do
+        xs <- filter positive <$> xPubBals xpub
+        applyOffsetLimit offset limit <$> go xs
+      where
+        positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
+        go [] = return []
+        go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
+            uns <- getAddressUnspents a start limit
+            let xuns =
+                    map
+                        (\t ->
+                             XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
+                        uns
+            (xuns <>) <$> go xs
+    xPubTxs ::
+           XPubSpec -> Maybe BlockRef -> Offset -> Maybe Limit -> m [BlockTx]
+    xPubTxs xpub start offset limit = do
+        bs <- xPubBals xpub
+        let as = map (balanceAddress . xPubBal) bs
+        ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
+        let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
+        return $ applyOffsetLimit offset limit ts'
 
 class StoreWrite m where
     setBest :: BlockHash -> m ()
@@ -148,19 +286,33 @@ class StoreWrite m where
     deleteAddrTx :: Address -> BlockTx -> m ()
     insertAddrUnspent :: Address -> Unspent -> m ()
     deleteAddrUnspent :: Address -> Unspent -> m ()
-    setMempool :: [(UnixTime, TxHash)] -> m ()
+    setMempool :: [BlockTx] -> m ()
     insertOrphanTx :: Tx -> UnixTime -> m ()
     deleteOrphanTx :: TxHash -> m ()
     setBalance :: Balance -> m ()
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
 
-class StoreStream m where
-    getOrphans :: ConduitT i (UnixTime, Tx) m ()
-    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
-    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()
-    getAddressBalances :: ConduitT i Balance m ()
-    getUnspents :: ConduitT i Unspent m ()
+deriveAddresses :: DeriveAddr -> XPubKey -> Word32 -> [(Word32, Address)]
+deriveAddresses derive xpub start = map (\i -> (i, derive xpub i)) [start ..]
+
+deriveFunction :: DeriveType -> DeriveAddr
+deriveFunction DeriveNormal i = fst . deriveAddr i
+deriveFunction DeriveP2SH i   = fst . deriveCompatWitnessAddr i
+deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
+
+xPubAddrFunction :: DeriveType -> XPubKey -> Address
+xPubAddrFunction DeriveNormal = xPubAddr
+xPubAddrFunction DeriveP2SH   = xPubCompatWitnessAddr
+xPubAddrFunction DeriveP2WPKH = xPubWitnessAddr
+
+encodeShort :: Serialize a => a -> ShortByteString
+encodeShort = B.Short.toShort . S.encode
+
+decodeShort :: Serialize a => ShortByteString -> a
+decodeShort bs = case S.decode (B.Short.fromShort bs) of
+    Left e  -> error e
+    Right a -> a
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
@@ -236,12 +388,15 @@ instance BinSerial a => BinSerial [a] where
 
 -- | Reference to a block where a transaction is stored.
 data BlockRef
-    = BlockRef { blockRefHeight :: !BlockHeight
+    = BlockRef
+          { blockRefHeight :: !BlockHeight
       -- ^ block height in the chain
-               , blockRefPos    :: !Word32
+          , blockRefPos    :: !Word32
       -- ^ position of transaction within the block
-                }
-    | MemRef { memRefTime :: !UnixTime }
+          }
+    | MemRef
+          { memRefTime :: !UnixTime
+          }
     deriving (Show, Read, Eq, Ord, Generic, Hashable, NFData)
 
 -- | Serialized entities will sort in reverse order.
@@ -349,6 +504,15 @@ zeroBalance a =
         , balanceTxCount = 0
         , balanceTotalReceived = 0
         }
+
+nullBalance :: Balance -> Bool
+nullBalance Balance { balanceAmount = 0
+                    , balanceUnspentCount = 0
+                    , balanceZero = 0
+                    , balanceTxCount = 0
+                    , balanceTotalReceived = 0
+                    } = True
+nullBalance _ = False
 
 -- | JSON serialization for 'Balance'.
 balancePairs :: A.KeyValue kv => Network -> Balance -> [kv]
@@ -958,7 +1122,7 @@ instance BinSerial XPubBal where
 data XPubUnspent = XPubUnspent
     { xPubUnspentPath :: ![KeyIndex]
     , xPubUnspent     :: !Unspent
-    } deriving (Show, Eq, Generic, NFData)
+    } deriving (Show, Eq, Generic, Serialize, NFData)
 
 -- | JSON serialization for 'XPubUnspent'.
 xPubUnspentPairs :: A.KeyValue kv => Network -> XPubUnspent -> [kv]
@@ -1281,8 +1445,6 @@ data BlockMessage
       -- ^ peer has transactions available
     | BlockPing !(Listen ())
       -- ^ internal housekeeping ping
-    | PurgeMempool
-      -- ^ purge mempool transactions
 
 -- | Events that the store can generate.
 data StoreEvent
@@ -1330,12 +1492,35 @@ instance Show PubExcept where
 
 instance Exception PubExcept
 
-applyOffsetLimit :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
-applyOffsetLimit offset limit = applyOffset offset >> applyLimit limit
+applyOffsetLimit :: Offset -> Maybe Limit -> [a] -> [a]
+applyOffsetLimit offset limit = applyLimit limit . applyOffset offset
 
-applyOffset :: Monad m => Offset -> ConduitT i i m ()
-applyOffset = dropC . fromIntegral
+applyOffset :: Offset -> [a] -> [a]
+applyOffset = drop . fromIntegral
 
-applyLimit :: Monad m => Maybe Limit -> ConduitT i i m ()
-applyLimit Nothing  = mapC id
-applyLimit (Just l) = takeC (fromIntegral l)
+applyLimit :: Maybe Limit -> [a] -> [a]
+applyLimit Nothing  = id
+applyLimit (Just l) = take (fromIntegral l)
+
+applyOffsetLimitC :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
+applyOffsetLimitC offset limit = applyOffsetC offset >> applyLimitC limit
+
+applyOffsetC :: Monad m => Offset -> ConduitT i i m ()
+applyOffsetC = dropC . fromIntegral
+
+applyLimitC :: Monad m => Maybe Limit -> ConduitT i i m ()
+applyLimitC Nothing  = mapC id
+applyLimitC (Just l) = takeC (fromIntegral l)
+
+sortTxs :: [Tx] -> [(Word32, Tx)]
+sortTxs txs = go $ zip [0 ..] txs
+  where
+    go [] = []
+    go ts =
+        let (is, ds) =
+                partition
+                    (all ((`notElem` map (txHash . snd) ts) .
+                          outPointHash . prevOutput) .
+                     txIn . snd)
+                    ts
+         in is <> go ds

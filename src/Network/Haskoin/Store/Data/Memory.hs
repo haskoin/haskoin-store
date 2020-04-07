@@ -20,19 +20,18 @@ import           Haskoin                             (Address, BlockHash,
                                                       BlockHeight,
                                                       OutPoint (..), Tx, TxHash,
                                                       headerHash, txHash)
-import           Network.Haskoin.Store.Data.KeyValue (OutVal (..))
-import           Network.Haskoin.Store.Data.Types    (BalVal, Balance,
+import           Network.Haskoin.Store.Common        (BalVal, Balance,
                                                       BlockData (..), BlockRef,
                                                       BlockTx (..), Limit,
                                                       Spender, StoreRead (..),
-                                                      StoreStream (..),
                                                       StoreWrite (..),
                                                       TxData (..), UnixTime,
                                                       Unspent (..), UnspentVal,
-                                                      balanceToVal,
+                                                      applyLimit, balanceToVal,
                                                       unspentToVal,
                                                       valToBalance,
-                                                      valToUnspent)
+                                                      valToUnspent, zeroBalance)
+import           Network.Haskoin.Store.Data.KeyValue (OutVal (..))
 import           UnliftIO
 
 withBlockMem :: MonadIO m => TVar BlockMem -> ReaderT (TVar BlockMem) m a -> m a
@@ -48,7 +47,7 @@ data BlockMem = BlockMem
     , hBalance :: !(HashMap Address BalVal)
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
-    , hMempool :: !(Maybe [(UnixTime, TxHash)])
+    , hMempool :: !(Maybe [BlockTx])
     , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
     } deriving (Eq, Show)
 
@@ -88,14 +87,15 @@ getSpenderH op db = do
 getSpendersH :: TxHash -> BlockMem -> IntMap (Maybe Spender)
 getSpendersH t = M.lookupDefault I.empty t . hSpender
 
-getBalanceH :: Address -> BlockMem -> Maybe Balance
-getBalanceH a = fmap (valToBalance a) . M.lookup a . hBalance
+getBalanceH :: Address -> BlockMem -> Balance
+getBalanceH a =
+    fromMaybe (zeroBalance a) . fmap (valToBalance a) . M.lookup a . hBalance
 
-getMempoolH :: BlockMem -> Maybe [(UnixTime, TxHash)]
+getMempoolH :: BlockMem -> Maybe [BlockTx]
 getMempoolH = hMempool
 
-getOrphansH :: Monad m => BlockMem -> ConduitT i (UnixTime, Tx) m ()
-getOrphansH = yieldMany . catMaybes . M.elems . hOrphans
+getOrphansH :: BlockMem -> [(UnixTime, Tx)]
+getOrphansH = catMaybes . M.elems . hOrphans
 
 getOrphanTxH :: TxHash -> BlockMem -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
@@ -113,29 +113,25 @@ getUnspentsH BlockMem {hUnspent = us} =
 
 getAddressesTxsH ::
        [Address] -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [BlockTx]
-getAddressesTxsH addrs start limit db =
-    case limit of
-        Nothing -> g
-        Just l  -> take (fromIntegral l) g
+getAddressesTxsH addrs start limit db = applyLimit limit xs
   where
-    g =
+    xs =
         nub . sortBy (flip compare `on` blockTxBlock) . concat $
-        map (\a -> getAddressTxsH a start db) addrs
+        map (\a -> getAddressTxsH a start limit db) addrs
 
-getAddressTxsH :: Address -> Maybe BlockRef -> BlockMem -> [BlockTx]
-getAddressTxsH a mbr db =
+getAddressTxsH ::
+       Address -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [BlockTx]
+getAddressTxsH addr start limit db =
+    applyLimit limit .
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
-    M.lookupDefault M.empty a (hAddrTx db)
+    M.lookupDefault M.empty addr (hAddrTx db)
   where
     f b hm = map (uncurry (g b)) $ M.toList hm
-    g b h' True =
-        Just
-            BlockTx
-                {blockTxBlock = b, blockTxHash = h'}
+    g b h' True = Just BlockTx {blockTxBlock = b, blockTxHash = h'}
     g _ _ False = Nothing
     h BlockTx {blockTxBlock = b} =
-        case mbr of
+        case start of
             Nothing -> False
             Just br -> b > br
 
@@ -145,21 +141,19 @@ getAddressBalancesH BlockMem {hBalance = bm} =
 
 getAddressesUnspentsH ::
        [Address] -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [Unspent]
-getAddressesUnspentsH addrs start limit db =
-    case limit of
-        Nothing -> g
-        Just l  -> take (fromIntegral l) g
+getAddressesUnspentsH addrs start limit db = applyLimit limit xs
   where
-    g =
+    xs =
         nub . sortBy (flip compare `on` unspentBlock) . concat $
-        map (\a -> getAddressUnspentsH a start db) addrs
+        map (\a -> getAddressUnspentsH a start limit db) addrs
 
 getAddressUnspentsH ::
-       Address -> Maybe BlockRef -> BlockMem -> [Unspent]
-getAddressUnspentsH a mbr db =
+       Address -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [Unspent]
+getAddressUnspentsH addr start limit db =
+    applyLimit limit .
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
-    M.lookupDefault M.empty a (hAddrOut db)
+    M.lookupDefault M.empty addr (hAddrOut db)
   where
     f b hm = map (uncurry (g b)) $ M.toList hm
     g b p (Just u) =
@@ -172,7 +166,7 @@ getAddressUnspentsH a mbr db =
                 }
     g _ _ Nothing = Nothing
     h Unspent {unspentBlock = b} =
-        case mbr of
+        case start of
             Nothing -> False
             Just br -> b > br
 
@@ -261,7 +255,7 @@ deleteAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-setMempoolH :: [(UnixTime, TxHash)] -> BlockMem -> BlockMem
+setMempoolH :: [BlockTx] -> BlockMem -> BlockMem
 setMempoolH xs db = db {hMempool = Just xs}
 
 insertOrphanTxH :: Tx -> UnixTime -> BlockMem -> BlockMem
@@ -337,23 +331,15 @@ instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where
     getAddressesUnspents addr start limit = do
         v <- R.ask >>= readTVarIO
         return $ getAddressesUnspentsH addr start limit v
-
-instance MonadIO m => StoreStream (ReaderT (TVar BlockMem) m) where
     getOrphans = do
         v <- R.ask >>= readTVarIO
-        getOrphansH v
-    getAddressTxs a m = do
+        return $ getOrphansH v
+    getAddressTxs addr start limit = do
         v <- R.ask >>= readTVarIO
-        yieldMany $ getAddressTxsH a m v
-    getAddressUnspents a m = do
+        return $ getAddressTxsH addr start limit v
+    getAddressUnspents addr start limit = do
         v <- R.ask >>= readTVarIO
-        yieldMany $ getAddressUnspentsH a m v
-    getAddressBalances = do
-        v <- R.ask >>= readTVarIO
-        getAddressBalancesH v
-    getUnspents = do
-        v <- R.ask >>= readTVarIO
-        getUnspentsH v
+        return $ getAddressUnspentsH addr start limit v
 
 instance (MonadIO m) => StoreWrite (ReaderT (TVar BlockMem) m) where
     setBest h = do

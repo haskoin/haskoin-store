@@ -4,24 +4,23 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Network.Haskoin.Store.Data.KeyValue where
 
-import           Control.Monad                    (guard)
-import           Data.ByteString                  (ByteString)
-import qualified Data.ByteString                  as B
-import qualified Data.ByteString.Short            as B.Short
-import           Data.Hashable                    (Hashable)
-import           Data.Serialize                   (Serialize (..), getBytes,
-                                                   getWord8, putWord8)
-import           Data.Word                        (Word32, Word64)
-import qualified Database.RocksDB.Query           as R
-import           GHC.Generics                     (Generic)
-import           Haskoin                          (Address, BlockHash,
-                                                   BlockHeight, OutPoint (..),
-                                                   Tx, TxHash)
-import           Network.Haskoin.Store.Data.Types (BalVal, BlockData, BlockRef,
-                                                   BlockTx (..), Spender,
-                                                   TxData, UnixTime,
-                                                   Unspent (..), UnspentVal,
-                                                   getUnixTime, putUnixTime)
+import           Control.Monad                (guard)
+import           Data.ByteString              (ByteString)
+import qualified Data.ByteString              as B
+import qualified Data.ByteString.Short        as B.Short
+import           Data.Hashable                (Hashable)
+import           Data.Serialize               (Serialize (..), getBytes,
+                                               getWord8, putWord8)
+import           Data.Word                    (Word32, Word64)
+import qualified Database.RocksDB.Query       as R
+import           GHC.Generics                 (Generic)
+import           Haskoin                      (Address, BlockHash, BlockHeight,
+                                               OutPoint (..), Tx, TxHash)
+import           Network.Haskoin.Store.Common (BalVal, BlockData, BlockRef,
+                                               BlockTx (..), Spender, TxData,
+                                               UnixTime, Unspent (..),
+                                               UnspentVal, getUnixTime,
+                                               putUnixTime)
 
 -- | Database key for an address transaction.
 data AddrTxKey

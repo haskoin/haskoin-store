@@ -60,10 +60,10 @@ netNames = intercalate "|" (map getNetworkName allNets)
 defMaxLimits :: MaxLimits
 defMaxLimits =
     MaxLimits
-        { maxLimitCount = 10000
-        , maxLimitFull = 500
+        { maxLimitCount = 20000
+        , maxLimitFull = 5000
         , maxLimitOffset = 50000
-        , maxLimitDefault = 100
+        , maxLimitDefault = 2000
         }
 
 defTimeouts :: Timeouts

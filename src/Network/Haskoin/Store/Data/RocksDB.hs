@@ -7,7 +7,6 @@ import           Conduit                             (ConduitT, MonadResource,
                                                       mapC, runConduit,
                                                       runResourceT, sinkList,
                                                       (.|))
-import           Control.Monad                       (forM_)
 import           Control.Monad.Except                (runExceptT, throwError)
 import           Control.Monad.Reader                (ReaderT, ask, runReaderT)
 import           Data.Function                       (on)
@@ -26,6 +25,16 @@ import           Database.RocksDB.Query              (insert, matching,
 import           Haskoin                             (Address, BlockHash,
                                                       BlockHeight,
                                                       OutPoint (..), Tx, TxHash)
+import           Network.Haskoin.Store.Common        (Balance, BlockDB (..),
+                                                      BlockData, BlockRef (..),
+                                                      BlockTx (..), Limit,
+                                                      Spender, StoreRead (..),
+                                                      TxData, UnixTime,
+                                                      Unspent (..),
+                                                      UnspentVal (..),
+                                                      applyLimit, applyLimitC,
+                                                      valToBalance,
+                                                      valToUnspent, zeroBalance)
 import           Network.Haskoin.Store.Data.KeyValue (AddrOutKey (..),
                                                       AddrTxKey (..),
                                                       BalKey (..), BestKey (..),
@@ -39,15 +48,6 @@ import           Network.Haskoin.Store.Data.KeyValue (AddrOutKey (..),
                                                       UnspentKey (..),
                                                       VersionKey (..),
                                                       toUnspent)
-import           Network.Haskoin.Store.Data.Types    (Balance, BlockDB (..),
-                                                      BlockData, BlockRef,
-                                                      BlockTx (..), Limit,
-                                                      Spender, StoreRead (..),
-                                                      StoreStream (..), TxData,
-                                                      UnixTime, Unspent (..),
-                                                      UnspentVal (..),
-                                                      applyLimit, valToBalance,
-                                                      valToUnspent)
 import           UnliftIO                            (MonadIO, liftIO)
 
 dataVersion :: Word32
@@ -125,20 +125,24 @@ getSpendersDB th BlockDB {blockDBopts = opts, blockDB = db} =
     f (SpenderKey op) s = (fromIntegral (outPointIndex op), s)
     f _ _               = undefined
 
-getBalanceDB :: MonadIO m => Address -> BlockDB -> m (Maybe Balance)
+getBalanceDB :: MonadIO m => Address -> BlockDB -> m Balance
 getBalanceDB a BlockDB {blockDBopts = opts, blockDB = db} =
-    fmap (valToBalance a) <$> retrieve db opts (BalKey a)
+    fromMaybe (zeroBalance a) . fmap (valToBalance a) <$>
+    retrieve db opts (BalKey a)
 
-getMempoolDB :: MonadIO m => BlockDB -> m [(UnixTime, TxHash)]
+getMempoolDB :: MonadIO m => BlockDB -> m [BlockTx]
 getMempoolDB BlockDB {blockDBopts = opts, blockDB = db} =
-    fromMaybe [] <$> retrieve db opts MemKey
+    fmap f . fromMaybe [] <$> retrieve db opts MemKey
+  where
+    f (t, h) = BlockTx {blockTxBlock = MemRef t, blockTxHash = h}
 
 getOrphansDB ::
-       (MonadIO m, MonadResource m)
+       MonadIO m
     => BlockDB
-    -> ConduitT i (UnixTime, Tx) m ()
+    -> m [(UnixTime, Tx)]
 getOrphansDB BlockDB {blockDBopts = opts, blockDB = db} =
-    matching db opts OrphanKeyS .| mapC snd
+    liftIO . runResourceT . runConduit $
+    matching db opts OrphanKeyS .| mapC snd .| sinkList
 
 getOrphanTxDB :: MonadIO m => TxHash -> BlockDB -> m (Maybe (UnixTime, Tx))
 getOrphanTxDB h BlockDB {blockDBopts = opts, blockDB = db} =
@@ -151,29 +155,24 @@ getAddressesTxsDB ::
     -> Maybe Limit
     -> BlockDB
     -> m [BlockTx]
-getAddressesTxsDB addrs start limit db =
-    liftIO . runResourceT $ do
-        ts <-
-            runConduit $
-            forM_ addrs (\a -> getAddressTxsDB a start db .| applyLimit limit) .|
-            sinkList
-        let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
-        return $
-            case limit of
-                Just l  -> take (fromIntegral l) ts'
-                Nothing -> ts'
+getAddressesTxsDB addrs start limit db = do
+    ts <- concat <$> mapM (\a -> getAddressTxsDB a start limit db) addrs
+    let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
+    return $ applyLimit limit ts'
 
 getAddressTxsDB ::
-       (MonadIO m, MonadResource m)
+       MonadIO m
     => Address
     -> Maybe BlockRef
+    -> Maybe Limit
     -> BlockDB
-    -> ConduitT i BlockTx m ()
-getAddressTxsDB a mbr BlockDB {blockDBopts = opts, blockDB = db} =
-    x .| mapC (uncurry f)
+    -> m [BlockTx]
+getAddressTxsDB a start limit BlockDB {blockDBopts = opts, blockDB = db} =
+    liftIO . runResourceT . runConduit $
+        x .| applyLimitC limit .| mapC (uncurry f) .| sinkList
   where
     x =
-        case mbr of
+        case start of
             Nothing -> matching db opts (AddrTxKeyA a)
             Just br -> matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a br)
     f AddrTxKey {addrTxKeyT = t} () = t
@@ -205,31 +204,24 @@ getAddressesUnspentsDB ::
     -> Maybe Limit
     -> BlockDB
     -> m [Unspent]
-getAddressesUnspentsDB addrs start limit bdb =
-    liftIO . runResourceT $ do
-        us <-
-            runConduit $
-            forM_
-                addrs
-                (\a -> getAddressUnspentsDB a start bdb .| applyLimit limit) .|
-            sinkList
-        let us' = nub $ sortBy (flip compare `on` unspentBlock) us
-        return $
-            case limit of
-                Just l  -> take (fromIntegral l) us'
-                Nothing -> us'
+getAddressesUnspentsDB addrs start limit bdb = do
+    us <- concat <$> mapM (\a -> getAddressUnspentsDB a start limit bdb) addrs
+    let us' = nub $ sortBy (flip compare `on` unspentBlock) us
+    return $ applyLimit limit us'
 
 getAddressUnspentsDB ::
-       (MonadIO m, MonadResource m)
+       MonadIO m
     => Address
     -> Maybe BlockRef
+    -> Maybe Limit
     -> BlockDB
-    -> ConduitT i Unspent m ()
-getAddressUnspentsDB a mbr BlockDB {blockDBopts = opts, blockDB = db} =
-    x .| mapC (uncurry toUnspent)
+    -> m [Unspent]
+getAddressUnspentsDB a start limit BlockDB {blockDBopts = opts, blockDB = db} =
+    liftIO . runResourceT . runConduit $
+    x .| applyLimitC limit .| mapC (uncurry toUnspent) .| sinkList
   where
     x =
-        case mbr of
+        case start of
             Nothing -> matching db opts (AddrOutKeyA a)
             Just br -> matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a br)
 
@@ -260,10 +252,6 @@ instance MonadIO m => StoreRead (ReaderT BlockDB m) where
         ask >>= getAddressesTxsDB addrs start limit
     getAddressesUnspents addrs start limit =
         ask >>= getAddressesUnspentsDB addrs start limit
-
-instance (MonadResource m, MonadIO m) => StoreStream (ReaderT BlockDB m) where
     getOrphans = ask >>= getOrphansDB
-    getAddressUnspents a b = ask >>= getAddressUnspentsDB a b
-    getAddressTxs a b = ask >>= getAddressTxsDB a b
-    getAddressBalances = ask >>= getAddressBalancesDB
-    getUnspents = ask >>= getUnspentsDB
+    getAddressUnspents a b c = ask >>= getAddressUnspentsDB a b c
+    getAddressTxs a b c = ask >>= getAddressTxsDB a b c

@@ -3,7 +3,14 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    hackage: haskoin-node-0.9.21@sha256:652593a472e9b6a5fc682764e531eec59beb7df68ad1fb14fe8c5212071818f9,2314
+    pantry-tree:
+      size: 736
+      sha256: e75568cf129b93eed0ee3599eceb88c37baf404c93a50af45a21eb2283ee7636
+  original:
+    hackage: haskoin-node-0.9.21
 snapshots:
 - completed:
     size: 488576

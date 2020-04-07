@@ -4,7 +4,6 @@ module Haskoin.Store
     , StoreConfig(..)
     , StoreRead(..)
     , StoreWrite(..)
-    , StoreStream(..)
     , StoreEvent(..)
     , BlockData(..)
     , Transaction(..)
@@ -46,10 +45,6 @@ module Haskoin.Store
     , getAddressesTxsFull
     , getAddressesTxsLimit
     , getPeersInformation
-    , xpubBals
-    , xpubUnspent
-    , xpubUnspentLimit
-    , xpubSummary
     , publishTx
     , isCoinbase
     , confirmed
@@ -59,6 +54,8 @@ module Haskoin.Store
     , withRocksDB
     , connectRocksDB
     , initRocksDB
+    , zeroBalance
+    , nullBalance
     ) where
 
 import           Control.Monad                      (unless, when)
@@ -81,10 +78,7 @@ import           Haskoin.Node                       (ChainEvent (..),
                                                      NodeEvent (..),
                                                      PeerEvent (..), node)
 import           Network.Haskoin.Store.Block        (blockStore)
-import           Network.Haskoin.Store.Data.Memory  (withBlockMem)
-import           Network.Haskoin.Store.Data.RocksDB (connectRocksDB,
-                                                     initRocksDB, withRocksDB)
-import           Network.Haskoin.Store.Data.Types   (Balance (..),
+import           Network.Haskoin.Store.Common       (Balance (..),
                                                      BinSerial (..),
                                                      BlockConfig (..),
                                                      BlockDB (..),
@@ -102,7 +96,6 @@ import           Network.Haskoin.Store.Data.Types   (Balance (..),
                                                      StoreConfig (..),
                                                      StoreEvent (..),
                                                      StoreRead (..),
-                                                     StoreStream (..),
                                                      StoreWrite (..),
                                                      Transaction (..),
                                                      TxAfterHeight (..),
@@ -111,8 +104,12 @@ import           Network.Haskoin.Store.Data.Types   (Balance (..),
                                                      XPubUnspent (..),
                                                      confirmed, fromTransaction,
                                                      getTransaction, isCoinbase,
-                                                     toTransaction,
-                                                     transactionData)
+                                                     nullBalance, toTransaction,
+                                                     transactionData,
+                                                     zeroBalance)
+import           Network.Haskoin.Store.Data.Memory  (withBlockMem)
+import           Network.Haskoin.Store.Data.RocksDB (connectRocksDB,
+                                                     initRocksDB, withRocksDB)
 import           Network.Haskoin.Store.Web          (Except (..),
                                                      MaxLimits (..),
                                                      Timeouts (..),
@@ -126,9 +123,7 @@ import           Network.Haskoin.Store.Web          (Except (..),
                                                      getAddressesUnspentsLimit,
                                                      getPeersInformation,
                                                      healthCheck, publishTx,
-                                                     runWeb, xpubBals,
-                                                     xpubSummary, xpubUnspent,
-                                                     xpubUnspentLimit)
+                                                     runWeb)
 import           Network.Socket                     (SockAddr (..))
 import           NQE                                (Inbox, Listen,
                                                      Process (..),

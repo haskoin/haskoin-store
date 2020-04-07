@@ -2,13 +2,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell   #-}
 module Network.Haskoin.Store.Data.ImportDB where
 
 import           Control.Applicative                 ((<|>))
 import           Control.Monad                       (join)
 import           Control.Monad.Except                (MonadError)
-import           Control.Monad.Logger                (MonadLoggerIO, logDebugS)
 import           Control.Monad.Reader                (ReaderT)
 import qualified Control.Monad.Reader                as R
 import           Control.Monad.Trans.Maybe           (MaybeT (..), runMaybeT)
@@ -17,14 +15,23 @@ import qualified Data.HashMap.Strict                 as M
 import           Data.IntMap.Strict                  (IntMap)
 import qualified Data.IntMap.Strict                  as I
 import           Data.List                           (nub)
-import           Data.Maybe                          (fromJust, isJust,
-                                                      maybeToList)
+import           Data.Maybe                          (fromJust, fromMaybe,
+                                                      isJust, maybeToList)
 import           Database.RocksDB                    (BatchOp)
 import           Database.RocksDB.Query              (deleteOp, insertOp,
                                                       writeBatch)
 import           Haskoin                             (Address, BlockHash,
                                                       BlockHeight,
                                                       OutPoint (..), Tx, TxHash)
+import           Network.Haskoin.Store.Common        (BalVal, Balance,
+                                                      BlockDB (..), BlockData,
+                                                      BlockRef (..),
+                                                      BlockTx (..), Spender,
+                                                      StoreRead (..),
+                                                      StoreWrite (..), TxData,
+                                                      UnixTime, Unspent,
+                                                      UnspentVal, nullBalance,
+                                                      zeroBalance)
 import           Network.Haskoin.Store.Data.KeyValue (AddrOutKey (..),
                                                       AddrTxKey (..),
                                                       BalKey (..), BestKey (..),
@@ -41,13 +48,6 @@ import           Network.Haskoin.Store.Data.Memory   (BlockMem (..),
                                                       getSpenderH, getSpendersH,
                                                       getUnspentH, withBlockMem)
 import           Network.Haskoin.Store.Data.RocksDB  (withRocksDB)
-import           Network.Haskoin.Store.Data.Types    (BalVal, Balance,
-                                                      BlockDB (..), BlockData,
-                                                      BlockRef, BlockTx (..),
-                                                      Spender, StoreRead (..),
-                                                      StoreWrite (..), TxData,
-                                                      UnixTime, Unspent,
-                                                      UnspentVal)
 import           UnliftIO                            (MonadIO, TVar, newTVarIO,
                                                       readTVarIO)
 
@@ -57,17 +57,12 @@ data ImportDB = ImportDB
     }
 
 runImportDB ::
-       (MonadError e m, MonadLoggerIO m)
-    => BlockDB
-    -> ReaderT ImportDB m a
-    -> m a
+       (MonadIO m, MonadError e m) => BlockDB -> ReaderT ImportDB m a -> m a
 runImportDB bdb@BlockDB {blockDB = db} f = do
     hm <- newTVarIO emptyBlockMem
     x <- R.runReaderT f ImportDB {importDB = bdb, importHashMap = hm}
     ops <- hashMapOps <$> readTVarIO hm
-    $(logDebugS) "ImportDB" "Committing changes to database"
     writeBatch db ops
-    $(logDebugS) "ImportDB" "Finished committing changes to database"
     return x
 
 hashMapOps :: BlockMem -> [BatchOp]
@@ -163,8 +158,10 @@ addrOutOps = concat . concatMap (uncurry f) . M.toList
     h a b p Nothing =
         deleteOp AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p}
 
-mempoolOp :: [(UnixTime, TxHash)] -> BatchOp
-mempoolOp = insertOp MemKey
+mempoolOp :: [BlockTx] -> BatchOp
+mempoolOp =
+    insertOp MemKey .
+    map (\BlockTx {blockTxBlock = MemRef t, blockTxHash = h} -> (t, h))
 
 orphanOps :: HashMap TxHash (Maybe (UnixTime, Tx)) -> [BatchOp]
 orphanOps = map (uncurry f) . M.toList
@@ -219,7 +216,7 @@ deleteAddrUnspentI :: MonadIO m => Address -> Unspent -> ImportDB -> m ()
 deleteAddrUnspentI a u ImportDB {importHashMap = hm} =
     withBlockMem hm $ deleteAddrUnspent a u
 
-setMempoolI :: MonadIO m => [(UnixTime, TxHash)] -> ImportDB -> m ()
+setMempoolI :: MonadIO m => [BlockTx] -> ImportDB -> m ()
 setMempoolI xs ImportDB {importHashMap = hm} = withBlockMem hm $ setMempool xs
 
 insertOrphanTxI :: MonadIO m => Tx -> UnixTime -> ImportDB -> m ()
@@ -278,12 +275,24 @@ getSpendersI t ImportDB {importDB = db, importHashMap = hm} = do
     dsm <- I.map Just <$> withRocksDB db (getSpenders t)
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
-getBalanceI :: MonadIO m => Address -> ImportDB -> m (Maybe Balance)
+getBalanceI :: MonadIO m => Address -> ImportDB -> m Balance
 getBalanceI a ImportDB {importDB = db, importHashMap = hm} =
-    runMaybeT $ MaybeT f <|> MaybeT g
+    fromMaybe (zeroBalance a) <$> runMaybeT (MaybeT f <|> MaybeT g)
   where
-    f = withBlockMem hm $ getBalance a
-    g = withRocksDB db $ getBalance a
+    f =
+        withBlockMem hm $
+        getBalance a >>= \b ->
+            return $
+            if nullBalance b
+                then Nothing
+                else Just b
+    g =
+        withRocksDB db $
+        getBalance a >>= \b ->
+            return $
+            if nullBalance b
+                then Nothing
+                else Just b
 
 setBalanceI :: MonadIO m => Balance -> ImportDB -> m ()
 setBalanceI b ImportDB {importHashMap = hm} =
@@ -307,7 +316,7 @@ deleteUnspentI p ImportDB {importHashMap = hm} =
 getMempoolI ::
        MonadIO m
     => ImportDB
-    -> m [(UnixTime, TxHash)]
+    -> m [BlockTx]
 getMempoolI ImportDB {importHashMap = hm, importDB = db} =
     getMempoolH <$> readTVarIO hm >>= \case
         Just xs -> return xs
@@ -326,6 +335,7 @@ instance MonadIO m => StoreRead (ReaderT ImportDB m) where
     getMempool = R.ask >>= getMempoolI
     getAddressesTxs = undefined
     getAddressesUnspents = undefined
+    getOrphans = undefined
 
 instance MonadIO m => StoreWrite (ReaderT ImportDB m) where
     setBest h = R.ask >>= setBestI h
