@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.20.0'
+  version: '0.20.1'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp

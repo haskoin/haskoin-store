@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.20.1
+### Changed
+- Refactor code greatly.
+- Depend on new Haskoin Store package to avoid missing tx broadcasts.
+- Merge StoreStream class into StoreRead.
+- Move former streaming functions to use lists instead of conduits.
+- Remove excessively verbose debugging.
+
 ## 0.20.0
 ### Added
 - Set minimum version bounds for some dependencies.
