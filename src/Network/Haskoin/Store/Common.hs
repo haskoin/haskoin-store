@@ -58,8 +58,9 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             xPubWitnessAddr)
 import           Haskoin.Node              (Chain, HostPort, Manager, Peer)
 import           Network.Socket            (SockAddr)
-import           NQE                       (Listen, Mailbox)
+import           NQE                       (Listen, Mailbox, send)
 import qualified Paths_haskoin_store       as P
+import           UnliftIO                  (MonadIO)
 
 data DeriveType
     = DeriveNormal
@@ -72,6 +73,15 @@ data XPubSpec =
         { xPubSpecKey    :: !XPubKey
         , xPubDeriveType :: !DeriveType
         } deriving (Show, Eq, Generic, NFData)
+
+data CacheMessage
+    = CacheXPub !XPubSpec
+    | CacheNewTx !TxHash
+    | CacheDelTx !TxHash
+    | CacheNewBlock
+    deriving (Show, Eq, Generic, NFData)
+
+type Cache = Mailbox CacheMessage
 
 instance Serialize XPubSpec where
     put XPubSpec {xPubSpecKey = k, xPubDeriveType = t} = do
@@ -1483,3 +1493,15 @@ sortTxs txs = go $ zip [0 ..] txs
                      txIn . snd)
                     ts
          in is <> go ds
+
+cacheXPub :: MonadIO m => Cache -> XPubSpec -> m ()
+cacheXPub cache xpub = CacheXPub xpub `send` cache
+
+cacheNewTx :: MonadIO m => Cache -> TxHash -> m ()
+cacheNewTx cache tx = CacheNewTx tx `send` cache
+
+cacheDelTx :: MonadIO m => Cache -> TxHash -> m ()
+cacheDelTx cache tx = CacheDelTx tx `send` cache
+
+cacheNewBlock :: MonadIO m => Cache -> m ()
+cacheNewBlock = send CacheNewBlock
