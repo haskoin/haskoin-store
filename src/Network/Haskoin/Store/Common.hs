@@ -6,10 +6,9 @@ module Network.Haskoin.Store.Common where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
 import           Control.Applicative       ((<|>))
-import           Control.Arrow             (first)
 import           Control.DeepSeq           (NFData)
 import           Control.Exception         (Exception)
-import           Control.Monad             (forM, guard, mzero)
+import           Control.Monad             (guard, mzero)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import           Data.Aeson                (Encoding, ToJSON (..), Value (..),
@@ -23,8 +22,6 @@ import qualified Data.ByteString.Short     as B.Short
 import           Data.Default              (Default (..))
 import           Data.Function             (on)
 import           Data.Hashable             (Hashable)
-import           Data.HashMap.Strict       (HashMap)
-import qualified Data.HashMap.Strict       as M
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
 import           Data.List                 (nub, partition, sortBy)
@@ -34,8 +31,7 @@ import           Data.Serialize            (Get, Put, Putter, Serialize (..),
                                             getListOf, getShortByteString,
                                             getWord32be, getWord64be, getWord8,
                                             putListOf, putShortByteString,
-                                            putWord32be, putWord64be, putWord8,
-                                            runGet, runPut)
+                                            putWord32be, putWord64be, putWord8)
 import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
 import qualified Data.Text.Encoding        as T
@@ -218,10 +214,7 @@ class Monad m =>
     xPubSummary :: XPubSpec -> m XPubSummary
     xPubSummary xpub = do
         bs <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
-        let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
-                (a, p)
-            pm = M.fromList $ map f bs
-            ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
+        let ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
             ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
             uc =
                 sum
@@ -242,7 +235,6 @@ class Monad m =>
                 , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
                 , xPubSummaryReceived = rx
                 , xPubUnspentCount = uc
-                , xPubSummaryPaths = pm
                 , xPubChangeIndex = ch
                 , xPubExternalIndex = ex
                 }
@@ -1161,73 +1153,40 @@ data XPubSummary =
         , xPubUnspentCount     :: !Word64
         , xPubExternalIndex    :: !Word32
         , xPubChangeIndex      :: !Word32
-        , xPubSummaryPaths     :: !(HashMap Address [KeyIndex])
         }
-    deriving (Eq, Show, Generic, NFData)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
-xPubSummaryPairs :: A.KeyValue kv => Network -> XPubSummary -> [kv]
-xPubSummaryPairs net XPubSummary { xPubSummaryConfirmed = c
-                                 , xPubSummaryZero = z
-                                 , xPubSummaryReceived = r
-                                 , xPubUnspentCount = u
-                                 , xPubSummaryPaths = ps
-                                 , xPubExternalIndex = ext
-                                 , xPubChangeIndex = ch
-                                 } =
+xPubSummaryPairs :: A.KeyValue kv => XPubSummary -> [kv]
+xPubSummaryPairs XPubSummary { xPubSummaryConfirmed = c
+                               , xPubSummaryZero = z
+                               , xPubSummaryReceived = r
+                               , xPubUnspentCount = u
+                               , xPubExternalIndex = ext
+                               , xPubChangeIndex = ch
+                               } =
     [ "balance" .=
       object
-          [ "confirmed" .= c
-          , "unconfirmed" .= z
-          , "received" .= r
-          , "utxo" .= u
-          ]
+          ["confirmed" .= c, "unconfirmed" .= z, "received" .= r, "utxo" .= u]
     , "indices" .= object ["change" .= ch, "external" .= ext]
-    , "paths" .= object (mapMaybe (uncurry f) (M.toList ps))
     ]
-  where
-    f a p = (.= p) <$> addrToString net a
 
-xPubSummaryToJSON :: Network -> XPubSummary -> Value
-xPubSummaryToJSON net = object . xPubSummaryPairs net
+xPubSummaryToJSON :: XPubSummary -> Value
+xPubSummaryToJSON = object . xPubSummaryPairs
 
-xPubSummaryToEncoding :: Network -> XPubSummary -> Encoding
-xPubSummaryToEncoding net = pairs . mconcat . xPubSummaryPairs net
+xPubSummaryToEncoding :: XPubSummary -> Encoding
+xPubSummaryToEncoding = pairs . mconcat . xPubSummaryPairs
+
+instance ToJSON XPubSummary where
+    toJSON = xPubSummaryToJSON
+    toEncoding = xPubSummaryToEncoding
 
 instance JsonSerial XPubSummary where
-    jsonSerial = xPubSummaryToEncoding
-    jsonValue = xPubSummaryToJSON
+    jsonSerial _ = xPubSummaryToEncoding
+    jsonValue _ = xPubSummaryToJSON
 
 instance BinSerial XPubSummary where
-    binSerial net XPubSummary { xPubSummaryConfirmed = c
-                              , xPubSummaryZero = z
-                              , xPubSummaryReceived = r
-                              , xPubUnspentCount = u
-                              , xPubExternalIndex = ext
-                              , xPubChangeIndex = ch
-                              , xPubSummaryPaths = ps
-                              } = do
-        put c
-        put z
-        put r
-        put u
-        put ext
-        put ch
-        put (map (first (runPut . binSerial net)) (M.toList ps))
-    binDeserial net = do
-        c <- get
-        z <- get
-        r <- get
-        u <- get
-        ext <- get
-        ch <- get
-        ps <- get
-        let xs = map (first (runGet (binDeserial net))) ps
-        ys <-
-            forM xs $ \(k, v) ->
-                case k of
-                    Right a -> return (a, v)
-                    Left _  -> mzero
-        return $ XPubSummary c z r u ext ch (M.fromList ys)
+    binSerial _ = put
+    binDeserial _ = get
 
 data HealthCheck =
     HealthCheck

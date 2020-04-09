@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.20.2
+### Changed
+- Filter xpub address balances on web API to show only addresses that have been used.
+
+### Removed
+- Remove paths and addresses from xpub summary.
+
 ## 0.20.1
 ### Changed
 - Refactor code greatly.
