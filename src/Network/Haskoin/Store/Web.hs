@@ -82,9 +82,11 @@ import           Network.Haskoin.Store.Common       (BinSerial (..),
                                                      TxAfterHeight (..),
                                                      TxData (..), TxId (..),
                                                      UnixTime, Unspent,
+                                                     XPubBal (..),
                                                      XPubSpec (..), applyOffset,
                                                      blockAtOrBefore,
                                                      getTransaction, isCoinbase,
+                                                     nullBalance,
                                                      transactionData)
 import           Network.Haskoin.Store.Data.RocksDB (withRocksDB)
 import           Network.HTTP.Types                 (Status (..), status400,
@@ -528,7 +530,7 @@ scottyXpubBalances net = do
     setHeaders
     xpub <- parseXpub net
     proto <- setupBin
-    res <- xPubBals xpub
+    res <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
     protoSerial net proto res
 
 scottyXpubTxs :: MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
@@ -664,7 +666,7 @@ runWeb WebConfig { webDB = bdb
     runner <- askRunInIO
     S.scottyT port (runner . withRocksDB bdb) $ do
         case req_logger of
-            Just m -> S.middleware m
+            Just m  -> S.middleware m
             Nothing -> return ()
         S.defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net limits False

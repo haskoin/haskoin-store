@@ -217,7 +217,7 @@ class Monad m =>
                 else (xbs <>) <$> derive_until_gap m as2
     xPubSummary :: XPubSpec -> m XPubSummary
     xPubSummary xpub = do
-        bs <- xPubBals xpub
+        bs <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
         let f XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}} =
                 (a, p)
             pm = M.fromList $ map f bs
