@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE TupleSections        #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-module Network.Haskoin.Store.Data.Cache where
+module Network.Haskoin.Store.Data.CacheReader where
 
 import           Control.DeepSeq              (NFData)
 import           Control.Monad.Reader         (ReaderT (..), asks)
@@ -26,7 +26,7 @@ import           GHC.Generics                 (Generic)
 import           Haskoin                      (Address, BlockHash, KeyIndex,
                                                OutPoint (..), scriptToAddressBS)
 import           Network.Haskoin.Store.Common (Balance (..), BlockRef (..),
-                                               BlockTx (..), Cache, Limit,
+                                               BlockTx (..), CacheWriter, Limit,
                                                Offset, StoreRead (..),
                                                Unspent (..), XPubBal (..),
                                                XPubSpec (..), XPubUnspent (..),
@@ -34,9 +34,13 @@ import           Network.Haskoin.Store.Common (Balance (..), BlockRef (..),
 import           UnliftIO                     (Exception, MonadIO, liftIO,
                                                throwIO)
 
-----------
--- Data --
-----------
+data CacheReaderConfig =
+    CacheReaderConfig
+        { cacheReaderConn   :: !Connection
+        , cacheReaderGap    :: !KeyIndex
+        , cacheReaderWriter :: !CacheWriter
+        }
+
 
 data AddressXPub =
     AddressXPub
@@ -44,21 +48,14 @@ data AddressXPub =
         , addressXPubPath :: ![KeyIndex]
         } deriving (Show, Eq, Generic, NFData, Serialize)
 
-data CacheState =
-    CacheState
-        { cacheStateConn    :: !Connection
-        , cacheStateGap     :: !KeyIndex
-        , cacheStateMailbox :: !Cache
-        }
-
-type CacheT = ReaderT CacheState
+type CacheReaderT = ReaderT CacheReaderConfig
 
 data CacheError
     = RedisError Reply
     | LogicError String
     deriving (Show, Eq, Generic, NFData, Exception)
 
-instance (MonadIO m, StoreRead m) => StoreRead (CacheT m) where
+instance (MonadIO m, StoreRead m) => StoreRead (CacheReaderT m) where
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
@@ -78,6 +75,9 @@ instance (MonadIO m, StoreRead m) => StoreRead (CacheT m) where
     xPubBals = getXPubBalances
     xPubUnspents = getXPubUnspents
     xPubTxs = getXPubTxs
+
+withCacheReader :: StoreRead m => CacheReaderConfig -> CacheReaderT m a -> m a
+withCacheReader s f = runReaderT f s
 
 -- Version of the cache database
 cacheVerKey :: ByteString
@@ -118,22 +118,17 @@ utxoPfx = "u"
 addrPfx :: ByteString
 addrPfx = "a"
 
-
--------------
--- Queries --
--------------
-
 getXPubTxs ::
        (MonadIO m, StoreRead m)
     => XPubSpec
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
-    -> CacheT m [BlockTx]
+    -> CacheReaderT m [BlockTx]
 getXPubTxs xpub start offset limit = do
     cacheGetXPubTxs xpub start offset limit >>= \case
         [] -> do
-            cache <- asks cacheStateMailbox
+            cache <- asks cacheReaderWriter
             cacheXPub cache xpub
             lift (xPubTxs xpub start offset limit)
         txs -> return txs
@@ -144,11 +139,11 @@ getXPubUnspents ::
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
-    -> CacheT m [XPubUnspent]
+    -> CacheReaderT m [XPubUnspent]
 getXPubUnspents xpub start offset limit =
     getXPubBalances xpub >>= \case
         [] -> do
-            cache <- asks cacheStateMailbox
+            cache <- asks cacheReaderWriter
             cacheXPub cache xpub
             lift (xPubUnspents xpub start offset limit)
         bals -> do
@@ -176,22 +171,18 @@ getXPubUnspents xpub start offset limit =
 getXPubBalances ::
        (MonadIO m, StoreRead m)
     => XPubSpec
-    -> CacheT m [XPubBal]
+    -> CacheReaderT m [XPubBal]
 getXPubBalances xpub = do
     cacheGetXPubBalances xpub >>= \case
         [] -> do
-            cache <- asks cacheStateMailbox
+            cache <- asks cacheReaderWriter
             cacheXPub cache xpub
             lift (xPubBals xpub)
         bals -> return bals
 
----------------
--- Low level --
----------------
-
-cacheGetXPubBalances :: MonadIO m => XPubSpec -> CacheT m [XPubBal]
+cacheGetXPubBalances :: MonadIO m => XPubSpec -> CacheReaderT m [XPubBal]
 cacheGetXPubBalances xpub = do
-    conn <- asks cacheStateConn
+    conn <- asks cacheReaderConn
     liftIO (runRedis conn (redisGetXPubBalances xpub)) >>= \case
         Left e -> throwIO (RedisError e)
         Right bals -> return bals
@@ -202,9 +193,9 @@ cacheGetXPubTxs ::
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
-    -> CacheT m [BlockTx]
+    -> CacheReaderT m [BlockTx]
 cacheGetXPubTxs xpub start offset limit = do
-    conn <- asks cacheStateConn
+    conn <- asks cacheReaderConn
     liftIO (runRedis conn (redisGetXPubTxs xpub start offset limit)) >>= \case
         Left e -> throwIO (RedisError e)
         Right bts -> return bts
@@ -215,16 +206,12 @@ cacheGetXPubUnspents ::
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
-    -> CacheT m [(BlockRef, OutPoint)]
+    -> CacheReaderT m [(BlockRef, OutPoint)]
 cacheGetXPubUnspents xpub start offset limit = do
-    conn <- asks cacheStateConn
+    conn <- asks cacheReaderConn
     liftIO (runRedis conn (redisGetXPubUnspents xpub start offset limit)) >>= \case
         Left e -> throwIO (RedisError e)
         Right ops -> return ops
-
------------
--- Redis --
------------
 
 redisGetHead :: (Monad m, Monad f, RedisCtx m f) => m (f (Maybe BlockHash))
 redisGetHead = do
@@ -321,10 +308,6 @@ redisGetXPubIndex xpub change = do
         if change
             then chgIndexPfx
             else extIndexPfx
-
-----------------------
--- Helper Functions --
-----------------------
 
 blockRefScore :: BlockRef -> Double
 blockRefScore BlockRef {blockRefHeight = h, blockRefPos = p} =

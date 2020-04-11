@@ -1,113 +1,141 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 module Network.Haskoin.Store.Web where
 
-import           Conduit                            ()
-import           Control.Applicative                ((<|>))
-import           Control.Monad                      (forever, guard, mzero,
-                                                     unless, when, (<=<))
-import           Control.Monad.Logger               (Loc, LogLevel, LogSource,
-                                                     LogStr, MonadLogger,
-                                                     MonadLoggerIO, askLoggerIO,
-                                                     logInfoS, monadLoggerLog)
-import           Control.Monad.Reader               (ReaderT, ask)
-import           Control.Monad.Trans                (lift)
-import           Control.Monad.Trans.Maybe          (MaybeT (..), runMaybeT)
-import           Data.Aeson                         (ToJSON (..), object, (.=))
-import           Data.Aeson.Encoding                (encodingToLazyByteString)
-import qualified Data.ByteString                    as B
-import           Data.ByteString.Builder            (lazyByteString)
-import qualified Data.ByteString.Lazy               as L
-import qualified Data.ByteString.Lazy.Char8         as C
-import           Data.Char                          (isSpace)
-import           Data.List                          (nub)
-import           Data.Maybe                         (catMaybes, fromMaybe,
-                                                     isJust, listToMaybe,
-                                                     mapMaybe)
-import           Data.Serialize                     as Serialize
-import           Data.String.Conversions            (cs)
-import           Data.Text                          (Text)
-import qualified Data.Text                          as T
-import qualified Data.Text.Encoding                 as T
-import qualified Data.Text.Lazy                     as T.Lazy
-import           Data.Time.Clock                    (NominalDiffTime,
-                                                     diffUTCTime,
-                                                     getCurrentTime)
-import           Data.Time.Clock.System             (getSystemTime,
-                                                     systemSeconds)
-import           Data.Word                          (Word32, Word64)
-import           Database.RocksDB                   (Property (..), getProperty)
-import           Haskoin                            (Address, Block (..),
-                                                     BlockHash (..),
-                                                     BlockHeader (..),
-                                                     BlockHeight,
-                                                     BlockNode (..),
-                                                     GetData (..), Hash256,
-                                                     InvType (..),
-                                                     InvVector (..),
-                                                     Message (..), Network (..),
-                                                     OutPoint (..), Tx,
-                                                     TxHash (..),
-                                                     VarString (..),
-                                                     Version (..), decodeHex,
-                                                     eitherToMaybe, headerHash,
-                                                     hexToBlockHash,
-                                                     hexToTxHash,
-                                                     sockToHostAddress,
-                                                     stringToAddr, txHash,
-                                                     xPubImport)
-import           Haskoin.Node                       (Chain, Manager,
-                                                     OnlinePeer (..),
-                                                     chainGetBest,
-                                                     managerGetPeers,
-                                                     sendMessage)
-import           Network.Haskoin.Store.Common       (BinSerial (..),
-                                                     BlockDB (..),
-                                                     BlockData (..),
-                                                     BlockRef (..),
-                                                     BlockTx (..),
-                                                     DeriveType (..),
-                                                     Event (..),
-                                                     HealthCheck (..),
-                                                     JsonSerial (..), Limit,
-                                                     Offset,
-                                                     PeerInformation (..),
-                                                     PubExcept (..), Store (..),
-                                                     StoreEvent (..),
-                                                     StoreInput (..),
-                                                     StoreRead (..),
-                                                     Transaction (..),
-                                                     TxAfterHeight (..),
-                                                     TxData (..), TxId (..),
-                                                     UnixTime, Unspent,
-                                                     XPubBal (..),
-                                                     XPubSpec (..), applyOffset,
-                                                     blockAtOrBefore,
-                                                     getTransaction, isCoinbase,
-                                                     nullBalance,
-                                                     transactionData)
-import           Network.Haskoin.Store.Data.RocksDB (withRocksDB)
-import           Network.HTTP.Types                 (Status (..), status400,
-                                                     status403, status404,
-                                                     status500, status503)
-import           Network.Wai                        (Middleware, Request (..),
-                                                     responseStatus)
-import           NQE                                (Publisher, receive,
-                                                     withSubscription)
-import           Text.Printf                        (printf)
-import           Text.Read                          (readMaybe)
-import           UnliftIO                           (Exception, MonadIO,
-                                                     MonadUnliftIO, askRunInIO,
-                                                     liftIO, timeout)
-import           Web.Scotty.Internal.Types          (ActionT)
-import           Web.Scotty.Trans                   (Parsable, ScottyError)
-import qualified Web.Scotty.Trans                   as S
+import           Conduit                                   ()
+import           Control.Applicative                       ((<|>))
+import           Control.Monad                             (forever, guard,
+                                                            mzero, unless, when,
+                                                            (<=<))
+import           Control.Monad.Logger                      (Loc, LogLevel,
+                                                            LogSource, LogStr,
+                                                            MonadLogger,
+                                                            MonadLoggerIO,
+                                                            askLoggerIO,
+                                                            logInfoS,
+                                                            monadLoggerLog)
+import           Control.Monad.Reader                      (ReaderT, asks,
+                                                            runReaderT)
+import           Control.Monad.Trans                       (lift)
+import           Control.Monad.Trans.Maybe                 (MaybeT (..),
+                                                            runMaybeT)
+import           Data.Aeson                                (ToJSON (..), object,
+                                                            (.=))
+import           Data.Aeson.Encoding                       (encodingToLazyByteString)
+import qualified Data.ByteString                           as B
+import           Data.ByteString.Builder                   (lazyByteString)
+import qualified Data.ByteString.Lazy                      as L
+import qualified Data.ByteString.Lazy.Char8                as C
+import           Data.Char                                 (isSpace)
+import           Data.List                                 (nub)
+import           Data.Maybe                                (catMaybes,
+                                                            fromMaybe, isJust,
+                                                            listToMaybe,
+                                                            mapMaybe)
+import           Data.Serialize                            as Serialize
+import           Data.String.Conversions                   (cs)
+import           Data.Text                                 (Text)
+import qualified Data.Text                                 as T
+import qualified Data.Text.Encoding                        as T
+import qualified Data.Text.Lazy                            as T.Lazy
+import           Data.Time.Clock                           (NominalDiffTime,
+                                                            diffUTCTime,
+                                                            getCurrentTime)
+import           Data.Time.Clock.System                    (getSystemTime,
+                                                            systemSeconds)
+import           Data.Word                                 (Word32, Word64)
+import           Database.RocksDB                          (Property (..),
+                                                            getProperty)
+import           Haskoin                                   (Address, Block (..),
+                                                            BlockHash (..),
+                                                            BlockHeader (..),
+                                                            BlockHeight,
+                                                            BlockNode (..),
+                                                            GetData (..),
+                                                            Hash256,
+                                                            InvType (..),
+                                                            InvVector (..),
+                                                            Message (..),
+                                                            Network (..),
+                                                            OutPoint (..), Tx,
+                                                            TxHash (..),
+                                                            VarString (..),
+                                                            Version (..),
+                                                            decodeHex,
+                                                            eitherToMaybe,
+                                                            headerHash,
+                                                            hexToBlockHash,
+                                                            hexToTxHash,
+                                                            sockToHostAddress,
+                                                            stringToAddr,
+                                                            txHash, xPubImport)
+import           Haskoin.Node                              (Chain, Manager,
+                                                            OnlinePeer (..),
+                                                            chainGetBest,
+                                                            managerGetPeers,
+                                                            sendMessage)
+import           Network.Haskoin.Store.Common              (BinSerial (..),
+                                                            BlockData (..),
+                                                            BlockRef (..),
+                                                            BlockTx (..),
+                                                            DeriveType (..),
+                                                            Event (..),
+                                                            HealthCheck (..),
+                                                            JsonSerial (..),
+                                                            Limit, Offset,
+                                                            PeerInformation (..),
+                                                            PubExcept (..),
+                                                            Store (..),
+                                                            StoreEvent (..),
+                                                            StoreInput (..),
+                                                            StoreRead (..),
+                                                            Transaction (..),
+                                                            TxAfterHeight (..),
+                                                            TxData (..),
+                                                            TxId (..), UnixTime,
+                                                            Unspent,
+                                                            XPubBal (..),
+                                                            XPubSpec (..),
+                                                            applyOffset,
+                                                            blockAtOrBefore,
+                                                            getTransaction,
+                                                            isCoinbase,
+                                                            nullBalance,
+                                                            transactionData)
+import           Network.Haskoin.Store.Data.CacheReader    (CacheReaderConfig,
+                                                            CacheReaderT,
+                                                            withCacheReader)
+import           Network.Haskoin.Store.Data.DatabaseReader (DatabaseReader (..),
+                                                            DatabaseReaderT,
+                                                            withDatabaseReader)
+import           Network.HTTP.Types                        (Status (..),
+                                                            status400,
+                                                            status403,
+                                                            status404,
+                                                            status500,
+                                                            status503)
+import           Network.Wai                               (Middleware,
+                                                            Request (..),
+                                                            responseStatus)
+import           NQE                                       (Publisher, receive,
+                                                            withSubscription)
+import           Text.Printf                               (printf)
+import           Text.Read                                 (readMaybe)
+import           UnliftIO                                  (Exception, MonadIO,
+                                                            MonadUnliftIO,
+                                                            askRunInIO, liftIO,
+                                                            timeout)
+import           Web.Scotty.Internal.Types                 (ActionT)
+import           Web.Scotty.Trans                          (Parsable,
+                                                            ScottyError)
+import qualified Web.Scotty.Trans                          as S
 
 type LoggerIO = Loc -> LogSource -> LogLevel -> LogStr -> IO ()
 
-type WebT m = ActionT Except (ReaderT BlockDB m)
+type WebT m = ActionT Except (ReaderT WebConfig m)
 
 data Except
     = ThingNotFound
@@ -161,7 +189,8 @@ data WebConfig =
     WebConfig
         { webPort      :: !Int
         , webNetwork   :: !Network
-        , webDB        :: !BlockDB
+        , webDB        :: !DatabaseReader
+        , webCache     :: !(Maybe CacheReaderConfig)
         , webPublisher :: !(Publisher StoreEvent)
         , webStore     :: !Store
         , webMaxLimits :: !MaxLimits
@@ -219,7 +248,53 @@ instance Parsable StartParam where
             guard $ x > 1230768000
             return StartParamTime {startParamTime = x}
 
-instance MonadLoggerIO m => StoreRead (WebT m) where
+runInWebReader ::
+       MonadIO m
+    => DatabaseReaderT m a
+    -> CacheReaderT (DatabaseReaderT m) a
+    -> ReaderT WebConfig m a
+runInWebReader bf cf = do
+    bdb <- asks webDB
+    mc <- asks webCache
+    lift $ withDatabaseReader bdb $
+        case mc of
+            Nothing -> bf
+            Just c  -> withCacheReader c cf
+
+instance MonadIO m => StoreRead (ReaderT WebConfig m) where
+    getBestBlock = runInWebReader getBestBlock getBestBlock
+    getBlocksAtHeight height =
+        runInWebReader (getBlocksAtHeight height) (getBlocksAtHeight height)
+    getBlock bh = runInWebReader (getBlock bh) (getBlock bh)
+    getTxData th = runInWebReader (getTxData th) (getTxData th)
+    getSpender op = runInWebReader (getSpender op) (getSpender op)
+    getSpenders th = runInWebReader (getSpenders th) (getSpenders th)
+    getOrphanTx th = runInWebReader (getOrphanTx th) (getOrphanTx th)
+    getUnspent op = runInWebReader (getUnspent op) (getUnspent op)
+    getBalance a = runInWebReader (getBalance a) (getBalance a)
+    getBalances as = runInWebReader (getBalances as) (getBalances as)
+    getMempool = runInWebReader getMempool getMempool
+    getAddressesTxs addrs start limit =
+        runInWebReader
+            (getAddressesTxs addrs start limit)
+            (getAddressesTxs addrs start limit)
+    getAddressesUnspents addrs start limit =
+        runInWebReader
+            (getAddressesUnspents addrs start limit)
+            (getAddressesUnspents addrs start limit)
+    getOrphans = runInWebReader getOrphans getOrphans
+    xPubBals xpub = runInWebReader (xPubBals xpub) (xPubBals xpub)
+    xPubSummary xpub = runInWebReader (xPubSummary xpub) (xPubSummary xpub)
+    xPubUnspents xpub start offset limit =
+        runInWebReader
+            (xPubUnspents xpub start offset limit)
+            (xPubUnspents xpub start offset limit)
+    xPubTxs xpub start offset limit =
+        runInWebReader
+            (xPubTxs xpub start offset limit)
+            (xPubTxs xpub start offset limit)
+
+instance MonadIO m => StoreRead (WebT m) where
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
@@ -231,14 +306,18 @@ instance MonadLoggerIO m => StoreRead (WebT m) where
     getBalance = lift . getBalance
     getBalances = lift . getBalances
     getMempool = lift getMempool
-    getAddressesTxs addrs start limit =
-        lift (getAddressesTxs addrs start limit)
+    getAddressesTxs addrs start limit = lift (getAddressesTxs addrs start limit)
     getAddressesUnspents addrs start limit =
         lift (getAddressesUnspents addrs start limit)
     getOrphans = lift getOrphans
+    xPubBals = lift . xPubBals
+    xPubSummary = lift . xPubSummary
+    xPubUnspents xpub start offset limit =
+        lift (xPubUnspents xpub start offset limit)
+    xPubTxs xpub start offset limit = lift (xPubTxs xpub start offset limit)
 
-defHandler :: Monad m => Network -> Except -> WebT m ()
-defHandler net e = do
+defHandler :: Monad m => Except -> WebT m ()
+defHandler e = do
     proto <- setupBin
     case e of
         ThingNotFound -> S.status status404
@@ -247,28 +326,29 @@ defHandler net e = do
         StringError _ -> S.status status400
         ServerError   -> S.status status500
         BlockTooLarge -> S.status status403
-    protoSerial net proto e
+    protoSerial proto e
 
 maybeSerial ::
        (Monad m, JsonSerial a, BinSerial a)
-    => Network
-    -> Bool -- ^ binary
+    => Bool -- ^ binary
     -> Maybe a
     -> WebT m ()
-maybeSerial _ _ Nothing        = S.raise ThingNotFound
-maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
+maybeSerial _ Nothing      = S.raise ThingNotFound
+maybeSerial proto (Just x) =
+    lift (asks webNetwork) >>= \net -> S.raw (serialAny net proto x)
 
 protoSerial ::
        (Monad m, JsonSerial a, BinSerial a)
-    => Network
-    -> Bool
+    => Bool
     -> a
     -> WebT m ()
-protoSerial net proto = S.raw . serialAny net proto
+protoSerial proto x =
+    lift (asks webNetwork) >>= \net -> S.raw (serialAny net proto x)
 
 scottyBestBlock ::
-       (MonadLoggerIO m, MonadIO m) => Network -> MaxLimits -> Bool -> WebT m ()
-scottyBestBlock net limits raw = do
+       (MonadLoggerIO m, MonadIO m) => Bool -> WebT m ()
+scottyBestBlock raw = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
     n <- parseNoTx
     proto <- setupBin
@@ -283,11 +363,12 @@ scottyBestBlock net limits raw = do
     if raw
         then do
             refuseLargeBlock limits b
-            rawBlock b >>= protoSerial net proto
-        else protoSerial net proto (pruneTx n b)
+            rawBlock b >>= protoSerial proto
+        else protoSerial proto (pruneTx n b)
 
-scottyBlock :: MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
-scottyBlock net limits raw = do
+scottyBlock :: MonadLoggerIO m => Bool -> WebT m ()
+scottyBlock raw = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
     block <- myBlockHash <$> S.param "block"
     n <- parseNoTx
@@ -299,11 +380,13 @@ scottyBlock net limits raw = do
     if raw
         then do
             refuseLargeBlock limits b
-            rawBlock b >>= protoSerial net proto
-        else protoSerial net proto (pruneTx n b)
+            rawBlock b >>= protoSerial proto
+        else protoSerial proto (pruneTx n b)
 
-scottyBlockHeight :: MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
-scottyBlockHeight net limits raw = do
+scottyBlockHeight ::
+       MonadLoggerIO m => Bool -> WebT m ()
+scottyBlockHeight raw = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
     height <- S.param "height"
     n <- parseNoTx
@@ -314,47 +397,48 @@ scottyBlockHeight net limits raw = do
             blocks <- catMaybes <$> mapM getBlock hs
             mapM_ (refuseLargeBlock limits) blocks
             rawblocks <- mapM rawBlock blocks
-            protoSerial net proto rawblocks
+            protoSerial proto rawblocks
         else do
             blocks <- catMaybes <$> mapM getBlock hs
             let blocks' = map (pruneTx n) blocks
-            protoSerial net proto blocks'
+            protoSerial proto blocks'
 
-scottyBlockTime :: MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
-scottyBlockTime net limits raw = do
+scottyBlockTime :: MonadLoggerIO m => Bool -> WebT m ()
+scottyBlockTime raw = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
     q <- S.param "time"
     n <- parseNoTx
     proto <- setupBin
     m <- fmap (pruneTx n) <$> blockAtOrBefore q
     if raw
-        then maybeSerial net proto =<<
+        then maybeSerial proto =<<
              case m of
                  Nothing -> return Nothing
                  Just d -> do
                      refuseLargeBlock limits d
                      Just <$> rawBlock d
-        else maybeSerial net proto m
+        else maybeSerial proto m
 
-scottyBlockHeights :: MonadLoggerIO m => Network -> WebT m ()
-scottyBlockHeights net = do
+scottyBlockHeights :: MonadLoggerIO m => WebT m ()
+scottyBlockHeights = do
     setHeaders
     heights <- S.param "heights"
     n <- parseNoTx
     proto <- setupBin
     bhs <- concat <$> mapM getBlocksAtHeight (heights :: [BlockHeight])
     blocks <- map (pruneTx n) . catMaybes <$> mapM getBlock bhs
-    protoSerial net proto blocks
+    protoSerial proto blocks
 
-scottyBlockLatest :: MonadLoggerIO m => Network -> WebT m ()
-scottyBlockLatest net = do
+scottyBlockLatest :: MonadLoggerIO m => WebT m ()
+scottyBlockLatest = do
     setHeaders
     n <- parseNoTx
     proto <- setupBin
     getBestBlock >>= \case
         Just h -> do
             blocks <- reverse <$> go 100 n h
-            protoSerial net proto blocks
+            protoSerial proto blocks
         Nothing -> S.raise ThingNotFound
   where
     go 0 _ _ = return []
@@ -370,57 +454,58 @@ scottyBlockLatest net = do
                         else (b' :) <$> go i' n prev
 
 
-scottyBlocks :: MonadLoggerIO m => Network -> WebT m ()
-scottyBlocks net = do
+scottyBlocks :: MonadLoggerIO m => WebT m ()
+scottyBlocks = do
     setHeaders
     bhs <- map myBlockHash <$> S.param "blocks"
     n <- parseNoTx
     proto <- setupBin
     bks <- map (pruneTx n) . catMaybes <$> mapM getBlock (nub bhs)
-    protoSerial net proto bks
+    protoSerial proto bks
 
-scottyMempool :: MonadLoggerIO m => Network -> WebT m ()
-scottyMempool net = do
+scottyMempool :: MonadLoggerIO m => WebT m ()
+scottyMempool = do
     setHeaders
     proto <- setupBin
     txs <- map blockTxHash <$> getMempool
-    protoSerial net proto txs
+    protoSerial proto txs
 
-scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
-scottyTransaction net = do
+scottyTransaction :: MonadLoggerIO m => WebT m ()
+scottyTransaction = do
     setHeaders
     txid <- myTxHash <$> S.param "txid"
     proto <- setupBin
     res <- getTransaction txid
-    maybeSerial net proto res
+    maybeSerial proto res
 
-scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
-scottyRawTransaction net = do
+scottyRawTransaction :: MonadLoggerIO m => WebT m ()
+scottyRawTransaction = do
     setHeaders
     txid <- myTxHash <$> S.param "txid"
     proto <- setupBin
     res <- fmap transactionData <$> getTransaction txid
-    maybeSerial net proto res
+    maybeSerial proto res
 
-scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
-scottyTxAfterHeight net = do
+scottyTxAfterHeight :: MonadLoggerIO m => WebT m ()
+scottyTxAfterHeight = do
     setHeaders
     txid <- myTxHash <$> S.param "txid"
     height <- S.param "height"
     proto <- setupBin
     res <- cbAfterHeight 10000 height txid
-    protoSerial net proto res
+    protoSerial proto res
 
-scottyTransactions :: MonadLoggerIO m => Network -> WebT m ()
-scottyTransactions net = do
+scottyTransactions :: MonadLoggerIO m => WebT m ()
+scottyTransactions = do
     setHeaders
     txids <- map myTxHash <$> S.param "txids"
     proto <- setupBin
     txs <- catMaybes <$> mapM getTransaction (nub txids)
-    protoSerial net proto txs
+    protoSerial proto txs
 
-scottyBlockTransactions :: MonadLoggerIO m => Network -> MaxLimits -> WebT m ()
-scottyBlockTransactions net limits = do
+scottyBlockTransactions :: MonadLoggerIO m => WebT m ()
+scottyBlockTransactions = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
     h <- myBlockHash <$> S.param "block"
     proto <- setupBin
@@ -429,17 +514,17 @@ scottyBlockTransactions net limits = do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
             txs <- catMaybes <$> mapM getTransaction ths
-            protoSerial net proto txs
+            protoSerial proto txs
         Nothing -> S.raise ThingNotFound
 
 scottyRawTransactions ::
-       MonadLoggerIO m => Network -> WebT m ()
-scottyRawTransactions net = do
+       MonadLoggerIO m => WebT m ()
+scottyRawTransactions = do
     setHeaders
     txids <- map myTxHash <$> S.param "txids"
     proto <- setupBin
     txs <- map transactionData . catMaybes <$> mapM getTransaction (nub txids)
-    protoSerial net proto txs
+    protoSerial proto txs
 
 rawBlock :: (Monad m, StoreRead m) => BlockData -> m Block
 rawBlock b = do
@@ -449,8 +534,9 @@ rawBlock b = do
     return Block {blockHeader = h, blockTxns = txs}
 
 scottyRawBlockTransactions ::
-       MonadLoggerIO m => Network -> MaxLimits -> WebT m ()
-scottyRawBlockTransactions net limits = do
+       MonadLoggerIO m => WebT m ()
+scottyRawBlockTransactions = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
     h <- myBlockHash <$> S.param "block"
     proto <- setupBin
@@ -459,84 +545,89 @@ scottyRawBlockTransactions net limits = do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
             txs <- map transactionData . catMaybes <$> mapM getTransaction ths
-            protoSerial net proto txs
+            protoSerial proto txs
         Nothing -> S.raise ThingNotFound
 
-scottyAddressTxs :: MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
-scottyAddressTxs net limits full = do
+scottyAddressTxs :: MonadLoggerIO m => Bool -> WebT m ()
+scottyAddressTxs full = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
-    a <- parseAddress net
+    a <- parseAddress
     s <- getStart
     o <- getOffset limits
     l <- getLimit limits full
     proto <- setupBin
     if full
         then do
-            getAddressTxsFull o l s a >>= protoSerial net proto
+            getAddressTxsFull o l s a >>= protoSerial proto
         else do
-            getAddressTxsLimit o l s a >>= protoSerial net proto
+            getAddressTxsLimit o l s a >>= protoSerial proto
 
 scottyAddressesTxs ::
-       MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
-scottyAddressesTxs net limits full = do
+       MonadLoggerIO m => Bool -> WebT m ()
+scottyAddressesTxs full = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
-    as <- parseAddresses net
+    as <- parseAddresses
     s <- getStart
     l <- getLimit limits full
     proto <- setupBin
     if full
-        then getAddressesTxsFull l s as >>= protoSerial net proto
-        else getAddressesTxsLimit l s as >>= protoSerial net proto
+        then getAddressesTxsFull l s as >>= protoSerial proto
+        else getAddressesTxsLimit l s as >>= protoSerial proto
 
-scottyAddressUnspent :: MonadLoggerIO m => Network -> MaxLimits -> WebT m ()
-scottyAddressUnspent net limits = do
+scottyAddressUnspent :: MonadLoggerIO m => WebT m ()
+scottyAddressUnspent = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
-    a <- parseAddress net
+    a <- parseAddress
     s <- getStart
     o <- getOffset limits
     l <- getLimit limits False
     proto <- setupBin
     uns <- getAddressUnspentsLimit o l s a
-    protoSerial net proto uns
+    protoSerial proto uns
 
-scottyAddressesUnspent :: MonadLoggerIO m => Network -> MaxLimits -> WebT m ()
-scottyAddressesUnspent net limits = do
+scottyAddressesUnspent :: MonadLoggerIO m => WebT m ()
+scottyAddressesUnspent = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
-    as <- parseAddresses net
+    as <- parseAddresses
     s <- getStart
     l <- getLimit limits False
     proto <- setupBin
     uns <- getAddressesUnspentsLimit l s as
-    protoSerial net proto uns
+    protoSerial proto uns
 
-scottyAddressBalance :: MonadLoggerIO m => Network -> WebT m ()
-scottyAddressBalance net = do
+scottyAddressBalance :: MonadLoggerIO m => WebT m ()
+scottyAddressBalance = do
     setHeaders
-    a <- parseAddress net
+    a <- parseAddress
     proto <- setupBin
     res <- getBalance a
-    protoSerial net proto res
+    protoSerial proto res
 
-scottyAddressesBalances :: MonadLoggerIO m => Network -> WebT m ()
-scottyAddressesBalances net = do
+scottyAddressesBalances :: MonadLoggerIO m => WebT m ()
+scottyAddressesBalances = do
     setHeaders
-    as <- parseAddresses net
+    as <- parseAddresses
     proto <- setupBin
     res <- getBalances as
-    protoSerial net proto res
+    protoSerial proto res
 
-scottyXpubBalances :: MonadLoggerIO m => Network -> WebT m ()
-scottyXpubBalances net = do
+scottyXpubBalances :: MonadLoggerIO m => WebT m ()
+scottyXpubBalances = do
     setHeaders
-    xpub <- parseXpub net
+    xpub <- parseXpub
     proto <- setupBin
     res <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
-    protoSerial net proto res
+    protoSerial proto res
 
-scottyXpubTxs :: MonadLoggerIO m => Network -> MaxLimits -> Bool -> WebT m ()
-scottyXpubTxs net limits full = do
+scottyXpubTxs :: MonadLoggerIO m => Bool -> WebT m ()
+scottyXpubTxs full = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
-    xpub <- parseXpub net
+    xpub <- parseXpub
     start <- getStart
     limit <- getLimit limits full
     proto <- setupBin
@@ -544,34 +635,35 @@ scottyXpubTxs net limits full = do
     if full
         then do
             txs' <- catMaybes <$> mapM (getTransaction . blockTxHash) txs
-            protoSerial net proto txs'
-        else protoSerial net proto txs
+            protoSerial proto txs'
+        else protoSerial proto txs
 
-scottyXpubUnspents :: MonadLoggerIO m => Network -> MaxLimits -> WebT m ()
-scottyXpubUnspents net limits = do
+scottyXpubUnspents :: MonadLoggerIO m => WebT m ()
+scottyXpubUnspents = do
+    limits <- lift $ asks webMaxLimits
     setHeaders
-    xpub <- parseXpub net
+    xpub <- parseXpub
     proto <- setupBin
     start <- getStart
     limit <- getLimit limits False
     uns <- xPubUnspents xpub start 0 limit
-    protoSerial net proto uns
+    protoSerial proto uns
 
-scottyXpubSummary :: MonadLoggerIO m => Network -> WebT m ()
-scottyXpubSummary net = do
+scottyXpubSummary :: MonadLoggerIO m => WebT m ()
+scottyXpubSummary = do
     setHeaders
-    xpub <- parseXpub net
+    xpub <- parseXpub
     proto <- setupBin
     res <- xPubSummary xpub
-    protoSerial net proto res
+    protoSerial proto res
 
 scottyPostTx ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => Network
-    -> Store
-    -> Publisher StoreEvent
-    -> WebT m ()
-scottyPostTx net st pub = do
+    => WebT m ()
+scottyPostTx = do
+    net <- lift $ asks webNetwork
+    pub <- lift $ asks webPublisher
+    st <- lift $ asks webStore
     setHeaders
     proto <- setupBin
     b <- S.body
@@ -583,20 +675,20 @@ scottyPostTx net st pub = do
             Just x  -> return x
     lift (publishTx net pub st tx) >>= \case
         Right () -> do
-            protoSerial net proto (TxId (txHash tx))
+            protoSerial proto (TxId (txHash tx))
         Left e -> do
             case e of
                 PubNoPeers          -> S.status status500
                 PubTimeout          -> S.status status500
                 PubPeerDisconnected -> S.status status500
                 PubReject _         -> S.status status400
-            protoSerial net proto (UserError (show e))
+            protoSerial proto (UserError (show e))
             S.finish
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
     setHeaders
-    BlockDB {blockDB = db} <- lift ask
+    DatabaseReader {databaseHandle = db} <- lift $ asks webDB
     stats <- lift (getProperty db Stats)
     case stats of
       Nothing -> do
@@ -604,8 +696,10 @@ scottyDbStats = do
       Just txt -> do
           S.text $ cs txt
 
-scottyEvents :: MonadLoggerIO m => Network -> Publisher StoreEvent -> WebT m ()
-scottyEvents net pub = do
+scottyEvents :: MonadLoggerIO m => WebT m ()
+scottyEvents = do
+    net <- lift $ asks webNetwork
+    pub <- lift $ asks webPublisher
     setHeaders
     proto <- setupBin
     S.stream $ \io flush' ->
@@ -629,86 +723,76 @@ scottyEvents net pub = do
                                     else "\n"
                          in io (lazyByteString bs)
 
-scottyPeers :: MonadLoggerIO m => Network -> Store -> WebT m ()
-scottyPeers net st = do
+scottyPeers :: MonadLoggerIO m => WebT m ()
+scottyPeers = do
+    mgr <- lift $ asks (storeManager . webStore)
     setHeaders
     proto <- setupBin
-    ps <- getPeersInformation (storeManager st)
-    protoSerial net proto ps
+    ps <- getPeersInformation mgr
+    protoSerial proto ps
 
 scottyHealth ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => Network
-    -> Store
-    -> Timeouts
-    -> WebT m ()
-scottyHealth net st tos = do
+    => WebT m ()
+scottyHealth = do
+    net <- lift $ asks webNetwork
+    st <- lift $ asks webStore
+    tos <- lift $ asks webTimeouts
     setHeaders
     proto <- setupBin
     h <- lift $ healthCheck net (storeManager st) (storeChain st) tos
     when (not (healthOK h) || not (healthSynced h)) $ S.status status503
-    protoSerial net proto h
+    protoSerial proto h
 
 runWeb :: (MonadLoggerIO m, MonadUnliftIO m) => WebConfig -> m ()
-runWeb WebConfig { webDB = bdb
-                 , webPort = port
-                 , webNetwork = net
-                 , webStore = st
-                 , webPublisher = pub
-                 , webMaxLimits = limits
-                 , webReqLog = reqlog
-                 , webTimeouts = tos
-                 } = do
+runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
     req_logger <-
         if reqlog
             then Just <$> logIt
             else return Nothing
     runner <- askRunInIO
-    S.scottyT port (runner . withRocksDB bdb) $ do
+    S.scottyT port (runner . (`runReaderT` cfg)) $ do
         case req_logger of
             Just m  -> S.middleware m
             Nothing -> return ()
-        S.defaultHandler (defHandler net)
-        S.get "/block/best" $ scottyBestBlock net limits False
-        S.get "/block/best/raw" $ scottyBestBlock net limits True
-        S.get "/block/:block" $ scottyBlock net limits False
-        S.get "/block/:block/raw" $ scottyBlock net limits True
-        S.get "/block/height/:height" $ scottyBlockHeight net limits False
-        S.get "/block/height/:height/raw" $ scottyBlockHeight net limits True
-        S.get "/block/time/:time" $ scottyBlockTime net limits False
-        S.get "/block/time/:time/raw" $ scottyBlockTime net limits True
-        S.get "/block/heights" $ scottyBlockHeights net
-        S.get "/block/latest" $ scottyBlockLatest net
-        S.get "/blocks" $ scottyBlocks net
-        S.get "/mempool" $ scottyMempool net
-        S.get "/transaction/:txid" $ scottyTransaction net
-        S.get "/transaction/:txid/raw" $ scottyRawTransaction net
-        S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
-        S.get "/transactions" $ scottyTransactions net
-        S.get "/transactions/raw" $ scottyRawTransactions net
-        S.get "/transactions/block/:block" $ scottyBlockTransactions net limits
-        S.get "/transactions/block/:block/raw" $
-            scottyRawBlockTransactions net limits
-        S.get "/address/:address/transactions" $
-            scottyAddressTxs net limits False
-        S.get "/address/:address/transactions/full" $
-            scottyAddressTxs net limits True
-        S.get "/address/transactions" $ scottyAddressesTxs net limits False
-        S.get "/address/transactions/full" $ scottyAddressesTxs net limits True
-        S.get "/address/:address/unspent" $ scottyAddressUnspent net limits
-        S.get "/address/unspent" $ scottyAddressesUnspent net limits
-        S.get "/address/:address/balance" $ scottyAddressBalance net
-        S.get "/address/balances" $ scottyAddressesBalances net
-        S.get "/xpub/:xpub/balances" $ scottyXpubBalances net
-        S.get "/xpub/:xpub/transactions" $ scottyXpubTxs net limits False
-        S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs net limits True
-        S.get "/xpub/:xpub/unspent" $ scottyXpubUnspents net limits
-        S.get "/xpub/:xpub" $ scottyXpubSummary net
-        S.post "/transactions" $ scottyPostTx net st pub
+        S.defaultHandler defHandler
+        S.get "/block/best" $ scottyBestBlock False
+        S.get "/block/best/raw" $ scottyBestBlock True
+        S.get "/block/:block" $ scottyBlock False
+        S.get "/block/:block/raw" $ scottyBlock True
+        S.get "/block/height/:height" $ scottyBlockHeight False
+        S.get "/block/height/:height/raw" $ scottyBlockHeight True
+        S.get "/block/time/:time" $ scottyBlockTime False
+        S.get "/block/time/:time/raw" $ scottyBlockTime True
+        S.get "/block/heights" scottyBlockHeights
+        S.get "/block/latest" scottyBlockLatest
+        S.get "/blocks" scottyBlocks
+        S.get "/mempool" scottyMempool
+        S.get "/transaction/:txid" scottyTransaction
+        S.get "/transaction/:txid/raw" scottyRawTransaction
+        S.get "/transaction/:txid/after/:height" scottyTxAfterHeight
+        S.get "/transactions" scottyTransactions
+        S.get "/transactions/raw" scottyRawTransactions
+        S.get "/transactions/block/:block" scottyBlockTransactions
+        S.get "/transactions/block/:block/raw" scottyRawBlockTransactions
+        S.get "/address/:address/transactions" $ scottyAddressTxs False
+        S.get "/address/:address/transactions/full" $ scottyAddressTxs True
+        S.get "/address/transactions" $ scottyAddressesTxs False
+        S.get "/address/transactions/full" $ scottyAddressesTxs True
+        S.get "/address/:address/unspent" scottyAddressUnspent
+        S.get "/address/unspent" scottyAddressesUnspent
+        S.get "/address/:address/balance" scottyAddressBalance
+        S.get "/address/balances" scottyAddressesBalances
+        S.get "/xpub/:xpub/balances" scottyXpubBalances
+        S.get "/xpub/:xpub/transactions" $ scottyXpubTxs False
+        S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs True
+        S.get "/xpub/:xpub/unspent" scottyXpubUnspents
+        S.get "/xpub/:xpub" scottyXpubSummary
+        S.post "/transactions" scottyPostTx
         S.get "/dbstats" scottyDbStats
-        S.get "/events" $ scottyEvents net pub
-        S.get "/peers" $ scottyPeers net st
-        S.get "/health" $ scottyHealth net st tos
+        S.get "/events" scottyEvents
+        S.get "/peers" scottyPeers
+        S.get "/health" scottyHealth
         S.notFound $ S.raise ThingNotFound
 
 getStart :: MonadLoggerIO m => WebT m (Maybe BlockRef)
@@ -771,39 +855,44 @@ getLimit limits full = do
                     then Just (min m n)
                     else Just n
 
-parseAddress :: (Monad m, ScottyError e) => Network -> ActionT e m Address
-parseAddress net = do
+parseAddress :: Monad m => WebT m Address
+parseAddress = do
+    net <- lift $ asks webNetwork
     address <- S.param "address"
     case stringToAddr net address of
         Nothing -> S.next
         Just a  -> return a
 
-parseAddresses :: (Monad m, ScottyError e) => Network -> ActionT e m [Address]
-parseAddresses net = do
+parseAddresses :: Monad m => WebT m [Address]
+parseAddresses = do
+    net <- lift $ asks webNetwork
     addresses <- S.param "addresses"
     let as = mapMaybe (stringToAddr net) addresses
     unless (length as == length addresses) S.next
     return as
 
-parseXpub :: (Monad m, ScottyError e) => Network -> ActionT e m XPubSpec
-parseXpub net = do
+parseXpub :: Monad m => WebT m XPubSpec
+parseXpub = do
+    net <- lift $ asks webNetwork
     t <- S.param "xpub"
-    d <- parseDeriveAddrs net
+    d <- parseDeriveAddrs
     case xPubImport net t of
         Nothing -> S.next
         Just x  -> return XPubSpec {xPubSpecKey = x, xPubDeriveType = d}
 
 parseDeriveAddrs ::
-       (Monad m, ScottyError e) => Network -> ActionT e m DeriveType
-parseDeriveAddrs net
-    | getSegWit net = do
-        t <- S.param "derive" `S.rescue` const (return "standard")
-        return $
-            case (t :: Text) of
-                "segwit" -> DeriveP2WPKH
-                "compat" -> DeriveP2SH
-                _        -> DeriveNormal
-    | otherwise = return DeriveNormal
+       Monad m => WebT m DeriveType
+parseDeriveAddrs =
+    lift (asks webNetwork) >>= \case
+      net
+          | getSegWit net -> do
+              t <- S.param "derive" `S.rescue` const (return "standard")
+              return $
+                  case (t :: Text) of
+                      "segwit" -> DeriveP2WPKH
+                      "compat" -> DeriveP2SH
+                      _        -> DeriveNormal
+          | otherwise -> return DeriveNormal
 
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
 parseNoTx = S.param "notx" `S.rescue` const (return False)

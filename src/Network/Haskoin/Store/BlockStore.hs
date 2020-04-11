@@ -5,75 +5,84 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
-module Network.Haskoin.Store.Block
-      ( blockStore
-      ) where
+module Network.Haskoin.Store.BlockStore where
 
-import           Control.Applicative                 ((<|>))
-import           Control.Monad                       (forM, forM_, forever,
-                                                      guard, mzero, unless,
-                                                      void, when)
-import           Control.Monad.Except                (ExceptT, runExceptT)
-import           Control.Monad.Logger                (MonadLoggerIO, logDebugS,
-                                                      logErrorS, logInfoS,
-                                                      logWarnS)
-import           Control.Monad.Reader                (MonadReader, ReaderT (..),
-                                                      asks)
-import           Control.Monad.Trans                 (lift)
-import           Control.Monad.Trans.Maybe           (MaybeT (MaybeT),
-                                                      runMaybeT)
-import           Data.Maybe                          (catMaybes, isNothing,
-                                                      listToMaybe)
-import           Data.String                         (fromString)
-import           Data.String.Conversions             (cs)
-import           Data.Time.Clock.System              (getSystemTime,
-                                                      systemSeconds)
-import           Haskoin                             (Block (..),
-                                                      BlockHash (..),
-                                                      BlockHeight,
-                                                      BlockNode (..),
-                                                      GetData (..),
-                                                      InvType (..),
-                                                      InvVector (..),
-                                                      Message (..),
-                                                      Network (..), Tx,
-                                                      TxHash (..),
-                                                      blockHashToHex,
-                                                      headerHash, txHash,
-                                                      txHashToHex)
-import           Haskoin.Node                        (OnlinePeer (..), Peer,
-                                                      PeerException (..),
-                                                      chainBlockMain,
-                                                      chainGetAncestor,
-                                                      chainGetBest,
-                                                      chainGetBlock,
-                                                      chainGetParents, killPeer,
-                                                      managerGetPeers,
-                                                      sendMessage)
-import           Network.Haskoin.Store.Common        (BlockConfig (..), BlockDB,
-                                                      BlockMessage (..),
-                                                      BlockStore,
-                                                      StoreEvent (..),
-                                                      StoreRead (..),
-                                                      StoreWrite (..), UnixTime)
-import           Network.Haskoin.Store.Data.ImportDB (ImportDB, runImportDB)
-import           Network.Haskoin.Store.Logic         (ImportException, deleteTx,
-                                                      getOldMempool,
-                                                      getOldOrphans,
-                                                      importBlock, importOrphan,
-                                                      initBest, newMempoolTx,
-                                                      revertBlock)
-import           NQE                                 (Inbox, Mailbox,
-                                                      inboxToMailbox, query,
-                                                      receive)
-import           System.Random                       (randomRIO)
-import           UnliftIO                            (Exception, MonadIO,
-                                                      MonadUnliftIO, TVar,
-                                                      atomically, liftIO,
-                                                      newTVarIO, readTVarIO,
-                                                      throwIO, withAsync,
-                                                      writeTVar)
-import           UnliftIO.Concurrent                 (threadDelay)
+import           Control.Applicative                       ((<|>))
+import           Control.Monad                             (forM, forM_,
+                                                            forever, guard,
+                                                            mzero, unless, void,
+                                                            when)
+import           Control.Monad.Except                      (ExceptT, runExceptT)
+import           Control.Monad.Logger                      (MonadLoggerIO,
+                                                            logDebugS,
+                                                            logErrorS, logInfoS,
+                                                            logWarnS)
+import           Control.Monad.Reader                      (MonadReader,
+                                                            ReaderT (..), asks)
+import           Control.Monad.Trans                       (lift)
+import           Control.Monad.Trans.Maybe                 (MaybeT (MaybeT),
+                                                            runMaybeT)
+import           Data.Maybe                                (catMaybes,
+                                                            isNothing,
+                                                            listToMaybe)
+import           Data.String                               (fromString)
+import           Data.String.Conversions                   (cs)
+import           Data.Time.Clock.System                    (getSystemTime,
+                                                            systemSeconds)
+import           Haskoin                                   (Block (..),
+                                                            BlockHash (..),
+                                                            BlockHeight,
+                                                            BlockNode (..),
+                                                            GetData (..),
+                                                            InvType (..),
+                                                            InvVector (..),
+                                                            Message (..),
+                                                            Network (..), Tx,
+                                                            TxHash (..),
+                                                            blockHashToHex,
+                                                            headerHash, txHash,
+                                                            txHashToHex)
+import           Haskoin.Node                              (OnlinePeer (..),
+                                                            Peer,
+                                                            PeerException (..),
+                                                            chainBlockMain,
+                                                            chainGetAncestor,
+                                                            chainGetBest,
+                                                            chainGetBlock,
+                                                            chainGetParents,
+                                                            killPeer,
+                                                            managerGetPeers,
+                                                            sendMessage)
+import           Haskoin.Node                              (Chain, Manager)
+import           Network.Haskoin.Store.Common              (BlockStore, BlockStoreMessage (..),
+                                                            StoreEvent (..),
+                                                            StoreRead (..),
+                                                            StoreWrite (..),
+                                                            UnixTime)
+import           Network.Haskoin.Store.Data.DatabaseReader (DatabaseReader)
+import           Network.Haskoin.Store.Data.DatabaseWriter (DatabaseWriter,
+                                                            runDatabaseWriter)
+import           Network.Haskoin.Store.Logic               (ImportException,
+                                                            deleteTx,
+                                                            getOldMempool,
+                                                            getOldOrphans,
+                                                            importBlock,
+                                                            importOrphan,
+                                                            initBest,
+                                                            newMempoolTx,
+                                                            revertBlock)
+import           NQE                                       (Inbox, Listen,
+                                                            inboxToMailbox,
+                                                            query, receive)
+import           System.Random                             (randomRIO)
+import           UnliftIO                                  (Exception, MonadIO,
+                                                            MonadUnliftIO, TVar,
+                                                            atomically, liftIO,
+                                                            newTVarIO,
+                                                            readTVarIO, throwIO,
+                                                            withAsync,
+                                                            writeTVar)
+import           UnliftIO.Concurrent                       (threadDelay)
 
 data BlockException
     = BlockNotInChain !BlockHash
@@ -91,22 +100,37 @@ data Syncing = Syncing
 -- | Block store process state.
 data BlockRead = BlockRead
     { mySelf   :: !BlockStore
-    , myConfig :: !BlockConfig
+    , myConfig :: !BlockStoreConfig
     , myPeer   :: !(TVar (Maybe Syncing))
     }
+
+-- | Configuration for a block store.
+data BlockStoreConfig =
+    BlockStoreConfig
+        { blockConfManager  :: !Manager
+      -- ^ peer manager from running node
+        , blockConfChain    :: !Chain
+      -- ^ chain from a running node
+        , blockConfListener :: !(Listen StoreEvent)
+      -- ^ listener for store events
+        , blockConfDB       :: !DatabaseReader
+      -- ^ RocksDB database handle
+        , blockConfNet      :: !Network
+      -- ^ network constants
+        }
 
 type BlockT m = ReaderT BlockRead m
 
 runImport ::
        MonadLoggerIO m
-    => ReaderT ImportDB (ExceptT ImportException m) a
+    => ReaderT DatabaseWriter (ExceptT ImportException m) a
     -> ReaderT BlockRead m (Either ImportException a)
 runImport f =
-    ReaderT $ \r -> runExceptT (runImportDB (blockConfDB (myConfig r)) f)
+    ReaderT $ \r -> runExceptT (runDatabaseWriter (blockConfDB (myConfig r)) f)
 
-runRocksDB :: ReaderT BlockDB m a -> ReaderT BlockRead m a
+runRocksDB :: ReaderT DatabaseReader m a -> ReaderT BlockRead m a
 runRocksDB f =
-    ReaderT $ \BlockRead {myConfig = BlockConfig {blockConfDB = db}} ->
+    ReaderT $ \BlockRead {myConfig = BlockStoreConfig {blockConfDB = db}} ->
         runReaderT f db
 
 instance MonadIO m => StoreRead (ReaderT BlockRead m) where
@@ -131,8 +155,8 @@ instance MonadIO m => StoreRead (ReaderT BlockRead m) where
 -- | Run block store process.
 blockStore ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => BlockConfig
-    -> Inbox BlockMessage
+    => BlockStoreConfig
+    -> Inbox BlockStoreMessage
     -> m ()
 blockStore cfg inbox = do
     pb <- newTVarIO Nothing
@@ -151,7 +175,7 @@ blockStore cfg inbox = do
     run =
         withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
             receive inbox >>= \x ->
-                ReaderT $ \r -> runReaderT (processBlockMessage x) r
+                ReaderT $ \r -> runReaderT (processBlockStoreMessage x) r
 
 isInSync ::
        (MonadLoggerIO m, StoreRead m, MonadReader BlockRead m)
@@ -483,28 +507,28 @@ getPeer = runMaybeT $ MaybeT syncingpeer <|> MaybeT onlinepeer
 getSyncingState :: (MonadIO m, MonadReader BlockRead m) => m (Maybe Syncing)
 getSyncingState = readTVarIO =<< asks myPeer
 
-processBlockMessage ::
+processBlockStoreMessage ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => BlockMessage
+    => BlockStoreMessage
     -> BlockT m ()
-processBlockMessage (BlockNewBest _) = do
+processBlockStoreMessage (BlockNewBest _) = do
     getPeer >>= \case
         Nothing -> do
             $(logErrorS) "Block" "New best block but no peer to sync from"
         Just p -> syncMe p
-processBlockMessage (BlockPeerConnect p _) = syncMe p
-processBlockMessage (BlockPeerDisconnect p _sa) = processDisconnect p
-processBlockMessage (BlockReceived p b) = processBlock p b
-processBlockMessage (BlockNotFound p bs) = processNoBlocks p bs
-processBlockMessage (BlockTxReceived p tx) = processTx p tx
-processBlockMessage (BlockTxAvailable p ts) = processTxs p ts
-processBlockMessage (BlockPing r) = do
+processBlockStoreMessage (BlockPeerConnect p _) = syncMe p
+processBlockStoreMessage (BlockPeerDisconnect p _sa) = processDisconnect p
+processBlockStoreMessage (BlockReceived p b) = processBlock p b
+processBlockStoreMessage (BlockNotFound p bs) = processNoBlocks p bs
+processBlockStoreMessage (BlockTxReceived p tx) = processTx p tx
+processBlockStoreMessage (BlockTxAvailable p ts) = processTxs p ts
+processBlockStoreMessage (BlockPing r) = do
     processOrphans
     checkTime
     pruneMempool
     atomically (r ())
 
-pingMe :: MonadLoggerIO m => Mailbox BlockMessage -> m ()
+pingMe :: MonadLoggerIO m => BlockStore -> m ()
 pingMe mbox =
     forever $ do
         threadDelay =<< liftIO (randomRIO (5 * 1000 * 1000, 10 * 1000 * 1000))

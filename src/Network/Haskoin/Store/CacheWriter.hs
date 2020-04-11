@@ -1,79 +1,84 @@
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE TupleSections        #-}
-{-# LANGUAGE TypeSynonymInstances #-}
-module Network.Haskoin.Store.Cache where
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE TupleSections     #-}
+module Network.Haskoin.Store.CacheWriter where
 
-import           Control.DeepSeq                  (NFData)
-import           Control.Monad                    (forM_, forever, unless, void,
-                                                   when)
-import           Control.Monad.Reader             (ReaderT (..), asks)
-import           Control.Monad.Trans              (lift)
-import           Control.Monad.Trans.Maybe        (MaybeT (..), runMaybeT)
-import           Data.Bits                        (shift, (.&.), (.|.))
-import           Data.ByteString                  (ByteString)
-import           Data.Either                      (rights)
-import qualified Data.IntMap.Strict               as IntMap
-import           Data.List                        (nub, partition, (\\))
-import qualified Data.Map.Strict                  as Map
-import           Data.Maybe                       (catMaybes, mapMaybe)
-import           Data.Serialize                   (Serialize, decode, encode)
-import           Data.Word                        (Word64)
-import           Database.Redis                   (Connection, RedisCtx, Reply,
-                                                   runRedis, zadd,
-                                                   zrangeWithscores,
-                                                   zrangebyscoreWithscoresLimit,
-                                                   zrem)
-import qualified Database.Redis                   as Redis
-import           GHC.Generics                     (Generic)
-import           Haskoin                          (Address, BlockHash,
-                                                   BlockHeader (..),
-                                                   BlockNode (..),
-                                                   DerivPathI (..), KeyIndex,
-                                                   OutPoint (..), Tx (..),
-                                                   TxHash, TxIn (..),
-                                                   TxOut (..), derivePubPath,
-                                                   headerHash, pathToList,
-                                                   scriptToAddressBS, txHash)
-import           Haskoin.Node                     (Chain, chainGetAncestor,
-                                                   chainGetBlock,
-                                                   chainGetSplitBlock)
-import           Network.Haskoin.Store.Common     (BlockData (..),
-                                                   BlockRef (..), BlockTx (..),
-                                                   Cache, CacheMessage (..),
-                                                   Limit, Offset, Prev (..),
-                                                   StoreEvent (..),
-                                                   StoreRead (..), TxData (..),
-                                                   Unspent (..), XPubBal (..),
-                                                   XPubSpec (..),
-                                                   XPubUnspent (..), cacheXPub,
-                                                   sortTxs, xPubAddrFunction,
-                                                   xPubBals, xPubTxs,
-                                                   xPubUnspents)
-import           Network.Haskoin.Store.Data.Cache
-import           NQE                              (Inbox, receive)
-import           UnliftIO                         (Exception, MonadIO,
-                                                   MonadUnliftIO, liftIO,
-                                                   throwIO)
------------
--- Actor --
------------
+import           Control.Monad                          (forM_, forever, unless,
+                                                         void, when)
+import           Control.Monad.Reader                   (ReaderT (..), asks)
+import           Control.Monad.Trans                    (lift)
+import           Control.Monad.Trans.Maybe              (MaybeT (..), runMaybeT)
+import qualified Data.IntMap.Strict                     as IntMap
+import           Data.List                              (nub, partition, (\\))
+import qualified Data.Map.Strict                        as Map
+import           Data.Maybe                             (catMaybes, mapMaybe)
+import           Data.Serialize                         (encode)
+import           Database.Redis                         (RedisCtx, runRedis,
+                                                         zadd, zrem)
+import qualified Database.Redis                         as Redis
+import           Haskoin                                (Address, BlockHash,
+                                                         BlockHeader (..),
+                                                         BlockNode (..),
+                                                         DerivPathI (..),
+                                                         KeyIndex,
+                                                         OutPoint (..), Tx (..),
+                                                         TxHash, TxIn (..),
+                                                         TxOut (..),
+                                                         derivePubPath,
+                                                         headerHash, pathToList,
+                                                         scriptToAddressBS,
+                                                         txHash)
+import           Haskoin.Node                           (Chain,
+                                                         chainGetAncestor,
+                                                         chainGetBlock,
+                                                         chainGetSplitBlock)
+import           Network.Haskoin.Store.Common           (BlockData (..),
+                                                         BlockRef (..),
+                                                         BlockTx (..),
+                                                         CacheWriterMessage (..),
+                                                         Prev (..),
+                                                         StoreRead (..),
+                                                         TxData (..),
+                                                         Unspent (..),
+                                                         XPubBal (..),
+                                                         XPubSpec (..),
+                                                         XPubUnspent (..),
+                                                         sortTxs,
+                                                         xPubAddrFunction,
+                                                         xPubBals, xPubTxs,
+                                                         xPubUnspents)
+import           Network.Haskoin.Store.Data.CacheReader (AddressXPub (..),
+                                                         CacheError (..),
+                                                         CacheReaderConfig (..),
+                                                         CacheReaderT, addrPfx,
+                                                         balancesPfx,
+                                                         bestBlockKey,
+                                                         blockRefScore,
+                                                         chgIndexPfx,
+                                                         extIndexPfx,
+                                                         mempoolSetKey,
+                                                         pathScore,
+                                                         redisGetAddrInfo,
+                                                         redisGetHead,
+                                                         redisGetMempool,
+                                                         redisGetXPubIndex,
+                                                         txSetPfx, utxoPfx,
+                                                         withCacheReader)
+import           NQE                                    (Inbox, receive)
+import           UnliftIO                               (MonadIO, MonadUnliftIO,
+                                                         liftIO, throwIO)
+type CacheWriterInbox = Inbox CacheWriterMessage
 
-type CacheInbox = Inbox CacheMessage
-
-data CacheConf =
-    CacheConf
-        { cacheConfState :: !CacheState
-        , cacheConfChain :: !Chain
-        , cacheConfInbox :: !CacheInbox
+data CacheWriterConfig =
+    CacheWriterConfig
+        { cacheWriterReader  :: !CacheReaderConfig
+        , cacheWriterChain   :: !Chain
+        , cacheWriterMailbox :: !CacheWriterInbox
         }
 
-type CacheActorT = ReaderT CacheConf
+type CacheWriterT = ReaderT CacheWriterConfig
 
-instance (MonadIO m, StoreRead m) => StoreRead (CacheActorT m) where
+instance (MonadIO m, StoreRead m) => StoreRead (CacheWriterT m) where
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
@@ -90,31 +95,33 @@ instance (MonadIO m, StoreRead m) => StoreRead (CacheActorT m) where
     getAddressUnspents addr start = lift . getAddressUnspents addr start
     getAddressesUnspents addrs start = lift . getAddressesUnspents addrs start
     getMempool = lift getMempool
-    xPubBals = runInCacheT . xPubBals
-    xPubSummary = runInCacheT . xPubSummary
+    xPubBals = runCacheReaderT . xPubBals
+    xPubSummary = runCacheReaderT . xPubSummary
     xPubUnspents xpub start offset limit =
-        runInCacheT (xPubUnspents xpub start offset limit)
+        runCacheReaderT (xPubUnspents xpub start offset limit)
     xPubTxs xpub start offset limit =
-        runInCacheT (xPubTxs xpub start offset limit)
+        runCacheReaderT (xPubTxs xpub start offset limit)
 
-runInCacheT :: CacheT m a -> CacheActorT m a
-runInCacheT f = ReaderT (runReaderT f . cacheConfState)
+runCacheReaderT :: StoreRead m => CacheReaderT m a -> CacheWriterT m a
+runCacheReaderT f =
+    ReaderT (\CacheWriterConfig {cacheWriterReader = r} -> withCacheReader r f)
 
-cacheActor :: (MonadUnliftIO m, StoreRead m) => CacheConf -> m ()
-cacheActor cfg@CacheConf {cacheConfInbox = inbox} =
-    runReaderT (forever (receive inbox >>= react)) cfg
+cacheWriter :: (MonadUnliftIO m, StoreRead m) => CacheWriterConfig -> m ()
+cacheWriter cfg@CacheWriterConfig {cacheWriterMailbox = inbox} =
+    runReaderT (forever (receive inbox >>= cacheWriterReact)) cfg
 
-react :: (MonadUnliftIO m, StoreRead m) => CacheMessage -> CacheActorT m ()
-react CacheNewBlock    = newBlock
-react (CacheXPub xpub) = newXPub xpub
-react (CacheNewTx txh) = newTx txh
-react (CacheDelTx txh) = removeTx txh
+cacheWriterReact ::
+       (MonadUnliftIO m, StoreRead m) => CacheWriterMessage -> CacheWriterT m ()
+cacheWriterReact CacheNewBlock    = newBlockC
+cacheWriterReact (CacheXPub xpub) = newXPubC xpub
+cacheWriterReact (CacheNewTx txh) = newTxC txh
+cacheWriterReact (CacheDelTx txh) = removeTxC txh
 
-newXPub ::
+newXPubC ::
        (MonadUnliftIO m, StoreRead m)
     => XPubSpec
-    -> CacheActorT m ()
-newXPub xpub = do
+    -> CacheWriterT m ()
+newXPubC xpub = do
     present <- (> 0) <$> cacheGetXPubIndex xpub False
     unless present $ do
         bals <- lift $ xPubBals xpub
@@ -141,19 +148,19 @@ newXPub xpub = do
         cacheSetXPubIndex xpub False extindex
         cacheSetXPubIndex xpub True chgindex
 
-newBlock :: (MonadIO m, StoreRead m) => CacheActorT m ()
-newBlock =
+newBlockC :: (MonadIO m, StoreRead m) => CacheWriterT m ()
+newBlockC =
     lift getBestBlock >>= \case
         Nothing -> return ()
         Just newhead ->
             cacheGetHead >>= \case
-                Nothing -> importBlock newhead
+                Nothing -> importBlockC newhead
                 Just cachehead -> go newhead cachehead
   where
     go newhead cachehead
         | cachehead == newhead = return ()
         | otherwise = do
-            ch <- asks cacheConfChain
+            ch <- asks cacheWriterChain
             chainGetBlock newhead ch >>= \case
                 Nothing -> return ()
                 Just newheadnode ->
@@ -163,42 +170,42 @@ newBlock =
     go2 newheadnode cacheheadnode
         | nodeHeight cacheheadnode > nodeHeight newheadnode = return ()
         | otherwise = do
-            ch <- asks cacheConfChain
+            ch <- asks cacheWriterChain
             split <- chainGetSplitBlock cacheheadnode newheadnode ch
             if split == cacheheadnode
                 then if prevBlock (nodeHeader newheadnode) ==
                         headerHash (nodeHeader cacheheadnode)
-                         then importBlock (headerHash (nodeHeader newheadnode))
+                         then importBlockC (headerHash (nodeHeader newheadnode))
                          else go3 newheadnode cacheheadnode
-                else removeHead >> newBlock
+                else removeHeadC >> newBlockC
     go3 newheadnode cacheheadnode = do
-        ch <- asks cacheConfChain
+        ch <- asks cacheWriterChain
         ma <- chainGetAncestor (nodeHeight cacheheadnode + 1) newheadnode ch
         case ma of
             Nothing -> do
                 throwIO (LogicError "Could not get expected ancestor block")
             Just a -> do
-                importBlock (headerHash (nodeHeader a))
-                newBlock
+                importBlockC (headerHash (nodeHeader a))
+                newBlockC
 
-newTx :: (MonadIO m, StoreRead m) => TxHash -> CacheActorT m ()
-newTx th =
+newTxC :: (MonadIO m, StoreRead m) => TxHash -> CacheWriterT m ()
+newTxC th =
     lift (getTxData th) >>= \case
-        Just txd -> importTx txd
+        Just txd -> importTxC txd
         Nothing -> return ()
 
-removeTx :: (MonadIO m, StoreRead m) => TxHash -> CacheActorT m ()
-removeTx th =
+removeTxC :: (MonadIO m, StoreRead m) => TxHash -> CacheWriterT m ()
+removeTxC th =
     lift (getTxData th) >>= \case
-        Just txd -> deleteTx txd
+        Just txd -> deleteTxC txd
         Nothing -> return ()
 
 ---------------
 -- Importing --
 ---------------
 
-importBlock :: (StoreRead m, MonadIO m) => BlockHash -> CacheActorT m ()
-importBlock bh =
+importBlockC :: (StoreRead m, MonadIO m) => BlockHash -> CacheWriterT m ()
+importBlockC bh =
     lift (getBlock bh) >>= \case
         Nothing -> return ()
         Just bd -> go bd
@@ -206,10 +213,10 @@ importBlock bh =
     go bd = do
         let ths = blockDataTxs bd
         tds <- sortTxData . catMaybes <$> mapM (lift . getTxData) ths
-        forM_ tds importTx
+        forM_ tds importTxC
 
-removeHead :: (StoreRead m, MonadIO m) => CacheActorT m ()
-removeHead =
+removeHeadC :: (StoreRead m, MonadIO m) => CacheWriterT m ()
+removeHeadC =
     void . runMaybeT $ do
         bh <- MaybeT cacheGetHead
         bd <- MaybeT (lift (getBlock bh))
@@ -217,13 +224,13 @@ removeHead =
             tds <-
                 sortTxData . catMaybes <$>
                 mapM (lift . getTxData) (blockDataTxs bd)
-            forM_ (reverse (map (txHash . txData) tds)) removeTx
+            forM_ (reverse (map (txHash . txData) tds)) removeTxC
             cacheSetHead (prevBlock (blockDataHeader bd))
-            syncMempool
+            syncMempoolC
 
-importTx :: (StoreRead m, MonadIO m) => TxData -> CacheActorT m ()
-importTx txd = do
-    updateAddresses addrs
+importTxC :: (StoreRead m, MonadIO m) => TxData -> CacheWriterT m ()
+importTxC txd = do
+    updateAddressesC addrs
     is <- mapM cacheGetAddrInfo addrs
     let aim = Map.fromList (catMaybes (zipWith (\a i -> (a, ) <$> i) addrs is))
         dus = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) spnts
@@ -249,9 +256,9 @@ importTx txd = do
     utxos = txUnspent txd
     addrs = nub (map fst spnts <> map fst utxos)
 
-deleteTx :: (StoreRead m, MonadIO m) => TxData -> CacheActorT m ()
-deleteTx txd = do
-    updateAddresses addrs
+deleteTxC :: (StoreRead m, MonadIO m) => TxData -> CacheWriterT m ()
+deleteTxC txd = do
+    updateAddressesC addrs
     is <- mapM cacheGetAddrInfo addrs
     let aim = Map.fromList (catMaybes (zipWith (\a i -> (a, ) <$> i) addrs is))
         dus = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) spnts
@@ -272,24 +279,24 @@ deleteTx txd = do
     utxos = txUnspent txd
     addrs = nub (map fst spnts <> map fst utxos)
 
-updateAddresses ::
-       (StoreRead m, MonadIO m) => [Address] -> CacheActorT m ()
-updateAddresses as = do
+updateAddressesC ::
+       (StoreRead m, MonadIO m) => [Address] -> CacheWriterT m ()
+updateAddressesC as = do
     is <- mapM cacheGetAddrInfo as
     let ais = catMaybes (zipWith (\a i -> (a, ) <$> i) as is)
-    forM_ (catMaybes is) $ \i -> updateAddrGap i
+    forM_ (catMaybes is) $ \i -> updateAddressGapC i
     let as' = as \\ map fst ais
-    when (length as /= length as') (updateAddresses as')
+    when (length as /= length as') (updateAddressesC as')
 
-updateAddrGap ::
+updateAddressGapC ::
        (StoreRead m, MonadIO m)
     => AddressXPub
-    -> CacheActorT m ()
-updateAddrGap i = do
+    -> CacheWriterT m ()
+updateAddressGapC i = do
     current <- cacheGetXPubIndex (addressXPubSpec i) change
-    gap <- asks (cacheStateGap . cacheConfState)
-    let ns = addrsToAdd (addressXPubSpec i) change current new gap
-    forM_ ns (uncurry updateBalance)
+    gap <- asks (cacheReaderGap . cacheWriterReader)
+    let ns = addrsToAddC (addressXPubSpec i) change current new gap
+    forM_ ns (uncurry updateBalanceC)
     case ns of
         [] -> return ()
         _ ->
@@ -305,124 +312,124 @@ updateAddrGap i = do
             _ -> undefined
     new = last (addressXPubPath i)
 
-updateBalance ::
-       (StoreRead m, MonadIO m) => Address -> AddressXPub -> CacheActorT m ()
-updateBalance a i = do
+updateBalanceC ::
+       (StoreRead m, MonadIO m) => Address -> AddressXPub -> CacheWriterT m ()
+updateBalanceC a i = do
     cacheSetAddrInfo a i
     b <- lift (getBalance a)
     cacheAddXPubBalances
         (addressXPubSpec i)
         [XPubBal {xPubBalPath = addressXPubPath i, xPubBal = b}]
 
-syncMempool :: (MonadIO m, StoreRead m) => CacheActorT m ()
-syncMempool = do
+syncMempoolC :: (MonadIO m, StoreRead m) => CacheWriterT m ()
+syncMempoolC = do
     nodepool <- map blockTxHash <$> lift getMempool
     cachepool <- map blockTxHash <$> cacheGetMempool
     let deltxs = cachepool \\ nodepool
     deltds <- reverse . sortTxData . catMaybes <$> mapM (lift . getTxData) deltxs
-    forM_ deltds deleteTx
+    forM_ deltds deleteTxC
     let addtxs = nodepool \\ cachepool
     addtds <- sortTxData . catMaybes <$> mapM (lift . getTxData) addtxs
-    forM_ addtds importTx
+    forM_ addtds importTxC
 
-cacheAddXPubTxs :: MonadIO m => XPubSpec -> [BlockTx] -> CacheActorT m ()
+cacheAddXPubTxs :: MonadIO m => XPubSpec -> [BlockTx] -> CacheWriterT m ()
 cacheAddXPubTxs xpub txs = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisAddXPubTxs xpub txs)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheRemXPubTxs :: MonadIO m => XPubSpec -> [TxHash] -> CacheActorT m ()
+cacheRemXPubTxs :: MonadIO m => XPubSpec -> [TxHash] -> CacheWriterT m ()
 cacheRemXPubTxs xpub ths = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisRemXPubTxs xpub ths)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
 cacheAddXPubUnspents ::
-       MonadIO m => XPubSpec -> [(OutPoint, BlockRef)] -> CacheActorT m ()
+       MonadIO m => XPubSpec -> [(OutPoint, BlockRef)] -> CacheWriterT m ()
 cacheAddXPubUnspents xpub ops = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisAddXPubUnspents xpub ops)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheRemXPubUnspents :: MonadIO m => XPubSpec -> [OutPoint] -> CacheActorT m ()
+cacheRemXPubUnspents :: MonadIO m => XPubSpec -> [OutPoint] -> CacheWriterT m ()
 cacheRemXPubUnspents xpub ops = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisRemXPubUnspents xpub ops)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheAddXPubBalances :: MonadIO m => XPubSpec -> [XPubBal] -> CacheActorT m ()
+cacheAddXPubBalances :: MonadIO m => XPubSpec -> [XPubBal] -> CacheWriterT m ()
 cacheAddXPubBalances xpub bals = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisAddXPubBalances xpub bals)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheGetXPubIndex :: MonadIO m => XPubSpec -> Bool -> CacheActorT m KeyIndex
+cacheGetXPubIndex :: MonadIO m => XPubSpec -> Bool -> CacheWriterT m KeyIndex
 cacheGetXPubIndex xpub change = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisGetXPubIndex xpub change)) >>= \case
         Left e -> throwIO (RedisError e)
         Right x -> return x
 
 cacheSetXPubIndex ::
-       MonadIO m => XPubSpec -> Bool -> KeyIndex -> CacheActorT m ()
+       MonadIO m => XPubSpec -> Bool -> KeyIndex -> CacheWriterT m ()
 cacheSetXPubIndex xpub change index = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisSetXPubIndex xpub change index)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheGetMempool :: MonadIO m => CacheActorT m [BlockTx]
+cacheGetMempool :: MonadIO m => CacheWriterT m [BlockTx]
 cacheGetMempool = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn redisGetMempool) >>= \case
         Left e -> do
             throwIO (RedisError e)
         Right mem -> return mem
 
-cacheGetHead :: MonadIO m => CacheActorT m (Maybe BlockHash)
+cacheGetHead :: MonadIO m => CacheWriterT m (Maybe BlockHash)
 cacheGetHead = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn redisGetHead) >>= \case
         Left e ->
             throwIO (RedisError e)
         Right h -> return h
 
-cacheSetHead :: MonadIO m => BlockHash -> CacheActorT m ()
+cacheSetHead :: MonadIO m => BlockHash -> CacheWriterT m ()
 cacheSetHead bh = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisSetHead bh)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheAddToMempool :: MonadIO m => BlockTx -> CacheActorT m ()
+cacheAddToMempool :: MonadIO m => BlockTx -> CacheWriterT m ()
 cacheAddToMempool btx = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisAddToMempool btx)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheRemFromMempool :: MonadIO m => TxHash -> CacheActorT m ()
+cacheRemFromMempool :: MonadIO m => TxHash -> CacheWriterT m ()
 cacheRemFromMempool th = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisRemFromMempool th)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
-cacheGetAddrInfo :: MonadIO m => Address -> CacheActorT m (Maybe AddressXPub)
+cacheGetAddrInfo :: MonadIO m => Address -> CacheWriterT m (Maybe AddressXPub)
 cacheGetAddrInfo a = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisGetAddrInfo a)) >>= \case
         Left e -> throwIO (RedisError e)
         Right i -> return i
 
-cacheSetAddrInfo :: MonadIO m => Address -> AddressXPub -> CacheActorT m ()
+cacheSetAddrInfo :: MonadIO m => Address -> AddressXPub -> CacheWriterT m ()
 cacheSetAddrInfo a i = do
-    conn <- asks (cacheStateConn . cacheConfState)
+    conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisSetAddrInfo a i)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
@@ -496,14 +503,14 @@ redisSetHead bh = do
     f <- Redis.set bestBlockKey (encode bh)
     return $ f >> return ()
 
-addrsToAdd ::
+addrsToAddC ::
        XPubSpec
     -> Bool
     -> KeyIndex
     -> KeyIndex
     -> KeyIndex
     -> [(Address, AddressXPub)]
-addrsToAdd xpub change current new gap
+addrsToAddC xpub change current new gap
     | new <= current = []
     | otherwise =
         let top = new + gap

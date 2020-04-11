@@ -17,7 +17,7 @@ import           Test.Hspec
 import           UnliftIO
 
 data TestStore = TestStore
-    { testStoreDB         :: !BlockDB
+    { testStoreDB         :: !DatabaseReader
     , testStoreBlockStore :: !BlockStore
     , testStoreChain      :: !Chain
     , testStoreEvents     :: !(Inbox StoreEvent)
@@ -41,7 +41,7 @@ spec = do
                 bestHeight `shouldBe` 8
         it "get a block and its transactions" $
             withTestStore net "get-block-txs" $ \TestStore {..} ->
-                withRocksDB testStoreDB $ do
+                withDatabaseReader testStoreDB $ do
                     let h1 =
                             "e8588129e146eeb0aa7abdc3590f8c5920cc5ff42daf05c23b29d4ae5b51fc22"
                         h2 =
@@ -82,7 +82,11 @@ withTestStore net t f =
                         , errorIfExists = True
                         , compression = SnappyCompression
                         }
-            let bdb = BlockDB {blockDB = db, blockDBopts = defaultReadOptions}
+            let bdb =
+                    DatabaseReader
+                        { databaseHandle = db
+                        , databaseReadOptions = defaultReadOptions
+                        }
             let cfg =
                     StoreConfig
                         { storeConfMaxPeers = 20
@@ -91,6 +95,7 @@ withTestStore net t f =
                         , storeConfDB = bdb
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` x)
+                        , storeConfCache = Nothing
                         }
             withStore cfg $ \Store {..} ->
                 lift $

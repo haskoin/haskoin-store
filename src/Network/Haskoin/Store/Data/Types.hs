@@ -2,17 +2,17 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module Network.Haskoin.Store.Data.KeyValue where
+module Network.Haskoin.Store.Data.Types where
 
 import           Control.Monad                (guard)
 import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as B
-import qualified Data.ByteString.Short        as B.Short
+import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Short        as BSS
 import           Data.Hashable                (Hashable)
 import           Data.Serialize               (Serialize (..), getBytes,
                                                getWord8, putWord8)
 import           Data.Word                    (Word32, Word64)
-import qualified Database.RocksDB.Query       as R
+import           Database.RocksDB.Query       (Key, KeyValue)
 import           GHC.Generics                 (Generic)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                OutPoint (..), Tx, TxHash)
@@ -74,8 +74,8 @@ instance Serialize AddrTxKey
                           }
                 }
 
-instance R.Key AddrTxKey
-instance R.KeyValue AddrTxKey ()
+instance Key AddrTxKey
+instance KeyValue AddrTxKey ()
 
 -- | Database key for an address output.
 data AddrOutKey
@@ -114,14 +114,14 @@ instance Serialize AddrOutKey
         guard . (== 0x06) =<< getWord8
         AddrOutKey <$> get <*> get <*> get
 
-instance R.Key AddrOutKey
+instance Key AddrOutKey
 
 data OutVal = OutVal
     { outValAmount :: !Word64
     , outValScript :: !ByteString
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
 
-instance R.KeyValue AddrOutKey OutVal
+instance KeyValue AddrOutKey OutVal
 
 -- | Transaction database key.
 newtype TxKey = TxKey
@@ -137,8 +137,8 @@ instance Serialize TxKey where
         guard . (== 0x02) =<< getWord8
         TxKey <$> get
 
-instance R.Key TxKey
-instance R.KeyValue TxKey TxData
+instance Key TxKey
+instance KeyValue TxKey TxData
 
 data SpenderKey
     = SpenderKey { outputPoint :: !OutPoint }
@@ -159,8 +159,8 @@ instance Serialize SpenderKey where
         op <- OutPoint <$> get <*> get
         return $ SpenderKey op
 
-instance R.Key SpenderKey
-instance R.KeyValue SpenderKey Spender
+instance Key SpenderKey
+instance KeyValue SpenderKey Spender
 
 -- | Unspent output database key.
 data UnspentKey
@@ -188,8 +188,8 @@ instance Serialize UnspentKey
         i <- get
         return $ UnspentKey OutPoint {outPointHash = h, outPointIndex = i}
 
-instance R.Key UnspentKey
-instance R.KeyValue UnspentKey UnspentVal
+instance Key UnspentKey
+instance KeyValue UnspentKey UnspentVal
 
 toUnspent :: AddrOutKey -> OutVal -> Unspent
 toUnspent AddrOutKey {addrOutKeyB = b, addrOutKeyP = p} OutVal { outValAmount = v
@@ -198,7 +198,7 @@ toUnspent AddrOutKey {addrOutKeyB = b, addrOutKeyP = p} OutVal { outValAmount = 
     Unspent
         { unspentBlock = b
         , unspentAmount = v
-        , unspentScript = B.Short.toShort s
+        , unspentScript = BSS.toShort s
         , unspentPoint = p
         }
 toUnspent _ _ = undefined
@@ -216,8 +216,8 @@ instance Serialize MemKey where
         guard . (== 0x07) =<< getWord8
         return MemKey
 
-instance R.Key MemKey
-instance R.KeyValue MemKey [(UnixTime, TxHash)]
+instance Key MemKey
+instance KeyValue MemKey [(UnixTime, TxHash)]
 
 -- | Orphan pool transaction database key.
 data OrphanKey
@@ -239,8 +239,8 @@ instance Serialize OrphanKey
         guard . (== 0x08) =<< getWord8
         OrphanKey <$> get
 
-instance R.Key OrphanKey
-instance R.KeyValue OrphanKey (UnixTime, Tx)
+instance Key OrphanKey
+instance KeyValue OrphanKey (UnixTime, Tx)
 
 -- | Block entry database key.
 newtype BlockKey = BlockKey
@@ -256,7 +256,7 @@ instance Serialize BlockKey where
         guard . (== 0x01) =<< getWord8
         BlockKey <$> get
 
-instance R.KeyValue BlockKey BlockData
+instance KeyValue BlockKey BlockData
 
 -- | Block height database key.
 newtype HeightKey = HeightKey
@@ -272,8 +272,8 @@ instance Serialize HeightKey where
         guard . (== 0x03) =<< getWord8
         HeightKey <$> get
 
-instance R.Key HeightKey
-instance R.KeyValue HeightKey [BlockHash]
+instance Key HeightKey
+instance KeyValue HeightKey [BlockHash]
 
 -- | Address balance database key.
 data BalKey
@@ -294,8 +294,8 @@ instance Serialize BalKey where
         guard . (== 0x04) =<< getWord8
         BalKey <$> get
 
-instance R.Key BalKey
-instance R.KeyValue BalKey BalVal
+instance Key BalKey
+instance KeyValue BalKey BalVal
 
 -- | Key for best block in database.
 data BestKey =
@@ -304,13 +304,13 @@ data BestKey =
 
 instance Serialize BestKey where
     -- 0x00 × 32
-    put BestKey = put (B.replicate 32 0x00)
+    put BestKey = put (BS.replicate 32 0x00)
     get = do
-        guard . (== B.replicate 32 0x00) =<< getBytes 32
+        guard . (== BS.replicate 32 0x00) =<< getBytes 32
         return BestKey
 
-instance R.Key BestKey
-instance R.KeyValue BestKey BlockHash
+instance Key BestKey
+instance KeyValue BestKey BlockHash
 
 -- | Key for database version.
 data VersionKey =
@@ -324,8 +324,8 @@ instance Serialize VersionKey where
         guard . (== 0x0a) =<< getWord8
         return VersionKey
 
-instance R.Key VersionKey
-instance R.KeyValue VersionKey Word32
+instance Key VersionKey
+instance KeyValue VersionKey Word32
 
 
 -- | Old mempool transaction database key.
@@ -356,5 +356,5 @@ instance Serialize OldMemKey where
         guard . (== 0x07) =<< getWord8
         OldMemKey <$> getUnixTime <*> get
 
-instance R.Key OldMemKey
-instance R.KeyValue OldMemKey ()
+instance Key OldMemKey
+instance KeyValue OldMemKey ()

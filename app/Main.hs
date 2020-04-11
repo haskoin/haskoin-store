@@ -210,6 +210,7 @@ run Config { configPort = port
                         , storeConfDB = db
                         , storeConfNetwork = net
                         , storeConfListen = (`sendSTM` pub) . Event
+                        , storeConfCache = Nothing
                         }
              in withStore scfg $ \st ->
                     let wcfg =
@@ -222,6 +223,7 @@ run Config { configPort = port
                                 , webMaxLimits = limits
                                 , webReqLog = reqlog
                                 , webTimeouts = tos
+                                , webCache = Nothing
                                 }
                      in runWeb wcfg
   where

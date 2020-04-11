@@ -36,7 +36,6 @@ import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
 import qualified Data.Text.Encoding        as T
 import           Data.Word                 (Word32, Word64)
-import           Database.RocksDB          (DB, ReadOptions)
 import           GHC.Generics              (Generic)
 import           Haskoin                   (Address, Block, BlockHash,
                                             BlockHeader (..), BlockHeight,
@@ -56,7 +55,7 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             txHash, wrapPubKey, xPubAddr,
                                             xPubCompatWitnessAddr,
                                             xPubWitnessAddr)
-import           Haskoin.Node              (Chain, HostPort, Manager, Peer)
+import           Haskoin.Node              (Chain, Manager, Peer)
 import           Network.Socket            (SockAddr)
 import           NQE                       (Listen, Mailbox, send)
 import qualified Paths_haskoin_store       as P
@@ -68,20 +67,44 @@ data DeriveType
     | DeriveP2WPKH
     deriving (Show, Eq, Generic, NFData, Serialize)
 
+-- | Messages for block store actor.
+data BlockStoreMessage
+    = BlockNewBest !BlockNode
+      -- ^ new block header in chain
+    | BlockPeerConnect !Peer !SockAddr
+      -- ^ new peer connected
+    | BlockPeerDisconnect !Peer !SockAddr
+      -- ^ peer disconnected
+    | BlockReceived !Peer !Block
+      -- ^ new block received from a peer
+    | BlockNotFound !Peer ![BlockHash]
+      -- ^ block not found
+    | BlockTxReceived !Peer !Tx
+      -- ^ transaction received from peer
+    | BlockTxAvailable !Peer ![TxHash]
+      -- ^ peer has transactions available
+    | BlockPing !(Listen ())
+      -- ^ internal housekeeping ping
+
+-- | Mailbox for block store.
+type BlockStore = Mailbox BlockStoreMessage
+
+-- | Store mailboxes.
+data Store =
+    Store
+        { storeManager :: !Manager
+      -- ^ peer manager mailbox
+        , storeChain   :: !Chain
+      -- ^ chain header process mailbox
+        , storeBlock   :: !BlockStore
+      -- ^ block storage mailbox
+        }
+
 data XPubSpec =
     XPubSpec
         { xPubSpecKey    :: !XPubKey
         , xPubDeriveType :: !DeriveType
         } deriving (Show, Eq, Generic, NFData)
-
-data CacheMessage
-    = CacheXPub !XPubSpec
-    | CacheNewTx !TxHash
-    | CacheDelTx !TxHash
-    | CacheNewBlock
-    deriving (Show, Eq, Generic, NFData)
-
-type Cache = Mailbox CacheMessage
 
 instance Serialize XPubSpec where
     put XPubSpec {xPubSpecKey = k, xPubDeriveType = t} = do
@@ -110,63 +133,20 @@ instance Serialize XPubSpec where
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
--- | Mailbox for block store.
-type BlockStore = Mailbox BlockMessage
-
--- | Store mailboxes.
-data Store =
-    Store
-        { storeManager :: !Manager
-      -- ^ peer manager mailbox
-        , storeChain   :: !Chain
-      -- ^ chain header process mailbox
-        , storeBlock   :: !BlockStore
-      -- ^ block storage mailbox
-        }
-
--- | Configuration for a 'Store'.
-data StoreConfig =
-    StoreConfig
-        { storeConfMaxPeers  :: !Int
-      -- ^ max peers to connect to
-        , storeConfInitPeers :: ![HostPort]
-      -- ^ static set of peers to connect to
-        , storeConfDiscover  :: !Bool
-      -- ^ discover new peers?
-        , storeConfDB        :: !BlockDB
-      -- ^ RocksDB database handler
-        , storeConfNetwork   :: !Network
-      -- ^ network constants
-        , storeConfListen    :: !(Listen StoreEvent)
-      -- ^ listen to store events
-        }
-
--- | Configuration for a block store.
-data BlockConfig =
-    BlockConfig
-        { blockConfManager  :: !Manager
-      -- ^ peer manager from running node
-        , blockConfChain    :: !Chain
-      -- ^ chain from a running node
-        , blockConfListener :: !(Listen StoreEvent)
-      -- ^ listener for store events
-        , blockConfDB       :: !BlockDB
-      -- ^ RocksDB database handle
-        , blockConfNet      :: !Network
-      -- ^ network constants
-        }
-
-data BlockDB =
-    BlockDB
-        { blockDB     :: !DB
-        , blockDBopts :: !ReadOptions
-        }
-
 type UnixTime = Word64
 type BlockPos = Word32
 
 type Offset = Word32
 type Limit = Word32
+
+data CacheWriterMessage
+    = CacheXPub !XPubSpec
+    | CacheNewTx !TxHash
+    | CacheDelTx !TxHash
+    | CacheNewBlock
+    deriving (Show, Eq, Generic, NFData)
+
+type CacheWriter = Mailbox CacheWriterMessage
 
 class Monad m =>
       StoreRead m
@@ -1396,25 +1376,6 @@ valToUnspent p UnspentVal { unspentValBlock = b
         , unspentScript = s
         }
 
--- | Messages that a 'BlockStore' can accept.
-data BlockMessage
-    = BlockNewBest !BlockNode
-      -- ^ new block header in chain
-    | BlockPeerConnect !Peer !SockAddr
-      -- ^ new peer connected
-    | BlockPeerDisconnect !Peer !SockAddr
-      -- ^ peer disconnected
-    | BlockReceived !Peer !Block
-      -- ^ new block received from a peer
-    | BlockNotFound !Peer ![BlockHash]
-      -- ^ block not found
-    | BlockTxReceived !Peer !Tx
-      -- ^ transaction received from peer
-    | BlockTxAvailable !Peer ![TxHash]
-      -- ^ peer has transactions available
-    | BlockPing !(Listen ())
-      -- ^ internal housekeeping ping
-
 -- | Events that the store can generate.
 data StoreEvent
     = StoreBestBlock !BlockHash
@@ -1494,14 +1455,14 @@ sortTxs txs = go $ zip [0 ..] txs
                     ts
          in is <> go ds
 
-cacheXPub :: MonadIO m => Cache -> XPubSpec -> m ()
+cacheXPub :: MonadIO m => CacheWriter -> XPubSpec -> m ()
 cacheXPub cache xpub = CacheXPub xpub `send` cache
 
-cacheNewTx :: MonadIO m => Cache -> TxHash -> m ()
+cacheNewTx :: MonadIO m => CacheWriter -> TxHash -> m ()
 cacheNewTx cache tx = CacheNewTx tx `send` cache
 
-cacheDelTx :: MonadIO m => Cache -> TxHash -> m ()
+cacheDelTx :: MonadIO m => CacheWriter -> TxHash -> m ()
 cacheDelTx cache tx = CacheDelTx tx `send` cache
 
-cacheNewBlock :: MonadIO m => Cache -> m ()
+cacheNewBlock :: MonadIO m => CacheWriter -> m ()
 cacheNewBlock = send CacheNewBlock

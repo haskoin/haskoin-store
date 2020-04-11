@@ -1,15 +1,17 @@
-module Network.Haskoin.Store.Data.CacheSpec (spec) where
+module Network.Haskoin.Store.Data.CacheReaderSpec (spec) where
 
-import           Data.List                        (sort)
-import           Haskoin                          (KeyIndex)
-import           Network.Haskoin.Store.Common     (BlockRef (..))
-import           Network.Haskoin.Store.Data.Cache (blockRefScore, pathScore,
-                                                   scoreBlockRef, scorePath)
-import           Test.Hspec                       (Spec, describe)
-import           Test.Hspec.QuickCheck            (prop)
-import           Test.QuickCheck                  (Gen, arbitrary, choose,
-                                                   elements, forAll, listOf,
-                                                   oneof)
+import           Data.List                              (sort)
+import           Haskoin                                (KeyIndex)
+import           Network.Haskoin.Store.Common           (BlockRef (..))
+import           Network.Haskoin.Store.Data.CacheReader (blockRefScore,
+                                                         pathScore,
+                                                         scoreBlockRef,
+                                                         scorePath)
+import           Test.Hspec                             (Spec, describe)
+import           Test.Hspec.QuickCheck                  (prop)
+import           Test.QuickCheck                        (Gen, arbitrary, choose,
+                                                         elements, forAll,
+                                                         listOf, oneof)
 
 spec :: Spec
 spec = do

@@ -1,43 +1,42 @@
 {-# LANGUAGE FlexibleInstances #-}
-module Network.Haskoin.Store.Data.Memory where
+module Network.Haskoin.Store.Data.MemoryDatabase where
 
-import           Conduit                             (ConduitT, mapC, yieldMany,
-                                                      (.|))
-import           Control.Monad                       (join)
-import           Control.Monad.Reader                (ReaderT)
-import qualified Control.Monad.Reader                as R
-import qualified Data.ByteString.Short               as B.Short
-import           Data.Function                       (on)
-import           Data.HashMap.Strict                 (HashMap)
-import qualified Data.HashMap.Strict                 as M
-import           Data.IntMap.Strict                  (IntMap)
-import qualified Data.IntMap.Strict                  as I
-import           Data.List                           (nub, sortBy)
-import           Data.Maybe                          (catMaybes, fromJust,
-                                                      fromMaybe, isJust,
-                                                      maybeToList)
-import           Haskoin                             (Address, BlockHash,
-                                                      BlockHeight,
-                                                      OutPoint (..), Tx, TxHash,
-                                                      headerHash, txHash)
-import           Network.Haskoin.Store.Common        (BalVal, Balance,
-                                                      BlockData (..), BlockRef,
-                                                      BlockTx (..), Limit,
-                                                      Spender, StoreRead (..),
-                                                      StoreWrite (..),
-                                                      TxData (..), UnixTime,
-                                                      Unspent (..), UnspentVal,
-                                                      applyLimit, balanceToVal,
-                                                      unspentToVal,
-                                                      valToBalance,
-                                                      valToUnspent, zeroBalance)
-import           Network.Haskoin.Store.Data.KeyValue (OutVal (..))
+import           Conduit                          (ConduitT, mapC, yieldMany,
+                                                   (.|))
+import           Control.Monad                    (join)
+import           Control.Monad.Reader             (ReaderT)
+import qualified Control.Monad.Reader             as R
+import qualified Data.ByteString.Short            as B.Short
+import           Data.Function                    (on)
+import           Data.HashMap.Strict              (HashMap)
+import qualified Data.HashMap.Strict              as M
+import           Data.IntMap.Strict               (IntMap)
+import qualified Data.IntMap.Strict               as I
+import           Data.List                        (nub, sortBy)
+import           Data.Maybe                       (catMaybes, fromJust,
+                                                   fromMaybe, isJust,
+                                                   maybeToList)
+import           Haskoin                          (Address, BlockHash,
+                                                   BlockHeight, OutPoint (..),
+                                                   Tx, TxHash, headerHash,
+                                                   txHash)
+import           Network.Haskoin.Store.Common     (BalVal, Balance,
+                                                   BlockData (..), BlockRef,
+                                                   BlockTx (..), Limit, Spender,
+                                                   StoreRead (..),
+                                                   StoreWrite (..), TxData (..),
+                                                   UnixTime, Unspent (..),
+                                                   UnspentVal, applyLimit,
+                                                   balanceToVal, unspentToVal,
+                                                   valToBalance, valToUnspent,
+                                                   zeroBalance)
+import           Network.Haskoin.Store.Data.Types (OutVal (..))
 import           UnliftIO
 
-withBlockMem :: MonadIO m => TVar BlockMem -> ReaderT (TVar BlockMem) m a -> m a
-withBlockMem = flip R.runReaderT
+withMemoryDatabase :: MonadIO m => TVar MemoryDatabase -> ReaderT (TVar MemoryDatabase) m a -> m a
+withMemoryDatabase = flip R.runReaderT
 
-data BlockMem = BlockMem
+data MemoryDatabase = MemoryDatabase
     { hBest :: !(Maybe BlockHash)
     , hBlock :: !(HashMap BlockHash BlockData)
     , hHeight :: !(HashMap BlockHeight [BlockHash])
@@ -51,9 +50,9 @@ data BlockMem = BlockMem
     , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
     } deriving (Eq, Show)
 
-emptyBlockMem :: BlockMem
-emptyBlockMem =
-    BlockMem
+emptyMemoryDatabase :: MemoryDatabase
+emptyMemoryDatabase =
+    MemoryDatabase
         { hBest = Nothing
         , hBlock = M.empty
         , hHeight = M.empty
@@ -67,41 +66,41 @@ emptyBlockMem =
         , hOrphans = M.empty
         }
 
-getBestBlockH :: BlockMem -> Maybe BlockHash
+getBestBlockH :: MemoryDatabase -> Maybe BlockHash
 getBestBlockH = hBest
 
-getBlocksAtHeightH :: BlockHeight -> BlockMem -> [BlockHash]
+getBlocksAtHeightH :: BlockHeight -> MemoryDatabase -> [BlockHash]
 getBlocksAtHeightH h = M.lookupDefault [] h . hHeight
 
-getBlockH :: BlockHash -> BlockMem -> Maybe BlockData
+getBlockH :: BlockHash -> MemoryDatabase -> Maybe BlockData
 getBlockH h = M.lookup h . hBlock
 
-getTxDataH :: TxHash -> BlockMem -> Maybe TxData
+getTxDataH :: TxHash -> MemoryDatabase -> Maybe TxData
 getTxDataH t = M.lookup t . hTx
 
-getSpenderH :: OutPoint -> BlockMem -> Maybe (Maybe Spender)
+getSpenderH :: OutPoint -> MemoryDatabase -> Maybe (Maybe Spender)
 getSpenderH op db = do
     m <- M.lookup (outPointHash op) (hSpender db)
     I.lookup (fromIntegral (outPointIndex op)) m
 
-getSpendersH :: TxHash -> BlockMem -> IntMap (Maybe Spender)
+getSpendersH :: TxHash -> MemoryDatabase -> IntMap (Maybe Spender)
 getSpendersH t = M.lookupDefault I.empty t . hSpender
 
-getBalanceH :: Address -> BlockMem -> Balance
+getBalanceH :: Address -> MemoryDatabase -> Balance
 getBalanceH a =
     fromMaybe (zeroBalance a) . fmap (valToBalance a) . M.lookup a . hBalance
 
-getMempoolH :: BlockMem -> Maybe [BlockTx]
+getMempoolH :: MemoryDatabase -> Maybe [BlockTx]
 getMempoolH = hMempool
 
-getOrphansH :: BlockMem -> [(UnixTime, Tx)]
+getOrphansH :: MemoryDatabase -> [(UnixTime, Tx)]
 getOrphansH = catMaybes . M.elems . hOrphans
 
-getOrphanTxH :: TxHash -> BlockMem -> Maybe (Maybe (UnixTime, Tx))
+getOrphanTxH :: TxHash -> MemoryDatabase -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
 
-getUnspentsH :: Monad m => BlockMem -> ConduitT i Unspent m ()
-getUnspentsH BlockMem {hUnspent = us} =
+getUnspentsH :: Monad m => MemoryDatabase -> ConduitT i Unspent m ()
+getUnspentsH MemoryDatabase {hUnspent = us} =
     yieldMany
         [ u
         | (h, m) <- M.toList us
@@ -112,7 +111,7 @@ getUnspentsH BlockMem {hUnspent = us} =
         ]
 
 getAddressesTxsH ::
-       [Address] -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [BlockTx]
+       [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [BlockTx]
 getAddressesTxsH addrs start limit db = applyLimit limit xs
   where
     xs =
@@ -120,7 +119,7 @@ getAddressesTxsH addrs start limit db = applyLimit limit xs
         map (\a -> getAddressTxsH a start limit db) addrs
 
 getAddressTxsH ::
-       Address -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [BlockTx]
+       Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [BlockTx]
 getAddressTxsH addr start limit db =
     applyLimit limit .
     dropWhile h .
@@ -135,12 +134,12 @@ getAddressTxsH addr start limit db =
             Nothing -> False
             Just br -> b > br
 
-getAddressBalancesH :: Monad m => BlockMem -> ConduitT i Balance m ()
-getAddressBalancesH BlockMem {hBalance = bm} =
+getAddressBalancesH :: Monad m => MemoryDatabase -> ConduitT i Balance m ()
+getAddressBalancesH MemoryDatabase {hBalance = bm} =
     yieldMany (M.toList bm) .| mapC (uncurry valToBalance)
 
 getAddressesUnspentsH ::
-       [Address] -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [Unspent]
+       [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
 getAddressesUnspentsH addrs start limit db = applyLimit limit xs
   where
     xs =
@@ -148,7 +147,7 @@ getAddressesUnspentsH addrs start limit db = applyLimit limit xs
         map (\a -> getAddressUnspentsH a start limit db) addrs
 
 getAddressUnspentsH ::
-       Address -> Maybe BlockRef -> Maybe Limit -> BlockMem -> [Unspent]
+       Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
 getAddressUnspentsH addr start limit db =
     applyLimit limit .
     dropWhile h .
@@ -170,20 +169,20 @@ getAddressUnspentsH addr start limit db =
             Nothing -> False
             Just br -> b > br
 
-setBestH :: BlockHash -> BlockMem -> BlockMem
+setBestH :: BlockHash -> MemoryDatabase -> MemoryDatabase
 setBestH h db = db {hBest = Just h}
 
-insertBlockH :: BlockData -> BlockMem -> BlockMem
+insertBlockH :: BlockData -> MemoryDatabase -> MemoryDatabase
 insertBlockH bd db =
     db {hBlock = M.insert (headerHash (blockDataHeader bd)) bd (hBlock db)}
 
-setBlocksAtHeightH :: [BlockHash] -> BlockHeight -> BlockMem -> BlockMem
+setBlocksAtHeightH :: [BlockHash] -> BlockHeight -> MemoryDatabase -> MemoryDatabase
 setBlocksAtHeightH hs g db = db {hHeight = M.insert g hs (hHeight db)}
 
-insertTxH :: TxData -> BlockMem -> BlockMem
+insertTxH :: TxData -> MemoryDatabase -> MemoryDatabase
 insertTxH tx db = db {hTx = M.insert (txHash (txData tx)) tx (hTx db)}
 
-insertSpenderH :: OutPoint -> Spender -> BlockMem -> BlockMem
+insertSpenderH :: OutPoint -> Spender -> MemoryDatabase -> MemoryDatabase
 insertSpenderH op s db =
     db
         { hSpender =
@@ -194,7 +193,7 @@ insertSpenderH op s db =
                   (hSpender db)
         }
 
-deleteSpenderH :: OutPoint -> BlockMem -> BlockMem
+deleteSpenderH :: OutPoint -> MemoryDatabase -> MemoryDatabase
 deleteSpenderH op db =
     db
         { hSpender =
@@ -205,12 +204,12 @@ deleteSpenderH op db =
                   (hSpender db)
         }
 
-setBalanceH :: Balance -> BlockMem -> BlockMem
+setBalanceH :: Balance -> MemoryDatabase -> MemoryDatabase
 setBalanceH bal db = db {hBalance = M.insert a b (hBalance db)}
   where
     (a, b) = balanceToVal bal
 
-insertAddrTxH :: Address -> BlockTx -> BlockMem -> BlockMem
+insertAddrTxH :: Address -> BlockTx -> MemoryDatabase -> MemoryDatabase
 insertAddrTxH a btx db =
     let s =
             M.singleton
@@ -220,7 +219,7 @@ insertAddrTxH a btx db =
                      (M.singleton (blockTxHash btx) True))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-deleteAddrTxH :: Address -> BlockTx -> BlockMem -> BlockMem
+deleteAddrTxH :: Address -> BlockTx -> MemoryDatabase -> MemoryDatabase
 deleteAddrTxH a btx db =
     let s =
             M.singleton
@@ -230,7 +229,7 @@ deleteAddrTxH a btx db =
                      (M.singleton (blockTxHash btx) False))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-insertAddrUnspentH :: Address -> Unspent -> BlockMem -> BlockMem
+insertAddrUnspentH :: Address -> Unspent -> MemoryDatabase -> MemoryDatabase
 insertAddrUnspentH a u db =
     let uns =
             OutVal
@@ -245,7 +244,7 @@ insertAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) (Just uns)))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-deleteAddrUnspentH :: Address -> Unspent -> BlockMem -> BlockMem
+deleteAddrUnspentH :: Address -> Unspent -> MemoryDatabase -> MemoryDatabase
 deleteAddrUnspentH a u db =
     let s =
             M.singleton
@@ -255,22 +254,22 @@ deleteAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-setMempoolH :: [BlockTx] -> BlockMem -> BlockMem
+setMempoolH :: [BlockTx] -> MemoryDatabase -> MemoryDatabase
 setMempoolH xs db = db {hMempool = Just xs}
 
-insertOrphanTxH :: Tx -> UnixTime -> BlockMem -> BlockMem
+insertOrphanTxH :: Tx -> UnixTime -> MemoryDatabase -> MemoryDatabase
 insertOrphanTxH tx u db =
     db {hOrphans = M.insert (txHash tx) (Just (u, tx)) (hOrphans db)}
 
-deleteOrphanTxH :: TxHash -> BlockMem -> BlockMem
+deleteOrphanTxH :: TxHash -> MemoryDatabase -> MemoryDatabase
 deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
 
-getUnspentH :: OutPoint -> BlockMem -> Maybe (Maybe Unspent)
+getUnspentH :: OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
 getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
     fmap (valToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
 
-insertUnspentH :: Unspent -> BlockMem -> BlockMem
+insertUnspentH :: Unspent -> MemoryDatabase -> MemoryDatabase
 insertUnspentH u db =
     db
         { hUnspent =
@@ -283,7 +282,7 @@ insertUnspentH u db =
                   (hUnspent db)
         }
 
-deleteUnspentH :: OutPoint -> BlockMem -> BlockMem
+deleteUnspentH :: OutPoint -> MemoryDatabase -> MemoryDatabase
 deleteUnspentH op db =
     db
         { hUnspent =
@@ -294,7 +293,7 @@ deleteUnspentH op db =
                   (hUnspent db)
         }
 
-instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where
+instance MonadIO m => StoreRead (ReaderT (TVar MemoryDatabase) m) where
     getBestBlock = do
         v <- R.ask >>= readTVarIO
         return $ getBestBlockH v
@@ -341,7 +340,7 @@ instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where
         v <- R.ask >>= readTVarIO
         return $ getAddressUnspentsH addr start limit v
 
-instance (MonadIO m) => StoreWrite (ReaderT (TVar BlockMem) m) where
+instance (MonadIO m) => StoreWrite (ReaderT (TVar MemoryDatabase) m) where
     setBest h = do
         v <- R.ask
         atomically $ modifyTVar v (setBestH h)
