@@ -550,12 +550,11 @@ scottyRawBlockTransactions = do
 
 scottyAddressTxs :: MonadLoggerIO m => Bool -> WebT m ()
 scottyAddressTxs full = do
-    limits <- lift $ asks webMaxLimits
     setHeaders
     a <- parseAddress
     s <- getStart
-    o <- getOffset limits
-    l <- getLimit limits full
+    o <- getOffset
+    l <- getLimit full
     proto <- setupBin
     if full
         then do
@@ -566,11 +565,10 @@ scottyAddressTxs full = do
 scottyAddressesTxs ::
        MonadLoggerIO m => Bool -> WebT m ()
 scottyAddressesTxs full = do
-    limits <- lift $ asks webMaxLimits
     setHeaders
     as <- parseAddresses
     s <- getStart
-    l <- getLimit limits full
+    l <- getLimit full
     proto <- setupBin
     if full
         then getAddressesTxsFull l s as >>= protoSerial proto
@@ -578,23 +576,21 @@ scottyAddressesTxs full = do
 
 scottyAddressUnspent :: MonadLoggerIO m => WebT m ()
 scottyAddressUnspent = do
-    limits <- lift $ asks webMaxLimits
     setHeaders
     a <- parseAddress
     s <- getStart
-    o <- getOffset limits
-    l <- getLimit limits False
+    o <- getOffset
+    l <- getLimit False
     proto <- setupBin
     uns <- getAddressUnspentsLimit o l s a
     protoSerial proto uns
 
 scottyAddressesUnspent :: MonadLoggerIO m => WebT m ()
 scottyAddressesUnspent = do
-    limits <- lift $ asks webMaxLimits
     setHeaders
     as <- parseAddresses
     s <- getStart
-    l <- getLimit limits False
+    l <- getLimit False
     proto <- setupBin
     uns <- getAddressesUnspentsLimit l s as
     protoSerial proto uns
@@ -625,11 +621,10 @@ scottyXpubBalances = do
 
 scottyXpubTxs :: MonadLoggerIO m => Bool -> WebT m ()
 scottyXpubTxs full = do
-    limits <- lift $ asks webMaxLimits
     setHeaders
     xpub <- parseXpub
     start <- getStart
-    limit <- getLimit limits full
+    limit <- getLimit full
     proto <- setupBin
     txs <- xPubTxs xpub start 0 limit
     if full
@@ -640,12 +635,11 @@ scottyXpubTxs full = do
 
 scottyXpubUnspents :: MonadLoggerIO m => WebT m ()
 scottyXpubUnspents = do
-    limits <- lift $ asks webMaxLimits
     setHeaders
     xpub <- parseXpub
     proto <- setupBin
     start <- getStart
-    limit <- getLimit limits False
+    limit <- getLimit False
     uns <- xPubUnspents xpub start 0 limit
     protoSerial proto uns
 
@@ -822,8 +816,9 @@ getStart =
                 return $ BlockRef g maxBound
             else return $ MemRef q
 
-getOffset :: Monad m => MaxLimits -> ActionT Except m Offset
-getOffset limits = do
+getOffset :: Monad m => WebT m Offset
+getOffset = do
+    limits <- lift $ asks webMaxLimits
     o <- S.param "offset" `S.rescue` const (return 0)
     when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) .
         S.raise . UserError $
@@ -832,10 +827,10 @@ getOffset limits = do
 
 getLimit ::
        Monad m
-    => MaxLimits
-    -> Bool
-    -> ActionT Except m (Maybe Limit)
-getLimit limits full = do
+    => Bool
+    -> WebT m (Maybe Limit)
+getLimit full = do
+    limits <- lift $ asks webMaxLimits
     l <- (Just <$> S.param "limit") `S.rescue` const (return Nothing)
     let m =
             if full
@@ -1076,7 +1071,7 @@ getAddressTxsLimit ::
     -> Address
     -> m [BlockTx]
 getAddressTxsLimit offset limit start addr =
-    applyOffset offset <$> getAddressTxs addr start limit
+    applyOffset offset <$> getAddressTxs addr start ((offset +) <$> limit)
 
 getAddressTxsFull ::
        (Monad m, StoreRead m)
@@ -1117,7 +1112,7 @@ getAddressUnspentsLimit ::
     -> Address
     -> m [Unspent]
 getAddressUnspentsLimit offset limit start addr =
-    applyOffset offset <$> getAddressUnspents addr start limit
+    applyOffset offset <$> getAddressUnspents addr start ((offset +) <$> limit)
 
 getAddressesUnspentsLimit ::
        (Monad m, StoreRead m)
