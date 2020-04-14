@@ -19,12 +19,12 @@ packages:
   original:
     hackage: haskoin-core-0.12.0
 - completed:
-    hackage: secp256k1-haskell-0.2.1@sha256:f923d9b68c822f4bd21c559e024607672e43d37f466f881f11c192c51ac94ba2,2342
+    hackage: secp256k1-haskell-0.2.2@sha256:f4e8efe87e239a73fd9518703177e25d66c1475f6cb967fcd434e38d99923916,2466
     pantry-tree:
       size: 603
-      sha256: f0b9d9a08430dcff34bd3b543e68ecc52297bb13ea652511d454f1d25a104b46
+      sha256: c1e3077968c5012f6a16c158d13bb587068dd5ba6d389033f37864e37bfaf522
   original:
-    hackage: secp256k1-haskell-0.2.1
+    hackage: secp256k1-haskell-0.2.2
 snapshots:
 - completed:
     size: 488576
