@@ -117,7 +117,9 @@ store cfg mgri chi bsi = do
                     , blockConfDB = storeConfDB cfg
                     , blockConfNet = storeConfNetwork cfg
                     }
-        blockStore bcfg bsi
+        case storeConfCache cfg of
+            Nothing -> blockStore bcfg bsi
+            Just cacheconf -> undefined
   where
     l = storeConfListen cfg
     b = inboxToMailbox bsi
