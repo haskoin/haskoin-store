@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.21.0
+### Fixed
+- Fix output of web API calls when issuing limits with offsets.
+
+### Changed
+- Massive refactoring of entire codebase.
+
+### Added
+- Work in progress Redis caching for extended public keys.
+
 ## 0.20.2
 ### Changed
 - Filter xpub address balances on web API to show only addresses that have been used.
