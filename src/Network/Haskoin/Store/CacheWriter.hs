@@ -419,8 +419,8 @@ updateBalanceC a i = do
         " on xpub " <>
         xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
         cs (pathToStr (listToPath (addressXPubPath i)))
-    cacheSetAddrInfo a i
     b <- lift (getBalance a)
+    cacheSetAddrInfo b i
     cacheAddXPubBalances
         (addressXPubSpec i)
         [XPubBal {xPubBalPath = addressXPubPath i, xPubBal = b}]
@@ -532,10 +532,10 @@ cacheGetAddrInfo a = do
         Left e -> throwIO (RedisError e)
         Right i -> return i
 
-cacheSetAddrInfo :: MonadIO m => Address -> AddressXPub -> CacheWriterT m ()
-cacheSetAddrInfo a i = do
+cacheSetAddrInfo :: MonadIO m => Balance -> AddressXPub -> CacheWriterT m ()
+cacheSetAddrInfo b i = do
     conn <- asks (cacheReaderConn . cacheWriterReader)
-    liftIO (runRedis conn (redisSetAddrInfo a i)) >>= \case
+    liftIO (runRedis conn (redisSetAddrInfo b i)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
@@ -553,9 +553,13 @@ redisRemFromMempool th = do
     return $ f >> return ()
 
 redisSetAddrInfo ::
-       (Monad f, RedisCtx m f) => Address -> AddressXPub -> m (f ())
-redisSetAddrInfo a i = do
-    f <- Redis.set (addrPfx <> encode a) (encode i)
+       (Monad f, RedisCtx m f) => Balance -> AddressXPub -> m (f ())
+redisSetAddrInfo b i = do
+    f <- Redis.set (addrPfx <> encode (balanceAddress b)) (encode i)
+    g <-
+        redisAddXPubBalances
+            (addressXPubSpec i)
+            [XPubBal {xPubBal = b, xPubBalPath = addressXPubPath i}]
     return $ f >> return ()
 
 redisAddXPubTxs :: (Monad f, RedisCtx m f) => XPubSpec -> [BlockTx] -> m (f ())
@@ -603,7 +607,7 @@ redisAddXPubBalances xpub bals = do
             gs <-
                 forM bals $ \b ->
                     redisSetAddrInfo
-                        (balanceAddress (xPubBal b))
+                        (xPubBal b)
                         AddressXPub
                             { addressXPubSpec = xpub
                             , addressXPubPath = xPubBalPath b
