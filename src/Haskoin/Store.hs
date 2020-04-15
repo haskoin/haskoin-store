@@ -142,6 +142,7 @@ store cfg mgri chi bsi = do
                             { cacheWriterReader = crconf
                             , cacheWriterChain = c
                             , cacheWriterMailbox = snd cacheinfo
+                            , cacheWriterNetwork = storeConfNetwork cfg
                             }
                     cw =
                         withDatabaseReader
