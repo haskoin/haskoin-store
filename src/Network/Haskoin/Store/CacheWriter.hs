@@ -367,11 +367,12 @@ updateAddressesC as = do
     net <- asks cacheWriterNetwork
     forM_ ais $ \(a, i) -> do
         $(logDebugS) "Cache" $
-            "Updating gaps for address " <>
+            "Updating balances and gaps for address " <>
             fromMaybe "[notext]" (addrToString net a) <>
             " xpub " <>
             xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
             cs (pathToStr (listToPath (addressXPubPath i)))
+        updateBalanceC a i
         updateAddressGapC i
     let as' = as \\ map fst ais
     when (length as /= length as') (updateAddressesC as')
