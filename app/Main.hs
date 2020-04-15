@@ -147,7 +147,7 @@ config = do
         switch $ long "cache" <> help "Redis cache for extended public keys"
     configRedisURL <-
         strOption $
-        metavar "URL" <> long "redis" <> help "URL for Redis cache"
+        metavar "URL" <> long "redis" <> help "URL for Redis cache" <> value ""
     pure
         Config
             { configMaxLimits = MaxLimits {..}
