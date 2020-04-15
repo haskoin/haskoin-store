@@ -251,12 +251,12 @@ redisGetAddrInfo a = do
 
 redisGetXPubBalances :: (Monad f, RedisCtx m f) => XPubSpec -> m (f [XPubBal])
 redisGetXPubBalances xpub = do
-    xs <- getAllFromMap (balancesPfx <> encode xpub)
+    fxs <- getAllFromMap (balancesPfx <> encode xpub)
     return $ do
-        xs' <- xs
-        return (sort $ map (uncurry f) xs')
+        xs <- fxs
+        return (sort $ map (uncurry f) xs)
   where
-    f b s = XPubBal {xPubBalPath = scorePath s, xPubBal = b}
+    f p b = XPubBal {xPubBalPath = p, xPubBal = b}
 
 redisGetXPubTxs ::
        (Monad f, RedisCtx m f)
@@ -387,8 +387,10 @@ getFromSortedSet key (Just score) offset (Just count) = do
         ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
         return (rights ys)
 
-getAllFromMap :: (Monad f, RedisCtx m f, Serialize k, Serialize v)
- => ByteString -> m (f [(k, v)])
+getAllFromMap ::
+       (Monad f, RedisCtx m f, Serialize k, Serialize v)
+    => ByteString
+    -> m (f [(k, v)])
 getAllFromMap n = do
     fxs <- hgetall n
     return $ do
