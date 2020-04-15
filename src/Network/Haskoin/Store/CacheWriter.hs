@@ -21,7 +21,7 @@ import           Data.Maybe                             (catMaybes, fromMaybe,
 import           Data.Serialize                         (encode)
 import           Data.String.Conversions                (cs)
 import           Database.Redis                         (RedisCtx, runRedis,
-                                                         zadd, zrem)
+                                                         zadd, zrem, hmset)
 import qualified Database.Redis                         as Redis
 import           Haskoin                                (Address, BlockHash,
                                                          BlockHeader (..),
@@ -588,11 +588,11 @@ redisAddXPubBalances ::
        (Monad f, RedisCtx m f) => XPubSpec -> [XPubBal] -> m (f ())
 redisAddXPubBalances xpub bals = do
     let entries =
-            map (\b -> (pathScore (xPubBalPath b), encode (xPubBal b))) bals
+            map (\b -> (encode (xPubBalPath b), encode (xPubBal b))) bals
     if null entries
         then return (return ())
         else do
-            f <- zadd (balancesPfx <> encode xpub) entries
+            f <- hmset (balancesPfx <> encode xpub) entries
             gs <-
                 forM bals $ \b ->
                     redisSetAddrInfo

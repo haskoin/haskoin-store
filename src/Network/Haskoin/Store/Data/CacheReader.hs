@@ -14,12 +14,14 @@ import           Data.Bits                    (shift, (.&.), (.|.))
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString.Short        as BSS
 import           Data.Either                  (rights)
+import           Data.List                    (sort)
 import qualified Data.Map.Strict              as Map
 import           Data.Maybe                   (catMaybes, mapMaybe)
 import           Data.Serialize               (Serialize, decode, encode)
 import           Data.Word                    (Word32, Word64)
 import           Database.Redis               (Connection, RedisCtx, Reply,
-                                               runRedis, zrangeWithscores,
+                                               hgetall, runRedis,
+                                               zrangeWithscores,
                                                zrangebyscoreWithscoresLimit)
 import qualified Database.Redis               as Redis
 import           GHC.Generics                 (Generic)
@@ -249,10 +251,10 @@ redisGetAddrInfo a = do
 
 redisGetXPubBalances :: (Monad f, RedisCtx m f) => XPubSpec -> m (f [XPubBal])
 redisGetXPubBalances xpub = do
-    xs <- getFromSortedSet (balancesPfx <> encode xpub) Nothing 0 Nothing
+    xs <- getAllFromMap (balancesPfx <> encode xpub)
     return $ do
         xs' <- xs
-        return (map (uncurry f) xs')
+        return (sort $ map (uncurry f) xs')
   where
     f b s = XPubBal {xPubBalPath = scorePath s, xPubBal = b}
 
@@ -384,3 +386,16 @@ getFromSortedSet key (Just score) offset (Just count) = do
     return $ do
         ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
         return (rights ys)
+
+getAllFromMap :: (Monad f, RedisCtx m f, Serialize k, Serialize v)
+ => ByteString -> m (f [(k, v)])
+getAllFromMap n = do
+    fxs <- hgetall n
+    return $ do
+        xs <- fxs
+        return
+            [ (k, v)
+            | (k', v') <- xs
+            , let Right k = decode k'
+            , let Right v = decode v'
+            ]

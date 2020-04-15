@@ -1076,7 +1076,7 @@ instance BinSerial PeerInformation where
 data XPubBal = XPubBal
     { xPubBalPath :: ![KeyIndex]
     , xPubBal     :: !Balance
-    } deriving (Show, Eq, Generic, NFData)
+    } deriving (Show, Ord, Eq, Generic, NFData)
 
 -- | JSON serialization for 'XPubBal'.
 xPubBalPairs :: A.KeyValue kv => Network -> XPubBal -> [kv]
