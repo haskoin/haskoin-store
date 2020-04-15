@@ -460,8 +460,11 @@ redisAddXPubTxs xpub btxs = do
             map
                 (\t -> (blockRefScore (blockTxBlock t), encode (blockTxHash t)))
                 btxs
-    f <- zadd (txSetPfx <> encode xpub) entries
-    return $ f >> return ()
+    if null entries
+        then return (return ())
+        else do
+            f <- zadd (txSetPfx <> encode xpub) entries
+            return $ f >> return ()
 
 redisRemXPubTxs :: (Monad f, RedisCtx m f) => XPubSpec -> [TxHash] -> m (f ())
 redisRemXPubTxs xpub txhs = do
@@ -472,8 +475,11 @@ redisAddXPubUnspents ::
        (Monad f, RedisCtx m f) => XPubSpec -> [(OutPoint, BlockRef)] -> m (f ())
 redisAddXPubUnspents xpub utxo = do
     let entries = map (\(p, r) -> (blockRefScore r, encode p)) utxo
-    f <- zadd (utxoPfx <> encode xpub) entries
-    return $ f >> return ()
+    if null entries
+        then return (return ())
+        else do
+            f <- zadd (utxoPfx <> encode xpub) entries
+            return $ f >> return ()
 
 redisRemXPubUnspents ::
        (Monad f, RedisCtx m f) => XPubSpec -> [OutPoint] -> m (f ())
@@ -486,8 +492,11 @@ redisAddXPubBalances ::
 redisAddXPubBalances xpub bals = do
     let entries =
             map (\b -> (pathScore (xPubBalPath b), encode (xPubBal b))) bals
-    f <- zadd (balancesPfx <> encode xpub) entries
-    return $ f >> return ()
+    if null entries
+        then return (return ())
+        else do
+            f <- zadd (balancesPfx <> encode xpub) entries
+            return $ f >> return ()
 
 redisSetXPubIndex :: (Monad f, RedisCtx m f) => XPubSpec -> Bool -> KeyIndex -> m (f ())
 redisSetXPubIndex xpub change index = do
