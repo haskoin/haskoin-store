@@ -66,13 +66,13 @@ import           Network.Haskoin.Store.Data.CacheReader (AddressXPub (..),
                                                          balancesPfx,
                                                          bestBlockKey,
                                                          blockRefScore,
-                                                         getXPubBalances,
                                                          mempoolSetKey,
                                                          pathScore,
                                                          redisGetAddrInfo,
                                                          redisGetHead,
                                                          redisGetMempool,
                                                          txSetPfx, utxoPfx,
+                                                         cacheGetXPubBalances,
                                                          withCacheReader)
 import           NQE                                    (Inbox, receive)
 import           UnliftIO                               (MonadIO, MonadUnliftIO,
@@ -139,7 +139,7 @@ newXPubC ::
     => XPubSpec
     -> CacheWriterT m ()
 newXPubC xpub = do
-    empty <- null <$> runCacheReaderT (getXPubBalances xpub)
+    empty <- null <$> runCacheReaderT (cacheGetXPubBalances xpub)
     when empty $ do
         net <- asks cacheWriterNetwork
         $(logDebugS) "Cache" $
@@ -378,7 +378,7 @@ updateAddressGapC ::
     => AddressXPub
     -> CacheWriterT m ()
 updateAddressGapC i = do
-    bals <- runCacheReaderT (getXPubBalances (addressXPubSpec i))
+    bals <- runCacheReaderT (cacheGetXPubBalances (addressXPubSpec i))
     gap <- getMaxGap
     let ns = addrsToAddC gap i bals
     mapM_ (uncurry updateBalanceC) ns
