@@ -575,15 +575,15 @@ addrsToAddC ::
     -> [XPubBal]
     -> [(Address, AddressXPub)]
 addrsToAddC gap i bals =
-    let maxi =
+    let headi = head (addressXPubPath i)
+        maxi =
             maximum $
             map (head . tail . xPubBalPath) $
             filter ((== headi) . head . xPubBalPath) bals
-        headi = head (addressXPubPath i)
         xpub = addressXPubSpec i
         newi = head (tail (addressXPubPath i))
         genixs =
-            if maxi - newi > gap
+            if maxi - newi < gap
                 then [maxi + 1 .. newi + gap]
                 else []
         paths = map (Deriv :/ headi :/) genixs
