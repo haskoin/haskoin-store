@@ -5,8 +5,8 @@
 {-# LANGUAGE TupleSections     #-}
 module Network.Haskoin.Store.CacheWriter where
 
-import           Control.Monad                          (forM_, forever, unless,
-                                                         void, when)
+import           Control.Monad                          (forM, forM_, forever,
+                                                         unless, void, when)
 import           Control.Monad.Logger                   (MonadLoggerIO,
                                                          logDebugS, logErrorS,
                                                          logInfoS, logWarnS)
@@ -54,6 +54,7 @@ import           Network.Haskoin.Store.Common           (BlockData (..),
                                                          XPubBal (..),
                                                          XPubSpec (..),
                                                          XPubUnspent (..),
+                                                         Balance (..),
                                                          sortTxs,
                                                          xPubAddrFunction,
                                                          xPubBals, xPubTxs,
@@ -252,18 +253,14 @@ newBlockC =
 newTxC :: (MonadLoggerIO m, StoreRead m) => TxHash -> CacheWriterT m ()
 newTxC th =
     lift (getTxData th) >>= \case
-        Just txd -> do
-            $(logDebugS) "Cache" $ "Importing transaction: " <> txHashToHex th
-            importTxC txd
+        Just txd -> importTxC txd
         Nothing ->
             $(logErrorS) "Cache" $ "Transaction not found: " <> txHashToHex th
 
 removeTxC :: (MonadLoggerIO m, StoreRead m) => TxHash -> CacheWriterT m ()
 removeTxC th =
     lift (getTxData th) >>= \case
-        Just txd -> do
-            $(logDebugS) "Cache" $ "Deleting transaction: " <> txHashToHex th
-            deleteTxC txd
+        Just txd -> deleteTxC txd
         Nothing ->
             $(logWarnS) "Cache" $ "Transaction not found: " <> txHashToHex th
 
@@ -603,7 +600,15 @@ redisAddXPubBalances xpub bals = do
         then return (return ())
         else do
             f <- zadd (balancesPfx <> encode xpub) entries
-            return $ f >> return ()
+            gs <-
+                forM bals $ \b ->
+                    redisSetAddrInfo
+                        (balanceAddress (xPubBal b))
+                        AddressXPub
+                            { addressXPubSpec = xpub
+                            , addressXPubPath = xPubBalPath b
+                            }
+            return $ f >> sequence gs >> return ()
 
 redisSetXPubIndex :: (Monad f, RedisCtx m f) => XPubSpec -> Bool -> KeyIndex -> m (f ())
 redisSetXPubIndex xpub change index = do
