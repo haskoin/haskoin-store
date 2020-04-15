@@ -5,9 +5,12 @@ module Haskoin.Store
     , module X )
     where
 
-import           Control.Monad                             (unless, when)
+import           Control.Monad                             (forever, unless,
+                                                            when)
 import           Control.Monad.Logger                      (MonadLoggerIO)
 import           Data.Serialize                            (decode)
+import           Data.Word                                 (Word32)
+import           Database.Redis                            (Connection)
 import           Haskoin                                   (BlockHash (..),
                                                             Inv (..),
                                                             InvType (..),
@@ -43,10 +46,15 @@ import           Network.Haskoin.Store.Web                 as X
 import           Network.Socket                            (SockAddr (..))
 import           NQE                                       (Inbox, Listen,
                                                             Process (..),
+                                                            Publisher,
+                                                            PublisherMessage (Event),
                                                             inboxToMailbox,
-                                                            newInbox, sendSTM,
-                                                            withProcess)
-import           UnliftIO                                  (MonadUnliftIO, link,
+                                                            newInbox, receive,
+                                                            send, sendSTM,
+                                                            withProcess,
+                                                            withSubscription)
+import           UnliftIO                                  (MonadIO,
+                                                            MonadUnliftIO, link,
                                                             withAsync)
 
 -- | Configuration for a 'Store'.
@@ -62,10 +70,12 @@ data StoreConfig =
       -- ^ RocksDB database handler
         , storeConfNetwork   :: !Network
       -- ^ network constants
-        , storeConfListen    :: !(Listen StoreEvent)
-      -- ^ listen to store events
-        , storeConfCache     :: !(Maybe CacheReaderConfig)
+        , storeConfPublisher :: !(Publisher StoreEvent)
+      -- ^ publish store events
+        , storeConfCache     :: !(Maybe (Connection, CacheWriterInbox))
       -- ^ Redis cache configuration
+        , storeConfGap       :: !Word32
+      -- ^ gap for extended public keys
         }
 
 withStore ::
@@ -101,7 +111,7 @@ store cfg mgri chi bsi = do
                 , nodeConfDB = databaseHandle (storeConfDB cfg)
                 , nodeConfPeers = storeConfInitPeers cfg
                 , nodeConfDiscover = storeConfDiscover cfg
-                , nodeConfEvents = storeDispatch b l
+                , nodeConfEvents = storeDispatch b ((`sendSTM` l) . Event)
                 , nodeConfNetAddr =
                       NetworkAddress 0 (sockToHostAddress (SockAddrInet 0 0))
                 , nodeConfNet = storeConfNetwork cfg
@@ -113,16 +123,49 @@ store cfg mgri chi bsi = do
                 BlockStoreConfig
                     { blockConfChain = inboxToMailbox chi
                     , blockConfManager = inboxToMailbox mgri
-                    , blockConfListener = l
+                    , blockConfListener = (`sendSTM` l) . Event
                     , blockConfDB = storeConfDB cfg
                     , blockConfNet = storeConfNetwork cfg
                     }
         case storeConfCache cfg of
             Nothing -> blockStore bcfg bsi
-            Just cacheconf -> undefined
+            Just cacheinfo -> do
+                let cwm = inboxToMailbox (snd cacheinfo)
+                    crconf =
+                        CacheReaderConfig
+                            { cacheReaderConn = fst cacheinfo
+                            , cacheReaderWriter = cwm
+                            , cacheReaderGap = storeConfGap cfg
+                            }
+                    cwconf =
+                        CacheWriterConfig
+                            { cacheWriterReader = crconf
+                            , cacheWriterChain = c
+                            , cacheWriterMailbox = snd cacheinfo
+                            }
+                    cw =
+                        withDatabaseReader
+                            (storeConfDB cfg)
+                            (cacheWriter cwconf)
+                withAsync cw $ \w ->
+                    withSubscription l $ \evts -> do
+                        link w
+                        withAsync (cacheWriterEvents evts cwm) $ \cwd -> do
+                            link cwd
+                            blockStore bcfg bsi
   where
-    l = storeConfListen cfg
+    l = storeConfPublisher cfg
     b = inboxToMailbox bsi
+    c = inboxToMailbox chi
+
+cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
+cacheWriterEvents evts cwm = forever $ receive evts >>= (`cacheWriterDispatch` cwm)
+
+cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
+cacheWriterDispatch (StoreBestBlock _)    = send CacheNewBlock
+cacheWriterDispatch (StoreMempoolNew txh) = send (CacheNewTx txh)
+cacheWriterDispatch (StoreTxDeleted txh)  = send (CacheDelTx txh)
+cacheWriterDispatch _                     = const (return ())
 
 -- | Dispatcher of node events.
 storeDispatch :: BlockStore -> Listen StoreEvent -> Listen NodeEvent

@@ -17,7 +17,7 @@ import           Data.Either                  (rights)
 import qualified Data.Map.Strict              as Map
 import           Data.Maybe                   (catMaybes, mapMaybe)
 import           Data.Serialize               (Serialize, decode, encode)
-import           Data.Word                    (Word64)
+import           Data.Word                    (Word32, Word64)
 import           Database.Redis               (Connection, RedisCtx, Reply,
                                                runRedis, zrangeWithscores,
                                                zrangebyscoreWithscoresLimit)
@@ -37,8 +37,8 @@ import           UnliftIO                     (Exception, MonadIO, liftIO,
 data CacheReaderConfig =
     CacheReaderConfig
         { cacheReaderConn   :: !Connection
-        , cacheReaderGap    :: !KeyIndex
         , cacheReaderWriter :: !CacheWriter
+        , cacheReaderGap    :: !Word32
         }
 
 
@@ -75,6 +75,7 @@ instance (MonadIO m, StoreRead m) => StoreRead (CacheReaderT m) where
     xPubBals = getXPubBalances
     xPubUnspents = getXPubUnspents
     xPubTxs = getXPubTxs
+    getMaxGap = asks cacheReaderGap
 
 withCacheReader :: StoreRead m => CacheReaderConfig -> CacheReaderT m a -> m a
 withCacheReader s f = runReaderT f s

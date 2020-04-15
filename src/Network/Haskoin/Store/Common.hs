@@ -175,8 +175,10 @@ class Monad m =>
     getMempool :: m [BlockTx]
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
+        gap <- getMaxGap
         ext <-
             derive_until_gap
+                gap
                 0
                 (deriveAddresses
                      (deriveFunction (xPubDeriveType xpub))
@@ -184,6 +186,7 @@ class Monad m =>
                      0)
         chg <-
             derive_until_gap
+                gap
                 1
                 (deriveAddresses
                      (deriveFunction (xPubDeriveType xpub))
@@ -192,15 +195,14 @@ class Monad m =>
         return (ext ++ chg)
       where
         xbalance m b n = XPubBal {xPubBalPath = [m, n], xPubBal = b}
-        derive_until_gap _ [] = return []
-        derive_until_gap m as = do
-            let n = 32
-            let (as1, as2) = splitAt n as
+        derive_until_gap _ _ [] = return []
+        derive_until_gap gap m as = do
+            let (as1, as2) = splitAt (fromIntegral gap) as
             bs <- getBalances (map snd as1)
             let xbs = zipWith (xbalance m) bs (map fst as1)
             if all nullBalance bs
                 then return xbs
-                else (xbs <>) <$> derive_until_gap m as2
+                else (xbs <>) <$> derive_until_gap gap m as2
     xPubSummary :: XPubSpec -> m XPubSummary
     xPubSummary xpub = do
         bs <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
@@ -256,6 +258,8 @@ class Monad m =>
         ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
         let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
         return $ applyOffsetLimit offset limit ts'
+    getMaxGap :: m Word32
+    getMaxGap = return 32
 
 class StoreWrite m where
     setBest :: BlockHash -> m ()

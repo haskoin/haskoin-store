@@ -6,7 +6,8 @@ import           Conduit                          (ConduitT, MonadResource,
                                                    mapC, runConduit,
                                                    runResourceT, sinkList, (.|))
 import           Control.Monad.Except             (runExceptT, throwError)
-import           Control.Monad.Reader             (ReaderT, ask, runReaderT)
+import           Control.Monad.Reader             (ReaderT, ask, asks,
+                                                   runReaderT)
 import           Data.Function                    (on)
 import           Data.IntMap                      (IntMap)
 import qualified Data.IntMap.Strict               as I
@@ -48,22 +49,29 @@ data DatabaseReader =
     DatabaseReader
         { databaseHandle      :: !DB
         , databaseReadOptions :: !ReadOptions
+        , databaseMaxGap      :: !Word32
         }
 
 dataVersion :: Word32
 dataVersion = 16
 
-connectRocksDB :: MonadIO m => FilePath -> m DatabaseReader
-connectRocksDB dir = do
-    bdb <- open
-        dir
-        defaultOptions
-            { createIfMissing = True
-            , compression = SnappyCompression
-            , maxOpenFiles = -1
-            , writeBufferSize = 2 ^ (30 :: Integer)
-            } >>= \db ->
-        return DatabaseReader {databaseReadOptions = defaultReadOptions, databaseHandle = db}
+connectRocksDB :: MonadIO m => Word32 -> FilePath -> m DatabaseReader
+connectRocksDB gap dir = do
+    bdb <-
+        open
+            dir
+            defaultOptions
+                { createIfMissing = True
+                , compression = SnappyCompression
+                , maxOpenFiles = -1
+                , writeBufferSize = 2 ^ (30 :: Integer)
+                } >>= \db ->
+            return
+                DatabaseReader
+                    { databaseReadOptions = defaultReadOptions
+                    , databaseHandle = db
+                    , databaseMaxGap = gap
+                    }
     initRocksDB bdb
     return bdb
 
@@ -255,3 +263,4 @@ instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getOrphans = ask >>= getOrphansDB
     getAddressUnspents a b c = ask >>= getAddressUnspentsDB a b c
     getAddressTxs a b c = ask >>= getAddressTxsDB a b c
+    getMaxGap = asks databaseMaxGap

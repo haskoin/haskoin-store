@@ -16,6 +16,7 @@ import           Data.List                        (nub, sortBy)
 import           Data.Maybe                       (catMaybes, fromJust,
                                                    fromMaybe, isJust,
                                                    maybeToList)
+import           Data.Word                        (Word32)
 import           Haskoin                          (Address, BlockHash,
                                                    BlockHeight, OutPoint (..),
                                                    Tx, TxHash, headerHash,
@@ -33,7 +34,17 @@ import           Network.Haskoin.Store.Common     (BalVal, Balance,
 import           Network.Haskoin.Store.Data.Types (OutVal (..))
 import           UnliftIO
 
-withMemoryDatabase :: MonadIO m => TVar MemoryDatabase -> ReaderT (TVar MemoryDatabase) m a -> m a
+data MemoryState =
+    MemoryState
+        { memoryDatabase :: !(TVar MemoryDatabase)
+        , memoryMaxGap   :: !Word32
+        }
+
+withMemoryDatabase ::
+       MonadIO m
+    => MemoryState
+    -> ReaderT MemoryState m a
+    -> m a
 withMemoryDatabase = flip R.runReaderT
 
 data MemoryDatabase = MemoryDatabase
@@ -293,99 +304,100 @@ deleteUnspentH op db =
                   (hUnspent db)
         }
 
-instance MonadIO m => StoreRead (ReaderT (TVar MemoryDatabase) m) where
+instance MonadIO m => StoreRead (ReaderT MemoryState m) where
     getBestBlock = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBestBlockH v
     getBlocksAtHeight h = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBlocksAtHeightH h v
     getBlock b = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBlockH b v
     getTxData t = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getTxDataH t v
     getSpender t = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return . join $ getSpenderH t v
     getSpenders t = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return . I.map fromJust . I.filter isJust $ getSpendersH t v
     getOrphanTx h = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return . join $ getOrphanTxH h v
     getUnspent p = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return . join $ getUnspentH p v
     getBalance a = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBalanceH a v
     getMempool = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return . fromMaybe [] $ getMempoolH v
     getAddressesTxs addr start limit = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getAddressesTxsH addr start limit v
     getAddressesUnspents addr start limit = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getAddressesUnspentsH addr start limit v
     getOrphans = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getOrphansH v
     getAddressTxs addr start limit = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getAddressTxsH addr start limit v
     getAddressUnspents addr start limit = do
-        v <- R.ask >>= readTVarIO
+        v <- R.asks memoryDatabase >>= readTVarIO
         return $ getAddressUnspentsH addr start limit v
+    getMaxGap = R.asks memoryMaxGap
 
-instance (MonadIO m) => StoreWrite (ReaderT (TVar MemoryDatabase) m) where
+instance MonadIO m => StoreWrite (ReaderT MemoryState m) where
     setBest h = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (setBestH h)
     insertBlock b = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertBlockH b)
     setBlocksAtHeight h g = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (setBlocksAtHeightH h g)
     insertTx t = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertTxH t)
     insertSpender p s = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertSpenderH p s)
     deleteSpender p = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (deleteSpenderH p)
     insertAddrTx a t = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertAddrTxH a t)
     deleteAddrTx a t = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (deleteAddrTxH a t)
     insertAddrUnspent a u = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertAddrUnspentH a u)
     deleteAddrUnspent a u = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (deleteAddrUnspentH a u)
     setMempool xs = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (setMempoolH xs)
     insertOrphanTx t u = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertOrphanTxH t u)
     deleteOrphanTx h = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (deleteOrphanTxH h)
     setBalance b = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (setBalanceH b)
     insertUnspent h = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (insertUnspentH h)
     deleteUnspent p = do
-        v <- R.ask
+        v <- R.asks memoryDatabase
         atomically $ modifyTVar v (deleteUnspentH p)

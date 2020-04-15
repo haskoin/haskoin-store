@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE TupleSections     #-}
 module Main where
 
 import           Control.Arrow           (second)
@@ -12,14 +13,17 @@ import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
 import           Data.Version            (showVersion)
+import           Database.Redis          (connect, defaultConnectInfo,
+                                          parseConnectInfo)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest)
 import           Haskoin.Node            (Host, Port)
-import           Haskoin.Store           (MaxLimits (..), StoreConfig (..),
+import           Haskoin.Store           (CacheReaderConfig (..),
+                                          MaxLimits (..), StoreConfig (..),
                                           Timeouts (..), WebConfig (..),
                                           connectRocksDB, runWeb, withStore)
-import           NQE                     (PublisherMessage (..), sendSTM,
+import           NQE                     (inboxToMailbox, newInbox,
                                           withPublisher)
 import           Options.Applicative     (Parser, auto, eitherReader,
                                           execParser, fullDesc, header, help,
@@ -46,6 +50,8 @@ data Config = Config
     , configReqLog    :: !Bool
     , configMaxLimits :: !MaxLimits
     , configTimeouts  :: !Timeouts
+    , configRedis     :: !Bool
+    , configRedisURL  :: !String
     }
 
 defPort :: Int
@@ -64,6 +70,7 @@ defMaxLimits =
         , maxLimitFull = 5000
         , maxLimitOffset = 50000
         , maxLimitDefault = 2000
+        , maxLimitGap = 32
         }
 
 defTimeouts :: Timeouts
@@ -119,6 +126,11 @@ config = do
         help "Default limit (0 for max)" <>
         showDefault <>
         value (maxLimitDefault defMaxLimits)
+    maxLimitGap <-
+        option auto $
+        metavar "MAXGAP" <> long "maxgap" <> help "Max gap for xpub queries" <>
+        showDefault <>
+        value (maxLimitGap defMaxLimits)
     blockTimeout <-
         option auto $
         metavar "BLOCKSECONDS" <> long "blocktimeout" <>
@@ -131,6 +143,11 @@ config = do
         help "Last transaction broadcast timeout (0 for infinite)" <>
         showDefault <>
         value (txTimeout defTimeouts)
+    configRedis <-
+        switch $ long "cache" <> help "Redis cache for extended public keys"
+    configRedisURL <-
+        strOption $
+        metavar "URL" <> long "redis" <> help "URL for Redis cache"
     pure
         Config
             { configMaxLimits = MaxLimits {..}
@@ -192,12 +209,26 @@ run Config { configPort = port
            , configMaxLimits = limits
            , configReqLog = reqlog
            , configTimeouts = tos
+           , configRedis = redis
+           , configRedisURL = redisurl
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
-        db <- connectRocksDB (wd </> "db")
+        db <- connectRocksDB (maxLimitGap limits) (wd </> "db")
+        maybecache <-
+            if redis
+                then do
+                    conninfo <-
+                        if null redisurl
+                            then return defaultConnectInfo
+                            else case parseConnectInfo redisurl of
+                                     Left e  -> error e
+                                     Right r -> return r
+                    cachembox <- newInbox
+                    Just . (, cachembox) <$> liftIO (connect conninfo)
+                else return Nothing
         withPublisher $ \pub ->
             let scfg =
                     StoreConfig
@@ -209,11 +240,24 @@ run Config { configPort = port
                         , storeConfDiscover = disc
                         , storeConfDB = db
                         , storeConfNetwork = net
-                        , storeConfListen = (`sendSTM` pub) . Event
-                        , storeConfCache = Nothing
+                        , storeConfPublisher = pub
+                        , storeConfCache = maybecache
+                        , storeConfGap = maxLimitGap limits
                         }
              in withStore scfg $ \st ->
-                    let wcfg =
+                    let crcfg =
+                            case maybecache of
+                                Nothing -> Nothing
+                                Just (conn, mbox) ->
+                                    Just
+                                        CacheReaderConfig
+                                            { cacheReaderConn = conn
+                                            , cacheReaderWriter =
+                                                  inboxToMailbox mbox
+                                            , cacheReaderGap =
+                                                  maxLimitGap limits
+                                            }
+                        wcfg =
                             WebConfig
                                 { webPort = port
                                 , webNetwork = net
@@ -223,7 +267,7 @@ run Config { configPort = port
                                 , webMaxLimits = limits
                                 , webReqLog = reqlog
                                 , webTimeouts = tos
-                                , webCache = Nothing
+                                , webCache = crcfg
                                 }
                      in runWeb wcfg
   where

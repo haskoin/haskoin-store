@@ -101,6 +101,7 @@ instance (MonadIO m, StoreRead m) => StoreRead (CacheWriterT m) where
         runCacheReaderT (xPubUnspents xpub start offset limit)
     xPubTxs xpub start offset limit =
         runCacheReaderT (xPubTxs xpub start offset limit)
+    getMaxGap = asks (cacheReaderGap . cacheWriterReader)
 
 runCacheReaderT :: StoreRead m => CacheReaderT m a -> CacheWriterT m a
 runCacheReaderT f =
@@ -294,7 +295,7 @@ updateAddressGapC ::
     -> CacheWriterT m ()
 updateAddressGapC i = do
     current <- cacheGetXPubIndex (addressXPubSpec i) change
-    gap <- asks (cacheReaderGap . cacheWriterReader)
+    gap <- getMaxGap
     let ns = addrsToAddC (addressXPubSpec i) change current new gap
     forM_ ns (uncurry updateBalanceC)
     case ns of

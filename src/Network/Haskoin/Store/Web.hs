@@ -204,6 +204,7 @@ data MaxLimits =
         , maxLimitFull    :: !Word32
         , maxLimitOffset  :: !Word32
         , maxLimitDefault :: !Word32
+        , maxLimitGap     :: !Word32
         }
     deriving (Eq, Show)
 
@@ -284,7 +285,8 @@ instance MonadIO m => StoreRead (ReaderT WebConfig m) where
             (getAddressesUnspents addrs start limit)
     getOrphans = runInWebReader getOrphans getOrphans
     xPubBals xpub = runInWebReader (xPubBals xpub) (xPubBals xpub)
-    xPubSummary xpub = runInWebReader (xPubSummary xpub) (xPubSummary xpub)
+    xPubSummary xpub =
+        runInWebReader (xPubSummary xpub) (xPubSummary xpub)
     xPubUnspents xpub start offset limit =
         runInWebReader
             (xPubUnspents xpub start offset limit)
@@ -315,6 +317,7 @@ instance MonadIO m => StoreRead (WebT m) where
     xPubUnspents xpub start offset limit =
         lift (xPubUnspents xpub start offset limit)
     xPubTxs xpub start offset limit = lift (xPubTxs xpub start offset limit)
+    getMaxGap = lift $ asks (maxLimitGap . webMaxLimits)
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do

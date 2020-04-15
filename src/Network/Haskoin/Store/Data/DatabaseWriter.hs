@@ -39,6 +39,7 @@ import           Network.Haskoin.Store.Common              (BalVal, Balance,
 import           Network.Haskoin.Store.Data.DatabaseReader (DatabaseReader (..),
                                                             withDatabaseReader)
 import           Network.Haskoin.Store.Data.MemoryDatabase (MemoryDatabase (..),
+                                                            MemoryState (..),
                                                             emptyMemoryDatabase,
                                                             getMempoolH,
                                                             getOrphanTxH,
@@ -58,20 +59,27 @@ import           Network.Haskoin.Store.Data.Types          (AddrOutKey (..),
                                                             SpenderKey (..),
                                                             TxKey (..),
                                                             UnspentKey (..))
-import           UnliftIO                                  (MonadIO, TVar,
-                                                            newTVarIO,
+import           UnliftIO                                  (MonadIO, newTVarIO,
                                                             readTVarIO)
 
 data DatabaseWriter = DatabaseWriter
     { databaseWriterReader :: !DatabaseReader
-    , databaseWriterState  :: !(TVar MemoryDatabase)
+    , databaseWriterState  :: !MemoryState
     }
 
 runDatabaseWriter ::
-       (MonadIO m, MonadError e m) => DatabaseReader -> ReaderT DatabaseWriter m a -> m a
-runDatabaseWriter bdb@DatabaseReader {databaseHandle = db} f = do
+       (MonadIO m, MonadError e m)
+    => DatabaseReader
+    -> ReaderT DatabaseWriter m a
+    -> m a
+runDatabaseWriter bdb@DatabaseReader {databaseHandle = db, databaseMaxGap = gap} f = do
     hm <- newTVarIO emptyMemoryDatabase
-    x <- R.runReaderT f DatabaseWriter {databaseWriterReader = bdb, databaseWriterState = hm}
+    let ms = MemoryState {memoryDatabase = hm, memoryMaxGap = gap}
+    x <-
+        R.runReaderT
+            f
+            DatabaseWriter
+                {databaseWriterReader = bdb, databaseWriterState = ms}
     ops <- hashMapOps <$> readTVarIO hm
     writeBatch db ops
     return x
@@ -270,19 +278,19 @@ getOrphanTxI :: MonadIO m => TxHash -> DatabaseWriter -> m (Maybe (UnixTime, Tx)
 getOrphanTxI h DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
     fmap join . runMaybeT $ MaybeT f <|> MaybeT g
   where
-    f = getOrphanTxH h <$> readTVarIO hm
+    f = getOrphanTxH h <$> readTVarIO (memoryDatabase hm)
     g = Just <$> withDatabaseReader db (getOrphanTx h)
 
 getSpenderI :: MonadIO m => OutPoint -> DatabaseWriter -> m (Maybe Spender)
 getSpenderI op DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
     fmap join . runMaybeT $ MaybeT f <|> MaybeT g
   where
-    f = getSpenderH op <$> readTVarIO hm
+    f = getSpenderH op <$> readTVarIO (memoryDatabase hm)
     g = Just <$> withDatabaseReader db (getSpender op)
 
 getSpendersI :: MonadIO m => TxHash -> DatabaseWriter -> m (IntMap Spender)
 getSpendersI t DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} = do
-    hsm <- getSpendersH t <$> readTVarIO hm
+    hsm <- getSpendersH t <$> readTVarIO (memoryDatabase hm)
     dsm <- I.map Just <$> withDatabaseReader db (getSpenders t)
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
@@ -313,7 +321,7 @@ getUnspentI :: MonadIO m => OutPoint -> DatabaseWriter -> m (Maybe Unspent)
 getUnspentI op DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
     fmap join . runMaybeT $ MaybeT f <|> MaybeT g
   where
-    f = getUnspentH op <$> readTVarIO hm
+    f = getUnspentH op <$> readTVarIO (memoryDatabase hm)
     g = Just <$> withDatabaseReader db (getUnspent op)
 
 insertUnspentI :: MonadIO m => Unspent -> DatabaseWriter -> m ()
@@ -329,7 +337,7 @@ getMempoolI ::
     => DatabaseWriter
     -> m [BlockTx]
 getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
-    getMempoolH <$> readTVarIO hm >>= \case
+    getMempoolH <$> readTVarIO (memoryDatabase hm) >>= \case
         Just xs -> return xs
         Nothing -> withDatabaseReader db getMempool
 
@@ -347,6 +355,7 @@ instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
     getAddressesTxs = undefined
     getAddressesUnspents = undefined
     getOrphans = undefined
+    getMaxGap = R.asks (databaseMaxGap . databaseWriterReader)
 
 instance MonadIO m => StoreWrite (ReaderT DatabaseWriter m) where
     setBest h = R.ask >>= setBestI h
