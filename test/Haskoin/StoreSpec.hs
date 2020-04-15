@@ -8,6 +8,7 @@ import           Control.Monad
 import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Maybe
+import           Data.Word
 import           Database.RocksDB
 import           Haskoin
 import           Haskoin.Node
@@ -72,8 +73,7 @@ withTestStore ::
        MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
 withTestStore net t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
-        runNoLoggingT $ do
-            x <- newInbox
+        runNoLoggingT $ withPublisher $ \pub -> do
             db <-
                 open
                     w
@@ -86,6 +86,7 @@ withTestStore net t f =
                     DatabaseReader
                         { databaseHandle = db
                         , databaseReadOptions = defaultReadOptions
+                        , databaseMaxGap = gap
                         }
             let cfg =
                     StoreConfig
@@ -94,15 +95,19 @@ withTestStore net t f =
                         , storeConfDiscover = True
                         , storeConfDB = bdb
                         , storeConfNetwork = net
-                        , storeConfListen = (`sendSTM` x)
+                        , storeConfPublisher = pub
                         , storeConfCache = Nothing
+                        , storeConfGap = gap
                         }
-            withStore cfg $ \Store {..} ->
+            withStore cfg $ \Store {..} -> withSubscription pub $ \sub ->
                 lift $
                 f
                     TestStore
                         { testStoreDB = bdb
                         , testStoreBlockStore = storeBlock
                         , testStoreChain = storeChain
-                        , testStoreEvents = x
+                        , testStoreEvents = sub
                         }
+
+gap :: Word32
+gap = 32
