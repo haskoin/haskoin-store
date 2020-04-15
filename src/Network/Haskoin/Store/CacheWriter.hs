@@ -20,8 +20,8 @@ import           Data.Maybe                             (catMaybes, fromMaybe,
                                                          mapMaybe)
 import           Data.Serialize                         (encode)
 import           Data.String.Conversions                (cs)
-import           Database.Redis                         (RedisCtx, runRedis,
-                                                         zadd, zrem, hmset)
+import           Database.Redis                         (RedisCtx, hmset,
+                                                         runRedis, zadd, zrem)
 import qualified Database.Redis                         as Redis
 import           Haskoin                                (Address, BlockHash,
                                                          BlockHeader (..),
@@ -43,7 +43,8 @@ import           Haskoin.Node                           (Chain,
                                                          chainGetAncestor,
                                                          chainGetBlock,
                                                          chainGetSplitBlock)
-import           Network.Haskoin.Store.Common           (BlockData (..),
+import           Network.Haskoin.Store.Common           (Balance (..),
+                                                         BlockData (..),
                                                          BlockRef (..),
                                                          BlockTx (..),
                                                          CacheWriterMessage (..),
@@ -54,7 +55,6 @@ import           Network.Haskoin.Store.Common           (BlockData (..),
                                                          XPubBal (..),
                                                          XPubSpec (..),
                                                          XPubUnspent (..),
-                                                         Balance (..),
                                                          sortTxs,
                                                          xPubAddrFunction,
                                                          xPubBals, xPubTxs,
@@ -66,14 +66,12 @@ import           Network.Haskoin.Store.Data.CacheReader (AddressXPub (..),
                                                          balancesPfx,
                                                          bestBlockKey,
                                                          blockRefScore,
-                                                         chgIndexPfx,
-                                                         extIndexPfx,
+                                                         getXPubBalances,
                                                          mempoolSetKey,
                                                          pathScore,
                                                          redisGetAddrInfo,
                                                          redisGetHead,
                                                          redisGetMempool,
-                                                         redisGetXPubIndex,
                                                          txSetPfx, utxoPfx,
                                                          withCacheReader)
 import           NQE                                    (Inbox, receive)
@@ -141,8 +139,8 @@ newXPubC ::
     => XPubSpec
     -> CacheWriterT m ()
 newXPubC xpub = do
-    present <- (> 0) <$> cacheGetXPubIndex xpub False
-    unless present $ do
+    empty <- null <$> runCacheReaderT (getXPubBalances xpub)
+    when empty $ do
         net <- asks cacheWriterNetwork
         $(logDebugS) "Cache" $
             "Adding xpub: " <> xPubExport net (xPubSpecKey xpub)
@@ -180,8 +178,6 @@ newXPubC xpub = do
             xpub
             (map ((\u -> (unspentPoint u, unspentBlock u)) . xPubUnspent) utxo)
         cacheAddXPubTxs xpub xtxs
-        cacheSetXPubIndex xpub False extindex
-        cacheSetXPubIndex xpub True chgindex
 
 newBlockC :: (MonadLoggerIO m, StoreRead m) => CacheWriterT m ()
 newBlockC =
@@ -382,30 +378,10 @@ updateAddressGapC ::
     => AddressXPub
     -> CacheWriterT m ()
 updateAddressGapC i = do
-    current <- cacheGetXPubIndex (addressXPubSpec i) change
-    net <- asks cacheWriterNetwork
+    bals <- runCacheReaderT (getXPubBalances (addressXPubSpec i))
     gap <- getMaxGap
-    let ns = addrsToAddC (addressXPubSpec i) change current new gap
-    unless (null ns) $ do
-        forM_ ns (uncurry updateBalanceC)
-        let newlast = last (addressXPubPath (snd (last ns)))
-        $(logDebugS) "Cache" $
-            "Setting " <>
-            (if change
-                 then "change"
-                 else "external") <>
-            " index for xpub " <>
-            xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
-            " to " <>
-            cs (show (newlast))
-        cacheSetXPubIndex (addressXPubSpec i) change newlast
-  where
-    change =
-        case head (addressXPubPath i) of
-            1 -> True
-            0 -> False
-            _ -> undefined
-    new = last (addressXPubPath i)
+    let ns = addrsToAddC gap i bals
+    mapM_ (uncurry updateBalanceC) ns
 
 updateBalanceC ::
        (StoreRead m, MonadLoggerIO m)
@@ -470,21 +446,6 @@ cacheAddXPubBalances :: MonadIO m => XPubSpec -> [XPubBal] -> CacheWriterT m ()
 cacheAddXPubBalances xpub bals = do
     conn <- asks (cacheReaderConn . cacheWriterReader)
     liftIO (runRedis conn (redisAddXPubBalances xpub bals)) >>= \case
-        Left e -> throwIO (RedisError e)
-        Right () -> return ()
-
-cacheGetXPubIndex :: MonadIO m => XPubSpec -> Bool -> CacheWriterT m KeyIndex
-cacheGetXPubIndex xpub change = do
-    conn <- asks (cacheReaderConn . cacheWriterReader)
-    liftIO (runRedis conn (redisGetXPubIndex xpub change)) >>= \case
-        Left e -> throwIO (RedisError e)
-        Right x -> return x
-
-cacheSetXPubIndex ::
-       MonadIO m => XPubSpec -> Bool -> KeyIndex -> CacheWriterT m ()
-cacheSetXPubIndex xpub change index = do
-    conn <- asks (cacheReaderConn . cacheWriterReader)
-    liftIO (runRedis conn (redisSetXPubIndex xpub change index)) >>= \case
         Left e -> throwIO (RedisError e)
         Right () -> return ()
 
@@ -603,50 +564,38 @@ redisAddXPubBalances xpub bals = do
                             }
             return $ f >> sequence gs >> return ()
 
-redisSetXPubIndex :: (Monad f, RedisCtx m f) => XPubSpec -> Bool -> KeyIndex -> m (f ())
-redisSetXPubIndex xpub change index = do
-    f <- Redis.set (pfx <> encode xpub) (encode index)
-    return $ f >> return ()
-  where
-    pfx =
-        if change
-            then chgIndexPfx
-            else extIndexPfx
-
 redisSetHead :: (Monad m, Monad f, RedisCtx m f) => BlockHash -> m (f ())
 redisSetHead bh = do
     f <- Redis.set bestBlockKey (encode bh)
     return $ f >> return ()
 
 addrsToAddC ::
-       XPubSpec
-    -> Bool
-    -> KeyIndex
-    -> KeyIndex
-    -> KeyIndex
+       KeyIndex
+    -> AddressXPub
+    -> [XPubBal]
     -> [(Address, AddressXPub)]
-addrsToAddC xpub change current new gap
-    | new <= current = []
-    | otherwise =
-        let top = new + gap
-            indices = [current + 1 .. top]
-            paths =
-                map
-                    (Deriv :/
-                     (if change
-                          then 1
-                          else 0) :/)
-                    indices
-            keys = map (\p -> derivePubPath p (xPubSpecKey xpub)) paths
-            list = map pathToList paths
-            xpubf = xPubAddrFunction (xPubDeriveType xpub)
-            addrs = map xpubf keys
-         in zipWith
-                (\a p ->
-                     ( a
-                     , AddressXPub {addressXPubSpec = xpub, addressXPubPath = p}))
-                addrs
-                list
+addrsToAddC gap i bals =
+    let maxi =
+            maximum $
+            map (head . tail . xPubBalPath) $
+            filter ((== headi) . head . xPubBalPath) bals
+        headi = head (addressXPubPath i)
+        xpub = addressXPubSpec i
+        newi = head (tail (addressXPubPath i))
+        genixs =
+            if maxi - newi > gap
+                then [maxi + 1 .. newi + gap]
+                else []
+        paths = map (Deriv :/ headi :/) genixs
+        keys = map (\p -> derivePubPath p (xPubSpecKey xpub)) paths
+        list = map pathToList paths
+        xpubf = xPubAddrFunction (xPubDeriveType xpub)
+        addrs = map xpubf keys
+     in zipWith
+            (\a p ->
+                 (a, AddressXPub {addressXPubSpec = xpub, addressXPubPath = p}))
+            addrs
+            list
 
 sortTxData :: [TxData] -> [TxData]
 sortTxData tds =

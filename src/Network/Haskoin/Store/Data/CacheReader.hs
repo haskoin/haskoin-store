@@ -89,14 +89,6 @@ cacheVerKey = "version"
 cacheVerCurrent :: ByteString
 cacheVerCurrent = "1"
 
--- External max index
-extIndexPfx :: ByteString
-extIndexPfx = "e"
-
--- Change max index
-chgIndexPfx :: ByteString
-chgIndexPfx = "c"
-
 -- Ordered set of transaction ids in mempool
 mempoolSetKey :: ByteString
 mempoolSetKey = "mempool"
@@ -297,20 +289,6 @@ redisGetXPubUnspents xpub start offset limit = do
         return (map (uncurry f) xs')
   where
     f o s = (scoreBlockRef s, o)
-
-redisGetXPubIndex :: (Monad f, RedisCtx m f) => XPubSpec -> Bool -> m (f KeyIndex)
-redisGetXPubIndex xpub change = do
-    f <- Redis.get (pfx <> encode xpub)
-    return $ f >>= \case
-        Nothing -> return 0
-        Just x -> case decode x of
-            Left e  -> error e
-            Right n -> return n
-  where
-    pfx =
-        if change
-            then chgIndexPfx
-            else extIndexPfx
 
 blockRefScore :: BlockRef -> Double
 blockRefScore BlockRef {blockRefHeight = h, blockRefPos = p} =
