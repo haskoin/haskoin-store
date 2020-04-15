@@ -367,7 +367,15 @@ updateAddressesC ::
 updateAddressesC as = do
     is <- mapM cacheGetAddrInfo as
     let ais = catMaybes (zipWith (\a i -> (a, ) <$> i) as is)
-    forM_ (catMaybes is) $ \i -> updateAddressGapC i
+    net <- asks cacheWriterNetwork
+    forM_ ais $ \(a, i) -> do
+        $(logDebugS) "Cache" $
+            "Updating gaps for address " <>
+            fromMaybe "[notext]" (addrToString net a) <>
+            " xpub " <>
+            xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
+            cs (pathToStr (listToPath (addressXPubPath i)))
+        updateAddressGapC i
     let as' = as \\ map fst ais
     when (length as /= length as') (updateAddressesC as')
 
@@ -377,16 +385,22 @@ updateAddressGapC ::
     -> CacheWriterT m ()
 updateAddressGapC i = do
     current <- cacheGetXPubIndex (addressXPubSpec i) change
+    net <- asks cacheWriterNetwork
     gap <- getMaxGap
     let ns = addrsToAddC (addressXPubSpec i) change current new gap
-    forM_ ns (uncurry updateBalanceC)
-    case ns of
-        [] -> return ()
-        _ ->
-            cacheSetXPubIndex
-                (addressXPubSpec i)
-                change
-                (last (addressXPubPath (snd (last ns))))
+    unless (null ns) $ do
+        forM_ ns (uncurry updateBalanceC)
+        let newlast = last (addressXPubPath (snd (last ns)))
+        $(logDebugS) "Cache" $
+            "Setting " <>
+            (if change
+                 then "change"
+                 else "external") <>
+            " index for xpub " <>
+            xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
+            " to " <>
+            cs (show (newlast))
+        cacheSetXPubIndex (addressXPubSpec i) change newlast
   where
     change =
         case head (addressXPubPath i) of
