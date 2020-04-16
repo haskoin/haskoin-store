@@ -13,8 +13,8 @@ import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
 import           Data.Version            (showVersion)
-import           Database.Redis          (connect, defaultConnectInfo,
-                                          parseConnectInfo)
+import           Database.Redis          (defaultConnectInfo, parseConnectInfo,
+                                          withCheckedConnect)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest)
@@ -35,7 +35,7 @@ import           System.Exit             (die, exitSuccess)
 import           System.FilePath         ((</>))
 import           System.IO.Unsafe        (unsafePerformIO)
 import           Text.Read               (readMaybe)
-import           UnliftIO                (MonadUnliftIO, liftIO)
+import           UnliftIO                (MonadUnliftIO, liftIO, withRunInIO)
 import           UnliftIO.Directory      (createDirectoryIfMissing,
                                           getAppUserDataDirectory)
 
@@ -217,60 +217,63 @@ run Config { configPort = port
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
         db <- connectRocksDB (maxLimitGap limits) (wd </> "db")
-        maybecache <-
-            if redis
-                then do
-                    conninfo <-
-                        if null redisurl
-                            then return defaultConnectInfo
-                            else case parseConnectInfo redisurl of
-                                     Left e  -> error e
-                                     Right r -> return r
-                    cachembox <- newInbox
-                    Just . (, cachembox) <$> liftIO (connect conninfo)
-                else return Nothing
-        withPublisher $ \pub ->
-            let scfg =
-                    StoreConfig
-                        { storeConfMaxPeers = 20
-                        , storeConfInitPeers =
-                              map
-                                  (second (fromMaybe (getDefaultPort net)))
-                                  peers
-                        , storeConfDiscover = disc
-                        , storeConfDB = db
-                        , storeConfNetwork = net
-                        , storeConfPublisher = pub
-                        , storeConfCache = maybecache
-                        , storeConfGap = maxLimitGap limits
-                        }
-             in withStore scfg $ \st ->
-                    let crcfg =
-                            case maybecache of
-                                Nothing -> Nothing
-                                Just (conn, mbox) ->
-                                    Just
-                                        CacheReaderConfig
-                                            { cacheReaderConn = conn
-                                            , cacheReaderWriter =
-                                                  inboxToMailbox mbox
-                                            , cacheReaderGap =
-                                                  maxLimitGap limits
-                                            }
-                        wcfg =
-                            WebConfig
-                                { webPort = port
-                                , webNetwork = net
-                                , webDB = db
-                                , webPublisher = pub
-                                , webStore = st
-                                , webMaxLimits = limits
-                                , webReqLog = reqlog
-                                , webTimeouts = tos
-                                , webCache = crcfg
-                                }
-                     in runWeb wcfg
+        withcache $ \maybecache ->
+            withPublisher $ \pub ->
+                let scfg =
+                        StoreConfig
+                            { storeConfMaxPeers = 20
+                            , storeConfInitPeers =
+                                  map
+                                      (second (fromMaybe (getDefaultPort net)))
+                                      peers
+                            , storeConfDiscover = disc
+                            , storeConfDB = db
+                            , storeConfNetwork = net
+                            , storeConfPublisher = pub
+                            , storeConfCache = maybecache
+                            , storeConfGap = maxLimitGap limits
+                            }
+                 in withStore scfg $ \st ->
+                        let crcfg =
+                                case maybecache of
+                                    Nothing -> Nothing
+                                    Just (conn, mbox) ->
+                                        Just
+                                            CacheReaderConfig
+                                                { cacheReaderConn = conn
+                                                , cacheReaderWriter =
+                                                      inboxToMailbox mbox
+                                                , cacheReaderGap =
+                                                      maxLimitGap limits
+                                                }
+                            wcfg =
+                                WebConfig
+                                    { webPort = port
+                                    , webNetwork = net
+                                    , webDB = db
+                                    , webPublisher = pub
+                                    , webStore = st
+                                    , webMaxLimits = limits
+                                    , webReqLog = reqlog
+                                    , webTimeouts = tos
+                                    , webCache = crcfg
+                                    }
+                         in runWeb wcfg
   where
+    withcache f =
+        if redis
+            then do
+                conninfo <-
+                    if null redisurl
+                        then return defaultConnectInfo
+                        else case parseConnectInfo redisurl of
+                                 Left e -> error e
+                                 Right r -> return r
+                cachembox <- newInbox
+                withRunInIO $ \r ->
+                    withCheckedConnect conninfo $ \conn ->
+                        r $ f (Just (conn, cachembox))
+            else f Nothing
     l _ lvl
         | deb = True
         | otherwise = LevelInfo <= lvl
