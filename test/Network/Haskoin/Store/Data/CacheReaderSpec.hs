@@ -1,16 +1,12 @@
 module Network.Haskoin.Store.Data.CacheReaderSpec (spec) where
 
 import           Data.List                              (sort)
-import           Haskoin                                (KeyIndex)
 import           Network.Haskoin.Store.Common           (BlockRef (..))
 import           Network.Haskoin.Store.Data.CacheReader (blockRefScore,
-                                                         pathScore,
-                                                         scoreBlockRef,
-                                                         scorePath)
+                                                         scoreBlockRef)
 import           Test.Hspec                             (Spec, describe)
 import           Test.Hspec.QuickCheck                  (prop)
-import           Test.QuickCheck                        (Gen, arbitrary, choose,
-                                                         elements, forAll,
+import           Test.QuickCheck                        (Gen, choose, forAll,
                                                          listOf, oneof)
 
 spec :: Spec
@@ -25,25 +21,6 @@ spec = do
                 let score = blockRefScore b
                     ref = scoreBlockRef score
                  in ref == b
-    describe "Score for derivation path" $ do
-        prop "sorts correctly" $
-            forAll arbitraryDerivationPaths $ \ds ->
-                let scores = map pathScore (sort ds)
-                 in sort scores == scores
-        prop "respects identity" $
-            forAll arbitraryDerivationPath $ \d ->
-                let score = pathScore d
-                    d' = scorePath score
-                 in d' == d
-
-arbitraryDerivationPaths :: Gen [[KeyIndex]]
-arbitraryDerivationPaths = listOf arbitraryDerivationPath
-
-arbitraryDerivationPath :: Gen [KeyIndex]
-arbitraryDerivationPath = do
-    x <- elements [0, 1]
-    y <- arbitrary
-    return [x, y]
 
 arbitraryBlockRefs :: Gen [BlockRef]
 arbitraryBlockRefs = listOf arbitraryBlockRef

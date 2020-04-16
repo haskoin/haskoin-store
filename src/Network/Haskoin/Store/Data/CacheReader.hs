@@ -310,21 +310,6 @@ scoreBlockRef s
     h = fromIntegral (m `shift` (-26))
     p = fromIntegral (m .&. 0x03ffffff)
 
-pathScore :: [KeyIndex] -> Double
-pathScore [m, n]
-    | m == 0 || m == 1 = fromIntegral (toInteger n .|. toInteger m `shift` 32)
-    | otherwise = undefined
-pathScore _ = undefined
-
-scorePath :: Double -> [KeyIndex]
-scorePath s
-    | s < 0 = undefined
-    | s > 0x01ffffffff = undefined
-    | otherwise =
-        [ fromInteger (round s `shift` (-32))
-        , fromInteger (round s .&. 0xffffffff)
-        ]
-
 getFromSortedSet ::
        (Monad f, RedisCtx m f, Serialize a)
     => ByteString

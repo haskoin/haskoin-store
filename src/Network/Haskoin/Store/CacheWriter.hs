@@ -6,18 +6,17 @@
 module Network.Haskoin.Store.CacheWriter where
 
 import           Control.Monad                          (forM, forM_, forever,
-                                                         unless, void, when)
+                                                         void, when)
 import           Control.Monad.Logger                   (MonadLoggerIO,
-                                                         logDebugS, logErrorS,
-                                                         logInfoS, logWarnS)
+                                                         logErrorS, logInfoS,
+                                                         logWarnS)
 import           Control.Monad.Reader                   (ReaderT (..), asks)
 import           Control.Monad.Trans                    (lift)
 import           Control.Monad.Trans.Maybe              (MaybeT (..), runMaybeT)
 import qualified Data.IntMap.Strict                     as IntMap
-import           Data.List                              (nub, partition, (\\))
+import           Data.List                              (nub, (\\))
 import qualified Data.Map.Strict                        as Map
-import           Data.Maybe                             (catMaybes, fromMaybe,
-                                                         mapMaybe)
+import           Data.Maybe                             (catMaybes, mapMaybe)
 import           Data.Serialize                         (encode)
 import           Data.String.Conversions                (cs)
 import           Database.Redis                         (RedisCtx, hmset,
@@ -31,14 +30,11 @@ import           Haskoin                                (Address, BlockHash,
                                                          OutPoint (..), Tx (..),
                                                          TxHash, TxIn (..),
                                                          TxOut (..),
-                                                         addrToString,
                                                          blockHashToHex,
                                                          derivePubPath,
-                                                         headerHash, listToPath,
-                                                         pathToList, pathToStr,
+                                                         headerHash, pathToList,
                                                          scriptToAddressBS,
-                                                         txHash, txHashToHex,
-                                                         xPubAddr, xPubExport)
+                                                         txHash, txHashToHex)
 import           Haskoin.Node                           (Chain,
                                                          chainGetAncestor,
                                                          chainGetBlock,
@@ -66,13 +62,12 @@ import           Network.Haskoin.Store.Data.CacheReader (AddressXPub (..),
                                                          balancesPfx,
                                                          bestBlockKey,
                                                          blockRefScore,
+                                                         cacheGetXPubBalances,
                                                          mempoolSetKey,
-                                                         pathScore,
                                                          redisGetAddrInfo,
                                                          redisGetHead,
                                                          redisGetMempool,
                                                          txSetPfx, utxoPfx,
-                                                         cacheGetXPubBalances,
                                                          withCacheReader)
 import           NQE                                    (Inbox, receive)
 import           UnliftIO                               (MonadIO, MonadUnliftIO,
@@ -141,38 +136,12 @@ newXPubC ::
 newXPubC xpub = do
     empty <- null <$> runCacheReaderT (cacheGetXPubBalances xpub)
     when empty $ do
-        net <- asks cacheWriterNetwork
-        $(logDebugS) "Cache" $
-            "Adding xpub: " <> xPubExport net (xPubSpecKey xpub)
         bals <- lift $ xPubBals xpub
         go bals
   where
     go bals = do
-        net <- asks cacheWriterNetwork
         utxo <- lift $ xPubUnspents xpub Nothing 0 Nothing
         xtxs <- lift $ xPubTxs xpub Nothing 0 Nothing
-        let (external, change) =
-                partition (\b -> head (xPubBalPath b) == 0) bals
-        extindex <-
-            if null external
-                then do
-                    $(logErrorS) "Cache" $
-                        "External balance list empty for xpub: " <>
-                        xPubExport net (xPubSpecKey xpub)
-                    throwIO . LogicError . cs $
-                        "External balance list empty for xpub: " <>
-                        xPubExport net (xPubSpecKey xpub)
-                else return $ last (xPubBalPath (last external))
-        chgindex <-
-            if null change
-                then do
-                    $(logErrorS) "Cache" $
-                        "Change balance list empty for xpub: " <>
-                        xPubExport net (xPubSpecKey xpub)
-                    throwIO . LogicError . cs $
-                        "Change balance list empty for xpub: " <>
-                        xPubExport net (xPubSpecKey xpub)
-                else return $ last (xPubBalPath (last change))
         cacheAddXPubBalances xpub bals
         cacheAddXPubUnspents
             xpub
@@ -189,14 +158,10 @@ newBlockC =
                 Nothing -> do
                     $(logInfoS) "Cache" "Cache has no best block set"
                     importBlockC newhead
-                Just cachehead -> do
-                    $(logDebugS) "Cache" $
-                        "Cache head: " <> blockHashToHex cachehead
-                    go newhead cachehead
+                Just cachehead -> go newhead cachehead
   where
     go newhead cachehead
-        | cachehead == newhead =
-            $(logDebugS) "Cache" "Cache up-to-date"
+        | cachehead == newhead = return ()
         | otherwise = do
             ch <- asks cacheWriterChain
             chainGetBlock newhead ch >>= \case
@@ -296,20 +261,12 @@ removeHeadC =
 
 importTxC :: (StoreRead m, MonadLoggerIO m) => TxData -> CacheWriterT m ()
 importTxC txd = do
-    $(logDebugS) "Cache" $
-        "Importing transaction: " <> txHashToHex (txHash (txData txd))
     updateAddressesC addrs
     is <- mapM cacheGetAddrInfo addrs
     let aim = Map.fromList (catMaybes (zipWith (\a i -> (a, ) <$> i) addrs is))
         dus = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) spnts
         ius = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) utxos
     forM_ aim $ \i -> do
-        net <- asks cacheWriterNetwork
-        $(logDebugS) "Cache" $
-            "Adding transaction " <> txHashToHex (txHash (txData txd)) <>
-            " to xpub " <>
-            xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
-            cs (pathToStr (listToPath (addressXPubPath i)))
         cacheAddXPubTxs
             (addressXPubSpec i)
             [ BlockTx
@@ -360,14 +317,7 @@ updateAddressesC ::
 updateAddressesC as = do
     is <- mapM cacheGetAddrInfo as
     let ais = catMaybes (zipWith (\a i -> (a, ) <$> i) as is)
-    net <- asks cacheWriterNetwork
     forM_ ais $ \(a, i) -> do
-        $(logDebugS) "Cache" $
-            "Updating balances and gaps for address " <>
-            fromMaybe "[notext]" (addrToString net a) <>
-            " xpub " <>
-            xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
-            cs (pathToStr (listToPath (addressXPubPath i)))
         updateBalanceC a i
         updateAddressGapC i
     let as' = as \\ map fst ais
@@ -389,13 +339,6 @@ updateBalanceC ::
     -> AddressXPub
     -> CacheWriterT m ()
 updateBalanceC a i = do
-    net <- asks cacheWriterNetwork
-    $(logDebugS) "Cache" $
-        "Updating balance for address " <>
-        fromMaybe "[notext]" (addrToString net a) <>
-        " on xpub " <>
-        xPubExport net (xPubSpecKey (addressXPubSpec i)) <>
-        cs (pathToStr (listToPath (addressXPubPath i)))
     b <- lift (getBalance a)
     cacheAddXPubBalances
         (addressXPubSpec i)
@@ -403,7 +346,6 @@ updateBalanceC a i = do
 
 syncMempoolC :: (MonadLoggerIO m, StoreRead m) => CacheWriterT m ()
 syncMempoolC = do
-    $(logDebugS) "Cache" "Sync mempool"
     nodepool <- map blockTxHash <$> lift getMempool
     cachepool <- map blockTxHash <$> cacheGetMempool
     let deltxs = cachepool \\ nodepool
