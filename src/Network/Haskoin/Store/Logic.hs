@@ -116,7 +116,7 @@ importOrphan net t tx = do
     ex (OrphanTx _) = do
         return Nothing
     ex _ = do
-        $(logWarnS) "Block" $
+        $(logWarnS) "BlockStore" $
             "Deleted bad orphan tx: " <> txHashToHex (txHash tx)
         deleteOrphanTx (txHash tx)
         return Nothing
@@ -143,7 +143,7 @@ newMempoolTx net tx w =
             mapM (getTxData . outPointHash . prevOutput) (txIn tx)
         if orp
             then do
-                $(logWarnS) "Block" $ "Orphan tx: " <> txHashToHex (txHash tx)
+                $(logWarnS) "BlockStore" $ "Orphan tx: " <> txHashToHex (txHash tx)
                 insertOrphanTx tx w
                 throwError $ OrphanTx (txHashToHex (txHash tx))
             else f
@@ -167,12 +167,12 @@ newMempoolTx net tx w =
             then r ds
             else n
     r ds = do
-        $(logWarnS) "Block" $ "Replace by fee tx: " <> txHashToHex (txHash tx)
+        $(logWarnS) "BlockStore" $ "Replace by fee tx: " <> txHashToHex (txHash tx)
         ths <- concat <$> forM ds (deleteTx net True)
         dts <- importTx net (MemRef w) w tx
         return (Just (nub (ths <> dts)))
     n = do
-        $(logWarnS) "Block" $ "Conflicting tx: " <> txHashToHex (txHash tx)
+        $(logWarnS) "BlockStore" $ "Conflicting tx: " <> txHashToHex (txHash tx)
         insertDeletedMempoolTx tx w
         return Nothing
     isrbf th = transactionRBF <$> getImportTx th
@@ -190,17 +190,17 @@ revertBlock net bh = do
     bd <-
         getBestBlock >>= \case
             Nothing -> do
-                $(logErrorS) "Block" "Best block unknown"
+                $(logErrorS) "BlockStore" "Best block unknown"
                 throwError BestBlockUnknown
             Just h ->
                 getBlock h >>= \case
                     Nothing -> do
-                        $(logErrorS) "Block" "Best block not found"
+                        $(logErrorS) "BlockStore" "Best block not found"
                         throwError (BestBlockNotFound (blockHashToHex h))
                     Just b
                         | h == bh -> return b
                         | otherwise -> do
-                            $(logErrorS) "Block" $
+                            $(logErrorS) "BlockStore" $
                                 "Cannot delete block that is not head: " <>
                                 blockHashToHex h
                             throwError (BlockNotBest (blockHashToHex bh))
@@ -228,14 +228,14 @@ importBlock net b n = do
         Nothing
             | isGenesis n -> return ()
             | otherwise -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Cannot import non-genesis block at this point: " <>
                     blockHashToHex (headerHash (blockHeader b))
                 throwError BestBlockUnknown
         Just h
             | prevBlock (blockHeader b) == h -> return ()
             | otherwise -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Block does not build on head: " <>
                     blockHashToHex (headerHash (blockHeader b))
                 throwError $
@@ -267,7 +267,7 @@ importBlock net b n = do
             then getTxData (txHash tx) >>= \case
                      Just td -> confirmTx net td (br x) tx >> return []
                      Nothing -> do
-                         $(logErrorS) "Block" $
+                         $(logErrorS) "BlockStore" $
                              "Cannot get data for mempool tx: " <>
                              txHashToHex (txHash tx)
                          throwError $ TxNotFound (txHashToHex (txHash tx))
@@ -304,11 +304,11 @@ importTx ::
     -> m [TxHash] -- ^ deleted transactions
 importTx net br tt tx = do
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
-        $(logErrorS) "Block" $
+        $(logErrorS) "BlockStore" $
             "Transaction spends same output twice: " <> txHashToHex (txHash tx)
         throwError (DuplicatePrevOutput (txHashToHex (txHash tx)))
     when (iscb && not (confirmed br)) $ do
-        $(logErrorS) "Block" $
+        $(logErrorS) "BlockStore" $
             "Coinbase cannot be imported into mempool: " <>
             txHashToHex (txHash tx)
         throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
@@ -321,7 +321,7 @@ importTx net br tt tx = do
     when
         (not (confirmed br) &&
          sum (map unspentAmount us) < sum (map outValue (txOut tx))) $ do
-        $(logErrorS) "Block" $
+        $(logErrorS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError (InsufficientFunds (txHashToHex th))
     zipWithM_ (spendOutput net br (txHash tx)) [0 ..] us
@@ -354,14 +354,14 @@ importTx net br tt tx = do
         getUnspent op >>= \case
             Just u -> return (u, [])
             Nothing -> do
-                $(logWarnS) "Block" $
+                $(logWarnS) "BlockStore" $
                     "Unspent output not found: " <>
                     txHashToHex (outPointHash op) <>
                     " " <>
                     fromString (show (outPointIndex op))
                 getSpender op >>= \case
                     Nothing -> do
-                        $(logErrorS) "Block" $
+                        $(logErrorS) "BlockStore" $
                             "Output not found: " <>
                             txHashToHex (outPointHash op) <>
                             " " <>
@@ -371,7 +371,7 @@ importTx net br tt tx = do
                         ths <- deleteTx net True s
                         getUnspent op >>= \case
                             Nothing -> do
-                                $(logErrorS) "Block" $
+                                $(logErrorS) "BlockStore" $
                                     "Cannot unspend output: " <>
                                     txHashToHex (outPointHash op) <>
                                     " " <>
@@ -520,14 +520,14 @@ deleteTx ::
 deleteTx net mo h = do
     getTxData h >>= \case
         Nothing -> do
-            $(logErrorS) "Block" $ "Cannot find tx to delete: " <> txHashToHex h
+            $(logErrorS) "BlockStore" $ "Cannot find tx to delete: " <> txHashToHex h
             throwError (TxNotFound (txHashToHex h))
         Just t
             | txDataDeleted t -> do
-                $(logWarnS) "Block" $ "Already deleted tx: " <> txHashToHex h
+                $(logWarnS) "BlockStore" $ "Already deleted tx: " <> txHashToHex h
                 return []
             | mo && confirmed (txDataBlock t) -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Will not delete confirmed tx: " <> txHashToHex h
                 throwError (TxConfirmed (txHashToHex h))
             | otherwise -> go t
@@ -580,7 +580,7 @@ insertDeletedMempoolTx tx w = do
              in fmap or . forM hs $ \h ->
                     getTxData h >>= \case
                         Nothing -> do
-                            $(logErrorS) "Block" $
+                            $(logErrorS) "BlockStore" $
                                 "Tx not found: " <> txHashToHex h
                             throwError (TxNotFound (txHashToHex h))
                         Just t
@@ -676,11 +676,11 @@ getImportTx ::
 getImportTx th =
     getTxData th >>= \case
         Nothing -> do
-            $(logErrorS) "Block" $ "Tx not found: " <> txHashToHex th
+            $(logErrorS) "BlockStore" $ "Tx not found: " <> txHashToHex th
             throwError $ TxNotFound (txHashToHex th)
         Just d
             | txDataDeleted d -> do
-                $(logErrorS) "Block" $ "Tx deleted: " <> txHashToHex th
+                $(logErrorS) "BlockStore" $ "Tx deleted: " <> txHashToHex th
                 throwError $ TxDeleted (txHashToHex th)
             | otherwise -> do
                 sm <- getSpenders th
@@ -693,7 +693,7 @@ getTxOutput ::
     -> m StoreOutput
 getTxOutput i tx = do
     unless (fromIntegral i < length (transactionOutputs tx)) $ do
-        $(logErrorS) "Block" $
+        $(logErrorS) "BlockStore" $
             "Output out of range: " <> txHashToHex (txHash (transactionData tx)) <>
             " " <>
             fromString (show i)
@@ -747,7 +747,7 @@ unspendOutput _ op = do
     s <-
         case outputSpender o of
             Nothing -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Output already unspent: " <> txHashToHex (outPointHash op) <>
                     " " <>
                     fromString (show (outPointIndex op))
@@ -795,12 +795,12 @@ reduceBalance net c t a v =
     getBalance a >>= \b ->
         if nullBalance b
             then do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Address balance not found: " <> addrText net a
                 throwError (BalanceNotFound (addrText net a))
             else do
                 when (v > amnt b) $ do
-                    $(logErrorS) "Block" $
+                    $(logErrorS) "BlockStore" $
                         "Insufficient " <> conf <> " balance: " <>
                         addrText net a <>
                         " (needs: " <>

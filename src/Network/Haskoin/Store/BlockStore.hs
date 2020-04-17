@@ -168,7 +168,7 @@ blockStore cfg inbox = do
         net <- asks (blockConfNet . myConfig)
         runImport (initBest net) >>= \case
             Left e -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Could not initialize block store: " <> fromString (show e)
                 throwIO e
             Right () -> return ()
@@ -183,7 +183,7 @@ isInSync ::
 isInSync =
     getBestBlock >>= \case
         Nothing -> do
-            $(logErrorS) "Block" "Block database uninitialized"
+            $(logErrorS) "BlockStore" "Block database uninitialized"
             throwIO Uninitialized
         Just bb ->
             asks (blockConfChain . myConfig) >>= chainGetBest >>= \cb ->
@@ -191,7 +191,7 @@ isInSync =
 
 mempool :: MonadLoggerIO m => Peer -> m ()
 mempool p = do
-    $(logDebugS) "Block" "Requesting mempool from network peer"
+    $(logDebugS) "BlockStore" "Requesting mempool from network peer"
     MMempool `sendMessage` p
 
 processBlock ::
@@ -207,13 +207,13 @@ processBlock peer block = do
         lift (runImport (importBlock net block blocknode)) >>= \case
             Right deletedtxids -> do
                 listener <- asks (blockConfListener . myConfig)
-                $(logInfoS) "Block" $ "Best block indexed: " <> hexhash
+                $(logInfoS) "BlockStore" $ "Best block indexed: " <> hexhash
                 atomically $ do
                     mapM_ (listener . StoreTxDeleted) deletedtxids
                     listener (StoreBestBlock blockhash)
                 lift (syncMe peer)
             Left e -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Error importing block: " <> hexhash <> ": " <>
                     fromString (show e)
                 killPeer (PeerMisbehaving (show e)) peer
@@ -226,13 +226,13 @@ processBlock peer block = do
             Just Syncing {syncingPeer = syncingpeer}
                 | peer == syncingpeer -> return ()
             _ -> do
-                $(logErrorS) "Block" $ "Peer sent unexpected block: " <> hexhash
+                $(logErrorS) "BlockStore" $ "Peer sent unexpected block: " <> hexhash
                 killPeer (PeerMisbehaving "Sent unpexpected block") peer
                 mzero
     getblocknode =
         asks (blockConfChain . myConfig) >>= chainGetBlock blockhash >>= \case
             Nothing -> do
-                $(logErrorS) "Block" $ "Block header not found: " <> hexhash
+                $(logErrorS) "BlockStore" $ "Block header not found: " <> hexhash
                 killPeer (PeerMisbehaving "Sent unknown block") peer
                 mzero
             Just n -> return n
@@ -243,7 +243,7 @@ processNoBlocks ::
     -> [BlockHash]
     -> ReaderT BlockRead m ()
 processNoBlocks p _bs = do
-    $(logErrorS) "Block" (cs m)
+    $(logErrorS) "BlockStore" (cs m)
     killPeer (PeerMisbehaving m) p
   where
     m = "I do not like peers that cannot find them blocks"
@@ -257,7 +257,7 @@ processTx _p tx =
             runImport (newMempoolTx net tx now) >>= \case
                 Right (Just deleted) -> do
                     l <- blockConfListener <$> asks myConfig
-                    $(logInfoS) "Block" $
+                    $(logInfoS) "BlockStore" $
                         "New mempool tx: " <> txHashToHex (txHash tx)
                     atomically $ do
                         mapM_ (l . StoreTxDeleted) deleted
@@ -275,7 +275,7 @@ processOrphans =
             case old of
                 [] -> return ()
                 _ -> do
-                    $(logInfoS) "Block" $
+                    $(logInfoS) "BlockStore" $
                         "Removing " <> cs (show (length old)) <>
                         " expired orphan transactions"
                     void . runImport $ mapM_ deleteOrphanTx old
@@ -283,7 +283,7 @@ processOrphans =
             case orphans of
                 [] -> return ()
                 _ ->
-                    $(logInfoS) "Block" $
+                    $(logInfoS) "BlockStore" $
                     "Attempting to import " <> cs (show (length orphans)) <>
                     " orphan transactions"
             ops <-
@@ -317,7 +317,7 @@ processTxs p hs =
                         guard (isNothing t)
                         return (getTxHash h)
             unless (null xs) $ do
-                $(logInfoS) "Block" $
+                $(logInfoS) "BlockStore" $
                     "Requesting " <> fromString (show (length xs)) <>
                     " new transactions"
                 net <- blockConfNet <$> asks myConfig
@@ -334,7 +334,7 @@ checkTime =
         Just Syncing {syncingTime = t, syncingPeer = p} -> do
             n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             when (n > t + 60) $ do
-                $(logErrorS) "Block" "Syncing peer timeout"
+                $(logErrorS) "BlockStore" "Syncing peer timeout"
                 resetPeer
                 killPeer PeerTimeout p
 
@@ -351,10 +351,10 @@ processDisconnect p =
                 getPeer >>= \case
                     Nothing ->
                         $(logWarnS)
-                            "Block"
+                            "BlockStore"
                             "No peers available after syncing peer disconnected"
                     Just peer -> do
-                        $(logWarnS) "Block" "Selected another peer to sync"
+                        $(logWarnS) "BlockStore" "Selected another peer to sync"
                         syncMe peer
             | otherwise -> return ()
 
@@ -368,7 +368,7 @@ pruneMempool =
                 old -> deletetxs old
   where
     deletetxs old = do
-        $(logInfoS) "Block" $
+        $(logInfoS) "BlockStore" $
             "Removing " <> cs (show (length old)) <> " old mempool transactions"
         net <- asks (blockConfNet . myConfig)
         forM_ old $ \txid ->
@@ -398,7 +398,7 @@ syncMe peer =
                 map
                     (InvVector inv . getBlockHash . headerHash . nodeHeader)
                     blocknodes
-        $(logInfoS) "Block" $
+        $(logInfoS) "BlockStore" $
             "Requesting " <> fromString (show (length vectors)) <> " blocks"
         MGetData (GetData vectors) `sendMessage` peer
   where
@@ -408,20 +408,20 @@ syncMe peer =
             Just Syncing {syncingPeer = p}
                 | p == peer -> return ()
                 | otherwise -> do
-                    $(logInfoS) "Block" "Already syncing against another peer"
+                    $(logInfoS) "BlockStore" "Already syncing against another peer"
                     mzero
     chainbestnode = chainGetBest =<< asks (blockConfChain . myConfig)
     bestblocknode = do
         bb <-
             lift getBestBlock >>= \case
                 Nothing -> do
-                    $(logErrorS) "Block" "No best block set"
+                    $(logErrorS) "BlockStore" "No best block set"
                     throwIO Uninitialized
                 Just b -> return b
         ch <- asks (blockConfChain . myConfig)
         chainGetBlock bb ch >>= \case
             Nothing -> do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Header not found for best block: " <> blockHashToHex bb
                 throwIO (BlockNotInChain bb)
             Just x -> return x
@@ -456,7 +456,7 @@ syncMe peer =
             else chainGetAncestor syncheight chainbest ch >>= \case
                      Just x -> return x
                      Nothing -> do
-                         $(logErrorS) "Block" $
+                         $(logErrorS) "BlockStore" $
                              "Could not find header for ancestor of block: " <>
                              blockHashToHex (headerHash (nodeHeader chainbest))
                          throwIO $
@@ -468,13 +468,13 @@ syncMe peer =
         ch <- asks (blockConfChain . myConfig)
         chainBlockMain bestblockhash ch >>= \y ->
             unless y $ do
-                $(logErrorS) "Block" $
+                $(logErrorS) "BlockStore" $
                     "Reverting best block: " <> blockHashToHex bestblockhash
                 resetPeer
                 net <- asks (blockConfNet . myConfig)
                 lift (runImport (revertBlock net bestblockhash)) >>= \case
                     Left e -> do
-                        $(logErrorS) "Block" $
+                        $(logErrorS) "BlockStore" $
                             "Could not revert best block: " <> cs (show e)
                         throwIO e
                     Right txids -> do
@@ -514,7 +514,9 @@ processBlockStoreMessage ::
 processBlockStoreMessage (BlockNewBest _) = do
     getPeer >>= \case
         Nothing -> do
-            $(logErrorS) "Block" "New best block but no peer to sync from"
+            $(logDebugS)
+                "BlockStore"
+                "New best block event received but no peers available"
         Just p -> syncMe p
 processBlockStoreMessage (BlockPeerConnect p _) = syncMe p
 processBlockStoreMessage (BlockPeerDisconnect p _sa) = processDisconnect p
