@@ -3,11 +3,13 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE TemplateHaskell      #-}
 {-# LANGUAGE TupleSections        #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 module Network.Haskoin.Store.Data.CacheReader where
 
 import           Control.DeepSeq              (NFData)
+import           Control.Monad.Logger         (MonadLoggerIO)
 import           Control.Monad.Reader         (ReaderT (..), asks)
 import           Control.Monad.Trans          (lift)
 import           Data.Bits                    (shift, (.&.), (.|.))
@@ -57,7 +59,7 @@ data CacheError
     | LogicError String
     deriving (Show, Eq, Generic, NFData, Exception)
 
-instance (MonadIO m, StoreRead m) => StoreRead (CacheReaderT m) where
+instance (MonadLoggerIO m, StoreRead m) => StoreRead (CacheReaderT m) where
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
@@ -114,14 +116,14 @@ getXPubTxs xpub start offset limit = do
         txs -> return txs
 
 getXPubUnspents ::
-       (MonadIO m, StoreRead m)
+       (MonadLoggerIO m, StoreRead m)
     => XPubSpec
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
     -> CacheReaderT m [XPubUnspent]
 getXPubUnspents xpub start offset limit =
-    getXPubBalances xpub >>= \case
+    cacheGetXPubBalances xpub >>= \case
         [] -> do
             cache <- asks cacheReaderWriter
             cacheXPub cache xpub

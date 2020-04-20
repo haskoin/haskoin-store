@@ -262,7 +262,7 @@ runInWebReader bf cf = do
             Nothing -> bf
             Just c  -> withCacheReader c cf
 
-instance MonadIO m => StoreRead (ReaderT WebConfig m) where
+instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
     getBestBlock = runInWebReader getBestBlock getBestBlock
     getBlocksAtHeight height =
         runInWebReader (getBlocksAtHeight height) (getBlocksAtHeight height)
@@ -296,7 +296,7 @@ instance MonadIO m => StoreRead (ReaderT WebConfig m) where
             (xPubTxs xpub start offset limit)
             (xPubTxs xpub start offset limit)
 
-instance MonadIO m => StoreRead (WebT m) where
+instance MonadLoggerIO m => StoreRead (WebT m) where
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock

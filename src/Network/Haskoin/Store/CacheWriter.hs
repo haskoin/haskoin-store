@@ -53,7 +53,7 @@ import           Network.Haskoin.Store.Common           (Balance (..),
                                                          XPubBal (..),
                                                          XPubSpec (..),
                                                          XPubUnspent (..),
-                                                         nullBalance, sortTxs,
+                                                         sortTxs,
                                                          xPubAddrFunction,
                                                          xPubBals, xPubTxs,
                                                          xPubUnspents)
@@ -147,8 +147,7 @@ newXPubC xpub = do
     x <- asks cacheWriterMin
     when empty $ do
         bals <- lift $ xPubBals xpub
-        let l = length (filter (not . nullBalance . xPubBal) bals)
-        when (x <= l) (go bals)
+        when (x <= length bals) (go bals)
   where
     go bals = do
         utxo <- lift $ xPubUnspents xpub Nothing 0 Nothing

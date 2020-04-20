@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.21.6
 ### Fixed
-- Fix for shared update of xpub cache gobbling up unspent outputs.
+- Fix missing xpub unspent outputs when using cache.
 
 ## 0.21.5
 ### Added
