@@ -468,7 +468,7 @@ redisAddXPubUnspents xpub utxo = do
 redisRemXPubUnspents ::
        (Monad f, RedisCtx m f) => XPubSpec -> [OutPoint] -> m (f ())
 redisRemXPubUnspents xpub ops = do
-    f <- zrem (txSetPfx <> encode xpub) (map encode ops)
+    f <- zrem (utxoPfx <> encode xpub) (map encode ops)
     return $ f >> return ()
 
 redisAddXPubBalances ::
