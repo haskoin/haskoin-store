@@ -244,6 +244,7 @@ importBlockC bh =
         let ths = blockDataTxs bd
         tds <- sortTxData . catMaybes <$> mapM (lift . getTxData) ths
         forM_ tds importTxC
+        cacheSetHead bh
 
 removeHeadC :: (StoreRead m, MonadLoggerIO m) => CacheWriterT m ()
 removeHeadC =
