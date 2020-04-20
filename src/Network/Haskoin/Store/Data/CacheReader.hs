@@ -25,8 +25,8 @@ import           Database.Redis               (Connection, RedisCtx, Reply,
                                                zrangebyscoreWithscoresLimit)
 import qualified Database.Redis               as Redis
 import           GHC.Generics                 (Generic)
-import           Haskoin                      (Address, BlockHash, KeyIndex,
-                                               OutPoint (..), scriptToAddressBS)
+import           Haskoin                      (Address, KeyIndex, OutPoint (..),
+                                               scriptToAddressBS)
 import           Network.Haskoin.Store.Common (Balance (..), BlockRef (..),
                                                BlockTx (..), CacheWriter, Limit,
                                                Offset, StoreRead (..),
@@ -81,21 +81,6 @@ instance (MonadIO m, StoreRead m) => StoreRead (CacheReaderT m) where
 
 withCacheReader :: StoreRead m => CacheReaderConfig -> CacheReaderT m a -> m a
 withCacheReader s f = runReaderT f s
-
--- Version of the cache database
-cacheVerKey :: ByteString
-cacheVerKey = "version"
-
-cacheVerCurrent :: ByteString
-cacheVerCurrent = "1"
-
--- Ordered set of transaction ids in mempool
-mempoolSetKey :: ByteString
-mempoolSetKey = "mempool"
-
--- Best block indexed
-bestBlockKey :: ByteString
-bestBlockKey = "head"
 
 -- Ordered set of balances for an extended public key
 balancesPfx :: ByteString
@@ -207,28 +192,6 @@ cacheGetXPubUnspents xpub start offset limit = do
     liftIO (runRedis conn (redisGetXPubUnspents xpub start offset limit)) >>= \case
         Left e -> throwIO (RedisError e)
         Right ops -> return ops
-
-redisGetHead :: (Monad m, Monad f, RedisCtx m f) => m (f (Maybe BlockHash))
-redisGetHead = do
-    f <- Redis.get bestBlockKey
-    return $ do
-        mbs <- f
-        case mbs of
-            Nothing -> return Nothing
-            Just bs ->
-                case decode bs of
-                    Left e  -> error e
-                    Right h -> return h
-
-redisGetMempool :: (Monad m, Monad f, RedisCtx m f) => m (f [BlockTx])
-redisGetMempool = do
-    f <- getFromSortedSet mempoolSetKey Nothing 0 Nothing
-    return $ do
-        bts <- f
-        return
-            (map (\(t, s) ->
-                      BlockTx {blockTxBlock = scoreBlockRef s, blockTxHash = t})
-                 bts)
 
 redisGetAddrInfo :: (Monad f, RedisCtx m f) => Address -> m (f (Maybe AddressXPub))
 redisGetAddrInfo a = do

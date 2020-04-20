@@ -13,11 +13,12 @@ import           Control.Monad.Logger                   (MonadLoggerIO,
 import           Control.Monad.Reader                   (ReaderT (..), asks)
 import           Control.Monad.Trans                    (lift)
 import           Control.Monad.Trans.Maybe              (MaybeT (..), runMaybeT)
+import           Data.ByteString                        (ByteString)
 import qualified Data.IntMap.Strict                     as IntMap
 import           Data.List                              (nub, (\\))
 import qualified Data.Map.Strict                        as Map
 import           Data.Maybe                             (catMaybes, mapMaybe)
-import           Data.Serialize                         (encode)
+import           Data.Serialize                         (decode, encode)
 import           Data.String.Conversions                (cs)
 import           Database.Redis                         (RedisCtx, hmset,
                                                          runRedis, zadd, zrem)
@@ -32,6 +33,7 @@ import           Haskoin                                (Address, BlockHash,
                                                          TxOut (..),
                                                          blockHashToHex,
                                                          derivePubPath,
+                                                         eitherToMaybe,
                                                          headerHash, pathToList,
                                                          scriptToAddressBS,
                                                          txHash, txHashToHex)
@@ -60,13 +62,11 @@ import           Network.Haskoin.Store.Data.CacheReader (AddressXPub (..),
                                                          CacheReaderConfig (..),
                                                          CacheReaderT, addrPfx,
                                                          balancesPfx,
-                                                         bestBlockKey,
                                                          blockRefScore,
                                                          cacheGetXPubBalances,
-                                                         mempoolSetKey,
+                                                         getFromSortedSet,
                                                          redisGetAddrInfo,
-                                                         redisGetHead,
-                                                         redisGetMempool,
+                                                         scoreBlockRef,
                                                          txSetPfx, utxoPfx,
                                                          withCacheReader)
 import           NQE                                    (Inbox, receive)
@@ -108,6 +108,14 @@ instance (MonadLoggerIO m, StoreRead m) => StoreRead (CacheWriterT m) where
     xPubTxs xpub start offset limit =
         runCacheReaderT (xPubTxs xpub start offset limit)
     getMaxGap = asks (cacheReaderGap . cacheWriterReader)
+
+-- Ordered set of transaction ids in mempool
+mempoolSetKey :: ByteString
+mempoolSetKey = "mempool"
+
+-- Best block indexed
+bestBlockKey :: ByteString
+bestBlockKey = "head"
 
 runCacheReaderT :: StoreRead m => CacheReaderT m a -> CacheWriterT m a
 runCacheReaderT f =
@@ -153,7 +161,6 @@ newBlockC =
     lift getBestBlock >>= \case
         Nothing -> $(logErrorS) "Cache" "Best block not set yet"
         Just newhead -> do
-            $(logErrorS) "Cache" $ "Best block: " <> blockHashToHex newhead
             cacheGetHead >>= \case
                 Nothing -> do
                     $(logInfoS) "Cache" "Cache has no best block set"
@@ -568,3 +575,18 @@ txUnspent td =
         f (Right a) p = Just (a, p)
         f (Left _) _  = Nothing
      in catMaybes (zipWith f as ps)
+
+redisGetHead :: (Monad m, Monad f, RedisCtx m f) => m (f (Maybe BlockHash))
+redisGetHead = do
+    f <- Redis.get bestBlockKey
+    return $ (eitherToMaybe . decode =<<) <$> f
+
+redisGetMempool :: (Monad m, Monad f, RedisCtx m f) => m (f [BlockTx])
+redisGetMempool = do
+    f <- getFromSortedSet mempoolSetKey Nothing 0 Nothing
+    return $ do
+        bts <- f
+        return
+            (map (\(t, s) ->
+                      BlockTx {blockTxBlock = scoreBlockRef s, blockTxHash = t})
+                 bts)
