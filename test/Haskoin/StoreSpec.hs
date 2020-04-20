@@ -98,6 +98,7 @@ withTestStore net t f =
                         , storeConfPublisher = pub
                         , storeConfCache = Nothing
                         , storeConfGap = gap
+                        , storeConfCacheMin = 100
                         }
             withStore cfg $ \Store {..} -> withSubscription pub $ \sub ->
                 lift $

@@ -76,6 +76,8 @@ data StoreConfig =
       -- ^ Redis cache configuration
         , storeConfGap       :: !Word32
       -- ^ gap for extended public keys
+        , storeConfCacheMin  :: !Int
+      -- ^ minimum number of addresses for caching
         }
 
 withStore ::
@@ -143,6 +145,7 @@ store cfg mgri chi bsi = do
                             , cacheWriterChain = c
                             , cacheWriterMailbox = snd cacheinfo
                             , cacheWriterNetwork = storeConfNetwork cfg
+                            , cacheWriterMin = storeConfCacheMin cfg
                             }
                     cw =
                         withDatabaseReader

@@ -52,6 +52,7 @@ data Config = Config
     , configTimeouts  :: !Timeouts
     , configRedis     :: !Bool
     , configRedisURL  :: !String
+    , configRedisMin  :: !Int
     }
 
 defPort :: Int
@@ -75,6 +76,9 @@ defMaxLimits =
 
 defTimeouts :: Timeouts
 defTimeouts = Timeouts {blockTimeout = 7200, txTimeout = 600}
+
+defRedisMin :: Int
+defRedisMin = 100
 
 config :: Parser Config
 config = do
@@ -148,6 +152,12 @@ config = do
     configRedisURL <-
         strOption $
         metavar "URL" <> long "redis" <> help "URL for Redis cache" <> value ""
+    configRedisMin <-
+        option auto $
+        metavar "MINADDRS" <> long "cachemin" <>
+        help "Minmum xpub address count to cache" <>
+        showDefault <>
+        value defRedisMin
     pure
         Config
             { configMaxLimits = MaxLimits {..}
@@ -211,6 +221,7 @@ run Config { configPort = port
            , configTimeouts = tos
            , configRedis = redis
            , configRedisURL = redisurl
+           , configRedisMin = cachemin
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -232,6 +243,7 @@ run Config { configPort = port
                             , storeConfPublisher = pub
                             , storeConfCache = maybecache
                             , storeConfGap = maxLimitGap limits
+                            , storeConfCacheMin = cachemin
                             }
                  in withStore scfg $ \st ->
                         let crcfg =
@@ -267,7 +279,7 @@ run Config { configPort = port
                     if null redisurl
                         then return defaultConnectInfo
                         else case parseConnectInfo redisurl of
-                                 Left e -> error e
+                                 Left e  -> error e
                                  Right r -> return r
                 cachembox <- newInbox
                 withRunInIO $ \r ->

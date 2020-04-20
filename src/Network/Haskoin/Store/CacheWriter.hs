@@ -53,7 +53,7 @@ import           Network.Haskoin.Store.Common           (Balance (..),
                                                          XPubBal (..),
                                                          XPubSpec (..),
                                                          XPubUnspent (..),
-                                                         sortTxs,
+                                                         nullBalance, sortTxs,
                                                          xPubAddrFunction,
                                                          xPubBals, xPubTxs,
                                                          xPubUnspents)
@@ -80,6 +80,7 @@ data CacheWriterConfig =
         , cacheWriterChain   :: !Chain
         , cacheWriterMailbox :: !CacheWriterInbox
         , cacheWriterNetwork :: !Network
+        , cacheWriterMin     :: !Int
         }
 
 type CacheWriterT = ReaderT CacheWriterConfig
@@ -143,9 +144,11 @@ newXPubC ::
     -> CacheWriterT m ()
 newXPubC xpub = do
     empty <- null <$> runCacheReaderT (cacheGetXPubBalances xpub)
+    x <- asks cacheWriterMin
     when empty $ do
         bals <- lift $ xPubBals xpub
-        go bals
+        let l = length (filter (not . nullBalance . xPubBal) bals)
+        when (x <= l) (go bals)
   where
     go bals = do
         utxo <- lift $ xPubUnspents xpub Nothing 0 Nothing
