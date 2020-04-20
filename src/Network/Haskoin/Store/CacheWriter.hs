@@ -136,7 +136,7 @@ cacheWriterReact ::
 cacheWriterReact CacheNewBlock    = newBlockC
 cacheWriterReact (CacheXPub xpub) = newXPubC xpub
 cacheWriterReact (CacheNewTx txh) = newTxC txh
-cacheWriterReact (CacheDelTx txh) = removeTxC txh
+cacheWriterReact (CacheDelTx txh) = newTxC txh
 
 newXPubC ::
        (MonadLoggerIO m, MonadUnliftIO m, StoreRead m)
@@ -222,13 +222,6 @@ newTxC th =
         Nothing ->
             $(logErrorS) "Cache" $ "Transaction not found: " <> txHashToHex th
 
-removeTxC :: (MonadLoggerIO m, StoreRead m) => TxHash -> CacheWriterT m ()
-removeTxC th =
-    lift (getTxData th) >>= \case
-        Just txd -> deleteTxC txd
-        Nothing ->
-            $(logWarnS) "Cache" $ "Transaction not found: " <> txHashToHex th
-
 ---------------
 -- Importing --
 ---------------
@@ -260,7 +253,7 @@ removeHeadC =
                 sortTxData . catMaybes <$>
                 mapM (lift . getTxData) (blockDataTxs bd)
             $(logWarnS) "Cache" $ "Reverting head: " <> blockHashToHex bh
-            forM_ (reverse (map (txHash . txData) tds)) removeTxC
+            forM_ (reverse (map (txHash . txData) tds)) newTxC
             cacheSetHead (prevBlock (blockDataHeader bd))
             syncMempoolC
 
@@ -271,50 +264,36 @@ importTxC txd = do
     let aim = Map.fromList (catMaybes (zipWith (\a i -> (a, ) <$> i) addrs is))
         dus = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) spnts
         ius = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) utxos
-    forM_ aim $ \i -> do
-        cacheAddXPubTxs
-            (addressXPubSpec i)
-            [ BlockTx
-                  { blockTxHash = txHash (txData txd)
-                  , blockTxBlock = txDataBlock txd
-                  }
-            ]
-    forM_ dus $ \(i, p) -> do cacheRemXPubUnspents (addressXPubSpec i) [p]
-    forM_ ius $ \(i, p) ->
-        cacheAddXPubUnspents (addressXPubSpec i) [(p, txDataBlock txd)]
-    case txDataBlock txd of
-        b@MemRef {} ->
-            cacheAddToMempool
-                BlockTx {blockTxHash = txHash (txData txd), blockTxBlock = b}
-        _ -> cacheRemFromMempool (txHash (txData txd))
-  where
-    spnts = txSpent txd
-    utxos = txUnspent txd
-    addrs = nub (map fst spnts <> map fst utxos)
-
-deleteTxC :: (StoreRead m, MonadLoggerIO m) => TxData -> CacheWriterT m ()
-deleteTxC txd = do
-    $(logWarnS) "Cache" $
-        "Deleting transaction: " <> txHashToHex (txHash (txData txd))
-    updateAddressesC addrs
-    is <- mapM cacheGetAddrInfo addrs
-    let aim = Map.fromList (catMaybes (zipWith (\a i -> (a, ) <$> i) addrs is))
-        dus = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) spnts
-        ius = mapMaybe (\(a, p) -> (, p) <$> Map.lookup a aim) utxos
-    forM_ aim $ \i -> do
-        cacheRemXPubTxs (addressXPubSpec i) [txHash (txData txd)]
-    forM_ dus $ \(i, p) ->
+    if txDataDeleted txd
+        then do
+            forM_ aim $ \i ->
+                cacheRemXPubTxs (addressXPubSpec i) [txHash (txData txd)]
+            case txDataBlock txd of
+                b@MemRef {} ->
+                    cacheAddToMempool
+                        BlockTx
+                            { blockTxHash = txHash (txData txd)
+                            , blockTxBlock = b
+                            }
+                _ -> cacheRemFromMempool (txHash (txData txd))
+        else do
+            forM_ aim $ \i ->
+                cacheAddXPubTxs
+                    (addressXPubSpec i)
+                    [ BlockTx
+                          { blockTxHash = txHash (txData txd)
+                          , blockTxBlock = txDataBlock txd
+                          }
+                    ]
+            cacheRemFromMempool (txHash (txData txd))
+    forM_ (dus <> ius) $ \(i, p) -> do
         lift (getUnspent p) >>= \case
-            Just u -> do
+            Nothing -> cacheRemXPubUnspents (addressXPubSpec i) [p]
+            Just u ->
                 cacheAddXPubUnspents (addressXPubSpec i) [(p, unspentBlock u)]
-            Nothing -> return ()
-    forM_ ius $ \(i, p) -> cacheRemXPubUnspents (addressXPubSpec i) [p]
-    case txDataBlock txd of
-        MemRef {} -> cacheRemFromMempool (txHash (txData txd))
-        _         -> return ()
   where
-    spnts = txSpent txd
-    utxos = txUnspent txd
+    spnts = txInputs txd
+    utxos = txOutputs txd
     addrs = nub (map fst spnts <> map fst utxos)
 
 updateAddressesC ::
@@ -355,7 +334,7 @@ syncMempoolC = do
     cachepool <- map blockTxHash <$> cacheGetMempool
     let deltxs = cachepool \\ nodepool
     deltds <- reverse . sortTxData . catMaybes <$> mapM (lift . getTxData) deltxs
-    forM_ deltds deleteTxC
+    forM_ deltds importTxC
     let addtxs = nodepool \\ cachepool
     addtds <- sortTxData . catMaybes <$> mapM (lift . getTxData) addtxs
     forM_ addtds importTxC
@@ -550,8 +529,8 @@ sortTxData tds =
         ths = map (txHash . snd) (sortTxs (map txData tds))
      in mapMaybe (\h -> Map.lookup h txm) ths
 
-txSpent :: TxData -> [(Address, OutPoint)]
-txSpent td =
+txInputs :: TxData -> [(Address, OutPoint)]
+txInputs td =
     let is = txIn (txData td)
         ps = IntMap.toAscList (txDataPrevs td)
         as = map (scriptToAddressBS . prevScript . snd) ps
@@ -559,8 +538,8 @@ txSpent td =
         f (Left _) _  = Nothing
      in catMaybes (zipWith f as is)
 
-txUnspent :: TxData -> [(Address, OutPoint)]
-txUnspent td =
+txOutputs :: TxData -> [(Address, OutPoint)]
+txOutputs td =
     let ps =
             zipWith
                 (\i _ ->
