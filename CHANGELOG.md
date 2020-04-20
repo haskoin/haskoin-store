@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.21.3
+### Fixed
+- Fix bug where best head was not being registered in cache.
+- Fix best head in cache being decoded incorrectly.
+
 ## 0.21.2
 ### Added
 - Complete support for Redis xpub cache.
