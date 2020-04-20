@@ -183,16 +183,10 @@ newBlockC =
                             $(logErrorS) "Cache" $
                                 "No header for cache head: " <>
                                 blockHashToHex cachehead
-                            error . cs $
-                                "No header for cache head: " <>
-                                blockHashToHex cachehead
                         Just cacheheadnode -> go2 newheadnode cacheheadnode
     go2 newheadnode cacheheadnode
         | nodeHeight cacheheadnode > nodeHeight newheadnode = do
             $(logErrorS) "Cache" $
-                "Cache head is above new best block: " <>
-                blockHashToHex (headerHash (nodeHeader newheadnode))
-            throwIO . LogicError . cs $
                 "Cache head is above new best block: " <>
                 blockHashToHex (headerHash (nodeHeader newheadnode))
         | otherwise = do
