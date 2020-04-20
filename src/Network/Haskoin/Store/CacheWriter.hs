@@ -126,7 +126,7 @@ cacheWriter ::
     => CacheWriterConfig
     -> m ()
 cacheWriter cfg@CacheWriterConfig {cacheWriterMailbox = inbox} =
-    runReaderT (forever (receive inbox >>= cacheWriterReact)) cfg
+    runReaderT (newBlockC >> forever (receive inbox >>= cacheWriterReact)) cfg
 
 cacheWriterReact ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
