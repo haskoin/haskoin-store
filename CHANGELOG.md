@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.21.7
 ### Changed
 - Improve build configuration.
-- Split common package out.
+
+### Fixed
+- Use minimum used addresses instead of minimum index for xpub cache decision.
 
 ## 0.21.6
 ### Fixed

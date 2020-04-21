@@ -155,7 +155,7 @@ config = do
     configRedisMin <-
         option auto $
         metavar "MINADDRS" <> long "cachemin" <>
-        help "Minimum xpub address count to cache" <>
+        help "Minimum used xpub addresses to cache" <>
         showDefault <>
         value defRedisMin
     pure
