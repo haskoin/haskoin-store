@@ -1,9 +1,18 @@
 module Haskoin.Store
-    ( StoreConfig (..)
+    ( StoreConfig(..)
     , store
     , withStore
-    , module X )
-    where
+    , module Network.Haskoin.Store.Common
+    , module Network.Haskoin.Store.BlockStore
+    , module Network.Haskoin.Store.Logic
+    , module Network.Haskoin.Store.Web
+    , module Network.Haskoin.Store.CacheWriter
+    , module Network.Haskoin.Store.Data.Types
+    , module Network.Haskoin.Store.Data.CacheReader
+    , module Network.Haskoin.Store.Data.DatabaseReader
+    , module Network.Haskoin.Store.Data.DatabaseWriter
+    , module Network.Haskoin.Store.Data.MemoryDatabase
+    ) where
 
 import           Control.Monad                             (forever, unless,
                                                             when)
@@ -33,16 +42,16 @@ import           Haskoin.Node                              (ChainEvent (..),
                                                             NodeEvent (..),
                                                             PeerEvent (..),
                                                             node)
-import           Network.Haskoin.Store.BlockStore          as X
-import           Network.Haskoin.Store.CacheWriter         as X
-import           Network.Haskoin.Store.Common              as X
-import           Network.Haskoin.Store.Data.CacheReader    as X
-import           Network.Haskoin.Store.Data.DatabaseReader as X
-import           Network.Haskoin.Store.Data.DatabaseWriter as X
-import           Network.Haskoin.Store.Data.MemoryDatabase as X
-import           Network.Haskoin.Store.Data.Types          as X
-import           Network.Haskoin.Store.Logic               as X
-import           Network.Haskoin.Store.Web                 as X
+import           Network.Haskoin.Store.BlockStore
+import           Network.Haskoin.Store.CacheWriter
+import           Network.Haskoin.Store.Common
+import           Network.Haskoin.Store.Data.CacheReader
+import           Network.Haskoin.Store.Data.DatabaseReader
+import           Network.Haskoin.Store.Data.DatabaseWriter
+import           Network.Haskoin.Store.Data.MemoryDatabase
+import           Network.Haskoin.Store.Data.Types
+import           Network.Haskoin.Store.Logic
+import           Network.Haskoin.Store.Web
 import           Network.Socket                            (SockAddr (..))
 import           NQE                                       (Inbox, Listen,
                                                             Process (..),
