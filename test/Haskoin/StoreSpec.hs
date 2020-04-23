@@ -9,10 +9,10 @@ import           Control.Monad.Logger
 import           Control.Monad.Trans
 import           Data.Maybe
 import           Data.Word
-import           Database.RocksDB
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
+import           Haskoin.Store.Common
 import           NQE
 import           Test.Hspec
 import           UnliftIO
@@ -73,38 +73,24 @@ withTestStore ::
        MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
 withTestStore net t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
-        runNoLoggingT $ withPublisher $ \pub -> do
-            db <-
-                open
-                    w
-                    defaultOptions
-                        { createIfMissing = True
-                        , errorIfExists = True
-                        , compression = SnappyCompression
-                        }
-            let bdb =
-                    DatabaseReader
-                        { databaseHandle = db
-                        , databaseReadOptions = defaultReadOptions
-                        , databaseMaxGap = gap
-                        }
+        runNoLoggingT $ do
             let cfg =
                     StoreConfig
                         { storeConfMaxPeers = 20
                         , storeConfInitPeers = []
                         , storeConfDiscover = True
-                        , storeConfDB = bdb
+                        , storeConfDB = w
                         , storeConfNetwork = net
-                        , storeConfPublisher = pub
                         , storeConfCache = Nothing
                         , storeConfGap = gap
                         , storeConfCacheMin = 100
+                        , storeConfMaxKeys = 100 * 1000 * 1000
                         }
-            withStore cfg $ \Store {..} -> withSubscription pub $ \sub ->
+            withStore cfg $ \Store {..} -> withSubscription storePublisher $ \sub ->
                 lift $
                 f
                     TestStore
-                        { testStoreDB = bdb
+                        { testStoreDB = storeDB
                         , testStoreBlockStore = storeBlock
                         , testStoreChain = storeChain
                         , testStoreEvents = sub

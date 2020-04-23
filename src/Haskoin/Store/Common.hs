@@ -2,7 +2,59 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Store.Common where
+module Haskoin.Store.Common
+    ( BlockStoreMessage(..)
+    , DeriveType(..)
+    , Limit
+    , Offset
+    , BlockStore
+    , UnixTime
+    , getUnixTime
+    , putUnixTime
+    , BlockPos
+    , XPubSpec(..)
+    , StoreRead(..)
+    , StoreWrite(..)
+    , JsonSerial(..)
+    , BinSerial(..)
+    , BlockRef(..)
+    , BlockTx(..)
+    , confirmed
+    , Balance(..)
+    , BlockData(..)
+    , StoreInput(..)
+    , isCoinbase
+    , Spender(..)
+    , StoreOutput(..)
+    , Prev(..)
+    , TxData(..)
+    , Unspent(..)
+    , Transaction(..)
+    , transactionData
+    , fromTransaction
+    , toTransaction
+    , TxAfterHeight(..)
+    , TxId(..)
+    , PeerInformation(..)
+    , XPubBal(..)
+    , XPubUnspent(..)
+    , XPubSummary(..)
+    , HealthCheck(..)
+    , Event(..)
+    , StoreEvent(..)
+    , PubExcept(..)
+    , zeroBalance
+    , nullBalance
+    , getTransaction
+    , blockAtOrBefore
+    , applyOffset
+    , applyLimit
+    , applyOffsetLimit
+    , applyOffsetC
+    , applyLimitC
+    , applyOffsetLimitC
+    , sortTxs
+    ) where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
 import           Control.Applicative       ((<|>))
@@ -19,9 +71,8 @@ import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B
 import           Data.ByteString.Short     (ShortByteString)
 import qualified Data.ByteString.Short     as B.Short
-import           Data.Default              (Default (..))
 import           Data.Function             (on)
-import           Data.Hashable             (Hashable)
+import           Data.Hashable             (Hashable (..))
 import qualified Data.IntMap               as I
 import           Data.IntMap.Strict        (IntMap)
 import           Data.List                 (nub, partition, sortBy)
@@ -52,14 +103,11 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             encodeHex, headerHash,
                                             hostToSockAddr, pubSubKey,
                                             scriptToAddressBS, stringToAddr,
-                                            txHash, wrapPubKey, xPubAddr,
-                                            xPubCompatWitnessAddr,
-                                            xPubWitnessAddr)
-import           Haskoin.Node              (Chain, Manager, Peer)
+                                            txHash, wrapPubKey)
+import           Haskoin.Node              (Peer)
 import           Network.Socket            (SockAddr)
-import           NQE                       (Listen, Mailbox, send)
+import           NQE                       (Listen, Mailbox)
 import qualified Paths_haskoin_store       as P
-import           UnliftIO                  (MonadIO)
 
 data DeriveType
     = DeriveNormal
@@ -89,22 +137,15 @@ data BlockStoreMessage
 -- | Mailbox for block store.
 type BlockStore = Mailbox BlockStoreMessage
 
--- | Store mailboxes.
-data Store =
-    Store
-        { storeManager :: !Manager
-      -- ^ peer manager mailbox
-        , storeChain   :: !Chain
-      -- ^ chain header process mailbox
-        , storeBlock   :: !BlockStore
-      -- ^ block storage mailbox
-        }
-
 data XPubSpec =
     XPubSpec
         { xPubSpecKey    :: !XPubKey
         , xPubDeriveType :: !DeriveType
         } deriving (Show, Eq, Generic, NFData)
+
+instance Hashable XPubSpec where
+    hashWithSalt i XPubSpec {xPubSpecKey = XPubKey {xPubKey = pubkey}} =
+        hashWithSalt i pubkey
 
 instance Serialize XPubSpec where
     put XPubSpec {xPubSpecKey = k, xPubDeriveType = t} = do
@@ -138,15 +179,6 @@ type BlockPos = Word32
 
 type Offset = Word32
 type Limit = Word32
-
-data CacheWriterMessage
-    = CacheXPub !XPubSpec
-    | CacheNewTx !TxHash
-    | CacheDelTx !TxHash
-    | CacheNewBlock
-    deriving (Show, Eq, Generic, NFData)
-
-type CacheWriter = Mailbox CacheWriterMessage
 
 class Monad m =>
       StoreRead m
@@ -286,19 +318,6 @@ deriveFunction :: DeriveType -> DeriveAddr
 deriveFunction DeriveNormal i = fst . deriveAddr i
 deriveFunction DeriveP2SH i   = fst . deriveCompatWitnessAddr i
 deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
-
-xPubAddrFunction :: DeriveType -> XPubKey -> Address
-xPubAddrFunction DeriveNormal = xPubAddr
-xPubAddrFunction DeriveP2SH   = xPubCompatWitnessAddr
-xPubAddrFunction DeriveP2WPKH = xPubWitnessAddr
-
-encodeShort :: Serialize a => a -> ShortByteString
-encodeShort = B.Short.toShort . S.encode
-
-decodeShort :: Serialize a => ShortByteString -> a
-decodeShort bs = case S.decode (B.Short.fromShort bs) of
-    Left e  -> error e
-    Right a -> a
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
@@ -764,12 +783,6 @@ inputPairs net StoreCoinbase { inputPoint = OutPoint oph opi
     ] ++
     ["witness" .= fmap (map encodeHex) wit | getSegWit net]
 
-inputToJSON :: Network -> StoreInput -> Value
-inputToJSON net = object . inputPairs net
-
-inputToEncoding :: Network -> StoreInput -> Encoding
-inputToEncoding net = pairs . mconcat . inputPairs net
-
 -- | Information about input spending output.
 data Spender = Spender
     { spenderHash  :: !TxHash
@@ -806,12 +819,6 @@ outputPairs net d =
     , "spent" .= isJust (outputSpender d)
     ] ++
     ["spender" .= outputSpender d | isJust (outputSpender d)]
-
-outputToJSON :: Network -> StoreOutput -> Value
-outputToJSON net = object . outputPairs net
-
-outputToEncoding :: Network -> StoreOutput -> Encoding
-outputToEncoding net = pairs . mconcat . outputPairs net
 
 data Prev = Prev
     { prevScript :: !ByteString
@@ -1300,86 +1307,6 @@ instance BinSerial TxId where
     binSerial _ (TxId th) = put th
     binDeserial _ = TxId <$> get
 
-data BalVal = BalVal
-    { balValAmount        :: !Word64
-    , balValZero          :: !Word64
-    , balValUnspentCount  :: !Word64
-    , balValTxCount       :: !Word64
-    , balValTotalReceived :: !Word64
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
-
-valToBalance :: Address -> BalVal -> Balance
-valToBalance a BalVal { balValAmount = v
-                      , balValZero = z
-                      , balValUnspentCount = u
-                      , balValTxCount = t
-                      , balValTotalReceived = r
-                      } =
-    Balance
-        { balanceAddress = a
-        , balanceAmount = v
-        , balanceZero = z
-        , balanceUnspentCount = u
-        , balanceTxCount = t
-        , balanceTotalReceived = r
-        }
-
-balanceToVal :: Balance -> (Address, BalVal)
-balanceToVal Balance { balanceAddress = a
-                     , balanceAmount = v
-                     , balanceZero = z
-                     , balanceUnspentCount = u
-                     , balanceTxCount = t
-                     , balanceTotalReceived = r
-                     } =
-    ( a
-    , BalVal
-          { balValAmount = v
-          , balValZero = z
-          , balValUnspentCount = u
-          , balValTxCount = t
-          , balValTotalReceived = r
-          })
-
--- | Default balance for an address.
-instance Default BalVal where
-    def =
-        BalVal
-            { balValAmount = 0
-            , balValZero = 0
-            , balValUnspentCount = 0
-            , balValTxCount = 0
-            , balValTotalReceived = 0
-            }
-
-data UnspentVal = UnspentVal
-    { unspentValBlock  :: !BlockRef
-    , unspentValAmount :: !Word64
-    , unspentValScript :: !ShortByteString
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
-
-unspentToVal :: Unspent -> (OutPoint, UnspentVal)
-unspentToVal Unspent { unspentBlock = b
-                     , unspentPoint = p
-                     , unspentAmount = v
-                     , unspentScript = s
-                     } =
-    ( p
-    , UnspentVal
-          {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
-
-valToUnspent :: OutPoint -> UnspentVal -> Unspent
-valToUnspent p UnspentVal { unspentValBlock = b
-                          , unspentValAmount = v
-                          , unspentValScript = s
-                          } =
-    Unspent
-        { unspentBlock = b
-        , unspentPoint = p
-        , unspentAmount = v
-        , unspentScript = s
-        }
-
 -- | Events that the store can generate.
 data StoreEvent
     = StoreBestBlock !BlockHash
@@ -1458,15 +1385,3 @@ sortTxs txs = go $ zip [0 ..] txs
                      txIn . snd)
                     ts
          in is <> go ds
-
-cacheXPub :: MonadIO m => CacheWriter -> XPubSpec -> m ()
-cacheXPub cache xpub = CacheXPub xpub `send` cache
-
-cacheNewTx :: MonadIO m => CacheWriter -> TxHash -> m ()
-cacheNewTx cache tx = CacheNewTx tx `send` cache
-
-cacheDelTx :: MonadIO m => CacheWriter -> TxHash -> m ()
-cacheDelTx cache tx = CacheDelTx tx `send` cache
-
-cacheNewBlock :: MonadIO m => CacheWriter -> m ()
-cacheNewBlock = send CacheNewBlock

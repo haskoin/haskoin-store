@@ -1,22 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Store.CommonSpec
+module Haskoin.Store.CommonSpec
     ( spec
     ) where
 
-import           Data.Serialize               (decode, encode, runGet, runPut)
-import           Data.Text                    (Text)
-import           Haskoin                      (Address, Network,
-                                               TxHash (TxHash), bch, bchRegTest,
-                                               bchTest, btc, btcRegTest,
-                                               btcTest, stringToAddr)
-import           Network.Haskoin.Store.Common (BinSerial (..), DeriveType (..),
-                                               XPubSpec (..))
-import           Network.Haskoin.Test         (arbitraryXPubKey)
-import           NQE                          ()
-import           Test.Hspec                   (Expectation, Spec, describe, it,
-                                               shouldBe)
-import           Test.Hspec.QuickCheck        (prop)
-import           Test.QuickCheck              (Gen, elements, forAll)
+import           Data.Serialize        (decode, encode, runGet, runPut)
+import           Data.Text             (Text)
+import           Haskoin               (Address, Network, TxHash (TxHash), bch,
+                                        bchRegTest, bchTest, btc, btcRegTest,
+                                        btcTest, stringToAddr)
+import           Haskoin.Store.Common  (BinSerial (..), DeriveType (..),
+                                        XPubSpec (..))
+import           Network.Haskoin.Test  (arbitraryXPubKey)
+import           NQE                   ()
+import           Test.Hspec            (Expectation, Spec, describe, it,
+                                        shouldBe)
+import           Test.Hspec.QuickCheck (prop)
+import           Test.QuickCheck       (Gen, elements, forAll)
 
 spec :: Spec
 spec = do

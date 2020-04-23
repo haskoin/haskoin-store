@@ -1,47 +1,45 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
-module Network.Haskoin.Store.Data.DatabaseReader where
+module Haskoin.Store.Database.Reader
+    ( DatabaseReader (..)
+    , DatabaseReaderT
+    , connectRocksDB
+    , withDatabaseReader
+    ) where
 
-import           Conduit                          (ConduitT, MonadResource,
-                                                   mapC, runConduit,
-                                                   runResourceT, sinkList, (.|))
-import           Control.Monad.Except             (runExceptT, throwError)
-import           Control.Monad.Reader             (ReaderT, ask, asks,
-                                                   runReaderT)
-import           Data.Function                    (on)
-import           Data.IntMap                      (IntMap)
-import qualified Data.IntMap.Strict               as I
-import           Data.List                        (nub, sortBy)
-import           Data.Maybe                       (fromMaybe)
-import           Data.Word                        (Word32)
-import           Database.RocksDB                 (Compression (..), DB,
-                                                   Options (..), ReadOptions,
-                                                   defaultOptions,
-                                                   defaultReadOptions, open)
-import           Database.RocksDB.Query           (insert, matching,
-                                                   matchingAsList, matchingSkip,
-                                                   retrieve)
-import           Haskoin                          (Address, BlockHash,
-                                                   BlockHeight, OutPoint (..),
-                                                   Tx, TxHash)
-import           Network.Haskoin.Store.Common     (Balance, BlockData,
-                                                   BlockRef (..), BlockTx (..),
-                                                   Limit, Spender,
-                                                   StoreRead (..), TxData,
-                                                   UnixTime, Unspent (..),
-                                                   UnspentVal (..), applyLimit,
-                                                   applyLimitC, valToBalance,
-                                                   valToUnspent, zeroBalance)
-import           Network.Haskoin.Store.Data.Types (AddrOutKey (..),
-                                                   AddrTxKey (..), BalKey (..),
-                                                   BestKey (..), BlockKey (..),
-                                                   HeightKey (..), MemKey (..),
-                                                   OldMemKey (..),
-                                                   OrphanKey (..),
-                                                   SpenderKey (..), TxKey (..),
-                                                   UnspentKey (..),
-                                                   VersionKey (..), toUnspent)
-import           UnliftIO                         (MonadIO, liftIO)
+import           Conduit                      (mapC, runConduit, runResourceT,
+                                               sinkList, (.|))
+import           Control.Monad.Except         (runExceptT, throwError)
+import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
+import           Data.Function                (on)
+import           Data.IntMap                  (IntMap)
+import qualified Data.IntMap.Strict           as I
+import           Data.List                    (nub, sortBy)
+import           Data.Maybe                   (fromMaybe)
+import           Data.Word                    (Word32)
+import           Database.RocksDB             (Compression (..), DB,
+                                               Options (..), ReadOptions,
+                                               defaultOptions,
+                                               defaultReadOptions, open)
+import           Database.RocksDB.Query       (insert, matching, matchingAsList,
+                                               matchingSkip, retrieve)
+import           Haskoin                      (Address, BlockHash, BlockHeight,
+                                               OutPoint (..), Tx, TxHash)
+import           Haskoin.Store.Common         (Balance, BlockData,
+                                               BlockRef (..), BlockTx (..),
+                                               Limit, Spender, StoreRead (..),
+                                               TxData, UnixTime, Unspent (..),
+                                               applyLimit, applyLimitC,
+                                               zeroBalance)
+import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
+                                               BalKey (..), BestKey (..),
+                                               BlockKey (..), HeightKey (..),
+                                               MemKey (..), OldMemKey (..),
+                                               OrphanKey (..), SpenderKey (..),
+                                               TxKey (..), UnspentKey (..),
+                                               VersionKey (..), toUnspent,
+                                               valToBalance, valToUnspent)
+import           UnliftIO                     (MonadIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
 
@@ -57,7 +55,7 @@ dataVersion = 16
 
 connectRocksDB :: MonadIO m => Word32 -> FilePath -> m DatabaseReader
 connectRocksDB gap dir = do
-    bdb <-
+    db <-
         open
             dir
             defaultOptions
@@ -65,13 +63,13 @@ connectRocksDB gap dir = do
                 , compression = SnappyCompression
                 , maxOpenFiles = -1
                 , writeBufferSize = 2 ^ (30 :: Integer)
-                } >>= \db ->
-            return
-                DatabaseReader
-                    { databaseReadOptions = defaultReadOptions
-                    , databaseHandle = db
-                    , databaseMaxGap = gap
-                    }
+                }
+    let bdb =
+            DatabaseReader
+                { databaseReadOptions = defaultReadOptions
+                , databaseHandle = db
+                , databaseMaxGap = gap
+                }
     initRocksDB bdb
     return bdb
 
@@ -186,21 +184,6 @@ getAddressTxsDB a start limit DatabaseReader {databaseReadOptions = opts, databa
     f AddrTxKey {addrTxKeyT = t} () = t
     f _ _                           = undefined
 
-getAddressBalancesDB ::
-       (MonadIO m, MonadResource m)
-    => DatabaseReader
-    -> ConduitT i Balance m ()
-getAddressBalancesDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
-    matching db opts BalKeyS .| mapC (\(BalKey a, b) -> valToBalance a b)
-
-getUnspentsDB ::
-       (MonadIO m, MonadResource m)
-    => DatabaseReader
-    -> ConduitT i Unspent m ()
-getUnspentsDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
-    matching db opts UnspentKeyB .|
-    mapC (\(UnspentKey k, v) -> unspentFromDB k v)
-
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
 getUnspentDB p DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
     fmap (valToUnspent p) <$> retrieve db opts (UnspentKey p)
@@ -232,18 +215,6 @@ getAddressUnspentsDB a start limit DatabaseReader {databaseReadOptions = opts, d
         case start of
             Nothing -> matching db opts (AddrOutKeyA a)
             Just br -> matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a br)
-
-unspentFromDB :: OutPoint -> UnspentVal -> Unspent
-unspentFromDB p UnspentVal { unspentValBlock = b
-                           , unspentValAmount = v
-                           , unspentValScript = s
-                           } =
-    Unspent
-        { unspentBlock = b
-        , unspentAmount = v
-        , unspentPoint = p
-        , unspentScript = s
-        }
 
 instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getBestBlock = ask >>= getBestDatabaseReader

@@ -2,65 +2,51 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Haskoin.Store.Data.DatabaseWriter where
+module Haskoin.Store.Database.Writer
+    ( DatabaseWriter
+    , runDatabaseWriter
+    ) where
 
-import           Control.Applicative                       ((<|>))
-import           Control.Monad                             (join)
-import           Control.Monad.Except                      (MonadError)
-import           Control.Monad.Reader                      (ReaderT)
-import qualified Control.Monad.Reader                      as R
-import           Control.Monad.Trans.Maybe                 (MaybeT (..),
-                                                            runMaybeT)
-import           Data.HashMap.Strict                       (HashMap)
-import qualified Data.HashMap.Strict                       as M
-import           Data.IntMap.Strict                        (IntMap)
-import qualified Data.IntMap.Strict                        as I
-import           Data.List                                 (nub)
-import           Data.Maybe                                (fromJust, fromMaybe,
-                                                            isJust, maybeToList)
-import           Database.RocksDB                          (BatchOp)
-import           Database.RocksDB.Query                    (deleteOp, insertOp,
-                                                            writeBatch)
-import           Haskoin                                   (Address, BlockHash,
-                                                            BlockHeight,
-                                                            OutPoint (..), Tx,
-                                                            TxHash)
-import           Network.Haskoin.Store.Common              (BalVal, Balance,
-                                                            BlockData,
-                                                            BlockRef (..),
-                                                            BlockTx (..),
-                                                            Spender,
-                                                            StoreRead (..),
-                                                            StoreWrite (..),
-                                                            TxData, UnixTime,
-                                                            Unspent, UnspentVal,
-                                                            nullBalance,
-                                                            zeroBalance)
-import           Network.Haskoin.Store.Data.DatabaseReader (DatabaseReader (..),
-                                                            withDatabaseReader)
-import           Network.Haskoin.Store.Data.MemoryDatabase (MemoryDatabase (..),
-                                                            MemoryState (..),
-                                                            emptyMemoryDatabase,
-                                                            getMempoolH,
-                                                            getOrphanTxH,
-                                                            getSpenderH,
-                                                            getSpendersH,
-                                                            getUnspentH,
-                                                            withMemoryDatabase)
-import           Network.Haskoin.Store.Data.Types          (AddrOutKey (..),
-                                                            AddrTxKey (..),
-                                                            BalKey (..),
-                                                            BestKey (..),
-                                                            BlockKey (..),
-                                                            HeightKey (..),
-                                                            MemKey (..),
-                                                            OrphanKey (..),
-                                                            OutVal,
-                                                            SpenderKey (..),
-                                                            TxKey (..),
-                                                            UnspentKey (..))
-import           UnliftIO                                  (MonadIO, newTVarIO,
-                                                            readTVarIO)
+import           Control.Applicative           ((<|>))
+import           Control.Monad                 (join)
+import           Control.Monad.Except          (MonadError)
+import           Control.Monad.Reader          (ReaderT)
+import qualified Control.Monad.Reader          as R
+import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
+import           Data.HashMap.Strict           (HashMap)
+import qualified Data.HashMap.Strict           as M
+import           Data.IntMap.Strict            (IntMap)
+import qualified Data.IntMap.Strict            as I
+import           Data.List                     (nub)
+import           Data.Maybe                    (fromJust, fromMaybe, isJust,
+                                                maybeToList)
+import           Database.RocksDB              (BatchOp)
+import           Database.RocksDB.Query        (deleteOp, insertOp, writeBatch)
+import           Haskoin                       (Address, BlockHash, BlockHeight,
+                                                OutPoint (..), Tx, TxHash)
+import           Haskoin.Store.Common          (Balance, BlockData,
+                                                BlockRef (..), BlockTx (..),
+                                                Spender, StoreRead (..),
+                                                StoreWrite (..), TxData,
+                                                UnixTime, Unspent, nullBalance,
+                                                zeroBalance)
+import           Haskoin.Store.Database.Memory (MemoryDatabase (..),
+                                                MemoryState (..),
+                                                emptyMemoryDatabase,
+                                                getMempoolH, getOrphanTxH,
+                                                getSpenderH, getSpendersH,
+                                                getUnspentH, withMemoryDatabase)
+import           Haskoin.Store.Database.Reader (DatabaseReader (..),
+                                                withDatabaseReader)
+import           Haskoin.Store.Database.Types  (AddrOutKey (..), AddrTxKey (..),
+                                                BalKey (..), BalVal (..),
+                                                BestKey (..), BlockKey (..),
+                                                HeightKey (..), MemKey (..),
+                                                OrphanKey (..), OutVal,
+                                                SpenderKey (..), TxKey (..),
+                                                UnspentKey (..),
+                                                UnspentVal (..))
+import           UnliftIO                      (MonadIO, newTVarIO, readTVarIO)
 
 data DatabaseWriter = DatabaseWriter
     { databaseWriterReader :: !DatabaseReader
@@ -96,12 +82,6 @@ hashMapOps db =
     addrOutOps (hAddrOut db) <>
     maybeToList (mempoolOp <$> hMempool db) <>
     orphanOps (hOrphans db) <>
-    unspentOps (hUnspent db)
-
-cacheMapOps :: MemoryDatabase -> [BatchOp]
-cacheMapOps db =
-    balOps (hBalance db) <> maybeToList (mempoolOp <$> hMempool db) <>
-    addrTxOps (hAddrTx db) <>
     unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]

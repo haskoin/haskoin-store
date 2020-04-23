@@ -3,7 +3,17 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
-module Network.Haskoin.Store.Logic where
+module Haskoin.Store.Logic
+    ( ImportException
+    , initBest
+    , getOldOrphans
+    , getOldMempool
+    , importOrphan
+    , revertBlock
+    , importBlock
+    , newMempoolTx
+    , deleteTx
+    ) where
 
 import           Control.Monad                 (forM, forM_, unless, void, when,
                                                 zipWithM_)
@@ -32,8 +42,7 @@ import           Haskoin                       (Address, Block (..), BlockHash,
                                                 headerHash, isGenesis,
                                                 nullOutPoint, scriptToAddressBS,
                                                 txHash, txHashToHex)
-import           Network.Haskoin.Block.Headers (computeSubsidy)
-import           Network.Haskoin.Store.Common  (Balance (..), BlockData (..),
+import           Haskoin.Store.Common          (Balance (..), BlockData (..),
                                                 BlockRef (..), BlockTx (..),
                                                 Prev (..), Spender (..),
                                                 StoreInput (..),
@@ -45,6 +54,7 @@ import           Network.Haskoin.Store.Common  (Balance (..), BlockData (..),
                                                 isCoinbase, nullBalance,
                                                 sortTxs, toTransaction,
                                                 transactionData)
+import           Network.Haskoin.Block.Headers (computeSubsidy)
 import           UnliftIO                      (Exception)
 
 data ImportException
@@ -483,18 +493,6 @@ confirmTx net t br tx = do
                     increaseBalance True False a (outValue o)
     insertTx t {txDataBlock = br}
     deleteFromMempool (txHash tx)
-
-getRecursiveTx ::
-       (Monad m, StoreRead m, MonadLogger m) => TxHash -> m [Transaction]
-getRecursiveTx th =
-    getTxData th >>= \case
-        Nothing -> return []
-        Just d -> do
-            sm <- getSpenders th
-            let t = toTransaction d sm
-            fmap (t :) $ do
-                let ss = nub . map spenderHash $ I.elems sm
-                concat <$> mapM getRecursiveTx ss
 
 deleteFromMempool :: (Monad m, StoreRead m, StoreWrite m) => TxHash -> m ()
 deleteFromMempool th = do

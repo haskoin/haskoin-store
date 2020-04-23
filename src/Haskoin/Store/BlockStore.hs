@@ -5,84 +5,60 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
-module Network.Haskoin.Store.BlockStore where
+module Haskoin.Store.BlockStore
+    ( BlockStoreConfig(..)
+    , blockStore
+    ) where
 
-import           Control.Applicative                       ((<|>))
-import           Control.Monad                             (forM, forM_,
-                                                            forever, guard,
-                                                            mzero, unless, void,
-                                                            when)
-import           Control.Monad.Except                      (ExceptT, runExceptT)
-import           Control.Monad.Logger                      (MonadLoggerIO,
-                                                            logDebugS,
-                                                            logErrorS, logInfoS,
-                                                            logWarnS)
-import           Control.Monad.Reader                      (MonadReader,
-                                                            ReaderT (..), asks)
-import           Control.Monad.Trans                       (lift)
-import           Control.Monad.Trans.Maybe                 (MaybeT (MaybeT),
-                                                            runMaybeT)
-import           Data.Maybe                                (catMaybes,
-                                                            isNothing,
-                                                            listToMaybe)
-import           Data.String                               (fromString)
-import           Data.String.Conversions                   (cs)
-import           Data.Time.Clock.System                    (getSystemTime,
-                                                            systemSeconds)
-import           Haskoin                                   (Block (..),
-                                                            BlockHash (..),
-                                                            BlockHeight,
-                                                            BlockNode (..),
-                                                            GetData (..),
-                                                            InvType (..),
-                                                            InvVector (..),
-                                                            Message (..),
-                                                            Network (..), Tx,
-                                                            TxHash (..),
-                                                            blockHashToHex,
-                                                            headerHash, txHash,
-                                                            txHashToHex)
-import           Haskoin.Node                              (OnlinePeer (..),
-                                                            Peer,
-                                                            PeerException (..),
-                                                            chainBlockMain,
-                                                            chainGetAncestor,
-                                                            chainGetBest,
-                                                            chainGetBlock,
-                                                            chainGetParents,
-                                                            killPeer,
-                                                            managerGetPeers,
-                                                            sendMessage)
-import           Haskoin.Node                              (Chain, Manager)
-import           Network.Haskoin.Store.Common              (BlockStore, BlockStoreMessage (..),
-                                                            StoreEvent (..),
-                                                            StoreRead (..),
-                                                            StoreWrite (..),
-                                                            UnixTime)
-import           Network.Haskoin.Store.Data.DatabaseReader (DatabaseReader)
-import           Network.Haskoin.Store.Data.DatabaseWriter (DatabaseWriter,
-                                                            runDatabaseWriter)
-import           Network.Haskoin.Store.Logic               (ImportException,
-                                                            deleteTx,
-                                                            getOldMempool,
-                                                            getOldOrphans,
-                                                            importBlock,
-                                                            importOrphan,
-                                                            initBest,
-                                                            newMempoolTx,
-                                                            revertBlock)
-import           NQE                                       (Inbox, Listen,
-                                                            inboxToMailbox,
-                                                            query, receive)
-import           System.Random                             (randomRIO)
-import           UnliftIO                                  (Exception, MonadIO,
-                                                            MonadUnliftIO, TVar,
-                                                            atomically, liftIO,
-                                                            newTVarIO,
-                                                            readTVarIO, throwIO,
-                                                            withAsync,
-                                                            writeTVar)
-import           UnliftIO.Concurrent                       (threadDelay)
+import           Control.Applicative           ((<|>))
+import           Control.Monad                 (forM, forM_, forever, guard,
+                                                mzero, unless, void, when)
+import           Control.Monad.Except          (ExceptT, runExceptT)
+import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
+                                                logErrorS, logInfoS, logWarnS)
+import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
+import           Control.Monad.Trans           (lift)
+import           Control.Monad.Trans.Maybe     (MaybeT (MaybeT), runMaybeT)
+import           Data.Maybe                    (catMaybes, isNothing,
+                                                listToMaybe)
+import           Data.String                   (fromString)
+import           Data.String.Conversions       (cs)
+import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
+import           Haskoin                       (Block (..), BlockHash (..),
+                                                BlockHeight, BlockNode (..),
+                                                GetData (..), InvType (..),
+                                                InvVector (..), Message (..),
+                                                Network (..), Tx, TxHash (..),
+                                                blockHashToHex, headerHash,
+                                                txHash, txHashToHex)
+import           Haskoin.Node                  (OnlinePeer (..), Peer,
+                                                PeerException (..),
+                                                chainBlockMain,
+                                                chainGetAncestor, chainGetBest,
+                                                chainGetBlock, chainGetParents,
+                                                killPeer, managerGetPeers,
+                                                sendMessage)
+import           Haskoin.Node                  (Chain, Manager)
+import           Haskoin.Store.Common          (BlockStore,
+                                                BlockStoreMessage (..),
+                                                StoreEvent (..), StoreRead (..),
+                                                StoreWrite (..), UnixTime)
+import           Haskoin.Store.Database.Reader (DatabaseReader)
+import           Haskoin.Store.Database.Writer (DatabaseWriter,
+                                                runDatabaseWriter)
+import           Haskoin.Store.Logic           (ImportException, deleteTx,
+                                                getOldMempool, getOldOrphans,
+                                                importBlock, importOrphan,
+                                                initBest, newMempoolTx,
+                                                revertBlock)
+import           NQE                           (Inbox, Listen, inboxToMailbox,
+                                                query, receive)
+import           System.Random                 (randomRIO)
+import           UnliftIO                      (Exception, MonadIO,
+                                                MonadUnliftIO, TVar, atomically,
+                                                liftIO, newTVarIO, readTVarIO,
+                                                throwIO, withAsync, writeTVar)
+import           UnliftIO.Concurrent           (threadDelay)
 
 data BlockException
     = BlockNotInChain !BlockHash

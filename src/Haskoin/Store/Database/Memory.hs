@@ -1,37 +1,41 @@
 {-# LANGUAGE FlexibleInstances #-}
-module Network.Haskoin.Store.Data.MemoryDatabase where
+module Haskoin.Store.Database.Memory
+    ( MemoryState(..)
+    , MemoryDatabase(..)
+    , withMemoryDatabase
+    , emptyMemoryDatabase
+    , getMempoolH
+    , getOrphanTxH
+    , getSpenderH
+    , getSpendersH
+    , getUnspentH
+    ) where
 
-import           Conduit                          (ConduitT, mapC, yieldMany,
-                                                   (.|))
-import           Control.Monad                    (join)
-import           Control.Monad.Reader             (ReaderT)
-import qualified Control.Monad.Reader             as R
-import qualified Data.ByteString.Short            as B.Short
-import           Data.Function                    (on)
-import           Data.HashMap.Strict              (HashMap)
-import qualified Data.HashMap.Strict              as M
-import           Data.IntMap.Strict               (IntMap)
-import qualified Data.IntMap.Strict               as I
-import           Data.List                        (nub, sortBy)
-import           Data.Maybe                       (catMaybes, fromJust,
-                                                   fromMaybe, isJust,
-                                                   maybeToList)
-import           Data.Word                        (Word32)
-import           Haskoin                          (Address, BlockHash,
-                                                   BlockHeight, OutPoint (..),
-                                                   Tx, TxHash, headerHash,
-                                                   txHash)
-import           Network.Haskoin.Store.Common     (BalVal, Balance,
-                                                   BlockData (..), BlockRef,
-                                                   BlockTx (..), Limit, Spender,
-                                                   StoreRead (..),
-                                                   StoreWrite (..), TxData (..),
-                                                   UnixTime, Unspent (..),
-                                                   UnspentVal, applyLimit,
-                                                   balanceToVal, unspentToVal,
-                                                   valToBalance, valToUnspent,
-                                                   zeroBalance)
-import           Network.Haskoin.Store.Data.Types (OutVal (..))
+import           Control.Monad                (join)
+import           Control.Monad.Reader         (ReaderT)
+import qualified Control.Monad.Reader         as R
+import qualified Data.ByteString.Short        as B.Short
+import           Data.Function                (on)
+import           Data.HashMap.Strict          (HashMap)
+import qualified Data.HashMap.Strict          as M
+import           Data.IntMap.Strict           (IntMap)
+import qualified Data.IntMap.Strict           as I
+import           Data.List                    (nub, sortBy)
+import           Data.Maybe                   (catMaybes, fromJust, fromMaybe,
+                                               isJust)
+import           Data.Word                    (Word32)
+import           Haskoin                      (Address, BlockHash, BlockHeight,
+                                               OutPoint (..), Tx, TxHash,
+                                               headerHash, txHash)
+import           Haskoin.Store.Common         (Balance, BlockData (..),
+                                               BlockRef, BlockTx (..), Limit,
+                                               Spender, StoreRead (..),
+                                               StoreWrite (..), TxData (..),
+                                               UnixTime, Unspent (..),
+                                               applyLimit, zeroBalance)
+import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
+                                               balanceToVal, unspentToVal,
+                                               valToBalance, valToUnspent)
 import           UnliftIO
 
 data MemoryState =
@@ -110,17 +114,6 @@ getOrphansH = catMaybes . M.elems . hOrphans
 getOrphanTxH :: TxHash -> MemoryDatabase -> Maybe (Maybe (UnixTime, Tx))
 getOrphanTxH h = M.lookup h . hOrphans
 
-getUnspentsH :: Monad m => MemoryDatabase -> ConduitT i Unspent m ()
-getUnspentsH MemoryDatabase {hUnspent = us} =
-    yieldMany
-        [ u
-        | (h, m) <- M.toList us
-        , (i, mv) <- I.toList m
-        , v <- maybeToList mv
-        , let p = OutPoint h (fromIntegral i)
-        , let u = valToUnspent p v
-        ]
-
 getAddressesTxsH ::
        [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [BlockTx]
 getAddressesTxsH addrs start limit db = applyLimit limit xs
@@ -144,10 +137,6 @@ getAddressTxsH addr start limit db =
         case start of
             Nothing -> False
             Just br -> b > br
-
-getAddressBalancesH :: Monad m => MemoryDatabase -> ConduitT i Balance m ()
-getAddressBalancesH MemoryDatabase {hBalance = bm} =
-    yieldMany (M.toList bm) .| mapC (uncurry valToBalance)
 
 getAddressesUnspentsH ::
        [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]

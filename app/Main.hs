@@ -9,22 +9,17 @@ import           Control.Arrow           (second)
 import           Control.Monad           (when)
 import           Control.Monad.Logger    (LogLevel (..), filterLogger, logInfoS,
                                           runStderrLoggingT)
+import           Data.Default            (def)
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
 import           Data.Version            (showVersion)
-import           Database.Redis          (defaultConnectInfo, parseConnectInfo,
-                                          withCheckedConnect)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest)
-import           Haskoin.Node            (Host, Port)
-import           Haskoin.Store           (CacheReaderConfig (..),
-                                          MaxLimits (..), StoreConfig (..),
-                                          Timeouts (..), WebConfig (..),
-                                          connectRocksDB, runWeb, withStore)
-import           NQE                     (inboxToMailbox, newInbox,
-                                          withPublisher)
+import           Haskoin.Store           (StoreConfig (..), WebConfig (..),
+                                          WebLimits (..), WebTimeouts (..),
+                                          runWeb, withStore)
 import           Options.Applicative     (Parser, auto, eitherReader,
                                           execParser, fullDesc, header, help,
                                           helper, info, long, many, metavar,
@@ -35,24 +30,25 @@ import           System.Exit             (die, exitSuccess)
 import           System.FilePath         ((</>))
 import           System.IO.Unsafe        (unsafePerformIO)
 import           Text.Read               (readMaybe)
-import           UnliftIO                (MonadUnliftIO, liftIO, withRunInIO)
+import           UnliftIO                (MonadUnliftIO, liftIO)
 import           UnliftIO.Directory      (createDirectoryIfMissing,
                                           getAppUserDataDirectory)
 
 data Config = Config
-    { configDir       :: !FilePath
-    , configPort      :: !Int
-    , configNetwork   :: !Network
-    , configDiscover  :: !Bool
-    , configPeers     :: ![(Host, Maybe Port)]
-    , configVersion   :: !Bool
-    , configDebug     :: !Bool
-    , configReqLog    :: !Bool
-    , configMaxLimits :: !MaxLimits
-    , configTimeouts  :: !Timeouts
-    , configRedis     :: !Bool
-    , configRedisURL  :: !String
-    , configRedisMin  :: !Int
+    { configDir         :: !FilePath
+    , configPort        :: !Int
+    , configNetwork     :: !Network
+    , configDiscover    :: !Bool
+    , configPeers       :: ![(String, Maybe Int)]
+    , configVersion     :: !Bool
+    , configDebug       :: !Bool
+    , configReqLog      :: !Bool
+    , configWebLimits   :: !WebLimits
+    , configWebTimeouts :: !WebTimeouts
+    , configRedis       :: !Bool
+    , configRedisURL    :: !String
+    , configRedisMin    :: !Int
+    , configRedisMax    :: !Integer
     }
 
 defPort :: Int
@@ -64,21 +60,11 @@ defNetwork = btc
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
 
-defMaxLimits :: MaxLimits
-defMaxLimits =
-    MaxLimits
-        { maxLimitCount = 20000
-        , maxLimitFull = 5000
-        , maxLimitOffset = 50000
-        , maxLimitDefault = 2000
-        , maxLimitGap = 32
-        }
-
-defTimeouts :: Timeouts
-defTimeouts = Timeouts {blockTimeout = 7200, txTimeout = 600}
-
 defRedisMin :: Int
 defRedisMin = 100
+
+defRedisMax :: Integer
+defRedisMax = 100 * 1000 * 1000
 
 config :: Parser Config
 config = do
@@ -111,42 +97,42 @@ config = do
         metavar "MAXLIMIT" <> long "maxlimit" <>
         help "Max limit for listings (0 for no limit)" <>
         showDefault <>
-        value (maxLimitCount defMaxLimits)
+        value (maxLimitCount def)
     maxLimitFull <-
         option auto $
         metavar "MAXLIMITFULL" <> long "maxfull" <>
         help "Max limit for full listings (0 for no limit)" <>
         showDefault <>
-        value (maxLimitFull defMaxLimits)
+        value (maxLimitFull def)
     maxLimitOffset <-
         option auto $
         metavar "MAXOFFSET" <> long "maxoffset" <>
         help "Max offset (0 for no limit)" <>
         showDefault <>
-        value (maxLimitOffset defMaxLimits)
+        value (maxLimitOffset def)
     maxLimitDefault <-
         option auto $
         metavar "LIMITDEFAULT" <> long "deflimit" <>
         help "Default limit (0 for max)" <>
         showDefault <>
-        value (maxLimitDefault defMaxLimits)
+        value (maxLimitDefault def)
     maxLimitGap <-
         option auto $
         metavar "MAXGAP" <> long "maxgap" <> help "Max gap for xpub queries" <>
         showDefault <>
-        value (maxLimitGap defMaxLimits)
+        value (maxLimitGap def)
     blockTimeout <-
         option auto $
         metavar "BLOCKSECONDS" <> long "blocktimeout" <>
         help "Last block mined timeout (0 for infinite)" <>
         showDefault <>
-        value (blockTimeout defTimeouts)
+        value (blockTimeout def)
     txTimeout <-
         option auto $
         metavar "TXSECONDS" <> long "txtimeout" <>
         help "Last transaction broadcast timeout (0 for infinite)" <>
         showDefault <>
-        value (txTimeout defTimeouts)
+        value (txTimeout def)
     configRedis <-
         switch $ long "cache" <> help "Redis cache for extended public keys"
     configRedisURL <-
@@ -158,10 +144,16 @@ config = do
         help "Minimum used xpub addresses to cache" <>
         showDefault <>
         value defRedisMin
+    configRedisMax <-
+        option auto $
+        metavar "MAXKEYS" <> long "cachekeys" <>
+        help "Maximum number of keys in Redis xpub cache" <>
+        showDefault <>
+        value defRedisMax
     pure
         Config
-            { configMaxLimits = MaxLimits {..}
-            , configTimeouts = Timeouts {..}
+            { configWebLimits = WebLimits {..}
+            , configWebTimeouts = WebTimeouts {..}
             , ..
             }
 
@@ -175,7 +167,7 @@ networkReader s
     | s == getNetworkName bchRegTest = Right bchRegTest
     | otherwise = Left "Network name invalid"
 
-peerReader :: String -> Either String (Host, Maybe Port)
+peerReader :: String -> Either String (String, Maybe Int)
 peerReader s = do
     let (host, p) = span (/= ':') s
     when (null host) (Left "Peer name or address not defined")
@@ -216,76 +208,45 @@ run Config { configPort = port
            , configPeers = peers
            , configDir = db_dir
            , configDebug = deb
-           , configMaxLimits = limits
+           , configWebLimits = limits
            , configReqLog = reqlog
-           , configTimeouts = tos
+           , configWebTimeouts = tos
            , configRedis = redis
            , configRedisURL = redisurl
            , configRedisMin = cachemin
+           , configRedisMax = redismax
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
-        db <- connectRocksDB (maxLimitGap limits) (wd </> "db")
-        withcache $ \maybecache ->
-            withPublisher $ \pub ->
-                let scfg =
-                        StoreConfig
-                            { storeConfMaxPeers = 20
-                            , storeConfInitPeers =
-                                  map
-                                      (second (fromMaybe (getDefaultPort net)))
-                                      peers
-                            , storeConfDiscover = disc
-                            , storeConfDB = db
-                            , storeConfNetwork = net
-                            , storeConfPublisher = pub
-                            , storeConfCache = maybecache
-                            , storeConfGap = maxLimitGap limits
-                            , storeConfCacheMin = cachemin
+        let scfg =
+                StoreConfig
+                    { storeConfMaxPeers = 20
+                    , storeConfInitPeers =
+                          map (second (fromMaybe (getDefaultPort net))) peers
+                    , storeConfDiscover = disc
+                    , storeConfDB = wd </> "db"
+                    , storeConfNetwork = net
+                    , storeConfCache =
+                          if redis
+                              then Just redisurl
+                              else Nothing
+                    , storeConfGap = maxLimitGap limits
+                    , storeConfCacheMin = cachemin
+                    , storeConfMaxKeys = redismax
+                    }
+         in withStore scfg $ \st ->
+                let wcfg =
+                        WebConfig
+                            { webPort = port
+                            , webStore = st
+                            , webMaxLimits = limits
+                            , webReqLog = reqlog
+                            , webWebTimeouts = tos
                             }
-                 in withStore scfg $ \st ->
-                        let crcfg =
-                                case maybecache of
-                                    Nothing -> Nothing
-                                    Just (conn, mbox) ->
-                                        Just
-                                            CacheReaderConfig
-                                                { cacheReaderConn = conn
-                                                , cacheReaderWriter =
-                                                      inboxToMailbox mbox
-                                                , cacheReaderGap =
-                                                      maxLimitGap limits
-                                                }
-                            wcfg =
-                                WebConfig
-                                    { webPort = port
-                                    , webNetwork = net
-                                    , webDB = db
-                                    , webPublisher = pub
-                                    , webStore = st
-                                    , webMaxLimits = limits
-                                    , webReqLog = reqlog
-                                    , webTimeouts = tos
-                                    , webCache = crcfg
-                                    }
-                         in runWeb wcfg
+                 in runWeb wcfg
   where
-    withcache f =
-        if redis
-            then do
-                conninfo <-
-                    if null redisurl
-                        then return defaultConnectInfo
-                        else case parseConnectInfo redisurl of
-                                 Left e  -> error e
-                                 Right r -> return r
-                cachembox <- newInbox
-                withRunInIO $ \r ->
-                    withCheckedConnect conninfo $ \conn ->
-                        r $ f (Just (conn, cachembox))
-            else f Nothing
     l _ lvl
         | deb = True
         | otherwise = LevelInfo <= lvl

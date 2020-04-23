@@ -3,137 +3,97 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
-module Network.Haskoin.Store.Web where
+module Haskoin.Store.Web
+    ( Except (..)
+    , WebConfig (..)
+    , WebLimits (..)
+    , WebTimeouts (..)
+    , runWeb
+    ) where
 
-import           Conduit                                   ()
-import           Control.Applicative                       ((<|>))
-import           Control.Monad                             (forever, guard,
-                                                            mzero, unless, when,
-                                                            (<=<))
-import           Control.Monad.Logger                      (Loc, LogLevel,
-                                                            LogSource, LogStr,
-                                                            MonadLogger,
-                                                            MonadLoggerIO,
-                                                            askLoggerIO,
-                                                            logInfoS,
-                                                            monadLoggerLog)
-import           Control.Monad.Reader                      (ReaderT, asks,
-                                                            runReaderT)
-import           Control.Monad.Trans                       (lift)
-import           Control.Monad.Trans.Maybe                 (MaybeT (..),
-                                                            runMaybeT)
-import           Data.Aeson                                (ToJSON (..), object,
-                                                            (.=))
-import           Data.Aeson.Encoding                       (encodingToLazyByteString)
-import qualified Data.ByteString                           as B
-import           Data.ByteString.Builder                   (lazyByteString)
-import qualified Data.ByteString.Lazy                      as L
-import qualified Data.ByteString.Lazy.Char8                as C
-import           Data.Char                                 (isSpace)
-import           Data.List                                 (nub)
-import           Data.Maybe                                (catMaybes,
-                                                            fromMaybe, isJust,
-                                                            listToMaybe,
-                                                            mapMaybe)
-import           Data.Serialize                            as Serialize
-import           Data.String.Conversions                   (cs)
-import           Data.Text                                 (Text)
-import qualified Data.Text                                 as T
-import qualified Data.Text.Encoding                        as T
-import qualified Data.Text.Lazy                            as T.Lazy
-import           Data.Time.Clock                           (NominalDiffTime,
-                                                            diffUTCTime,
-                                                            getCurrentTime)
-import           Data.Time.Clock.System                    (getSystemTime,
-                                                            systemSeconds)
-import           Data.Word                                 (Word32, Word64)
-import           Database.RocksDB                          (Property (..),
-                                                            getProperty)
-import           Haskoin                                   (Address, Block (..),
-                                                            BlockHash (..),
-                                                            BlockHeader (..),
-                                                            BlockHeight,
-                                                            BlockNode (..),
-                                                            GetData (..),
-                                                            Hash256,
-                                                            InvType (..),
-                                                            InvVector (..),
-                                                            Message (..),
-                                                            Network (..),
-                                                            OutPoint (..), Tx,
-                                                            TxHash (..),
-                                                            VarString (..),
-                                                            Version (..),
-                                                            decodeHex,
-                                                            eitherToMaybe,
-                                                            headerHash,
-                                                            hexToBlockHash,
-                                                            hexToTxHash,
-                                                            sockToHostAddress,
-                                                            stringToAddr,
-                                                            txHash, xPubImport)
-import           Haskoin.Node                              (Chain, Manager,
-                                                            OnlinePeer (..),
-                                                            chainGetBest,
-                                                            managerGetPeers,
-                                                            sendMessage)
-import           Network.Haskoin.Store.Common              (BinSerial (..),
-                                                            BlockData (..),
-                                                            BlockRef (..),
-                                                            BlockTx (..),
-                                                            DeriveType (..),
-                                                            Event (..),
-                                                            HealthCheck (..),
-                                                            JsonSerial (..),
-                                                            Limit, Offset,
-                                                            PeerInformation (..),
-                                                            PubExcept (..),
-                                                            Store (..),
-                                                            StoreEvent (..),
-                                                            StoreInput (..),
-                                                            StoreRead (..),
-                                                            Transaction (..),
-                                                            TxAfterHeight (..),
-                                                            TxData (..),
-                                                            TxId (..), UnixTime,
-                                                            Unspent,
-                                                            XPubBal (..),
-                                                            XPubSpec (..),
-                                                            applyOffset,
-                                                            blockAtOrBefore,
-                                                            getTransaction,
-                                                            isCoinbase,
-                                                            nullBalance,
-                                                            transactionData)
-import           Network.Haskoin.Store.Data.CacheReader    (CacheReaderConfig,
-                                                            CacheReaderT,
-                                                            withCacheReader)
-import           Network.Haskoin.Store.Data.DatabaseReader (DatabaseReader (..),
-                                                            DatabaseReaderT,
-                                                            withDatabaseReader)
-import           Network.HTTP.Types                        (Status (..),
-                                                            status400,
-                                                            status403,
-                                                            status404,
-                                                            status500,
-                                                            status503)
-import           Network.Wai                               (Middleware,
-                                                            Request (..),
-                                                            responseStatus)
-import           NQE                                       (Publisher, receive,
-                                                            withSubscription)
-import           Text.Printf                               (printf)
-import           Text.Read                                 (readMaybe)
-import           UnliftIO                                  (Exception, MonadIO,
-                                                            MonadUnliftIO,
-                                                            askRunInIO, liftIO,
-                                                            timeout)
-import           Web.Scotty.Internal.Types                 (ActionT)
-import           Web.Scotty.Trans                          (Parsable,
-                                                            ScottyError)
-import qualified Web.Scotty.Trans                          as S
-
-type LoggerIO = Loc -> LogSource -> LogLevel -> LogStr -> IO ()
+import           Conduit                       ()
+import           Control.Applicative           ((<|>))
+import           Control.Monad                 (forever, guard, mzero, unless,
+                                                when, (<=<))
+import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
+                                                askLoggerIO, logInfoS,
+                                                monadLoggerLog)
+import           Control.Monad.Reader          (ReaderT, asks, runReaderT)
+import           Control.Monad.Trans           (lift)
+import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
+import           Data.Aeson                    (ToJSON (..), object, (.=))
+import           Data.Aeson.Encoding           (encodingToLazyByteString)
+import qualified Data.ByteString               as B
+import           Data.ByteString.Builder       (lazyByteString)
+import qualified Data.ByteString.Lazy          as L
+import qualified Data.ByteString.Lazy.Char8    as C
+import           Data.Char                     (isSpace)
+import           Data.Default                  (Default (..))
+import           Data.List                     (nub)
+import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
+                                                listToMaybe, mapMaybe)
+import           Data.Serialize                as Serialize
+import           Data.String.Conversions       (cs)
+import           Data.Text                     (Text)
+import qualified Data.Text                     as T
+import qualified Data.Text.Encoding            as T
+import qualified Data.Text.Lazy                as T.Lazy
+import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
+                                                getCurrentTime)
+import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
+import           Data.Word                     (Word32, Word64)
+import           Database.RocksDB              (Property (..), getProperty)
+import           Haskoin                       (Address, Block (..),
+                                                BlockHash (..),
+                                                BlockHeader (..), BlockHeight,
+                                                BlockNode (..), GetData (..),
+                                                Hash256, InvType (..),
+                                                InvVector (..), Message (..),
+                                                Network (..), OutPoint (..), Tx,
+                                                TxHash (..), VarString (..),
+                                                Version (..), decodeHex,
+                                                eitherToMaybe, headerHash,
+                                                hexToBlockHash, hexToTxHash,
+                                                sockToHostAddress, stringToAddr,
+                                                txHash, xPubImport)
+import           Haskoin.Node                  (Chain, Manager, OnlinePeer (..),
+                                                chainGetBest, managerGetPeers,
+                                                sendMessage)
+import           Haskoin.Store.Cache           (CacheT, withCache)
+import           Haskoin.Store.Common          (BinSerial (..), BlockData (..),
+                                                BlockRef (..), BlockTx (..),
+                                                DeriveType (..), Event (..),
+                                                HealthCheck (..),
+                                                JsonSerial (..), Limit, Offset,
+                                                PeerInformation (..),
+                                                PubExcept (..), StoreEvent (..),
+                                                StoreInput (..), StoreRead (..),
+                                                Transaction (..),
+                                                TxAfterHeight (..), TxData (..),
+                                                TxId (..), UnixTime, Unspent,
+                                                XPubBal (..), XPubSpec (..),
+                                                applyOffset, blockAtOrBefore,
+                                                getTransaction, isCoinbase,
+                                                nullBalance, transactionData)
+import           Haskoin.Store.Database.Reader (DatabaseReader (..),
+                                                DatabaseReaderT,
+                                                withDatabaseReader)
+import           Haskoin.Store.Manager         (Store (..))
+import           Network.HTTP.Types            (Status (..), status400,
+                                                status403, status404, status500,
+                                                status503)
+import           Network.Wai                   (Middleware, Request (..),
+                                                responseStatus)
+import           NQE                           (Publisher, receive,
+                                                withSubscription)
+import           Text.Printf                   (printf)
+import           Text.Read                     (readMaybe)
+import           UnliftIO                      (Exception, MonadIO,
+                                                MonadUnliftIO, askRunInIO,
+                                                liftIO, timeout)
+import           Web.Scotty.Internal.Types     (ActionT)
+import           Web.Scotty.Trans              (Parsable, ScottyError)
+import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
 
@@ -187,19 +147,15 @@ instance BinSerial Except where
 
 data WebConfig =
     WebConfig
-        { webPort      :: !Int
-        , webNetwork   :: !Network
-        , webDB        :: !DatabaseReader
-        , webCache     :: !(Maybe CacheReaderConfig)
-        , webPublisher :: !(Publisher StoreEvent)
-        , webStore     :: !Store
-        , webMaxLimits :: !MaxLimits
-        , webReqLog    :: !Bool
-        , webTimeouts  :: !Timeouts
+        { webPort        :: !Int
+        , webStore       :: !Store
+        , webMaxLimits   :: !WebLimits
+        , webReqLog      :: !Bool
+        , webWebTimeouts :: !WebTimeouts
         }
 
-data MaxLimits =
-    MaxLimits
+data WebLimits =
+    WebLimits
         { maxLimitCount   :: !Word32
         , maxLimitFull    :: !Word32
         , maxLimitOffset  :: !Word32
@@ -208,15 +164,31 @@ data MaxLimits =
         }
     deriving (Eq, Show)
 
-data Timeouts =
-    Timeouts
+instance Default WebLimits where
+    def =
+        WebLimits
+            { maxLimitCount = 20000
+            , maxLimitFull = 5000
+            , maxLimitOffset = 50000
+            , maxLimitDefault = 2000
+            , maxLimitGap = 32
+            }
+
+data WebTimeouts =
+    WebTimeouts
         { txTimeout    :: !Word64
         , blockTimeout :: !Word64
         }
     deriving (Eq, Show)
 
-newtype MyBlockHash = MyBlockHash {myBlockHash :: BlockHash}
-newtype MyTxHash = MyTxHash {myTxHash :: TxHash}
+instance Default WebTimeouts where
+    def = WebTimeouts {txTimeout = 300, blockTimeout = 7200}
+
+newtype MyBlockHash =
+    MyBlockHash BlockHash
+
+newtype MyTxHash =
+    MyTxHash TxHash
 
 instance Parsable MyBlockHash where
     parseParam =
@@ -252,15 +224,15 @@ instance Parsable StartParam where
 runInWebReader ::
        MonadIO m
     => DatabaseReaderT m a
-    -> CacheReaderT (DatabaseReaderT m) a
+    -> CacheT (DatabaseReaderT m) a
     -> ReaderT WebConfig m a
 runInWebReader bf cf = do
-    bdb <- asks webDB
-    mc <- asks webCache
+    bdb <- asks (storeDB . webStore)
+    mc <- asks (storeCache . webStore)
     lift $ withDatabaseReader bdb $
         case mc of
             Nothing -> bf
-            Just c  -> withCacheReader c cf
+            Just c  -> withCache c cf
 
 instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
     getBestBlock = runInWebReader getBestBlock getBestBlock
@@ -337,16 +309,18 @@ maybeSerial ::
     -> Maybe a
     -> WebT m ()
 maybeSerial _ Nothing      = S.raise ThingNotFound
-maybeSerial proto (Just x) =
-    lift (asks webNetwork) >>= \net -> S.raw (serialAny net proto x)
+maybeSerial proto (Just x) = do
+    net <- lift $ asks (storeNetwork . webStore)
+    S.raw (serialAny net proto x)
 
 protoSerial ::
        (Monad m, JsonSerial a, BinSerial a)
     => Bool
     -> a
     -> WebT m ()
-protoSerial proto x =
-    lift (asks webNetwork) >>= \net -> S.raw (serialAny net proto x)
+protoSerial proto x = do
+    net <- lift $ asks (storeNetwork . webStore)
+    S.raw (serialAny net proto x)
 
 scottyBestBlock ::
        (MonadLoggerIO m, MonadIO m) => Bool -> WebT m ()
@@ -373,7 +347,7 @@ scottyBlock :: MonadLoggerIO m => Bool -> WebT m ()
 scottyBlock raw = do
     limits <- lift $ asks webMaxLimits
     setHeaders
-    block <- myBlockHash <$> S.param "block"
+    MyBlockHash block <- S.param "block"
     n <- parseNoTx
     proto <- setupBin
     b <-
@@ -460,7 +434,7 @@ scottyBlockLatest = do
 scottyBlocks :: MonadLoggerIO m => WebT m ()
 scottyBlocks = do
     setHeaders
-    bhs <- map myBlockHash <$> S.param "blocks"
+    bhs <- map (\(MyBlockHash h) -> h) <$> S.param "blocks"
     n <- parseNoTx
     proto <- setupBin
     bks <- map (pruneTx n) . catMaybes <$> mapM getBlock (nub bhs)
@@ -476,7 +450,7 @@ scottyMempool = do
 scottyTransaction :: MonadLoggerIO m => WebT m ()
 scottyTransaction = do
     setHeaders
-    txid <- myTxHash <$> S.param "txid"
+    MyTxHash txid <- S.param "txid"
     proto <- setupBin
     res <- getTransaction txid
     maybeSerial proto res
@@ -484,7 +458,7 @@ scottyTransaction = do
 scottyRawTransaction :: MonadLoggerIO m => WebT m ()
 scottyRawTransaction = do
     setHeaders
-    txid <- myTxHash <$> S.param "txid"
+    MyTxHash txid <- S.param "txid"
     proto <- setupBin
     res <- fmap transactionData <$> getTransaction txid
     maybeSerial proto res
@@ -492,7 +466,7 @@ scottyRawTransaction = do
 scottyTxAfterHeight :: MonadLoggerIO m => WebT m ()
 scottyTxAfterHeight = do
     setHeaders
-    txid <- myTxHash <$> S.param "txid"
+    MyTxHash txid <- S.param "txid"
     height <- S.param "height"
     proto <- setupBin
     res <- cbAfterHeight 10000 height txid
@@ -501,7 +475,7 @@ scottyTxAfterHeight = do
 scottyTransactions :: MonadLoggerIO m => WebT m ()
 scottyTransactions = do
     setHeaders
-    txids <- map myTxHash <$> S.param "txids"
+    txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
     txs <- catMaybes <$> mapM getTransaction (nub txids)
     protoSerial proto txs
@@ -510,7 +484,7 @@ scottyBlockTransactions :: MonadLoggerIO m => WebT m ()
 scottyBlockTransactions = do
     limits <- lift $ asks webMaxLimits
     setHeaders
-    h <- myBlockHash <$> S.param "block"
+    MyBlockHash h <- S.param "block"
     proto <- setupBin
     getBlock h >>= \case
         Just b -> do
@@ -524,7 +498,7 @@ scottyRawTransactions ::
        MonadLoggerIO m => WebT m ()
 scottyRawTransactions = do
     setHeaders
-    txids <- map myTxHash <$> S.param "txids"
+    txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
     txs <- map transactionData . catMaybes <$> mapM getTransaction (nub txids)
     protoSerial proto txs
@@ -541,7 +515,7 @@ scottyRawBlockTransactions ::
 scottyRawBlockTransactions = do
     limits <- lift $ asks webMaxLimits
     setHeaders
-    h <- myBlockHash <$> S.param "block"
+    MyBlockHash h <- S.param "block"
     proto <- setupBin
     getBlock h >>= \case
         Just b -> do
@@ -658,9 +632,9 @@ scottyPostTx ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => WebT m ()
 scottyPostTx = do
-    net <- lift $ asks webNetwork
-    pub <- lift $ asks webPublisher
-    st <- lift $ asks webStore
+    net <- lift $ asks (storeNetwork . webStore)
+    pub <- lift $ asks (storePublisher . webStore)
+    mgr <- lift $ asks (storeManager . webStore)
     setHeaders
     proto <- setupBin
     b <- S.body
@@ -670,7 +644,7 @@ scottyPostTx = do
         case hex b <|> bin (L.toStrict b) of
             Nothing -> S.raise $ UserError "decode tx fail"
             Just x  -> return x
-    lift (publishTx net pub st tx) >>= \case
+    lift (publishTx net pub mgr tx) >>= \case
         Right () -> do
             protoSerial proto (TxId (txHash tx))
         Left e -> do
@@ -685,18 +659,18 @@ scottyPostTx = do
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
     setHeaders
-    DatabaseReader {databaseHandle = db} <- lift $ asks webDB
+    db <- lift $ asks (databaseHandle . storeDB . webStore)
     stats <- lift (getProperty db Stats)
     case stats of
-      Nothing -> do
-          S.text "Could not get stats"
-      Just txt -> do
-          S.text $ cs txt
+        Nothing -> do
+            S.text "Could not get stats"
+        Just txt -> do
+            S.text $ cs txt
 
 scottyEvents :: MonadLoggerIO m => WebT m ()
 scottyEvents = do
-    net <- lift $ asks webNetwork
-    pub <- lift $ asks webPublisher
+    net <- lift $ asks (storeNetwork . webStore)
+    pub <- lift $ asks (storePublisher . webStore)
     setHeaders
     proto <- setupBin
     S.stream $ \io flush' ->
@@ -732,12 +706,13 @@ scottyHealth ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => WebT m ()
 scottyHealth = do
-    net <- lift $ asks webNetwork
-    st <- lift $ asks webStore
-    tos <- lift $ asks webTimeouts
+    net <- lift $ asks (storeNetwork . webStore)
+    mgr <- lift $ asks (storeManager . webStore)
+    chn <- lift $ asks (storeChain . webStore)
+    tos <- lift $ asks webWebTimeouts
     setHeaders
     proto <- setupBin
-    h <- lift $ healthCheck net (storeManager st) (storeChain st) tos
+    h <- lift $ healthCheck net mgr chn tos
     when (not (healthOK h) || not (healthSynced h)) $ S.status status503
     protoSerial proto h
 
@@ -855,7 +830,7 @@ getLimit full = do
 
 parseAddress :: Monad m => WebT m Address
 parseAddress = do
-    net <- lift $ asks webNetwork
+    net <- lift $ asks (storeNetwork . webStore)
     address <- S.param "address"
     case stringToAddr net address of
         Nothing -> S.next
@@ -863,7 +838,7 @@ parseAddress = do
 
 parseAddresses :: Monad m => WebT m [Address]
 parseAddresses = do
-    net <- lift $ asks webNetwork
+    net <- lift $ asks (storeNetwork . webStore)
     addresses <- S.param "addresses"
     let as = mapMaybe (stringToAddr net) addresses
     unless (length as == length addresses) S.next
@@ -871,7 +846,7 @@ parseAddresses = do
 
 parseXpub :: Monad m => WebT m XPubSpec
 parseXpub = do
-    net <- lift $ asks webNetwork
+    net <- lift $ asks (storeNetwork . webStore)
     t <- S.param "xpub"
     d <- parseDeriveAddrs
     case xPubImport net t of
@@ -881,7 +856,7 @@ parseXpub = do
 parseDeriveAddrs ::
        Monad m => WebT m DeriveType
 parseDeriveAddrs =
-    lift (asks webNetwork) >>= \case
+    lift (asks (storeNetwork . webStore)) >>= \case
       net
           | getSegWit net -> do
               t <- S.param "derive" `S.rescue` const (return "standard")
@@ -940,7 +915,7 @@ healthCheck ::
     => Network
     -> Manager
     -> Chain
-    -> Timeouts
+    -> WebTimeouts
     -> m HealthCheck
 healthCheck net mgr ch tos = do
     cb <- chain_best
@@ -1131,17 +1106,17 @@ publishTx ::
        (MonadUnliftIO m, StoreRead m)
     => Network
     -> Publisher StoreEvent
-    -> Store
+    -> Manager
     -> Tx
     -> m (Either PubExcept ())
-publishTx net pub st tx =
+publishTx net pub mgr tx =
     withSubscription pub $ \s ->
         getTransaction (txHash tx) >>= \case
             Just _ -> return $ Right ()
             Nothing -> go s
   where
     go s =
-        managerGetPeers (storeManager st) >>= \case
+        managerGetPeers mgr >>= \case
             [] -> return $ Left PubNoPeers
             OnlinePeer {onlinePeerMailbox = p}:_ -> do
                 MTx tx `sendMessage` p
@@ -1198,6 +1173,6 @@ fmtDiff d =
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
 
-refuseLargeBlock :: Monad m => MaxLimits -> BlockData -> ActionT Except m ()
-refuseLargeBlock MaxLimits {maxLimitFull = f} BlockData {blockDataTxs = txs} =
+refuseLargeBlock :: Monad m => WebLimits -> BlockData -> ActionT Except m ()
+refuseLargeBlock WebLimits {maxLimitFull = f} BlockData {blockDataTxs = txs} =
     when (length txs > fromIntegral f) $ S.raise BlockTooLarge

@@ -2,25 +2,49 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module Network.Haskoin.Store.Data.Types where
+module Haskoin.Store.Database.Types
+    ( AddrTxKey(..)
+    , AddrOutKey(..)
+    , BestKey(..)
+    , BlockKey(..)
+    , BalKey(..)
+    , HeightKey(..)
+    , MemKey(..)
+    , OldMemKey(..)
+    , OrphanKey(..)
+    , SpenderKey(..)
+    , TxKey(..)
+    , UnspentKey(..)
+    , VersionKey(..)
+    , BalVal(..)
+    , valToBalance
+    , balanceToVal
+    , UnspentVal(..)
+    , toUnspent
+    , unspentToVal
+    , valToUnspent
+    , OutVal(..)
+    ) where
 
-import           Control.Monad                (guard)
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
-import qualified Data.ByteString.Short        as BSS
-import           Data.Hashable                (Hashable)
-import           Data.Serialize               (Serialize (..), getBytes,
-                                               getWord8, putWord8)
-import           Data.Word                    (Word32, Word64)
-import           Database.RocksDB.Query       (Key, KeyValue)
-import           GHC.Generics                 (Generic)
-import           Haskoin                      (Address, BlockHash, BlockHeight,
-                                               OutPoint (..), Tx, TxHash)
-import           Network.Haskoin.Store.Common (BalVal, BlockData, BlockRef,
-                                               BlockTx (..), Spender, TxData,
-                                               UnixTime, Unspent (..),
-                                               UnspentVal, getUnixTime,
-                                               putUnixTime)
+import           Control.DeepSeq        (NFData)
+import           Control.Monad          (guard)
+import           Data.ByteString        (ByteString)
+import qualified Data.ByteString        as BS
+import           Data.ByteString.Short  (ShortByteString)
+import qualified Data.ByteString.Short  as BSS
+import           Data.Default           (Default (..))
+import           Data.Hashable          (Hashable)
+import           Data.Serialize         (Serialize (..), getBytes, getWord8,
+                                         putWord8)
+import           Data.Word              (Word32, Word64)
+import           Database.RocksDB.Query (Key, KeyValue)
+import           GHC.Generics           (Generic)
+import           Haskoin                (Address, BlockHash, BlockHeight,
+                                         OutPoint (..), Tx, TxHash)
+import           Haskoin.Store.Common   (Balance (..), BlockData, BlockRef,
+                                         BlockTx (..), Spender, TxData,
+                                         UnixTime, Unspent (..), getUnixTime,
+                                         putUnixTime)
 
 -- | Database key for an address transaction.
 data AddrTxKey
@@ -358,3 +382,83 @@ instance Serialize OldMemKey where
 
 instance Key OldMemKey
 instance KeyValue OldMemKey ()
+
+data BalVal = BalVal
+    { balValAmount        :: !Word64
+    , balValZero          :: !Word64
+    , balValUnspentCount  :: !Word64
+    , balValTxCount       :: !Word64
+    , balValTotalReceived :: !Word64
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
+
+valToBalance :: Address -> BalVal -> Balance
+valToBalance a BalVal { balValAmount = v
+                      , balValZero = z
+                      , balValUnspentCount = u
+                      , balValTxCount = t
+                      , balValTotalReceived = r
+                      } =
+    Balance
+        { balanceAddress = a
+        , balanceAmount = v
+        , balanceZero = z
+        , balanceUnspentCount = u
+        , balanceTxCount = t
+        , balanceTotalReceived = r
+        }
+
+balanceToVal :: Balance -> (Address, BalVal)
+balanceToVal Balance { balanceAddress = a
+                     , balanceAmount = v
+                     , balanceZero = z
+                     , balanceUnspentCount = u
+                     , balanceTxCount = t
+                     , balanceTotalReceived = r
+                     } =
+    ( a
+    , BalVal
+          { balValAmount = v
+          , balValZero = z
+          , balValUnspentCount = u
+          , balValTxCount = t
+          , balValTotalReceived = r
+          })
+
+-- | Default balance for an address.
+instance Default BalVal where
+    def =
+        BalVal
+            { balValAmount = 0
+            , balValZero = 0
+            , balValUnspentCount = 0
+            , balValTxCount = 0
+            , balValTotalReceived = 0
+            }
+
+data UnspentVal = UnspentVal
+    { unspentValBlock  :: !BlockRef
+    , unspentValAmount :: !Word64
+    , unspentValScript :: !ShortByteString
+    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
+
+unspentToVal :: Unspent -> (OutPoint, UnspentVal)
+unspentToVal Unspent { unspentBlock = b
+                     , unspentPoint = p
+                     , unspentAmount = v
+                     , unspentScript = s
+                     } =
+    ( p
+    , UnspentVal
+          {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
+
+valToUnspent :: OutPoint -> UnspentVal -> Unspent
+valToUnspent p UnspentVal { unspentValBlock = b
+                          , unspentValAmount = v
+                          , unspentValScript = s
+                          } =
+    Unspent
+        { unspentBlock = b
+        , unspentPoint = p
+        , unspentAmount = v
+        , unspentScript = s
+        }
