@@ -192,7 +192,11 @@ getXPubUnspents xpub start offset limit =
                             cs (show (lenNotNull bals)) <>
                             " balances"
                         return uns
-        bals -> process bals
+        bals -> do
+            $(logDebugS) "Cache" $
+                "Cache hit for xpub with " <> cs (show (length bals)) <>
+                " xpub balances"
+            process bals
   where
     process bals = do
         ops <- map snd <$> cacheGetXPubUnspents xpub start offset limit
@@ -231,7 +235,11 @@ getXPubBalances xpub = do
                             cs (show (lenNotNull bals)) <>
                             " balances"
                         return bals
-        bals -> return bals
+        bals -> do
+            $(logDebugS) "Cache" $
+                "Cache hit for xpub with " <> cs (show (length bals)) <>
+                " xpub balances"
+            return bals
 
 cacheGetXPubBalances :: MonadIO m => XPubSpec -> CacheT m [XPubBal]
 cacheGetXPubBalances xpub = do
@@ -776,8 +784,8 @@ redisGetNewAddrs gap addrmap =
             return $ HashMap.fromList xbs'
     newaddrs xpub bals =
         let paths = HashMap.lookupDefault [] xpub xpubmap
-            ext = maximum . map (head . tail) $ filter ((== 0) . head) paths
-            chg = maximum . map (head . tail) $ filter ((== 1) . head) paths
+            ext = maximum . (0 :) . map (head . tail) $ filter ((== 0) . head) (paths)
+            chg = maximum . (0 :) . map (head . tail) $ filter ((== 1) . head) (paths)
             extnew =
                 addrsToAdd
                     bals
@@ -836,7 +844,7 @@ redisDelXPubKeys xpub = do
     ebals <- redisGetXPubBalances xpub
     case ebals of
         Right bals -> go (map (balanceAddress . xPubBal) bals)
-        Left _ -> return $ ebals >> return 0
+        Left _     -> return $ ebals >> return 0
   where
     go addrs = do
         addrcount <-
