@@ -37,7 +37,9 @@ module Haskoin.Store.Common
     , TxId(..)
     , PeerInformation(..)
     , XPubBal(..)
+    , xPubBalsTxs
     , XPubUnspent(..)
+    , xPubBalsUnspents
     , XPubSummary(..)
     , HealthCheck(..)
     , Event(..)
@@ -318,6 +320,41 @@ deriveFunction :: DeriveType -> DeriveAddr
 deriveFunction DeriveNormal i = fst . deriveAddr i
 deriveFunction DeriveP2SH i   = fst . deriveCompatWitnessAddr i
 deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
+
+xPubBalsUnspents ::
+       StoreRead m
+    => [XPubBal]
+    -> Maybe BlockRef
+    -> Offset
+    -> Maybe Limit
+    -> m [XPubUnspent]
+xPubBalsUnspents bals start offset limit = do
+    let xs = filter positive bals
+    applyOffsetLimit offset limit <$> go xs
+  where
+    positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
+    go [] = return []
+    go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
+        uns <- getAddressUnspents a start limit
+        let xuns =
+                map
+                    (\t ->
+                          XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
+                    uns
+        (xuns <>) <$> go xs
+
+xPubBalsTxs ::
+       StoreRead m
+    => [XPubBal]
+    -> Maybe BlockRef
+    -> Offset
+    -> Maybe Limit
+    -> m [BlockTx]
+xPubBalsTxs bals start offset limit = do
+    let as = map balanceAddress . filter (not . nullBalance) $ map xPubBal bals
+    ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
+    let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
+    return $ applyOffsetLimit offset limit ts'
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)

@@ -62,15 +62,29 @@ import           Haskoin                   (Address, BlockHash,
                                             xPubWitnessAddr)
 import           Haskoin.Node              (Chain, chainGetAncestor,
                                             chainGetBlock, chainGetSplitBlock)
-import           Haskoin.Store.Common      (Balance (..), BlockData (..),
-                                            BlockRef (..), BlockTx (..),
-                                            DeriveType (..), Limit, Offset,
-                                            Prev (..), StoreRead (..),
-                                            StoreRead (..), TxData (..),
-                                            Unspent (..), XPubBal (..),
-                                            XPubSpec (..), XPubUnspent (..),
-                                            nullBalance, sortTxs, xPubBals,
-                                            xPubTxs, xPubUnspents)
+import Haskoin.Store.Common
+    ( Balance(..)
+    , BlockData(..)
+    , BlockRef(..)
+    , BlockTx(..)
+    , DeriveType(..)
+    , Limit
+    , Offset
+    , Prev(..)
+    , StoreRead(..)
+    , StoreRead(..)
+    , TxData(..)
+    , Unspent(..)
+    , XPubBal(..)
+    , XPubSpec(..)
+    , XPubUnspent(..)
+    , nullBalance
+    , sortTxs
+    , xPubBals
+    , xPubBalsTxs
+    , xPubBalsUnspents
+    , xPubTxs
+    )
 import           NQE                       (Inbox, Mailbox, receive)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             liftIO, throwIO)
@@ -152,25 +166,18 @@ getXPubTxs ::
     -> Maybe Limit
     -> CacheT m [BlockTx]
 getXPubTxs xpub start offset limit =
-    c >>= \case
-        [] ->
-            newXPubC xpub >>= \(bals, t) ->
-                if t
-                    then c
-                    else do
-                        txs <- d
-                        $(logDebugS) "Cache" $
-                            "Not caching xpub with " <>
-                            cs (show (lenNotNull bals)) <>
-                            " balances"
-                        return txs
-        txs -> do
+    isXPubCached xpub >>= \case
+        True -> do
+            txs <- cacheGetXPubTxs xpub start offset limit
             $(logDebugS) "Cache" $
                 "Cache hit for " <> cs (show (length txs)) <> " xpub txs"
             return txs
-  where
-    c = cacheGetXPubTxs xpub start offset limit
-    d = lift $ xPubTxs xpub start offset limit
+        False -> do
+            $(logDebugS) "Cache" $ "Cache miss for xpub txs request"
+            newXPubC xpub >>= \(bals, t) ->
+                if t
+                    then cacheGetXPubTxs xpub start offset limit
+                    else xPubBalsTxs bals start offset limit
 
 getXPubUnspents ::
        (MonadLoggerIO m, StoreRead m)
@@ -180,23 +187,20 @@ getXPubUnspents ::
     -> Maybe Limit
     -> CacheT m [XPubUnspent]
 getXPubUnspents xpub start offset limit =
-    cacheGetXPubBalances xpub >>= \case
-        [] ->
+    isXPubCached xpub >>= \case
+        True -> do
+            bals <- cacheGetXPubBalances xpub
+            $(logDebugS) "Cache" $
+                "Cache hit for unspents on an xpub with " <>
+                cs (show (length bals)) <>
+                " balances"
+            process bals
+        False -> do
+            $(logDebugS) "Cache" $ "Cache miss for xpub unspents request"
             newXPubC xpub >>= \(bals, t) ->
                 if t
                     then process bals
-                    else do
-                        uns <- lift $ xPubUnspents xpub start offset limit
-                        $(logDebugS) "Cache" $
-                            "Not caching xpub with " <>
-                            cs (show (lenNotNull bals)) <>
-                            " balances"
-                        return uns
-        bals -> do
-            $(logDebugS) "Cache" $
-                "Cache hit for xpub with " <> cs (show (length bals)) <>
-                " xpub balances"
-            process bals
+                    else xPubBalsUnspents bals start offset limit
   where
     process bals = do
         ops <- map snd <$> cacheGetXPubUnspents xpub start offset limit
@@ -223,23 +227,22 @@ getXPubBalances ::
        (MonadLoggerIO m, StoreRead m)
     => XPubSpec
     -> CacheT m [XPubBal]
-getXPubBalances xpub = do
-    cacheGetXPubBalances xpub >>= \case
-        [] ->
-            newXPubC xpub >>= \(bals, t) ->
-                if t
-                    then return bals
-                    else do
-                        $(logDebugS) "Cache" $
-                            "Not caching xpub with " <>
-                            cs (show (lenNotNull bals)) <>
-                            " balances"
-                        return bals
-        bals -> do
+getXPubBalances xpub =
+    isXPubCached xpub >>= \case
+        True -> do
+            bals <- cacheGetXPubBalances xpub
             $(logDebugS) "Cache" $
-                "Cache hit for xpub with " <> cs (show (length bals)) <>
-                " xpub balances"
+                "Cache hit for " <> cs (show (length bals)) <> " xpub balances"
             return bals
+        False -> do
+            $(logDebugS) "Cache" "Cache miss for xpub balances request"
+            fst <$> newXPubC xpub
+
+isXPubCached :: MonadIO m => XPubSpec -> CacheT m Bool
+isXPubCached = runRedisReply . redisIsXPubCached
+
+redisIsXPubCached :: XPubSpec -> RedisReply Bool
+redisIsXPubCached xpub = Redis.exists (balancesPfx <> encode xpub)
 
 cacheGetXPubBalances :: MonadIO m => XPubSpec -> CacheT m [XPubBal]
 cacheGetXPubBalances xpub = do
@@ -483,21 +486,21 @@ newXPubC ::
     => XPubSpec
     -> CacheT m ([XPubBal], Bool)
 newXPubC xpub = do
-    bals <- cacheGetXPubBalances xpub
+    bals <- lift $ xPubBals xpub
     x <- asks cacheMin
-    if null bals
+    let n = lenNotNull bals
+    if x <= n
         then do
-            bals' <- lift $ xPubBals xpub
-            case lenNotNull bals' of
-                0 -> return (bals', False)
-                _
-                    | x <= lenNotNull bals' -> go bals' >> return (bals', True)
-                    | otherwise -> return (bals', False)
-        else return (bals, False)
+            $(logDebugS) "Cache" $
+                "Caching xpub with " <> cs (show n) <> " used addresses"
+            go bals
+            return (bals, True)
+        else do
+            $(logDebugS) "Cache" $
+                "Not caching xpub with " <> cs (show n) <> " used addresses"
+            return (bals, False)
   where
     go bals = do
-        $(logDebugS) "Cache" $
-            "Adding xpub with " <> cs (show (lenNotNull bals)) <> " balances"
         utxo <- lift $ xPubUnspents xpub Nothing 0 Nothing
         xtxs <- lift $ xPubTxs xpub Nothing 0 Nothing
         now <- systemSeconds <$> liftIO getSystemTime
@@ -784,8 +787,8 @@ redisGetNewAddrs gap addrmap =
             return $ HashMap.fromList xbs'
     newaddrs xpub bals =
         let paths = HashMap.lookupDefault [] xpub xpubmap
-            ext = maximum . (0 :) . map (head . tail) $ filter ((== 0) . head) (paths)
-            chg = maximum . (0 :) . map (head . tail) $ filter ((== 1) . head) (paths)
+            ext = maximum . (0 :) . map (head . tail) $ filter ((== 0) . head) paths
+            chg = maximum . (0 :) . map (head . tail) $ filter ((== 1) . head) paths
             extnew =
                 addrsToAdd
                     bals
