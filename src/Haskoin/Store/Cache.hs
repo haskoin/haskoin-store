@@ -62,29 +62,16 @@ import           Haskoin                   (Address, BlockHash,
                                             xPubWitnessAddr)
 import           Haskoin.Node              (Chain, chainGetAncestor,
                                             chainGetBlock, chainGetSplitBlock)
-import Haskoin.Store.Common
-    ( Balance(..)
-    , BlockData(..)
-    , BlockRef(..)
-    , BlockTx(..)
-    , DeriveType(..)
-    , Limit
-    , Offset
-    , Prev(..)
-    , StoreRead(..)
-    , StoreRead(..)
-    , TxData(..)
-    , Unspent(..)
-    , XPubBal(..)
-    , XPubSpec(..)
-    , XPubUnspent(..)
-    , nullBalance
-    , sortTxs
-    , xPubBals
-    , xPubBalsTxs
-    , xPubBalsUnspents
-    , xPubTxs
-    )
+import           Haskoin.Store.Common      (Balance (..), BlockData (..),
+                                            BlockRef (..), BlockTx (..),
+                                            DeriveType (..), Limit, Offset,
+                                            Prev (..), StoreRead (..),
+                                            StoreRead (..), TxData (..),
+                                            Unspent (..), XPubBal (..),
+                                            XPubSpec (..), XPubUnspent (..),
+                                            nullBalance, sortTxs, xPubBals,
+                                            xPubBalsTxs, xPubBalsUnspents,
+                                            xPubTxs)
 import           NQE                       (Inbox, Mailbox, receive)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             liftIO, throwIO)
@@ -452,18 +439,15 @@ pruneDB = do
             return n
         else return 0
   where
-    flush n = do
-        n' <-
-            runRedisReply $ do
-                eks <- getFromSortedSet maxKey Nothing 0 (Just 10)
-                case eks of
-                    Right ks -> do
-                        xs <- sequence <$> forM (map fst ks) redisDelXPubKeys
-                        return $ xs >>= return . sum
-                    Left _ -> return $ eks >> return 0
-        if n <= n'
-            then return n'
-            else (n' +) <$> flush (n - n')
+    flush n =
+        runRedisReply $ do
+            let x = min 1000 (n `div` 64)
+            eks <- getFromSortedSet maxKey Nothing 0 (Just x)
+            case eks of
+                Right ks -> do
+                    xs <- sequence <$> forM (map fst ks) redisDelXPubKeys
+                    return $ xs >>= return . sum
+                Left _ -> return $ eks >> return 0
 
 touchKeys :: Real a => a -> [XPubSpec] -> RedisReply Integer
 touchKeys _ [] = return (pure 0)
