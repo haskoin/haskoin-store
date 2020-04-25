@@ -346,11 +346,13 @@ getFromSortedSet key Nothing offset Nothing = do
     return $ do
         ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
         return (rights ys)
-getFromSortedSet key Nothing offset (Just count) = do
-    xs <- zrangeWithscores key offset (offset + count - 1)
-    return $ do
-        ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
-        return (rights ys)
+getFromSortedSet key Nothing offset (Just count)
+    | count <= 0 = return (pure [])
+    | otherwise = do
+        xs <- zrangeWithscores key offset (offset + count - 1)
+        return $ do
+            ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
+            return (rights ys)
 getFromSortedSet key (Just score) offset Nothing = do
     xs <-
         zrangebyscoreWithscoresLimit
@@ -440,14 +442,16 @@ pruneDB = do
         else return 0
   where
     flush n =
-        runRedisReply $ do
-            let x = min 1000 (n `div` 64)
-            eks <- getFromSortedSet maxKey Nothing 0 (Just x)
-            case eks of
-                Right ks -> do
-                    xs <- sequence <$> forM (map fst ks) redisDelXPubKeys
-                    return $ xs >>= return . sum
-                Left _ -> return $ eks >> return 0
+        runRedisReply $
+        case min 1000 (n `div` 64) of
+            0 -> return (pure 0)
+            x -> do
+                eks <- getFromSortedSet maxKey Nothing 0 (Just x)
+                case eks of
+                    Right ks -> do
+                        xs <- sequence <$> forM (map fst ks) redisDelXPubKeys
+                        return $ xs >>= return . sum
+                    Left _ -> return $ eks >> return 0
 
 touchKeys :: Real a => a -> [XPubSpec] -> RedisReply Integer
 touchKeys _ [] = return (pure 0)
@@ -903,8 +907,7 @@ addrsToAdd ::
 addrsToAdd xbals gap addrinfo =
     let headi = head (addressXPubPath addrinfo)
         maxi =
-            maximum $
-            map (head . tail . xPubBalPath) $
+            maximum . (0 :) . map (head . tail . xPubBalPath) $
             filter ((== headi) . head . xPubBalPath) xbals
         xpub = addressXPubSpec addrinfo
         newi = head (tail (addressXPubPath addrinfo))
