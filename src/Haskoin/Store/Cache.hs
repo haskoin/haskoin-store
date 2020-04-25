@@ -21,7 +21,8 @@ module Haskoin.Store.Cache
     ) where
 
 import           Control.DeepSeq           (NFData)
-import           Control.Monad             (forM, forM_, forever, unless, void)
+import           Control.Monad             (forM, forM_, forever, unless, void,
+                                            when)
 import           Control.Monad.Logger      (MonadLoggerIO, logDebugS, logErrorS,
                                             logInfoS, logWarnS)
 import           Control.Monad.Reader      (ReaderT (..), asks)
@@ -437,7 +438,8 @@ pruneDB = do
     if s > x
         then do
             n <- flush (s - x)
-            $(logDebugS) "Cache" $ "Pruned " <> cs (show n) <> " keys"
+            when (n > 0) $
+                $(logDebugS) "Cache" $ "Pruned " <> cs (show n) <> " keys"
             return n
         else return 0
   where
