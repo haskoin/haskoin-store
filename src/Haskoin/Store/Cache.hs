@@ -841,7 +841,9 @@ redisDelXPubKeys xpub = do
         txsetcount <- Redis.del [txSetPfx <> encode xpub]
         utxocount <- Redis.del [utxoPfx <> encode xpub]
         balcount <- Redis.del [balancesPfx <> encode xpub]
+        x <- Redis.zrem maxKey [encode xpub]
         return $ do
+            _ <- x
             addrs' <- addrcount
             txset' <- txsetcount
             utxo' <- utxocount
