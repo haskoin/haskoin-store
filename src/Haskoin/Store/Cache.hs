@@ -43,7 +43,7 @@ import           Data.Serialize            (decode, encode)
 import           Data.Serialize            (Serialize)
 import           Data.String.Conversions   (cs)
 import           Data.Time.Clock.System    (getSystemTime, systemSeconds)
-import           Data.Word                 (Word32, Word64)
+import           Data.Word                 (Word64)
 import           Database.Redis            (Connection, Queued, Redis, RedisCtx,
                                             RedisTx, Reply, TxResult (..),
                                             checkedConnect, defaultConnectInfo,
@@ -99,15 +99,13 @@ runRedisTx pre action =
             TxError e -> throwIO (RedisTxError e)
   where
     go =
-        pre >>= \x ->
-            case x of
-                Left e  -> throwIO (RedisError e)
-                Right y -> Redis.multiExec (action y)
+        pre >>= \case
+            Left e -> throwIO (RedisError e)
+            Right y -> Redis.multiExec (action y)
 
 data CacheConfig =
     CacheConfig
         { cacheConn  :: !Connection
-        , cacheGap   :: !Word32
         , cacheMin   :: !Int
         , cacheMax   :: !Integer
         , cacheChain :: !Chain
@@ -152,7 +150,8 @@ instance (MonadLoggerIO m, StoreRead m) => StoreRead (CacheT m) where
     xPubBals = getXPubBalances
     xPubUnspents = getXPubUnspents
     xPubTxs = getXPubTxs
-    getMaxGap = asks cacheGap
+    getMaxGap = lift getMaxGap
+    getInitialGap = lift getInitialGap
 
 withCache :: StoreRead m => CacheConfig -> CacheT m a -> m a
 withCache s f = runReaderT f s

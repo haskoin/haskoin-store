@@ -121,6 +121,11 @@ config = do
         metavar "MAXGAP" <> long "maxgap" <> help "Max gap for xpub queries" <>
         showDefault <>
         value (maxLimitGap def)
+    maxLimitInitialGap <-
+        option auto $
+        metavar "INITGAP" <> long "initgap" <> help "Max gap for empty xpub" <>
+        showDefault <>
+        value (maxLimitInitialGap def)
     blockTimeout <-
         option auto $
         metavar "BLOCKSECONDS" <> long "blocktimeout" <>
@@ -233,6 +238,7 @@ run Config { configPort = port
                               then Just redisurl
                               else Nothing
                     , storeConfGap = maxLimitGap limits
+                    , storeConfInitialGap = maxLimitInitialGap limits
                     , storeConfCacheMin = cachemin
                     , storeConfMaxKeys = redismax
                     }

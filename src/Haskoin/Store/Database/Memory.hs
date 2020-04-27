@@ -41,8 +41,10 @@ import           UnliftIO
 
 data MemoryState =
     MemoryState
-        { memoryDatabase :: !(TVar MemoryDatabase)
-        , memoryMaxGap   :: !Word32
+        { memoryDatabase   :: !(TVar MemoryDatabase)
+        , memoryMaxGap     :: !Word32
+        , memoryInitialGap :: !Word32
+        , memoryNetwork    :: !Network
         }
 
 withMemoryDatabase ::
@@ -64,11 +66,10 @@ data MemoryDatabase = MemoryDatabase
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
     , hMempool :: !(Maybe [BlockTx])
     , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
-    , hNetwork :: !Network
     } deriving (Eq, Show)
 
-emptyMemoryDatabase :: Network -> MemoryDatabase
-emptyMemoryDatabase net =
+emptyMemoryDatabase :: MemoryDatabase
+emptyMemoryDatabase =
     MemoryDatabase
         { hBest = Nothing
         , hBlock = M.empty
@@ -81,7 +82,6 @@ emptyMemoryDatabase net =
         , hAddrOut = M.empty
         , hMempool = Nothing
         , hOrphans = M.empty
-        , hNetwork = net
         }
 
 getBestBlockH :: MemoryDatabase -> Maybe BlockHash
@@ -143,22 +143,26 @@ getAddressTxsH addr start limit db =
             Just br -> b > br
 
 getAddressesUnspentsH ::
-       [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
-getAddressesUnspentsH addrs start limit db = applyLimit limit xs
+       Network
+    -> [Address]
+    -> Maybe BlockRef
+    -> Maybe Limit
+    -> MemoryDatabase
+    -> [Unspent]
+getAddressesUnspentsH net addrs start limit db = applyLimit limit xs
   where
     xs =
         nub . sortBy (flip compare `on` unspentBlock) . concat $
-        map (\a -> getAddressUnspentsH a start limit db) addrs
+        map (\a -> getAddressUnspentsH net a start limit db) addrs
 
 getAddressUnspentsH ::
-       Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
-getAddressUnspentsH addr start limit db =
+       Network -> Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
+getAddressUnspentsH net addr start limit db =
     applyLimit limit .
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty addr (hAddrOut db)
   where
-    net = hNetwork db
     f b hm = map (uncurry (g b)) $ M.toList hm
     g b p (Just u) =
         Just
@@ -271,12 +275,10 @@ insertOrphanTxH tx u db =
 deleteOrphanTxH :: TxHash -> MemoryDatabase -> MemoryDatabase
 deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
 
-getUnspentH :: OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
-getUnspentH op db = do
+getUnspentH :: Network -> OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
+getUnspentH net op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
     fmap (valToUnspent net op) <$> I.lookup (fromIntegral (outPointIndex op)) m
-  where
-    net = hNetwork db
 
 insertUnspentH :: Unspent -> MemoryDatabase -> MemoryDatabase
 insertUnspentH u db =
@@ -303,7 +305,6 @@ deleteUnspentH op db =
         }
 
 instance MonadIO m => StoreRead (ReaderT MemoryState m) where
-    getNetwork = R.asks memoryDatabase >>= fmap hNetwork . readTVarIO
     getBestBlock = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBestBlockH v
@@ -327,7 +328,8 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
         return . join $ getOrphanTxH h v
     getUnspent p = do
         v <- R.asks memoryDatabase >>= readTVarIO
-        return . join $ getUnspentH p v
+        net <- R.asks memoryNetwork
+        return . join $ getUnspentH net p v
     getBalance a = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBalanceH a v
@@ -339,7 +341,8 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
         return $ getAddressesTxsH addr start limit v
     getAddressesUnspents addr start limit = do
         v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getAddressesUnspentsH addr start limit v
+        net <- R.asks memoryNetwork
+        return $ getAddressesUnspentsH net addr start limit v
     getOrphans = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getOrphansH v
@@ -348,8 +351,11 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
         return $ getAddressTxsH addr start limit v
     getAddressUnspents addr start limit = do
         v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getAddressUnspentsH addr start limit v
+        net <- R.asks memoryNetwork
+        return $ getAddressUnspentsH net addr start limit v
     getMaxGap = R.asks memoryMaxGap
+    getInitialGap = R.asks memoryInitialGap
+    getNetwork = R.asks memoryNetwork
 
 instance MonadIO m => StoreWrite (ReaderT MemoryState m) where
     setBest h = do

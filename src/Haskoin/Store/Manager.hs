@@ -63,13 +63,15 @@ data StoreConfig =
         , storeConfInitPeers :: ![HostPort]
       -- ^ static set of peers to connect to
         , storeConfDiscover  :: !Bool
-      -- ^ discover new peers?
+      -- ^ discover new peers
         , storeConfDB        :: !FilePath
       -- ^ RocksDB database path
         , storeConfNetwork   :: !Network
       -- ^ network constants
         , storeConfCache     :: !(Maybe String)
       -- ^ Redis cache configuration
+        , storeConfInitialGap :: !Word32
+      -- ^ gap on extended public key with no transactions
         , storeConfGap       :: !Word32
       -- ^ gap for extended public keys
         , storeConfCacheMin  :: !Int
@@ -93,6 +95,7 @@ withStore cfg action = do
     db <-
         connectRocksDB
             (storeConfNetwork cfg)
+            (storeConfInitialGap cfg)
             (storeConfGap cfg)
             (storeConfDB cfg)
     case maybecacheconn of
@@ -101,7 +104,6 @@ withStore cfg action = do
             let cachecfg =
                     CacheConfig
                         { cacheConn = cacheconn
-                        , cacheGap = storeConfGap cfg
                         , cacheMin = storeConfCacheMin cfg
                         , cacheChain = chain
                         , cacheMax = storeConfMaxKeys cfg

@@ -83,6 +83,7 @@ withTestStore net t f =
                         , storeConfNetwork = net
                         , storeConfCache = Nothing
                         , storeConfGap = gap
+                        , storeConfInitialGap = 20
                         , storeConfCacheMin = 100
                         , storeConfMaxKeys = 100 * 1000 * 1000
                         }

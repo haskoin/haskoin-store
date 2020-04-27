@@ -110,6 +110,8 @@ runRocksDB f =
         runReaderT f db
 
 instance MonadIO m => StoreRead (ReaderT BlockRead m) where
+    getMaxGap = runRocksDB getMaxGap
+    getInitialGap = runRocksDB getInitialGap
     getNetwork = runRocksDB getNetwork
     getBestBlock = runRocksDB getBestBlock
     getBlocksAtHeight = runRocksDB . getBlocksAtHeight

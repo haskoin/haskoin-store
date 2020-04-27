@@ -143,6 +143,7 @@ data WebLimits =
         , maxLimitOffset  :: !Word32
         , maxLimitDefault :: !Word32
         , maxLimitGap     :: !Word32
+        , maxLimitInitialGap :: !Word32
         }
     deriving (Eq, Show)
 
@@ -154,6 +155,7 @@ instance Default WebLimits where
             , maxLimitOffset = 50000
             , maxLimitDefault = 2000
             , maxLimitGap = 32
+            , maxLimitInitialGap = 20
             }
 
 data WebTimeouts =
@@ -217,6 +219,8 @@ runInWebReader bf cf = do
             Just c  -> withCache c cf
 
 instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
+    getMaxGap = runInWebReader getMaxGap getMaxGap
+    getInitialGap = runInWebReader getInitialGap getInitialGap
     getNetwork = runInWebReader getNetwork getNetwork
     getBestBlock = runInWebReader getBestBlock getBestBlock
     getBlocksAtHeight height =
@@ -274,6 +278,7 @@ instance MonadLoggerIO m => StoreRead (WebT m) where
         lift (xPubUnspents xpub start offset limit)
     xPubTxs xpub start offset limit = lift (xPubTxs xpub start offset limit)
     getMaxGap = lift $ asks (maxLimitGap . webMaxLimits)
+    getInitialGap = lift $ asks (maxLimitInitialGap . webMaxLimits)
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do

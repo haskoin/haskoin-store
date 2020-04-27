@@ -49,14 +49,16 @@ data DatabaseReader =
         { databaseHandle      :: !DB
         , databaseReadOptions :: !ReadOptions
         , databaseMaxGap      :: !Word32
+        , databaseInitialGap  :: !Word32
         , databaseNetwork     :: !Network
         }
 
 dataVersion :: Word32
 dataVersion = 16
 
-connectRocksDB :: MonadIO m => Network -> Word32 -> FilePath -> m DatabaseReader
-connectRocksDB net gap dir = do
+connectRocksDB ::
+       MonadIO m => Network -> Word32 -> Word32 -> FilePath -> m DatabaseReader
+connectRocksDB net igap gap dir = do
     db <-
         open
             dir
@@ -72,6 +74,7 @@ connectRocksDB net gap dir = do
                 , databaseHandle = db
                 , databaseMaxGap = gap
                 , databaseNetwork = net
+                , databaseInitialGap = igap
                 }
     initRocksDB bdb
     return bdb
@@ -247,3 +250,4 @@ instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getAddressUnspents a b c = ask >>= getAddressUnspentsDB a b c
     getAddressTxs a b c = ask >>= getAddressTxsDB a b c
     getMaxGap = asks databaseMaxGap
+    getInitialGap = asks databaseInitialGap

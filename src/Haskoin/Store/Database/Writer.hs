@@ -60,10 +60,17 @@ runDatabaseWriter ::
     -> m a
 runDatabaseWriter bdb@DatabaseReader { databaseHandle = db
                                      , databaseMaxGap = gap
+                                     , databaseInitialGap = igap
                                      , databaseNetwork = net
                                      } f = do
-    hm <- newTVarIO (emptyMemoryDatabase net)
-    let ms = MemoryState {memoryDatabase = hm, memoryMaxGap = gap}
+    hm <- newTVarIO emptyMemoryDatabase
+    let ms =
+            MemoryState
+                { memoryDatabase = hm
+                , memoryMaxGap = gap
+                , memoryNetwork = net
+                , memoryInitialGap = igap
+                }
     x <-
         R.runReaderT
             f
@@ -303,10 +310,12 @@ setBalanceI b DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ setBalance b
 
 getUnspentI :: MonadIO m => OutPoint -> DatabaseWriter -> m (Maybe Unspent)
-getUnspentI op DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
-    fmap join . runMaybeT $ MaybeT f <|> MaybeT g
+getUnspentI op DatabaseWriter { databaseWriterReader = db
+                              , databaseWriterState = hm
+                              } = fmap join . runMaybeT $ MaybeT f <|> MaybeT g
   where
-    f = getUnspentH op <$> readTVarIO (memoryDatabase hm)
+    net = databaseNetwork db
+    f = getUnspentH net op <$> readTVarIO (memoryDatabase hm)
     g = Just <$> withDatabaseReader db (getUnspent op)
 
 insertUnspentI :: MonadIO m => Unspent -> DatabaseWriter -> m ()
@@ -327,6 +336,7 @@ getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db}
         Nothing -> withDatabaseReader db getMempool
 
 instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
+    getInitialGap = R.asks (databaseInitialGap . databaseWriterReader)
     getNetwork = R.asks (databaseNetwork . databaseWriterReader)
     getBestBlock = R.ask >>= getBestBlockI
     getBlocksAtHeight h = R.ask >>= getBlocksAtHeightI h
