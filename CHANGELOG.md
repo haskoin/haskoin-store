@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.23.0
+### Changed
+- Add network parameter to some objects to help with JSON encoding.
+- Remove custom JSON encoding class.
+- Refactor and simplify some code.
+
 ## 0.22.5
 ### Fixed
 - Cache was being completely pruned.

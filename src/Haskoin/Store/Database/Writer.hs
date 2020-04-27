@@ -58,8 +58,11 @@ runDatabaseWriter ::
     => DatabaseReader
     -> ReaderT DatabaseWriter m a
     -> m a
-runDatabaseWriter bdb@DatabaseReader {databaseHandle = db, databaseMaxGap = gap} f = do
-    hm <- newTVarIO emptyMemoryDatabase
+runDatabaseWriter bdb@DatabaseReader { databaseHandle = db
+                                     , databaseMaxGap = gap
+                                     , databaseNetwork = net
+                                     } f = do
+    hm <- newTVarIO (emptyMemoryDatabase net)
     let ms = MemoryState {memoryDatabase = hm, memoryMaxGap = gap}
     x <-
         R.runReaderT
@@ -275,7 +278,9 @@ getSpendersI t DatabaseWriter {databaseWriterReader = db, databaseWriterState = 
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
 getBalanceI :: MonadIO m => Address -> DatabaseWriter -> m Balance
-getBalanceI a DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
+getBalanceI a DatabaseWriter { databaseWriterReader = db
+                             , databaseWriterState = hm
+                             } =
     fromMaybe (zeroBalance a) <$> runMaybeT (MaybeT f <|> MaybeT g)
   where
     f =
@@ -322,6 +327,7 @@ getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db}
         Nothing -> withDatabaseReader db getMempool
 
 instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
+    getNetwork = R.asks (databaseNetwork . databaseWriterReader)
     getBestBlock = R.ask >>= getBestBlockI
     getBlocksAtHeight h = R.ask >>= getBlocksAtHeightI h
     getBlock b = R.ask >>= getBlockI b

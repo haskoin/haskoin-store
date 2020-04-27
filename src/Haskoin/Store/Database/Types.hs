@@ -40,11 +40,11 @@ import           Data.Word              (Word32, Word64)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
-                                         OutPoint (..), Tx, TxHash)
+                                         Network, OutPoint (..), Tx, TxHash)
 import           Haskoin.Store.Common   (Balance (..), BlockData, BlockRef,
                                          BlockTx (..), Spender, TxData,
                                          UnixTime, Unspent (..), getUnixTime,
-                                         putUnixTime)
+                                         putUnixTime, scriptToStringAddr)
 
 -- | Database key for an address transaction.
 data AddrTxKey
@@ -215,17 +215,15 @@ instance Serialize UnspentKey
 instance Key UnspentKey
 instance KeyValue UnspentKey UnspentVal
 
-toUnspent :: AddrOutKey -> OutVal -> Unspent
-toUnspent AddrOutKey {addrOutKeyB = b, addrOutKeyP = p} OutVal { outValAmount = v
-                                                               , outValScript = s
-                                                               } =
+toUnspent :: Network -> AddrOutKey -> OutVal -> Unspent
+toUnspent net b v =
     Unspent
-        { unspentBlock = b
-        , unspentAmount = v
-        , unspentScript = BSS.toShort s
-        , unspentPoint = p
+        { unspentBlock = addrOutKeyB b
+        , unspentAmount = outValAmount v
+        , unspentScript = BSS.toShort (outValScript v)
+        , unspentPoint = addrOutKeyP b
+        , unspentAddress = scriptToStringAddr net (outValScript v)
         }
-toUnspent _ _ = undefined
 
 -- | Mempool transaction database key.
 data MemKey =
@@ -407,22 +405,20 @@ valToBalance a BalVal { balValAmount = v
         , balanceTotalReceived = r
         }
 
-balanceToVal :: Balance -> (Address, BalVal)
-balanceToVal Balance { balanceAddress = a
-                     , balanceAmount = v
+balanceToVal :: Balance -> BalVal
+balanceToVal Balance { balanceAmount = v
                      , balanceZero = z
                      , balanceUnspentCount = u
                      , balanceTxCount = t
                      , balanceTotalReceived = r
                      } =
-    ( a
-    , BalVal
-          { balValAmount = v
-          , balValZero = z
-          , balValUnspentCount = u
-          , balValTxCount = t
-          , balValTotalReceived = r
-          })
+    BalVal
+        { balValAmount = v
+        , balValZero = z
+        , balValUnspentCount = u
+        , balValTxCount = t
+        , balValTotalReceived = r
+        }
 
 -- | Default balance for an address.
 instance Default BalVal where
@@ -451,14 +447,15 @@ unspentToVal Unspent { unspentBlock = b
     , UnspentVal
           {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
 
-valToUnspent :: OutPoint -> UnspentVal -> Unspent
-valToUnspent p UnspentVal { unspentValBlock = b
-                          , unspentValAmount = v
-                          , unspentValScript = s
-                          } =
+valToUnspent :: Network -> OutPoint -> UnspentVal -> Unspent
+valToUnspent net p UnspentVal { unspentValBlock = b
+                              , unspentValAmount = v
+                              , unspentValScript = s
+                              } =
     Unspent
         { unspentBlock = b
         , unspentPoint = p
         , unspentAmount = v
         , unspentScript = s
+        , unspentAddress = scriptToStringAddr net (BSS.fromShort s)
         }

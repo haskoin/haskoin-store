@@ -25,14 +25,15 @@ import           Data.Maybe                   (catMaybes, fromJust, fromMaybe,
                                                isJust)
 import           Data.Word                    (Word32)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
-                                               OutPoint (..), Tx, TxHash,
-                                               headerHash, txHash)
-import           Haskoin.Store.Common         (Balance, BlockData (..),
+                                               Network, OutPoint (..), Tx,
+                                               TxHash, headerHash, txHash)
+import           Haskoin.Store.Common         (Balance (..), BlockData (..),
                                                BlockRef, BlockTx (..), Limit,
                                                Spender, StoreRead (..),
                                                StoreWrite (..), TxData (..),
                                                UnixTime, Unspent (..),
-                                               applyLimit, zeroBalance)
+                                               applyLimit, scriptToStringAddr,
+                                               zeroBalance)
 import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
                                                balanceToVal, unspentToVal,
                                                valToBalance, valToUnspent)
@@ -63,10 +64,11 @@ data MemoryDatabase = MemoryDatabase
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
     , hMempool :: !(Maybe [BlockTx])
     , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
+    , hNetwork :: !Network
     } deriving (Eq, Show)
 
-emptyMemoryDatabase :: MemoryDatabase
-emptyMemoryDatabase =
+emptyMemoryDatabase :: Network -> MemoryDatabase
+emptyMemoryDatabase net =
     MemoryDatabase
         { hBest = Nothing
         , hBlock = M.empty
@@ -79,6 +81,7 @@ emptyMemoryDatabase =
         , hAddrOut = M.empty
         , hMempool = Nothing
         , hOrphans = M.empty
+        , hNetwork = net
         }
 
 getBestBlockH :: MemoryDatabase -> Maybe BlockHash
@@ -102,8 +105,9 @@ getSpendersH :: TxHash -> MemoryDatabase -> IntMap (Maybe Spender)
 getSpendersH t = M.lookupDefault I.empty t . hSpender
 
 getBalanceH :: Address -> MemoryDatabase -> Balance
-getBalanceH a =
-    fromMaybe (zeroBalance a) . fmap (valToBalance a) . M.lookup a . hBalance
+getBalanceH a mem =
+    fromMaybe (zeroBalance a) . fmap (valToBalance a) . M.lookup a $
+    hBalance mem
 
 getMempoolH :: MemoryDatabase -> Maybe [BlockTx]
 getMempoolH = hMempool
@@ -154,6 +158,7 @@ getAddressUnspentsH addr start limit db =
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty addr (hAddrOut db)
   where
+    net = hNetwork db
     f b hm = map (uncurry (g b)) $ M.toList hm
     g b p (Just u) =
         Just
@@ -162,6 +167,7 @@ getAddressUnspentsH addr start limit db =
                 , unspentAmount = outValAmount u
                 , unspentScript = B.Short.toShort (outValScript u)
                 , unspentPoint = p
+                , unspentAddress = scriptToStringAddr net (outValScript u)
                 }
     g _ _ Nothing = Nothing
     h Unspent {unspentBlock = b} =
@@ -205,9 +211,10 @@ deleteSpenderH op db =
         }
 
 setBalanceH :: Balance -> MemoryDatabase -> MemoryDatabase
-setBalanceH bal db = db {hBalance = M.insert a b (hBalance db)}
+setBalanceH bal db =
+    db {hBalance = M.insert (balanceAddress bal) b (hBalance db)}
   where
-    (a, b) = balanceToVal bal
+    b = balanceToVal bal
 
 insertAddrTxH :: Address -> BlockTx -> MemoryDatabase -> MemoryDatabase
 insertAddrTxH a btx db =
@@ -267,7 +274,9 @@ deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
 getUnspentH :: OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
 getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
-    fmap (valToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
+    fmap (valToUnspent net op) <$> I.lookup (fromIntegral (outPointIndex op)) m
+  where
+    net = hNetwork db
 
 insertUnspentH :: Unspent -> MemoryDatabase -> MemoryDatabase
 insertUnspentH u db =
@@ -294,6 +303,7 @@ deleteUnspentH op db =
         }
 
 instance MonadIO m => StoreRead (ReaderT MemoryState m) where
+    getNetwork = R.asks memoryDatabase >>= fmap hNetwork . readTVarIO
     getBestBlock = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBestBlockH v

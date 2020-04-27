@@ -88,9 +88,13 @@ withStore cfg action = do
     let chain = inboxToMailbox chaininbox
     maybecacheconn <-
         case storeConfCache cfg of
-            Nothing       -> return Nothing
+            Nothing -> return Nothing
             Just redisurl -> Just <$> connectRedis redisurl
-    db <- connectRocksDB (storeConfGap cfg) (storeConfDB cfg)
+    db <-
+        connectRocksDB
+            (storeConfNetwork cfg)
+            (storeConfGap cfg)
+            (storeConfDB cfg)
     case maybecacheconn of
         Nothing -> launch db Nothing chaininbox
         Just cacheconn -> do

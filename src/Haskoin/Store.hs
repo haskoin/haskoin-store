@@ -12,6 +12,7 @@ module Haskoin.Store
     , XPubSummary (..)
     , XPubUnspent (..)
     , DeriveType (..)
+    , NetWrap (..)
     , UnixTime
     , Limit
     , Offset
@@ -24,9 +25,6 @@ module Haskoin.Store
     , transactionData
     , fromTransaction
     , toTransaction
-
-    , BinSerial (..)
-    , JsonSerial (..)
 
     , blockAtOrBefore
     , confirmed

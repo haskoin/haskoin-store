@@ -110,6 +110,7 @@ runRocksDB f =
         runReaderT f db
 
 instance MonadIO m => StoreRead (ReaderT BlockRead m) where
+    getNetwork = runRocksDB getNetwork
     getBestBlock = runRocksDB getBestBlock
     getBlocksAtHeight = runRocksDB . getBlocksAtHeight
     getBlock = runRocksDB . getBlock
@@ -141,8 +142,7 @@ blockStore cfg inbox = do
         BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb}
   where
     ini = do
-        net <- asks (blockConfNet . myConfig)
-        runImport (initBest net) >>= \case
+        runImport initBest >>= \case
             Left e -> do
                 $(logErrorS) "BlockStore" $
                     "Could not initialize block store: " <> fromString (show e)
@@ -179,8 +179,7 @@ processBlock peer block = do
     void . runMaybeT $ do
         checkpeer
         blocknode <- getblocknode
-        net <- asks (blockConfNet . myConfig)
-        lift (runImport (importBlock net block blocknode)) >>= \case
+        lift (runImport (importBlock block blocknode)) >>= \case
             Right deletedtxids -> do
                 listener <- asks (blockConfListener . myConfig)
                 $(logInfoS) "BlockStore" $ "Best block indexed: " <> hexhash
@@ -229,8 +228,7 @@ processTx _p tx =
     isInSync >>= \sync ->
         when sync $ do
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            net <- asks (blockConfNet . myConfig)
-            runImport (newMempoolTx net tx now) >>= \case
+            runImport (newMempoolTx tx now) >>= \case
                 Right (Just deleted) -> do
                     l <- blockConfListener <$> asks myConfig
                     $(logInfoS) "BlockStore" $
@@ -246,7 +244,6 @@ processOrphans =
     isInSync >>= \sync ->
         when sync $ do
             now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            net <- asks (blockConfNet . myConfig)
             old <- getOldOrphans now
             case old of
                 [] -> return ()
@@ -264,7 +261,7 @@ processOrphans =
                     " orphan transactions"
             ops <-
                 zip (map snd orphans) <$>
-                mapM (runImport . uncurry (importOrphan net)) orphans
+                mapM (runImport . uncurry importOrphan) orphans
             let tths =
                     [ (txHash tx, hs)
                     | (tx, emths) <- ops
@@ -346,9 +343,8 @@ pruneMempool =
     deletetxs old = do
         $(logInfoS) "BlockStore" $
             "Removing " <> cs (show (length old)) <> " old mempool transactions"
-        net <- asks (blockConfNet . myConfig)
         forM_ old $ \txid ->
-            runImport (deleteTx net True txid) >>= \case
+            runImport (deleteTx True txid) >>= \case
                 Left _ -> return ()
                 Right txids -> do
                     listener <- asks (blockConfListener . myConfig)
@@ -447,8 +443,7 @@ syncMe peer =
                 $(logErrorS) "BlockStore" $
                     "Reverting best block: " <> blockHashToHex bestblockhash
                 resetPeer
-                net <- asks (blockConfNet . myConfig)
-                lift (runImport (revertBlock net bestblockhash)) >>= \case
+                lift (runImport (revertBlock bestblockhash)) >>= \case
                     Left e -> do
                         $(logErrorS) "BlockStore" $
                             "Could not revert best block: " <> cs (show e)

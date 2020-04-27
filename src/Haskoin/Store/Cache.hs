@@ -1,3 +1,4 @@
+{-# LANGUAGE ApplicativeDo        #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleInstances    #-}
@@ -37,16 +38,17 @@ import qualified Data.IntMap.Strict        as IntMap
 import           Data.List                 (nub, sort)
 import           Data.Map.Strict           (Map)
 import qualified Data.Map.Strict           as Map
-import           Data.Maybe                (catMaybes, fromJust, mapMaybe)
+import           Data.Maybe                (catMaybes, mapMaybe)
 import           Data.Serialize            (decode, encode)
 import           Data.Serialize            (Serialize)
 import           Data.String.Conversions   (cs)
 import           Data.Time.Clock.System    (getSystemTime, systemSeconds)
 import           Data.Word                 (Word32, Word64)
-import           Database.Redis            (Connection, Redis, Reply,
+import           Database.Redis            (Connection, Queued, Redis, RedisCtx,
+                                            RedisTx, Reply, TxResult (..),
                                             checkedConnect, defaultConnectInfo,
-                                            hgetall, parseConnectInfo, runRedis,
-                                            runRedis, zadd, zrangeWithscores,
+                                            hgetall, parseConnectInfo, watch,
+                                            zadd, zrangeWithscores,
                                             zrangebyscoreWithscoresLimit, zrem)
 import qualified Database.Redis            as Redis
 import           GHC.Generics              (Generic)
@@ -77,14 +79,30 @@ import           NQE                       (Inbox, Mailbox, receive)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             liftIO, throwIO)
 
-type RedisReply a = Redis (Either Reply a)
-
-runRedisReply :: MonadIO m => RedisReply a -> CacheT m a
-runRedisReply action =
+runRedis :: MonadIO m => Redis (Either Reply a) -> CacheT m a
+runRedis action =
     asks cacheConn >>= \conn ->
-        liftIO (runRedis conn action) >>= \case
-            Left e -> throwIO (RedisError e)
+        liftIO (Redis.runRedis conn action) >>= \case
             Right x -> return x
+            Left e -> throwIO (RedisError e)
+
+runRedisTx ::
+       MonadIO m
+    => Redis (Either Reply b)
+    -> (b -> RedisTx (Queued a))
+    -> CacheT m a
+runRedisTx pre action =
+    asks cacheConn >>= \conn ->
+        liftIO (Redis.runRedis conn go) >>= \case
+            TxSuccess x -> return x
+            TxAborted -> runRedisTx pre action
+            TxError e -> throwIO (RedisTxError e)
+  where
+    go =
+        pre >>= \x ->
+            case x of
+                Left e  -> throwIO (RedisError e)
+                Right y -> Redis.multiExec (action y)
 
 data CacheConfig =
     CacheConfig
@@ -99,7 +117,8 @@ type CacheT = ReaderT CacheConfig
 
 data CacheError
     = RedisError Reply
-    | LogicError String
+    | RedisTxError !String
+    | LogicError !String
     deriving (Show, Eq, Generic, NFData, Exception)
 
 connectRedis :: MonadIO m => String -> m Connection
@@ -113,6 +132,7 @@ connectRedis redisurl = do
     liftIO (checkedConnect conninfo)
 
 instance (MonadLoggerIO m, StoreRead m) => StoreRead (CacheT m) where
+    getNetwork = lift getNetwork
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
@@ -227,21 +247,23 @@ getXPubBalances xpub =
             fst <$> newXPubC xpub
 
 isXPubCached :: MonadIO m => XPubSpec -> CacheT m Bool
-isXPubCached = runRedisReply . redisIsXPubCached
+isXPubCached = runRedis . redisIsXPubCached
 
-redisIsXPubCached :: XPubSpec -> RedisReply Bool
+redisIsXPubCached :: RedisCtx m f => XPubSpec -> m (f Bool)
 redisIsXPubCached xpub = Redis.exists (balancesPfx <> encode xpub)
+
+redisWatchXPubCached :: [XPubSpec] -> Redis (Either Reply [Bool])
+redisWatchXPubCached [] = return (pure [])
+redisWatchXPubCached xpubs = do
+    w <- watch $ map ((balancesPfx <>) . encode) xpubs
+    ys <- sequence <$> forM xpubs redisIsXPubCached
+    return $ w >> ys
 
 cacheGetXPubBalances :: MonadIO m => XPubSpec -> CacheT m [XPubBal]
 cacheGetXPubBalances xpub = do
-    now <- systemSeconds <$> liftIO getSystemTime
-    runRedisReply $ do
-        bals <- redisGetXPubBalances xpub
-        x <-
-            case bals of
-                Right (_:_) -> touchKeys now [xpub]
-                _           -> return (pure 0)
-        return $ x >> bals
+    bals <- runRedis $ redisGetXPubBalances xpub
+    touchKeys [xpub]
+    return bals
 
 cacheGetXPubTxs ::
        MonadIO m
@@ -251,14 +273,9 @@ cacheGetXPubTxs ::
     -> Maybe Limit
     -> CacheT m [BlockTx]
 cacheGetXPubTxs xpub start offset limit = do
-    now <- systemSeconds <$> liftIO getSystemTime
-    runRedisReply $ do
-        txs <- redisGetXPubTxs xpub start offset limit
-        x <-
-            case txs of
-                Right (_:_) -> touchKeys now [xpub]
-                _           -> return (pure 0)
-        return $ x >> txs
+    txs <- runRedis $ redisGetXPubTxs xpub start offset limit
+    touchKeys [xpub]
+    return txs
 
 cacheGetXPubUnspents ::
        MonadIO m
@@ -268,13 +285,11 @@ cacheGetXPubUnspents ::
     -> Maybe Limit
     -> CacheT m [(BlockRef, OutPoint)]
 cacheGetXPubUnspents xpub start offset limit = do
-    now <- systemSeconds <$> liftIO getSystemTime
-    runRedisReply $ do
-        x <- touchKeys now [xpub]
-        uns <- redisGetXPubUnspents xpub start offset limit
-        return $ x >> uns
+    uns <- runRedis $ redisGetXPubUnspents xpub start offset limit
+    touchKeys [xpub]
+    return uns
 
-redisGetXPubBalances :: XPubSpec -> RedisReply [XPubBal]
+redisGetXPubBalances :: (Functor f, RedisCtx m f) => XPubSpec -> m (f [XPubBal])
 redisGetXPubBalances xpub =
     getAllFromMap (balancesPfx <> encode xpub) >>=
     return . fmap (sort . map (uncurry f))
@@ -282,11 +297,12 @@ redisGetXPubBalances xpub =
     f p b = XPubBal {xPubBalPath = p, xPubBal = b}
 
 redisGetXPubTxs ::
-       XPubSpec
+       (Applicative f, RedisCtx m f)
+    => XPubSpec
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
-    -> RedisReply [BlockTx]
+    -> m (f [BlockTx])
 redisGetXPubTxs xpub start offset limit = do
     xs <-
         getFromSortedSet
@@ -299,11 +315,12 @@ redisGetXPubTxs xpub start offset limit = do
     f t s = BlockTx {blockTxHash = t, blockTxBlock = scoreBlockRef s}
 
 redisGetXPubUnspents ::
-       XPubSpec
+       (Applicative f, RedisCtx m f)
+    => XPubSpec
     -> Maybe BlockRef
     -> Offset
     -> Maybe Limit
-    -> RedisReply [(BlockRef, OutPoint)]
+    -> m (f [(BlockRef, OutPoint)])
 redisGetXPubUnspents xpub start offset limit = do
     xs <-
         getFromSortedSet
@@ -336,12 +353,12 @@ scoreBlockRef s
     p = fromIntegral (m .&. 0x03ffffff)
 
 getFromSortedSet ::
-       Serialize a
+       (Applicative f, RedisCtx m f, Serialize a)
     => ByteString
     -> Maybe Double
     -> Integer
     -> Maybe Integer
-    -> RedisReply [(a, Double)]
+    -> m (f [(a, Double)])
 getFromSortedSet key Nothing offset Nothing = do
     xs <- zrangeWithscores key offset (-1)
     return $ do
@@ -377,7 +394,10 @@ getFromSortedSet key (Just score) offset (Just count) = do
         ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
         return (rights ys)
 
-getAllFromMap :: (Serialize k, Serialize v) => ByteString -> RedisReply [(k, v)]
+getAllFromMap ::
+       (Functor f, RedisCtx m f, Serialize k, Serialize v)
+    => ByteString
+    -> m (f [(k, v)])
 getAllFromMap n = do
     fxs <- hgetall n
     return $ do
@@ -434,7 +454,7 @@ cacheWriter cfg inbox =
 pruneDB :: (MonadLoggerIO m, StoreRead m) => CacheT m Integer
 pruneDB = do
     x <- asks cacheMax
-    s <- runRedisReply Redis.dbsize
+    s <- runRedis Redis.dbsize
     if s > x
         then do
             n <- flush (s - x)
@@ -444,20 +464,25 @@ pruneDB = do
         else return 0
   where
     flush n =
-        runRedisReply $
         case min 1000 (n `div` 64) of
-            0 -> return (pure 0)
+            0 -> return 0
             x -> do
-                eks <- getFromSortedSet maxKey Nothing 0 (Just x)
-                case eks of
-                    Right ks -> do
-                        xs <- sequence <$> forM (map fst ks) redisDelXPubKeys
-                        return $ xs >>= return . sum
-                    Left _ -> return $ eks >> return 0
+                ks <-
+                    fmap (map fst) . runRedis $
+                    getFromSortedSet maxKey Nothing 0 (Just x)
+                delXPubKeys ks
 
-touchKeys :: Real a => a -> [XPubSpec] -> RedisReply Integer
-touchKeys _ [] = return (pure 0)
-touchKeys now xpubs =
+touchKeys :: MonadIO m => [XPubSpec] -> CacheT m Integer
+touchKeys xpubs = do
+    now <- systemSeconds <$> liftIO getSystemTime
+    runRedisTx (redisWatchXPubCached xpubs) $ \ys -> do
+        let xpubs' = map fst . filter snd $ zip xpubs ys
+        redisTouchKeys now xpubs'
+
+redisTouchKeys ::
+       (Applicative f, RedisCtx m f, Real a) => a -> [XPubSpec] -> m (f Integer)
+redisTouchKeys _ [] = return (pure 0)
+redisTouchKeys now xpubs =
     Redis.zadd maxKey $ map ((realToFrac now, ) . encode) xpubs
 
 cacheWriterReact ::
@@ -490,20 +515,20 @@ newXPubC xpub = do
                 "Not caching xpub with " <> cs (show n) <> " used addresses"
             return (bals, False)
   where
+    op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     go bals = do
         utxo <- lift $ xPubUnspents xpub Nothing 0 Nothing
         xtxs <- lift $ xPubTxs xpub Nothing 0 Nothing
         now <- systemSeconds <$> liftIO getSystemTime
-        runRedisReply $ do
-            x <- redisAddXPubBalances xpub bals
-            y <-
-                redisAddXPubUnspents
-                    xpub
-                    (map ((\u -> (unspentPoint u, unspentBlock u)) . xPubUnspent)
-                         utxo)
-            z <- redisAddXPubTxs xpub xtxs
-            a <- touchKeys now [xpub]
-            return $ x >> y >> z >> a >> return ()
+        runRedisTx (redisWatchXPubCached [xpub]) $ \ts ->
+            if and ts
+                then return (pure ())
+                else do
+                    x <- redisAddXPubBalances xpub bals
+                    y <- redisAddXPubUnspents xpub (map op utxo)
+                    z <- redisAddXPubTxs xpub xtxs
+                    t <- redisTouchKeys now [xpub]
+                    return $ x >> y >> z >> t >> pure ()
 
 newBlockC :: (MonadLoggerIO m, StoreRead m) => CacheT m ()
 newBlockC =
@@ -606,30 +631,37 @@ importMultiTxC txs = do
         cacheGetAddrsInfo alladdrs
     balmap <-
         Map.fromList . zipWith (,) alladdrs <$>
-        mapM (lift . getBalance) alladdrs
+        mapM (lift . getBalance) (Map.keys addrmap)
     unspentmap <-
         Map.fromList . catMaybes . zipWith (\p -> fmap (p, )) allops <$>
         lift (mapM getUnspent allops)
     gap <- getMaxGap
     now <- systemSeconds <$> liftIO getSystemTime
     newaddrs <-
-        runRedisReply $ do
-            x <- redisImportMultiTx addrmap unspentmap txs
-            y <- redisUpdateBalances addrmap balmap
-            z <- touchKeys now (allxpubs addrmap)
-            newaddrs <- redisGetNewAddrs gap addrmap
-            return $ x >> y >> z >> newaddrs
+        runRedisTx (redisWatchXPubCached (allxpubs addrmap)) $ \ys ->
+            if or ys
+                then do
+                    let xpubs = map fst . filter snd $ zip (allxpubs addrmap) ys
+                        addrmap' = faddrmap xpubs addrmap
+                    x <- redisImportMultiTx addrmap' unspentmap txs
+                    y <- redisUpdateBalances addrmap' balmap
+                    z <- redisTouchKeys now (allxpubs addrmap')
+                    n <- redisGetNewAddrs gap addrmap'
+                    return $ x >> y >> z >> n
+                else return (pure Map.empty)
     unless (Map.null newaddrs) $ cacheAddAddresses newaddrs
   where
+    faddrmap xpubs = Map.filter ((`elem` xpubs) . addressXPubSpec)
     allops = map snd $ concatMap txInputs txs <> concatMap txOutputs txs
     alladdrs = nub . map fst $ concatMap txInputs txs <> concatMap txOutputs txs
     allxpubs addrmap = nub . map addressXPubSpec $ Map.elems addrmap
 
 redisImportMultiTx ::
-       Map Address AddressXPub
+       (Monad f, RedisCtx m f)
+    => Map Address AddressXPub
     -> Map OutPoint Unspent
     -> [TxData]
-    -> RedisReply ()
+    -> m (f ())
 redisImportMultiTx addrmap unspentmap txs = do
     xs <- mapM importtxentries txs
     return $ sequence xs >> return ()
@@ -683,14 +715,16 @@ redisImportMultiTx addrmap unspentmap txs = do
     utxos td = txOutputs td
 
 redisUpdateBalances ::
-       Map Address AddressXPub -> Map Address Balance -> RedisReply ()
-redisUpdateBalances addrmap balmap = do
-    bs <-
-        forM (Map.keys addrmap) $ \a ->
-            let ainfo = fromJust (Map.lookup a addrmap)
-                bal = fromJust (Map.lookup a balmap)
-             in redisAddXPubBalances (addressXPubSpec ainfo) [xpubbal ainfo bal]
-    return $ sequence bs >> return ()
+       (Monad f, RedisCtx m f)
+    => Map Address AddressXPub
+    -> Map Address Balance
+    -> m (f ())
+redisUpdateBalances addrmap balmap =
+    fmap (void . sequence) . forM (Map.keys addrmap) $ \a ->
+        case (Map.lookup a addrmap, Map.lookup a balmap) of
+            (Just ainfo, Just bal) ->
+                redisAddXPubBalances (addressXPubSpec ainfo) [xpubbal ainfo bal]
+            _ -> return (pure ())
   where
     xpubbal ainfo bal =
         XPubBal {xPubBalPath = addressXPubPath ainfo, xPubBal = bal}
@@ -701,7 +735,7 @@ cacheAddAddresses ::
     -> CacheT m ()
 cacheAddAddresses addrmap = do
     gap <- getMaxGap
-    newmap <- runRedisReply (redisGetNewAddrs gap addrmap)
+    newmap <- runRedis (redisGetNewAddrs gap addrmap)
     balmap <- Map.fromList <$> mapM getbal (Map.keys newmap)
     utxomap <- Map.fromList <$> mapM getutxo (Map.keys newmap)
     txmap <- Map.fromList <$> mapM gettxmap (Map.keys newmap)
@@ -709,57 +743,74 @@ cacheAddAddresses addrmap = do
         xpubbals = getxpubbals newmap balmap
         unspents = getunspents newmap utxomap
         txs = gettxs newmap txmap
+        xpubs = map addressXPubSpec (Map.elems addrmap)
     newaddrs <-
-        runRedisReply $ do
+        runRedisTx (redisWatchXPubCached xpubs) $ \ys -> do
+            let xpubs' = map fst . filter snd $ zip xpubs ys
+                xpubbals' =
+                    HashMap.filterWithKey (\x _ -> x `elem` xpubs') xpubbals
+                unspents' =
+                    HashMap.filterWithKey (\x _ -> x `elem` xpubs') unspents
+                txs' = HashMap.filterWithKey (\x _ -> x `elem` xpubs') txs
+                notnulls' =
+                    Map.filter (\x -> addressXPubSpec x `elem` xpubs') notnulls
             x' <-
-                forM (HashMap.toList xpubbals) $ \(x, bs) ->
+                forM (HashMap.toList xpubbals') $ \(x, bs) ->
                     redisAddXPubBalances x bs
             y' <-
-                forM (HashMap.toList unspents) $ \(x, us) ->
+                forM (HashMap.toList unspents') $ \(x, us) ->
                     redisAddXPubUnspents x (map uns us)
-            z' <- forM (HashMap.toList txs) $ \(x, ts) -> redisAddXPubTxs x ts
-            newaddrs <- redisGetNewAddrs gap notnulls
+            z' <- forM (HashMap.toList txs') $ \(x, ts) -> redisAddXPubTxs x ts
+            new <- redisGetNewAddrs gap notnulls'
             return $ do
                 _ <- sequence x'
                 _ <- sequence y'
                 _ <- sequence z'
-                newaddrs
+                new
     unless (null newaddrs) $ cacheAddAddresses newaddrs
   where
     uns u = (unspentPoint u, unspentBlock u)
     gettxs newmap txmap =
         let f a ts =
-                let i = fromJust (Map.lookup a newmap)
-                 in (addressXPubSpec i, ts)
+                case Map.lookup a newmap of
+                    Nothing -> Nothing
+                    Just i  -> Just (addressXPubSpec i, ts)
             g m (x, ts) = HashMap.insertWith (<>) x ts m
-         in foldl g HashMap.empty (map (uncurry f) (Map.toList txmap))
+         in foldl g HashMap.empty (mapMaybe (uncurry f) (Map.toList txmap))
     getunspents newmap utxomap =
         let f a us =
-                let i = fromJust (Map.lookup a newmap)
-                 in (addressXPubSpec i, us)
+                case Map.lookup a newmap of
+                    Nothing -> Nothing
+                    Just i  -> Just (addressXPubSpec i, us)
             g m (x, us) = HashMap.insertWith (<>) x us m
-         in foldl g HashMap.empty (map (uncurry f) (Map.toList utxomap))
+         in foldl g HashMap.empty (mapMaybe (uncurry f) (Map.toList utxomap))
     getxpubbals newmap balmap =
         let f a b =
-                let i = fromJust (Map.lookup a newmap)
-                 in ( addressXPubSpec i
-                    , XPubBal {xPubBal = b, xPubBalPath = addressXPubPath i})
+                case Map.lookup a newmap of
+                    Nothing -> Nothing
+                    Just i ->
+                        Just
+                            ( addressXPubSpec i
+                            , XPubBal
+                                  {xPubBal = b, xPubBalPath = addressXPubPath i})
             g m (x, b) = HashMap.insertWith (<>) x [b] m
-         in foldl g HashMap.empty (map (uncurry f) (Map.toList balmap))
+         in foldl g HashMap.empty (mapMaybe (uncurry f) (Map.toList balmap))
     getnotnull newmap balmap =
         let f a _ =
-                let i = fromJust (Map.lookup a newmap)
-                 in (a, i)
-         in Map.fromList . map (uncurry f) . Map.toList $
+                case Map.lookup a newmap of
+                    Nothing -> Nothing
+                    Just i  -> Just (a, i)
+         in Map.fromList . mapMaybe (uncurry f) . Map.toList $
             Map.filter (not . nullBalance) balmap
     getbal a = (a, ) <$> lift (getBalance a)
     getutxo a = (a, ) <$> lift (getAddressUnspents a Nothing Nothing)
     gettxmap a = (a, ) <$> lift (getAddressTxs a Nothing Nothing)
 
 redisGetNewAddrs ::
-       KeyIndex
+       (Monad f, RedisCtx m f)
+    => KeyIndex
     -> Map Address AddressXPub
-    -> RedisReply (Map Address AddressXPub)
+    -> m (f (Map Address AddressXPub))
 redisGetNewAddrs gap addrmap =
     xbalmap >>= \xbalmap' ->
         return $ do
@@ -808,36 +859,50 @@ syncMempoolC = do
     importMultiTxC txs
 
 cacheGetMempool :: MonadIO m => CacheT m [BlockTx]
-cacheGetMempool = runRedisReply redisGetMempool
+cacheGetMempool = runRedis redisGetMempool
 
 cacheGetHead :: MonadIO m => CacheT m (Maybe BlockHash)
-cacheGetHead = runRedisReply redisGetHead
+cacheGetHead = runRedis redisGetHead
 
 cacheSetHead :: MonadIO m => BlockHash -> CacheT m ()
-cacheSetHead bh = runRedisReply (redisSetHead bh) >> return ()
+cacheSetHead bh = runRedis (redisSetHead bh) >> return ()
 
 cacheGetAddrsInfo ::
        MonadIO m => [Address] -> CacheT m [Maybe AddressXPub]
-cacheGetAddrsInfo as = runRedisReply (redisGetAddrsInfo as)
+cacheGetAddrsInfo as = runRedis (redisGetAddrsInfo as)
 
-redisAddToMempool :: BlockTx -> Redis (Either Reply Integer)
+redisAddToMempool :: RedisCtx m f => BlockTx -> m (f Integer)
 redisAddToMempool btx =
     zadd
         mempoolSetKey
         [(blockRefScore (blockTxBlock btx), encode (blockTxHash btx))]
 
-redisRemFromMempool :: TxHash -> RedisReply Integer
+redisRemFromMempool :: RedisCtx m f => TxHash -> m (f Integer)
 redisRemFromMempool th = zrem mempoolSetKey [encode th]
 
-redisSetAddrInfo :: Address -> AddressXPub -> RedisReply Redis.Status
+redisSetAddrInfo :: RedisCtx m f => Address -> AddressXPub -> m (f Redis.Status)
 redisSetAddrInfo a i = Redis.set (addrPfx <> encode a) (encode i)
 
-redisDelXPubKeys :: XPubSpec -> RedisReply Integer
-redisDelXPubKeys xpub = do
-    ebals <- redisGetXPubBalances xpub
-    case ebals of
-        Right bals -> go (map (balanceAddress . xPubBal) bals)
-        Left _     -> return $ ebals >> return 0
+delXPubKeys :: MonadIO m => [XPubSpec] -> CacheT m Integer
+delXPubKeys xpubs = do
+    is <- runRedisTx (watchRedisXPubBalances xpubs) $ \xbals -> do
+        xs <- forM xbals $ uncurry redisDelXPubKeys
+        return $ sequence xs
+    return $ sum is
+
+watchRedisXPubBalances ::
+       [XPubSpec] -> Redis (Either Reply [(XPubSpec, [XPubBal])])
+watchRedisXPubBalances [] = return (pure [])
+watchRedisXPubBalances xpubs = do
+    watch $ map (\xpub -> balancesPfx <> encode xpub) xpubs
+    bals' <- mapM redisGetXPubBalances xpubs
+    return $ do
+        bals <- sequence bals'
+        return $ zip xpubs bals
+
+redisDelXPubKeys ::
+       (Monad f, RedisCtx m f) => XPubSpec -> [XPubBal] -> m (f Integer)
+redisDelXPubKeys xpub bals = go (map (balanceAddress . xPubBal) bals)
   where
     go addrs = do
         addrcount <-
@@ -856,27 +921,33 @@ redisDelXPubKeys xpub = do
             bal' <- balcount
             return $ addrs' + txset' + utxo' + bal'
 
-redisAddXPubTxs :: XPubSpec -> [BlockTx] -> RedisReply Integer
-redisAddXPubTxs _ [] = return (Right 0)
+redisAddXPubTxs ::
+       (Applicative f, RedisCtx m f) => XPubSpec -> [BlockTx] -> m (f Integer)
+redisAddXPubTxs _ [] = return (pure 0)
 redisAddXPubTxs xpub btxs =
     zadd (txSetPfx <> encode xpub) $
     map (\t -> (blockRefScore (blockTxBlock t), encode (blockTxHash t))) btxs
 
-redisRemXPubTxs :: XPubSpec -> [TxHash] -> RedisReply Integer
+redisRemXPubTxs :: RedisCtx m f => XPubSpec -> [TxHash] -> m (f Integer)
 redisRemXPubTxs xpub txhs = zrem (txSetPfx <> encode xpub) (map encode txhs)
 
-redisAddXPubUnspents :: XPubSpec -> [(OutPoint, BlockRef)] -> RedisReply Integer
-redisAddXPubUnspents _ [] = return (Right 0)
+redisAddXPubUnspents ::
+       (Applicative f, RedisCtx m f)
+    => XPubSpec
+    -> [(OutPoint, BlockRef)]
+    -> m (f Integer)
+redisAddXPubUnspents _ [] = return (pure 0)
 redisAddXPubUnspents xpub utxo =
     zadd (utxoPfx <> encode xpub) $
     map (\(p, r) -> (blockRefScore r, encode p)) utxo
 
 redisRemXPubUnspents ::
-       XPubSpec -> [OutPoint] -> RedisReply Integer
-redisRemXPubUnspents _ []     = return (Right 0)
+       (Applicative f, RedisCtx m f) => XPubSpec -> [OutPoint] -> m (f Integer)
+redisRemXPubUnspents _ []     = return (pure 0)
 redisRemXPubUnspents xpub ops = zrem (utxoPfx <> encode xpub) (map encode ops)
 
-redisAddXPubBalances :: XPubSpec -> [XPubBal] -> RedisReply ()
+redisAddXPubBalances ::
+       (Monad f, RedisCtx m f) => XPubSpec -> [XPubBal] -> m (f ())
 redisAddXPubBalances _ [] = return (pure ())
 redisAddXPubBalances xpub bals = do
     xs <- mapM (uncurry (Redis.hset (balancesPfx <> encode xpub))) entries
@@ -890,11 +961,12 @@ redisAddXPubBalances xpub bals = do
   where
     entries = map (\b -> (encode (xPubBalPath b), encode (xPubBal b))) bals
 
-redisSetHead :: BlockHash -> RedisReply Redis.Status
+redisSetHead :: RedisCtx m f => BlockHash -> m (f Redis.Status)
 redisSetHead bh = Redis.set bestBlockKey (encode bh)
 
-redisGetAddrsInfo ::  [Address] -> RedisReply [Maybe AddressXPub]
-redisGetAddrsInfo [] = return (Right [])
+redisGetAddrsInfo ::
+       (Monad f, RedisCtx m f) => [Address] -> m (f [Maybe AddressXPub])
+redisGetAddrsInfo [] = return (pure [])
 redisGetAddrsInfo as = do
     is <- mapM (\a -> Redis.get (addrPfx <> encode a)) as
     return $ do
@@ -957,12 +1029,12 @@ txOutputs td =
         f (Left _) _  = Nothing
      in catMaybes (zipWith f as ps)
 
-redisGetHead :: RedisReply (Maybe BlockHash)
+redisGetHead :: (Functor f, RedisCtx m f) => m (f (Maybe BlockHash))
 redisGetHead = do
     x <- Redis.get bestBlockKey
     return $ (eitherToMaybe . decode =<<) <$> x
 
-redisGetMempool :: RedisReply [BlockTx]
+redisGetMempool :: (Applicative f, RedisCtx m f) => m (f [BlockTx])
 redisGetMempool = do
     xs <- getFromSortedSet mempoolSetKey Nothing 0 Nothing
     return $ do

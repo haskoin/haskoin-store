@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Haskoin.Store.Common
@@ -12,11 +14,10 @@ module Haskoin.Store.Common
     , getUnixTime
     , putUnixTime
     , BlockPos
+    , NetWrap(..)
     , XPubSpec(..)
     , StoreRead(..)
     , StoreWrite(..)
-    , JsonSerial(..)
-    , BinSerial(..)
     , BlockRef(..)
     , BlockTx(..)
     , confirmed
@@ -56,23 +57,25 @@ module Haskoin.Store.Common
     , applyLimitC
     , applyOffsetLimitC
     , sortTxs
+    , scriptToStringAddr
     ) where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
 import           Control.Applicative       ((<|>))
 import           Control.DeepSeq           (NFData)
 import           Control.Exception         (Exception)
-import           Control.Monad             (guard, mzero)
+import           Control.Monad             (guard, join, mzero)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
-import           Data.Aeson                (Encoding, ToJSON (..), Value (..),
-                                            object, pairs, (.=))
+import           Data.Aeson                (FromJSON (..), ToJSON (..),
+                                            Value (..), object, (.!=), (.:),
+                                            (.:?), (.=))
 import qualified Data.Aeson                as A
-import qualified Data.Aeson.Encoding       as A
+import           Data.Aeson.Types          (Parser)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B
 import           Data.ByteString.Short     (ShortByteString)
-import qualified Data.ByteString.Short     as B.Short
+import qualified Data.ByteString.Short     as BSS
 import           Data.Function             (on)
 import           Data.Hashable             (Hashable (..))
 import qualified Data.IntMap               as I
@@ -80,30 +83,26 @@ import           Data.IntMap.Strict        (IntMap)
 import           Data.List                 (nub, partition, sortBy)
 import           Data.Maybe                (catMaybes, isJust, listToMaybe,
                                             mapMaybe)
-import           Data.Serialize            (Get, Put, Putter, Serialize (..),
-                                            getListOf, getShortByteString,
+import           Data.Serialize            (Get, Put, Serialize (..),
                                             getWord32be, getWord64be, getWord8,
-                                            putListOf, putShortByteString,
                                             putWord32be, putWord64be, putWord8)
 import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
-import qualified Data.Text.Encoding        as T
+import           Data.Text                 (Text)
 import           Data.Word                 (Word32, Word64)
 import           GHC.Generics              (Generic)
 import           Haskoin                   (Address, Block, BlockHash,
                                             BlockHeader (..), BlockHeight,
-                                            BlockNode, BlockWork, HostAddress,
-                                            KeyIndex, Network (..),
-                                            NetworkAddress (..), OutPoint (..),
+                                            BlockNode, BlockWork, KeyIndex,
+                                            Network (..), OutPoint (..),
                                             PubKeyI (..), RejectCode (..),
                                             Tx (..), TxHash (..), TxIn (..),
                                             TxOut (..), WitnessStack,
-                                            XPubKey (..), addrToJSON,
-                                            addrToString, deriveAddr,
+                                            XPubKey (..), addrToString,
+                                            decodeHex, deriveAddr,
                                             deriveCompatWitnessAddr,
                                             deriveWitnessAddr, eitherToMaybe,
-                                            encodeHex, headerHash,
-                                            hostToSockAddr, pubSubKey,
+                                            encodeHex, headerHash, pubSubKey,
                                             scriptToAddressBS, stringToAddr,
                                             txHash, wrapPubKey)
 import           Haskoin.Node              (Peer)
@@ -182,9 +181,15 @@ type BlockPos = Word32
 type Offset = Word32
 type Limit = Word32
 
+data NetWrap a = NetWrap Network a
+
+instance ToJSON (NetWrap a) => ToJSON (NetWrap [a]) where
+    toJSON (NetWrap net xs) = toJSON $ map (toJSON . NetWrap net) xs
+
 class Monad m =>
       StoreRead m
     where
+    getNetwork :: m Network
     getBestBlock :: m (Maybe BlockHash)
     getBlocksAtHeight :: BlockHeight -> m [BlockHash]
     getBlock :: BlockHash -> m (Maybe BlockData)
@@ -338,8 +343,7 @@ xPubBalsUnspents bals start offset limit = do
         uns <- getAddressUnspents a start limit
         let xuns =
                 map
-                    (\t ->
-                          XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
+                    (\t -> XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
                     uns
         (xuns <>) <$> go xs
 
@@ -388,46 +392,6 @@ putUnixTime w = putWord64be $ maxBound - w
 getUnixTime :: Get Word64
 getUnixTime = (maxBound -) <$> getWord64be
 
-class JsonSerial a where
-    jsonSerial :: Network -> a -> Encoding
-    jsonValue :: Network -> a -> Value
-
-instance JsonSerial a => JsonSerial [a] where
-    jsonSerial net = A.list (jsonSerial net)
-    jsonValue net = toJSON . (jsonValue net)
-
-instance JsonSerial TxHash where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial TxHash where
-    binSerial _ = put
-    binDeserial _  = get
-
-instance BinSerial Address where
-    binSerial net a =
-        case addrToString net a of
-            Nothing -> put B.empty
-            Just x  -> put $ T.encodeUtf8 x
-
-    binDeserial net = do
-          bs <- get
-          guard (not (B.null bs))
-          t <- case T.decodeUtf8' bs of
-            Left _  -> mzero
-            Right v -> return v
-          case stringToAddr net t of
-            Nothing -> mzero
-            Just x  -> return x
-
-class BinSerial a where
-    binSerial :: Network -> Putter a
-    binDeserial :: Network -> Get a
-
-instance BinSerial a => BinSerial [a] where
-    binSerial net = putListOf (binSerial net)
-    binDeserial net = getListOf (binDeserial net)
-
 -- | Reference to a block where a transaction is stored.
 data BlockRef
     = BlockRef
@@ -461,34 +425,25 @@ instance Serialize BlockRef where
             p <- (maxBound -) <$> getWord32be
             return BlockRef {blockRefHeight = h, blockRefPos = p}
 
-instance BinSerial BlockRef where
-    binSerial _ BlockRef {blockRefHeight = h, blockRefPos = p} = do
-        putWord8 0x00
-        putWord32be h
-        putWord32be p
-    binSerial _ MemRef {memRefTime = t} = do
-        putWord8 0x01
-        putWord64be t
-
-    binDeserial _ = getWord8 >>=
-        \case
-            0x00 -> BlockRef <$> getWord32be <*> getWord32be
-            0x01 -> MemRef <$> getUnixTime
-            _ -> fail "Expected fst byte to be 0x00 or 0x01"
-
--- | JSON serialization for 'BlockRef'.
-blockRefPairs :: A.KeyValue kv => BlockRef -> [kv]
-blockRefPairs BlockRef {blockRefHeight = h, blockRefPos = p} =
-    ["height" .= h, "position" .= p]
-blockRefPairs MemRef {memRefTime = t} = ["mempool" .= t]
-
 confirmed :: BlockRef -> Bool
 confirmed BlockRef {} = True
 confirmed MemRef {}   = False
 
 instance ToJSON BlockRef where
-    toJSON = object . blockRefPairs
-    toEncoding = pairs . mconcat . blockRefPairs
+    toJSON BlockRef {blockRefHeight = h, blockRefPos = p} =
+        object ["height" .= h, "position" .= p]
+    toJSON MemRef {memRefTime = t} = object ["mempool" .= t]
+
+instance FromJSON BlockRef where
+    parseJSON = A.withObject "blockref" $ \o -> b o <|> m o
+      where
+        b o = do
+            height <- o .: "height"
+            position <- o .: "position"
+            return BlockRef {blockRefHeight = height, blockRefPos = position}
+        m o = do
+            mempool <- o .: "mempool"
+            return MemRef {memRefTime = mempool}
 
 -- | Transaction in relation to an address.
 data BlockTx = BlockTx
@@ -498,43 +453,33 @@ data BlockTx = BlockTx
       -- ^ transaction hash
     } deriving (Show, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
--- | JSON serialization for 'AddressTx'.
-blockTxPairs :: A.KeyValue kv => BlockTx -> [kv]
-blockTxPairs btx =
-    [ "txid" .= blockTxHash btx
-    , "block" .= blockTxBlock btx
-    ]
-
 instance ToJSON BlockTx where
-    toJSON = object . blockTxPairs
-    toEncoding = pairs . mconcat . blockTxPairs
+    toJSON btx = object ["txid" .= blockTxHash btx, "block" .= blockTxBlock btx]
 
-instance JsonSerial BlockTx where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial BlockTx where
-    binSerial net BlockTx { blockTxBlock = b, blockTxHash = h } = do
-        binSerial net b
-        binSerial net h
-
-    binDeserial net = BlockTx <$> binDeserial net <*> binDeserial net
+instance FromJSON BlockTx where
+    parseJSON =
+        A.withObject "blocktx" $ \o -> do
+            txid <- o .: "txid"
+            block <- o .: "block"
+            return BlockTx {blockTxBlock = block, blockTxHash = txid}
 
 -- | Address balance information.
-data Balance = Balance
-    { balanceAddress       :: !Address
+data Balance =
+    Balance
+        { balanceAddress       :: !Address
       -- ^ address balance
-    , balanceAmount        :: !Word64
+        , balanceAmount        :: !Word64
       -- ^ confirmed balance
-    , balanceZero          :: !Word64
+        , balanceZero          :: !Word64
       -- ^ unconfirmed balance
-    , balanceUnspentCount  :: !Word64
+        , balanceUnspentCount  :: !Word64
       -- ^ number of unspent outputs
-    , balanceTxCount       :: !Word64
+        , balanceTxCount       :: !Word64
       -- ^ number of transactions
-    , balanceTotalReceived :: !Word64
+        , balanceTotalReceived :: !Word64
       -- ^ total amount from all outputs in this address
-    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
+        }
+    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 zeroBalance :: Address -> Balance
 zeroBalance a =
@@ -556,113 +501,78 @@ nullBalance Balance { balanceAmount = 0
                     } = True
 nullBalance _ = False
 
--- | JSON serialization for 'Balance'.
-balancePairs :: A.KeyValue kv => Network -> Balance -> [kv]
-balancePairs net ab =
-    [ "address" .= addrToJSON net (balanceAddress ab)
-    , "confirmed" .= balanceAmount ab
-    , "unconfirmed" .= balanceZero ab
-    , "utxo" .= balanceUnspentCount ab
-    , "txs" .= balanceTxCount ab
-    , "received" .= balanceTotalReceived ab
-    ]
+instance ToJSON (NetWrap Balance) where
+    toJSON (NetWrap net b) =
+        object $
+        [ "address" .= addrToString net (balanceAddress b)
+        , "confirmed" .= balanceAmount b
+        , "unconfirmed" .= balanceZero b
+        , "utxo" .= balanceUnspentCount b
+        , "txs" .= balanceTxCount b
+        , "received" .= balanceTotalReceived b
+        ]
 
-balanceToJSON :: Network -> Balance -> Value
-balanceToJSON net = object . balancePairs net
-
-balanceToEncoding :: Network -> Balance -> Encoding
-balanceToEncoding net = pairs . mconcat . balancePairs net
-
-instance JsonSerial Balance where
-    jsonSerial = balanceToEncoding
-    jsonValue = balanceToJSON
-
-instance BinSerial Balance where
-    binSerial net Balance { balanceAddress = a
-                          , balanceAmount = v
-                          , balanceZero = z
-                          , balanceUnspentCount = u
-                          , balanceTxCount = c
-                          , balanceTotalReceived = t
-                          } = do
-        binSerial net a
-        putWord64be v
-        putWord64be z
-        putWord64be u
-        putWord64be c
-        putWord64be t
-
-    binDeserial net =
-      Balance <$> binDeserial net
-        <*> getWord64be
-        <*> getWord64be
-        <*> getWord64be
-        <*> getWord64be
-        <*> getWord64be
-
+instance FromJSON (Network -> Maybe Balance) where
+    parseJSON =
+        A.withObject "balance" $ \o -> do
+            amount <- o .: "confirmed"
+            unconfirmed <- o .: "unconfirmed"
+            utxo <- o .: "utxo"
+            txs <- o .: "txs"
+            received <- o .: "received"
+            address <- o .: "address"
+            return $ \net ->
+                stringToAddr net address >>= \a ->
+                    return
+                        Balance
+                            { balanceAddress = a
+                            , balanceAmount = amount
+                            , balanceUnspentCount = utxo
+                            , balanceZero = unconfirmed
+                            , balanceTxCount = txs
+                            , balanceTotalReceived = received
+                            }
 
 -- | Unspent output.
 data Unspent = Unspent
-    { unspentBlock  :: !BlockRef
-      -- ^ block information for output
-    , unspentPoint  :: !OutPoint
-      -- ^ txid and index where output located
-    , unspentAmount :: !Word64
-      -- ^ value of output in satoshi
-    , unspentScript :: !ShortByteString
-      -- ^ pubkey (output) script
-    } deriving (Show, Eq, Ord, Generic, Hashable, NFData)
+    { unspentBlock   :: !BlockRef
+    , unspentPoint   :: !OutPoint
+    , unspentAmount  :: !Word64
+    , unspentScript  :: !ShortByteString
+    , unspentAddress :: !(Maybe String)
+    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
-instance Serialize Unspent where
-    put u = do
-        put $ unspentBlock u
-        put $ unspentPoint u
-        put $ unspentAmount u
-        put $ B.Short.length (unspentScript u)
-        putShortByteString $ unspentScript u
-    get =
-        Unspent <$> get <*> get <*> get <*> (getShortByteString =<< get)
+instance ToJSON Unspent where
+    toJSON u =
+        object $
+        [ "address" .= unspentAddress u
+        , "block" .= unspentBlock u
+        , "txid" .= outPointHash (unspentPoint u)
+        , "index" .= outPointIndex (unspentPoint u)
+        , "pkscript" .= script
+        , "value" .= unspentAmount u
+        ]
+      where
+        bsscript = BSS.fromShort (unspentScript u)
+        script = String (encodeHex bsscript)
 
-unspentPairs :: A.KeyValue kv => Network -> Unspent -> [kv]
-unspentPairs net u =
-    [ "address" .=
-      eitherToMaybe
-          (addrToJSON net <$>
-           scriptToAddressBS (B.Short.fromShort (unspentScript u)))
-    , "block" .= unspentBlock u
-    , "txid" .= outPointHash (unspentPoint u)
-    , "index" .= outPointIndex (unspentPoint u)
-    , "pkscript" .= String (encodeHex (B.Short.fromShort (unspentScript u)))
-    , "value" .= unspentAmount u
-    ]
-
-unspentToJSON :: Network -> Unspent -> Value
-unspentToJSON net = object . unspentPairs net
-
-unspentToEncoding :: Network -> Unspent -> Encoding
-unspentToEncoding net = pairs . mconcat . unspentPairs net
-
-instance JsonSerial Unspent where
-    jsonSerial = unspentToEncoding
-    jsonValue = unspentToJSON
-
-instance BinSerial Unspent where
-    binSerial net Unspent { unspentBlock = b
-                          , unspentPoint = p
-                          , unspentAmount = v
-                          , unspentScript = s
-                          } = do
-        binSerial net b
-        put p
-        putWord64be v
-        put s
-
-    binDeserial net =
-      Unspent
-      <$> binDeserial net
-      <*> get
-      <*> getWord64be
-      <*> get
+instance FromJSON Unspent where
+    parseJSON =
+        A.withObject "unspent" $ \o -> do
+            block <- o .: "block"
+            txid <- o .: "txid"
+            index <- o .: "index"
+            value <- o .: "value"
+            script <- BSS.toShort <$> (o .: "pkscript" >>= jsonHex)
+            address <- o .: "address"
+            return
+                Unspent
+                    { unspentBlock = block
+                    , unspentPoint = OutPoint txid index
+                    , unspentAmount = value
+                    , unspentScript = script
+                    , unspentAddress = address
+                    }
 
 -- | Database value for a block entry.
 data BlockData = BlockData
@@ -688,137 +598,160 @@ data BlockData = BlockData
       -- ^ block subsidy
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
--- | JSON serialization for 'BlockData'.
-blockDataPairs :: A.KeyValue kv => Network -> BlockData -> [kv]
-blockDataPairs net bv =
-    [ "hash" .= headerHash (blockDataHeader bv)
-    , "height" .= blockDataHeight bv
-    , "mainchain" .= blockDataMainChain bv
-    , "previous" .= prevBlock (blockDataHeader bv)
-    , "time" .= blockTimestamp (blockDataHeader bv)
-    , "version" .= blockVersion (blockDataHeader bv)
-    , "bits" .= blockBits (blockDataHeader bv)
-    , "nonce" .= bhNonce (blockDataHeader bv)
-    , "size" .= blockDataSize bv
-    , "tx" .= blockDataTxs bv
-    , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
-    , "subsidy" .= blockDataSubsidy bv
-    , "fees" .= blockDataFees bv
-    , "outputs" .= blockDataOutputs bv
-    ] ++ ["weight" .= blockDataWeight bv | getSegWit net]
+instance ToJSON BlockData where
+    toJSON bv =
+        object
+            [ "hash" .= headerHash (blockDataHeader bv)
+            , "height" .= blockDataHeight bv
+            , "mainchain" .= blockDataMainChain bv
+            , "previous" .= prevBlock (blockDataHeader bv)
+            , "time" .= blockTimestamp (blockDataHeader bv)
+            , "version" .= blockVersion (blockDataHeader bv)
+            , "bits" .= blockBits (blockDataHeader bv)
+            , "nonce" .= bhNonce (blockDataHeader bv)
+            , "size" .= blockDataSize bv
+            , "tx" .= blockDataTxs bv
+            , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
+            , "subsidy" .= blockDataSubsidy bv
+            , "fees" .= blockDataFees bv
+            , "outputs" .= blockDataOutputs bv
+            , "work" .= String (cs (show (blockDataWork bv)))
+            , "weight" .= blockDataWeight bv
+            ]
 
-blockDataToJSON :: Network -> BlockData -> Value
-blockDataToJSON net = object . blockDataPairs net
+instance FromJSON BlockData where
+    parseJSON =
+        A.withObject "blockdata" $ \o -> do
+            height <- o .: "height"
+            mainchain <- o .: "mainchain"
+            previous <- o .: "previous"
+            time <- o .: "time"
+            version <- o .: "version"
+            bits <- o .: "bits"
+            nonce <- o .: "nonce"
+            size <- o .: "size"
+            tx <- o .: "tx"
+            TxHash merkle <- o .: "merkle"
+            subsidy <- o .: "subsidy"
+            fees <- o .: "fees"
+            outputs <- o .: "outputs"
+            work <- o .: "work"
+            weight <- o .: "weight"
+            return
+                BlockData
+                    { blockDataHeader =
+                          BlockHeader
+                              { prevBlock = previous
+                              , blockTimestamp = time
+                              , blockVersion = version
+                              , blockBits = bits
+                              , bhNonce = nonce
+                              , merkleRoot = merkle
+                              }
+                    , blockDataMainChain = mainchain
+                    , blockDataWork = read work
+                    , blockDataSize = size
+                    , blockDataWeight = weight
+                    , blockDataTxs = tx
+                    , blockDataOutputs = outputs
+                    , blockDataFees = fees
+                    , blockDataHeight = height
+                    , blockDataSubsidy = subsidy
+                    }
 
-blockDataToEncoding :: Network -> BlockData -> Encoding
-blockDataToEncoding net = pairs . mconcat . blockDataPairs net
-
-instance JsonSerial BlockData where
-    jsonSerial = blockDataToEncoding
-    jsonValue = blockDataToJSON
-
-instance BinSerial BlockData where
-    binSerial _ BlockData { blockDataHeight = e
-                          , blockDataMainChain = m
-                          , blockDataWork = w
-                          , blockDataHeader = h
-                          , blockDataSize = z
-                          , blockDataWeight = g
-                          , blockDataTxs = t
-                          , blockDataOutputs = o
-                          , blockDataFees = f
-                          , blockDataSubsidy = y
-                          } = do
-        put m
-        putWord32be e
-        put h
-        put w
-        putWord32be z
-        putWord32be g
-        putWord64be o
-        putWord64be f
-        putWord64be y
-        put t
-
-    binDeserial _ = do
-      m <- get
-      e <- getWord32be
-      h <- get
-      w <- get
-      z <- getWord32be
-      g <- getWord32be
-      o <- getWord64be
-      f <- getWord64be
-      y <- getWord64be
-      t <- get
-      return $ BlockData e m w h z g t o f y
-
--- | Input information.
 data StoreInput
     = StoreCoinbase { inputPoint     :: !OutPoint
-                 -- ^ output being spent (should be null)
                     , inputSequence  :: !Word32
-                 -- ^ sequence
                     , inputSigScript :: !ByteString
-                 -- ^ input script data (not valid script)
                     , inputWitness   :: !(Maybe WitnessStack)
-                 -- ^ witness data for this input (only segwit)
                      }
-    -- ^ coinbase details
     | StoreInput { inputPoint     :: !OutPoint
-              -- ^ output being spent
                  , inputSequence  :: !Word32
-              -- ^ sequence
                  , inputSigScript :: !ByteString
-              -- ^ signature (input) script
                  , inputPkScript  :: !ByteString
-              -- ^ pubkey (output) script from previous tx
                  , inputAmount    :: !Word64
-              -- ^ amount in satoshi being spent spent
                  , inputWitness   :: !(Maybe WitnessStack)
-              -- ^ witness data for this input (only segwit)
                   }
-    -- ^ input details
     deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 isCoinbase :: StoreInput -> Bool
 isCoinbase StoreCoinbase {} = True
 isCoinbase StoreInput {}    = False
 
-inputPairs :: A.KeyValue kv => Network -> StoreInput -> [kv]
-inputPairs net StoreInput { inputPoint = OutPoint oph opi
-                          , inputSequence = sq
-                          , inputSigScript = ss
-                          , inputPkScript = ps
-                          , inputAmount = val
-                          , inputWitness = wit
-                          } =
-    [ "coinbase" .= False
-    , "txid" .= oph
-    , "output" .= opi
-    , "sigscript" .= String (encodeHex ss)
-    , "sequence" .= sq
-    , "pkscript" .= String (encodeHex ps)
-    , "value" .= val
-    , "address" .= eitherToMaybe (addrToJSON net <$> scriptToAddressBS ps)
-    ] ++
-    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+instance ToJSON (NetWrap StoreInput) where
+    toJSON (NetWrap net StoreInput { inputPoint = OutPoint oph opi
+                                   , inputSequence = sq
+                                   , inputSigScript = ss
+                                   , inputPkScript = ps
+                                   , inputAmount = val
+                                   , inputWitness = wit
+                                   }) =
+        object
+            [ "coinbase" .= False
+            , "txid" .= oph
+            , "output" .= opi
+            , "sigscript" .= String (encodeHex ss)
+            , "sequence" .= sq
+            , "pkscript" .= String (encodeHex ps)
+            , "value" .= val
+            , "address" .= scriptToStringAddr net ps
+            , "witness" .= fmap (map encodeHex) wit
+            ]
+    toJSON (NetWrap _ StoreCoinbase { inputPoint = OutPoint oph opi
+                                    , inputSequence = sq
+                                    , inputSigScript = ss
+                                    , inputWitness = wit
+                                    }) =
+        object
+            [ "coinbase" .= True
+            , "txid" .= oph
+            , "output" .= opi
+            , "sigscript" .= String (encodeHex ss)
+            , "sequence" .= sq
+            , "pkscript" .= Null
+            , "value" .= Null
+            , "address" .= Null
+            , "witness" .= fmap (map encodeHex) wit
+            ]
 
-inputPairs net StoreCoinbase { inputPoint = OutPoint oph opi
-                             , inputSequence = sq
-                             , inputSigScript = ss
-                             , inputWitness = wit
-                             } =
-    [ "coinbase" .= True
-    , "txid" .= oph
-    , "output" .= opi
-    , "sigscript" .= String (encodeHex ss)
-    , "sequence" .= sq
-    , "pkscript" .= Null
-    , "value" .= Null
-    , "address" .= Null
-    ] ++
-    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+instance FromJSON StoreInput where
+    parseJSON =
+        A.withObject "storeinput" $ \o -> do
+            coinbase <- o .: "coinbase"
+            outpoint <- OutPoint <$> o .: "txid" <*> o .: "output"
+            sequ <- o .: "sequence"
+            witness <-
+                o .:? "witness" >>= \mmxs ->
+                    case join mmxs of
+                        Nothing -> return Nothing
+                        Just xs -> Just <$> mapM jsonHex xs
+            sigscript <- o .: "sigscript" >>= jsonHex
+            if coinbase
+                then return
+                        StoreCoinbase
+                            { inputPoint = outpoint
+                            , inputSequence = sequ
+                            , inputSigScript = sigscript
+                            , inputWitness = witness
+                            }
+                else do
+                    pkscript <- o .: "pkscript" >>= jsonHex
+                    value <- o .: "value"
+                    return
+                        StoreInput
+                            { inputPoint = outpoint
+                            , inputSequence = sequ
+                            , inputSigScript = sigscript
+                            , inputPkScript = pkscript
+                            , inputAmount = value
+                            , inputWitness = witness
+                            }
+
+jsonHex :: Text -> Parser ByteString
+jsonHex s =
+    case decodeHex s of
+        Nothing -> fail "Could not decode hex"
+        Just b  -> return b
 
 -- | Information about input spending output.
 data Spender = Spender
@@ -828,34 +761,42 @@ data Spender = Spender
       -- ^ input position in transaction
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
--- | JSON serialization for 'Spender'.
-spenderPairs :: A.KeyValue kv => Spender -> [kv]
-spenderPairs n =
-    ["txid" .= spenderHash n, "input" .= spenderIndex n]
-
 instance ToJSON Spender where
-    toJSON = object . spenderPairs
-    toEncoding = pairs . mconcat . spenderPairs
+    toJSON n = object ["txid" .= spenderHash n, "input" .= spenderIndex n]
+
+instance FromJSON Spender where
+    parseJSON =
+        A.withObject "spender" $ \o -> Spender <$> o .: "txid" <*> o .: "input"
 
 -- | Output information.
 data StoreOutput = StoreOutput
     { outputAmount  :: !Word64
-      -- ^ amount in satoshi
     , outputScript  :: !ByteString
-      -- ^ pubkey (output) script
     , outputSpender :: !(Maybe Spender)
-      -- ^ input spending this transaction
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
-outputPairs :: A.KeyValue kv => Network -> StoreOutput -> [kv]
-outputPairs net d =
-    [ "address" .=
-      eitherToMaybe (addrToJSON net <$> scriptToAddressBS (outputScript d))
-    , "pkscript" .= String (encodeHex (outputScript d))
-    , "value" .= outputAmount d
-    , "spent" .= isJust (outputSpender d)
-    ] ++
-    ["spender" .= outputSpender d | isJust (outputSpender d)]
+instance ToJSON (NetWrap StoreOutput) where
+    toJSON (NetWrap net d) =
+        object
+            [ "address" .= scriptToStringAddr net (outputScript d)
+            , "pkscript" .= String (encodeHex (outputScript d))
+            , "value" .= outputAmount d
+            , "spent" .= isJust (outputSpender d)
+            , "spender" .= outputSpender d
+            ]
+
+instance FromJSON StoreOutput where
+    parseJSON =
+        A.withObject "storeoutput" $ \o -> do
+            value <- o .: "value"
+            pkscript <- o .: "pkscript" >>= jsonHex
+            spender <- o .: "spender"
+            return
+                StoreOutput
+                    { outputAmount = value
+                    , outputScript = pkscript
+                    , outputSpender = spender
+                    }
 
 data Prev = Prev
     { prevScript :: !ByteString
@@ -896,33 +837,6 @@ data TxData = TxData
     , txDataRBF     :: !Bool
     , txDataTime    :: !Word64
     } deriving (Show, Eq, Ord, Generic, Serialize, NFData)
-
-instance BinSerial TxData where
-  binSerial _ TxData
-        { txDataBlock   = br
-        , txData        = tx
-        , txDataPrevs   = dp
-        , txDataDeleted = dd
-        , txDataRBF     = dr
-        , txDataTime    = t
-        } = do
-      put br
-      put tx
-      put dp
-      put dd
-      put dr
-      putWord64be t
-
-  binDeserial _ = do br <- get
-                     tx <- get
-                     dp <- get
-                     dd <- get
-                     dr <- get
-                     TxData br tx dp dd dr <$> getWord64be
-
-instance Serialize a => BinSerial (IntMap a) where
-  binSerial _ = put
-  binDeserial _ = get
 
 toTransaction :: TxData -> IntMap Spender -> Transaction
 toTransaction t sm =
@@ -1002,73 +916,61 @@ transactionData t =
     o StoreOutput {outputAmount = v, outputScript = s} =
         TxOut {outValue = v, scriptOutput = s}
 
--- | JSON serialization for 'Transaction'.
-transactionPairs :: A.KeyValue kv => Network -> Transaction -> [kv]
-transactionPairs net dtx =
-    [ "txid" .= txHash (transactionData dtx)
-    , "size" .= B.length (S.encode (transactionData dtx))
-    , "version" .= transactionVersion dtx
-    , "locktime" .= transactionLockTime dtx
-    , "fee" .=
-      if all isCoinbase (transactionInputs dtx)
-          then 0
-          else sum (map inputAmount (transactionInputs dtx)) -
-               sum (map outputAmount (transactionOutputs dtx))
-    , "inputs" .= map (object . inputPairs net) (transactionInputs dtx)
-    , "outputs" .= map (object . outputPairs net) (transactionOutputs dtx)
-    , "block" .= transactionBlock dtx
-    , "deleted" .= transactionDeleted dtx
-    , "time" .= transactionTime dtx
-    ] ++
-    ["rbf" .= transactionRBF dtx | getReplaceByFee net] ++
-    ["weight" .= w | getSegWit net]
-  where
-    w = let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
-            x = B.length $ S.encode (transactionData dtx)
-        in b * 3 + x
+instance ToJSON (NetWrap Transaction) where
+    toJSON (NetWrap net dtx) =
+        object
+            [ "txid" .= txHash (transactionData dtx)
+            , "size" .= B.length (S.encode (transactionData dtx))
+            , "version" .= transactionVersion dtx
+            , "locktime" .= transactionLockTime dtx
+            , "fee" .=
+              if any isCoinbase (transactionInputs dtx)
+                  then 0
+                  else inv - outv
+            , "inputs" .= map (NetWrap net) (transactionInputs dtx)
+            , "outputs" .= map (NetWrap net) (transactionOutputs dtx)
+            , "block" .= transactionBlock dtx
+            , "deleted" .= transactionDeleted dtx
+            , "time" .= transactionTime dtx
+            , "rbf" .= transactionRBF dtx
+            , "weight" .= w
+            ]
+      where
+        inv = sum (map inputAmount (transactionInputs dtx))
+        outv = sum (map outputAmount (transactionOutputs dtx))
+        w =
+            let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
+                x = B.length $ S.encode (transactionData dtx)
+             in b * 3 + x
 
-transactionToJSON :: Network -> Transaction -> Value
-transactionToJSON net = object . transactionPairs net
-
-transactionToEncoding :: Network -> Transaction -> Encoding
-transactionToEncoding net = pairs . mconcat . transactionPairs net
-
-instance JsonSerial Transaction where
-    jsonSerial = transactionToEncoding
-    jsonValue = transactionToJSON
-
-instance BinSerial Transaction where
-    binSerial net tx = do
-        let (txd, sp) = fromTransaction tx
-        binSerial net txd
-        binSerial net sp
-
-    binDeserial net = do
-      txd <- binDeserial net
-      sp <- binDeserial net
-      return $ toTransaction txd sp
-
-instance JsonSerial Tx where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial Tx where
-    binSerial _ = put
-    binDeserial _ = get
-
-instance JsonSerial Block where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial Block where
-    binSerial _ = put
-    binDeserial _ = get
+instance FromJSON Transaction where
+    parseJSON =
+        A.withObject "transaction" $ \o -> do
+            version <- o .: "version"
+            locktime <- o .: "locktime"
+            inputs <- o .: "inputs"
+            outputs <- o .: "outputs"
+            block <- o .: "block"
+            deleted <- o .: "deleted"
+            time <- o .: "time"
+            rbf <- o .:? "rbf" .!= False
+            return
+                Transaction
+                    { transactionBlock = block
+                    , transactionVersion = version
+                    , transactionLockTime = locktime
+                    , transactionInputs = inputs
+                    , transactionOutputs = outputs
+                    , transactionDeleted = deleted
+                    , transactionTime = time
+                    , transactionRBF = rbf
+                    }
 
 -- | Information about a connected peer.
 data PeerInformation
     = PeerInformation { peerUserAgent :: !ByteString
                         -- ^ user agent string
-                      , peerAddress   :: !HostAddress
+                      , peerAddress   :: !String
                         -- ^ network address
                       , peerVersion   :: !Word32
                         -- ^ version number
@@ -1077,76 +979,47 @@ data PeerInformation
                       , peerRelay     :: !Bool
                         -- ^ will relay transactions
                       }
-    deriving (Show, Eq, Ord, Generic, NFData)
-
--- | JSON serialization for 'PeerInformation'.
-peerInformationPairs :: A.KeyValue kv => PeerInformation -> [kv]
-peerInformationPairs p =
-    [ "useragent"   .= String (cs (peerUserAgent p))
-    , "address"     .= String (cs (show (hostToSockAddr (peerAddress p))))
-    , "version"     .= peerVersion p
-    , "services"    .= String (encodeHex (S.encode (peerServices p)))
-    , "relay"       .= peerRelay p
-    ]
+    deriving (Show, Eq, Ord, Generic, NFData, Serialize)
 
 instance ToJSON PeerInformation where
-    toJSON = object . peerInformationPairs
-    toEncoding = pairs . mconcat . peerInformationPairs
+    toJSON p = object
+        [ "useragent"   .= String (cs (peerUserAgent p))
+        , "address"     .= peerAddress p
+        , "version"     .= peerVersion p
+        , "services"    .= String (encodeHex (S.encode (peerServices p)))
+        , "relay"       .= peerRelay p
+        ]
 
-instance JsonSerial PeerInformation where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial PeerInformation where
-    binSerial _ PeerInformation { peerUserAgent = u
-                                , peerAddress = a
-                                , peerVersion = v
-                                , peerServices = s
-                                , peerRelay = b
-                                } = do
-        putWord32be v
-        put b
-        put u
-        put $ NetworkAddress s a
-
-    binDeserial _ = do
-      v <- getWord32be
-      b <- get
-      u <- get
-      NetworkAddress { naServices = s, naAddress = a } <- get
-      return $ PeerInformation u a v s b
+instance FromJSON PeerInformation where
+    parseJSON =
+        A.withObject "peerinformation" $ \o -> do
+            String useragent <- o .: "useragent"
+            address <- o .: "address"
+            version <- o .: "version"
+            services <-
+                o .: "services" >>= jsonHex >>= \b ->
+                    case S.decode b of
+                        Left e  -> fail $ "Could not decode services: " <> e
+                        Right s -> return s
+            relay <- o .: "relay"
+            return
+                PeerInformation
+                    { peerUserAgent = cs useragent
+                    , peerAddress = address
+                    , peerVersion = version
+                    , peerServices = services
+                    , peerRelay = relay
+                    }
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
     { xPubBalPath :: ![KeyIndex]
     , xPubBal     :: !Balance
-    } deriving (Show, Ord, Eq, Generic, NFData)
+    } deriving (Show, Ord, Eq, Generic, Serialize, NFData)
 
--- | JSON serialization for 'XPubBal'.
-xPubBalPairs :: A.KeyValue kv => Network -> XPubBal -> [kv]
-xPubBalPairs net XPubBal {xPubBalPath = p, xPubBal = b} =
-    [ "path" .= p
-    , "balance" .= balanceToJSON net b
-    ]
-
-xPubBalToJSON :: Network -> XPubBal -> Value
-xPubBalToJSON net = object . xPubBalPairs net
-
-xPubBalToEncoding :: Network -> XPubBal -> Encoding
-xPubBalToEncoding net = pairs . mconcat . xPubBalPairs net
-
-instance JsonSerial XPubBal where
-    jsonSerial = xPubBalToEncoding
-    jsonValue = xPubBalToJSON
-
-instance BinSerial XPubBal where
-    binSerial net XPubBal {xPubBalPath = p, xPubBal = b} = do
-        put p
-        binSerial net b
-    binDeserial net  = do
-      p <- get
-      b <- binDeserial net
-      return $ XPubBal p b
+instance ToJSON (NetWrap XPubBal) where
+    toJSON (NetWrap net XPubBal {xPubBalPath = p, xPubBal = b}) =
+        object ["path" .= p, "balance" .= toJSON (NetWrap net b)]
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
@@ -1154,34 +1027,9 @@ data XPubUnspent = XPubUnspent
     , xPubUnspent     :: !Unspent
     } deriving (Show, Eq, Generic, Serialize, NFData)
 
--- | JSON serialization for 'XPubUnspent'.
-xPubUnspentPairs :: A.KeyValue kv => Network -> XPubUnspent -> [kv]
-xPubUnspentPairs net XPubUnspent { xPubUnspentPath = p
-                                 , xPubUnspent = u
-                                 } =
-    [ "path" .= p
-    , "unspent" .= unspentToJSON net u
-    ]
-
-xPubUnspentToJSON :: Network -> XPubUnspent -> Value
-xPubUnspentToJSON net = object . xPubUnspentPairs net
-
-xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
-xPubUnspentToEncoding net = pairs . mconcat . xPubUnspentPairs net
-
-instance JsonSerial XPubUnspent where
-    jsonSerial = xPubUnspentToEncoding
-    jsonValue = xPubUnspentToJSON
-
-instance BinSerial XPubUnspent where
-    binSerial net XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} = do
-        put p
-        binSerial net u
-
-    binDeserial net = do
-      p <- get
-      u <- binDeserial net
-      return $ XPubUnspent p u
+instance ToJSON XPubUnspent where
+    toJSON XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
+        object ["path" .= p, "unspent" .= toJSON u]
 
 data XPubSummary =
     XPubSummary
@@ -1194,37 +1042,45 @@ data XPubSummary =
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
-xPubSummaryPairs :: A.KeyValue kv => XPubSummary -> [kv]
-xPubSummaryPairs XPubSummary { xPubSummaryConfirmed = c
-                               , xPubSummaryZero = z
-                               , xPubSummaryReceived = r
-                               , xPubUnspentCount = u
-                               , xPubExternalIndex = ext
-                               , xPubChangeIndex = ch
-                               } =
-    [ "balance" .=
-      object
-          ["confirmed" .= c, "unconfirmed" .= z, "received" .= r, "utxo" .= u]
-    , "indices" .= object ["change" .= ch, "external" .= ext]
-    ]
-
-xPubSummaryToJSON :: XPubSummary -> Value
-xPubSummaryToJSON = object . xPubSummaryPairs
-
-xPubSummaryToEncoding :: XPubSummary -> Encoding
-xPubSummaryToEncoding = pairs . mconcat . xPubSummaryPairs
-
 instance ToJSON XPubSummary where
-    toJSON = xPubSummaryToJSON
-    toEncoding = xPubSummaryToEncoding
+    toJSON XPubSummary { xPubSummaryConfirmed = c
+                       , xPubSummaryZero = z
+                       , xPubSummaryReceived = r
+                       , xPubUnspentCount = u
+                       , xPubExternalIndex = ext
+                       , xPubChangeIndex = ch
+                       } =
+        object
+            [ "balance" .=
+              object
+                  [ "confirmed" .= c
+                  , "unconfirmed" .= z
+                  , "received" .= r
+                  , "utxo" .= u
+                  ]
+            , "indices" .= object ["change" .= ch, "external" .= ext]
+            ]
 
-instance JsonSerial XPubSummary where
-    jsonSerial _ = xPubSummaryToEncoding
-    jsonValue _ = xPubSummaryToJSON
-
-instance BinSerial XPubSummary where
-    binSerial _ = put
-    binDeserial _ = get
+instance FromJSON XPubSummary where
+    parseJSON =
+        A.withObject "xpubsummary" $ \o -> do
+            b <- o .: "balance"
+            i <- o .: "indices"
+            conf <- b .: "confirmed"
+            unconfirmed <- b .: "unconfirmed"
+            received <- b .: "received"
+            utxo <- b .: "utxo"
+            change <- i .: "change"
+            external <- i .: "external"
+            return
+                XPubSummary
+                    { xPubSummaryConfirmed = conf
+                    , xPubSummaryZero = unconfirmed
+                    , xPubSummaryReceived = received
+                    , xPubUnspentCount = utxo
+                    , xPubExternalIndex = external
+                    , xPubChangeIndex = change
+                    }
 
 data HealthCheck =
     HealthCheck
@@ -1241,108 +1097,97 @@ data HealthCheck =
         }
     deriving (Show, Eq, Generic, Serialize, NFData)
 
-healthCheckPairs :: A.KeyValue kv => HealthCheck -> [kv]
-healthCheckPairs h =
-    [ "headers" .=
-      object ["hash" .= healthHeaderBest h, "height" .= healthHeaderHeight h]
-    , "blocks" .=
-      object ["hash" .= healthBlockBest h, "height" .= healthBlockHeight h]
-    , "peers" .= healthPeers h
-    , "net" .= healthNetwork h
-    , "ok" .= healthOK h
-    , "synced" .= healthSynced h
-    , "version" .= P.version
-    , "lastblock" .= healthLastBlock h
-    , "lasttx" .= healthLastTx h
-    ]
-
 instance ToJSON HealthCheck where
-    toJSON = object . healthCheckPairs
-    toEncoding = pairs . mconcat . healthCheckPairs
+    toJSON h =
+        object
+            [ "headers" .=
+              object
+                  [ "hash" .= healthHeaderBest h
+                  , "height" .= healthHeaderHeight h
+                  ]
+            , "blocks" .=
+              object
+                  ["hash" .= healthBlockBest h, "height" .= healthBlockHeight h]
+            , "peers" .= healthPeers h
+            , "net" .= healthNetwork h
+            , "ok" .= healthOK h
+            , "synced" .= healthSynced h
+            , "version" .= P.version
+            , "lastblock" .= healthLastBlock h
+            , "lasttx" .= healthLastTx h
+            ]
 
-instance JsonSerial HealthCheck where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial HealthCheck where
-    binSerial _ HealthCheck { healthHeaderBest = hbest
-                            , healthHeaderHeight = hheight
-                            , healthBlockBest = bbest
-                            , healthBlockHeight = bheight
-                            , healthPeers = peers
-                            , healthNetwork = net
-                            , healthOK = ok
-                            , healthSynced = synced
-                            , healthLastBlock = lbk
-                            , healthLastTx = ltx
-                            } = do
-        put hbest
-        put hheight
-        put bbest
-        put bheight
-        put peers
-        put net
-        put ok
-        put synced
-        put lbk
-        put ltx
-    binDeserial _ =
-        HealthCheck <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*>
-        get <*>
-        get <*>
-        get
+instance FromJSON HealthCheck where
+    parseJSON =
+        A.withObject "healthcheck" $ \o -> do
+            headers <- o .: "headers"
+            headers_hash <- headers .: "hash"
+            headers_height <- headers .: "height"
+            blocks <- o .: "blocks"
+            blocks_hash <- blocks .: "hash"
+            blocks_height <- blocks .: "height"
+            peers <- o .: "peers"
+            net <- o .: "net"
+            ok <- o .: "ok"
+            synced <- o .: "synced"
+            lastblock <- o .: "lastblock"
+            lasttx <- o .: "lasttx"
+            return
+                HealthCheck
+                    { healthHeaderBest = headers_hash
+                    , healthHeaderHeight = headers_height
+                    , healthBlockBest = blocks_hash
+                    , healthBlockHeight = blocks_height
+                    , healthPeers = peers
+                    , healthNetwork = net
+                    , healthOK = ok
+                    , healthSynced = synced
+                    , healthLastBlock = lastblock
+                    , healthLastTx = lasttx
+                    }
 
 data Event
     = EventBlock BlockHash
     | EventTx TxHash
-    deriving (Show, Eq, Generic)
+    deriving (Show, Eq, Generic, Serialize, NFData)
 
 instance ToJSON Event where
     toJSON (EventTx h)    = object ["type" .= String "tx", "id" .= h]
     toJSON (EventBlock h) = object ["type" .= String "block", "id" .= h]
 
-instance JsonSerial Event where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial Event where
-    binSerial _ (EventBlock bh) = putWord8 0x00 >> put bh
-    binSerial _ (EventTx th)    = putWord8 0x01 >> put th
-
-    binDeserial _ = getWord8 >>=
-            \case
-                0x00-> EventBlock <$> get
-                0x01 -> EventTx <$> get
-                _ -> fail "Expected fst byte to be 0x00 or 0x01"
-
+instance FromJSON Event where
+    parseJSON =
+        A.withObject "event" $ \o -> do
+            t <- o .: "type"
+            case t of
+                "tx" -> do
+                    i <- o .: "id"
+                    return $ EventTx i
+                "block" -> do
+                    i <- o .: "id"
+                    return $ EventBlock i
+                _ -> fail $ "Could not recognize event type: " <> t
 
 newtype TxAfterHeight = TxAfterHeight
     { txAfterHeight :: Maybe Bool
-    } deriving (Show, Eq, Generic, NFData)
+    } deriving (Show, Eq, Generic, Serialize, NFData)
 
 instance ToJSON TxAfterHeight where
     toJSON (TxAfterHeight b) = object ["result" .= b]
 
-instance JsonSerial TxAfterHeight where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
+instance FromJSON TxAfterHeight where
+    parseJSON =
+        A.withObject "txafterheight" $ \o -> TxAfterHeight <$> o .: "result"
 
-instance BinSerial TxAfterHeight where
-    binSerial _ TxAfterHeight {txAfterHeight = a} = put a
-    binDeserial _ = TxAfterHeight <$> get
-
-newtype TxId = TxId TxHash deriving (Show, Eq, Generic, NFData)
+newtype TxId =
+    TxId TxHash
+    deriving (Show, Eq, Generic, Serialize, NFData)
 
 instance ToJSON TxId where
     toJSON (TxId h) = object ["txid" .= h]
 
-instance JsonSerial TxId where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial TxId where
-    binSerial _ (TxId th) = put th
-    binDeserial _ = TxId <$> get
+instance FromJSON TxId where
+    parseJSON = A.withObject "txid" $ \o -> TxId <$> o .: "txid"
 
 -- | Events that the store can generate.
 data StoreEvent
@@ -1370,7 +1215,7 @@ data PubExcept
     | PubReject RejectCode
     | PubTimeout
     | PubPeerDisconnected
-    deriving Eq
+    deriving (Eq, NFData, Generic, Serialize)
 
 instance Show PubExcept where
     show PubNoPeers = "no peers"
@@ -1422,3 +1267,7 @@ sortTxs txs = go $ zip [0 ..] txs
                      txIn . snd)
                     ts
          in is <> go ds
+
+scriptToStringAddr :: Network -> ByteString -> Maybe String
+scriptToStringAddr net bs =
+    cs <$> (addrToString net =<< eitherToMaybe (scriptToAddressBS bs))

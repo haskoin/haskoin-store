@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass    #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -13,8 +16,9 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forever, guard, mzero, unless,
-                                                when, (<=<))
+import           Control.DeepSeq               (NFData)
+import           Control.Monad                 (forever, guard, unless, when,
+                                                (<=<))
 import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
                                                 askLoggerIO, logInfoS,
                                                 monadLoggerLog)
@@ -43,6 +47,7 @@ import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
+import           GHC.Generics                  (Generic)
 import           Haskoin                       (Address, Block (..),
                                                 BlockHash (..),
                                                 BlockHeader (..), BlockHeight,
@@ -54,17 +59,16 @@ import           Haskoin                       (Address, Block (..),
                                                 Version (..), decodeHex,
                                                 eitherToMaybe, headerHash,
                                                 hexToBlockHash, hexToTxHash,
-                                                sockToHostAddress, stringToAddr,
-                                                txHash, xPubImport)
+                                                stringToAddr, txHash,
+                                                xPubImport)
 import           Haskoin.Node                  (Chain, Manager, OnlinePeer (..),
                                                 chainGetBest, managerGetPeers,
                                                 sendMessage)
 import           Haskoin.Store.Cache           (CacheT, withCache)
-import           Haskoin.Store.Common          (BinSerial (..), BlockData (..),
-                                                BlockRef (..), BlockTx (..),
-                                                DeriveType (..), Event (..),
-                                                HealthCheck (..),
-                                                JsonSerial (..), Limit, Offset,
+import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
+                                                BlockTx (..), DeriveType (..),
+                                                Event (..), HealthCheck (..),
+                                                Limit, NetWrap (..), Offset,
                                                 PeerInformation (..),
                                                 PubExcept (..), StoreEvent (..),
                                                 StoreInput (..), StoreRead (..),
@@ -104,7 +108,7 @@ data Except
     | UserError String
     | StringError String
     | BlockTooLarge
-    deriving Eq
+    deriving (Eq, Ord, Serialize, Generic, NFData)
 
 instance Show Except where
     show ThingNotFound   = "not found"
@@ -122,28 +126,6 @@ instance ScottyError Except where
 
 instance ToJSON Except where
     toJSON e = object ["error" .= T.pack (show e)]
-
-instance JsonSerial Except where
-    jsonSerial _ = toEncoding
-    jsonValue _ = toJSON
-
-instance BinSerial Except where
-    binSerial _ ex =
-        case ex of
-            ThingNotFound -> putWord8 0
-            ServerError   -> putWord8 1
-            BadRequest    -> putWord8 2
-            UserError s   -> putWord8 3 >> Serialize.put s
-            StringError s -> putWord8 4 >> Serialize.put s
-            BlockTooLarge -> putWord8 5
-    binDeserial _ =
-        getWord8 >>= \case
-            0 -> return ThingNotFound
-            1 -> return ServerError
-            2 -> return BadRequest
-            3 -> UserError <$> Serialize.get
-            4 -> StringError <$> Serialize.get
-            _ -> mzero
 
 data WebConfig =
     WebConfig
@@ -235,6 +217,7 @@ runInWebReader bf cf = do
             Just c  -> withCache c cf
 
 instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
+    getNetwork = runInWebReader getNetwork getNetwork
     getBestBlock = runInWebReader getBestBlock getBestBlock
     getBlocksAtHeight height =
         runInWebReader (getBlocksAtHeight height) (getBlocksAtHeight height)
@@ -269,6 +252,7 @@ instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
             (xPubTxs xpub start offset limit)
 
 instance MonadLoggerIO m => StoreRead (WebT m) where
+    getNetwork = lift getNetwork
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
@@ -304,23 +288,40 @@ defHandler e = do
     protoSerial proto e
 
 maybeSerial ::
-       (Monad m, JsonSerial a, BinSerial a)
+       (Monad m, ToJSON a, Serialize a)
     => Bool -- ^ binary
     -> Maybe a
     -> WebT m ()
 maybeSerial _ Nothing      = S.raise ThingNotFound
 maybeSerial proto (Just x) = do
+    S.raw (serialAny proto x)
+
+maybeSerialNet ::
+       (Monad m, ToJSON (NetWrap a), Serialize a)
+    => Bool
+    -> Maybe a
+    -> WebT m ()
+maybeSerialNet _ Nothing = S.raise ThingNotFound
+maybeSerialNet proto (Just x) = do
     net <- lift $ asks (storeNetwork . webStore)
-    S.raw (serialAny net proto x)
+    S.raw (serialAnyNet net proto x)
 
 protoSerial ::
-       (Monad m, JsonSerial a, BinSerial a)
+       (Monad m, ToJSON a, Serialize a)
     => Bool
     -> a
     -> WebT m ()
 protoSerial proto x = do
+    S.raw (serialAny proto x)
+
+protoSerialNet ::
+       (Monad m, ToJSON (NetWrap a), Serialize a)
+    => Bool
+    -> a
+    -> WebT m ()
+protoSerialNet proto x = do
     net <- lift $ asks (storeNetwork . webStore)
-    S.raw (serialAny net proto x)
+    S.raw (serialAnyNet net proto x)
 
 scottyBestBlock ::
        (MonadLoggerIO m, MonadIO m) => Bool -> WebT m ()
@@ -453,7 +454,7 @@ scottyTransaction = do
     MyTxHash txid <- S.param "txid"
     proto <- setupBin
     res <- getTransaction txid
-    maybeSerial proto res
+    maybeSerialNet proto res
 
 scottyRawTransaction :: MonadLoggerIO m => WebT m ()
 scottyRawTransaction = do
@@ -478,7 +479,7 @@ scottyTransactions = do
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
     txs <- catMaybes <$> mapM getTransaction (nub txids)
-    protoSerial proto txs
+    protoSerialNet proto txs
 
 scottyBlockTransactions :: MonadLoggerIO m => WebT m ()
 scottyBlockTransactions = do
@@ -491,7 +492,7 @@ scottyBlockTransactions = do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
             txs <- catMaybes <$> mapM getTransaction ths
-            protoSerial proto txs
+            protoSerialNet proto txs
         Nothing -> S.raise ThingNotFound
 
 scottyRawTransactions ::
@@ -535,7 +536,7 @@ scottyAddressTxs full = do
     proto <- setupBin
     if full
         then do
-            getAddressTxsFull o l s a >>= protoSerial proto
+            getAddressTxsFull o l s a >>= protoSerialNet proto
         else do
             getAddressTxsLimit o l s a >>= protoSerial proto
 
@@ -548,7 +549,7 @@ scottyAddressesTxs full = do
     l <- getLimit full
     proto <- setupBin
     if full
-        then getAddressesTxsFull l s as >>= protoSerial proto
+        then getAddressesTxsFull l s as >>= protoSerialNet proto
         else getAddressesTxsLimit l s as >>= protoSerial proto
 
 scottyAddressUnspent :: MonadLoggerIO m => WebT m ()
@@ -578,7 +579,7 @@ scottyAddressBalance = do
     a <- parseAddress
     proto <- setupBin
     res <- getBalance a
-    protoSerial proto res
+    protoSerialNet proto res
 
 scottyAddressesBalances :: MonadLoggerIO m => WebT m ()
 scottyAddressesBalances = do
@@ -586,7 +587,7 @@ scottyAddressesBalances = do
     as <- parseAddresses
     proto <- setupBin
     res <- getBalances as
-    protoSerial proto res
+    protoSerialNet proto res
 
 scottyXpubBalances :: MonadLoggerIO m => WebT m ()
 scottyXpubBalances = do
@@ -594,7 +595,7 @@ scottyXpubBalances = do
     xpub <- parseXpub
     proto <- setupBin
     res <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
-    protoSerial proto res
+    protoSerialNet proto res
 
 scottyXpubTxs :: MonadLoggerIO m => Bool -> WebT m ()
 scottyXpubTxs full = do
@@ -607,7 +608,7 @@ scottyXpubTxs full = do
     if full
         then do
             txs' <- catMaybes <$> mapM (getTransaction . blockTxHash) txs
-            protoSerial proto txs'
+            protoSerialNet proto txs'
         else protoSerial proto txs
 
 scottyXpubUnspents :: MonadLoggerIO m => WebT m ()
@@ -669,7 +670,6 @@ scottyDbStats = do
 
 scottyEvents :: MonadLoggerIO m => WebT m ()
 scottyEvents = do
-    net <- lift $ asks (storeNetwork . webStore)
     pub <- lift $ asks (storePublisher . webStore)
     setHeaders
     proto <- setupBin
@@ -688,7 +688,7 @@ scottyEvents = do
                     Nothing -> return ()
                     Just e ->
                         let bs =
-                                serialAny net proto e <>
+                                serialAny proto e <>
                                 if proto
                                     then mempty
                                     else "\n"
@@ -879,13 +879,16 @@ setHeaders = do
     S.setHeader "Access-Control-Allow-Origin" "*"
 
 serialAny ::
-       (JsonSerial a, BinSerial a)
-    => Network
-    -> Bool -- ^ binary
+       (ToJSON a, Serialize a)
+    => Bool -- ^ binary
     -> a
     -> L.ByteString
-serialAny net True  = runPutLazy . binSerial net
-serialAny net False = encodingToLazyByteString . jsonSerial net
+serialAny True  = runPutLazy . put
+serialAny False = encodingToLazyByteString . toEncoding
+
+serialAnyNet :: (ToJSON (NetWrap a), Serialize a) => Network -> Bool -> a -> L.ByteString
+serialAnyNet _ True    = runPutLazy . put
+serialAnyNet net False = encodingToLazyByteString . toEncoding . NetWrap net
 
 setupBin :: Monad m => ActionT Except m Bool
 setupBin =
@@ -993,7 +996,7 @@ getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
         return
             PeerInformation
                 { peerUserAgent = ua
-                , peerAddress = sockToHostAddress as
+                , peerAddress = show as
                 , peerVersion = vs
                 , peerServices = sv
                 , peerRelay = rl

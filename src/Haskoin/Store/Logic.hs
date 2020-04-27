@@ -38,10 +38,11 @@ import           Haskoin                       (Address, Block (..), BlockHash,
                                                 OutPoint (..), Tx (..), TxHash,
                                                 TxIn (..), TxOut (..),
                                                 addrToString, blockHashToHex,
-                                                genesisBlock, genesisNode,
-                                                headerHash, isGenesis,
-                                                nullOutPoint, scriptToAddressBS,
-                                                txHash, txHashToHex)
+                                                genesisBlock,
+                                                genesisNode, headerHash,
+                                                isGenesis, nullOutPoint,
+                                                scriptToAddressBS, txHash,
+                                                txHashToHex)
 import           Haskoin.Store.Common          (Balance (..), BlockData (..),
                                                 BlockRef (..), BlockTx (..),
                                                 Prev (..), Spender (..),
@@ -52,8 +53,8 @@ import           Haskoin.Store.Common          (Balance (..), BlockData (..),
                                                 UnixTime, Unspent (..),
                                                 confirmed, fromTransaction,
                                                 isCoinbase, nullBalance,
-                                                sortTxs, toTransaction,
-                                                transactionData)
+                                                scriptToStringAddr, sortTxs,
+                                                toTransaction, transactionData)
 import           Network.Haskoin.Block.Headers (computeSubsidy)
 import           UnliftIO                      (Exception)
 
@@ -86,13 +87,13 @@ initBest ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> m ()
-initBest net = do
+    => m ()
+initBest = do
+    net <- getNetwork
     m <- getBestBlock
     when
         (isNothing m)
-        (void (importBlock net (genesisBlock net) (genesisNode net)))
+        (void (importBlock (genesisBlock net) (genesisNode net)))
 
 getOldOrphans :: StoreRead m => UnixTime -> m [TxHash]
 getOldOrphans now =
@@ -109,16 +110,15 @@ importOrphan ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> UnixTime
+    => UnixTime
     -> Tx
     -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
-importOrphan net t tx = do
+importOrphan t tx = do
     go `catchError` ex
   where
     go = do
         maybetxids <-
-            newMempoolTx net tx t >>= \case
+            newMempoolTx tx t >>= \case
                 Just ths -> return (Just ths)
                 Nothing -> return Nothing
         deleteOrphanTx (txHash tx)
@@ -137,11 +137,10 @@ newMempoolTx ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> Tx
+    => Tx
     -> UnixTime
     -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
-newMempoolTx net tx w =
+newMempoolTx tx w =
     getTxData (txHash tx) >>= \case
         Just x
             | not (txDataDeleted x) -> return Nothing
@@ -153,7 +152,8 @@ newMempoolTx net tx w =
             mapM (getTxData . outPointHash . prevOutput) (txIn tx)
         if orp
             then do
-                $(logWarnS) "BlockStore" $ "Orphan tx: " <> txHashToHex (txHash tx)
+                $(logWarnS) "BlockStore" $
+                    "Orphan tx: " <> txHashToHex (txHash tx)
                 insertOrphanTx tx w
                 throwError $ OrphanTx (txHashToHex (txHash tx))
             else f
@@ -165,10 +165,11 @@ newMempoolTx net tx w =
         let ds = map spenderHash (mapMaybe outputSpender us)
         if null ds
             then do
-                ths <- importTx net (MemRef w) w tx
+                ths <- importTx (MemRef w) w tx
                 return (Just ths)
             else g ds
     g ds = do
+        net <- getNetwork
         rbf <-
             if getReplaceByFee net
                 then and <$> mapM isrbf ds
@@ -177,9 +178,10 @@ newMempoolTx net tx w =
             then r ds
             else n
     r ds = do
-        $(logWarnS) "BlockStore" $ "Replace by fee tx: " <> txHashToHex (txHash tx)
-        ths <- concat <$> forM ds (deleteTx net True)
-        dts <- importTx net (MemRef w) w tx
+        $(logWarnS) "BlockStore" $
+            "Replace by fee tx: " <> txHashToHex (txHash tx)
+        ths <- concat <$> forM ds (deleteTx True)
+        dts <- importTx (MemRef w) w tx
         return (Just (nub (ths <> dts)))
     n = do
         $(logWarnS) "BlockStore" $ "Conflicting tx: " <> txHashToHex (txHash tx)
@@ -193,10 +195,9 @@ revertBlock ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> BlockHash
+    => BlockHash
     -> m [TxHash]
-revertBlock net bh = do
+revertBlock bh = do
     bd <-
         getBestBlock >>= \case
             Nothing -> do
@@ -217,7 +218,7 @@ revertBlock net bh = do
     txs <- mapM (fmap transactionData . getImportTx) (blockDataTxs bd)
     ths <-
         nub . concat <$>
-        mapM (deleteTx net False . txHash . snd) (reverse (sortTxs txs))
+        mapM (deleteTx False . txHash . snd) (reverse (sortTxs txs))
     setBest (prevBlock (blockDataHeader bd))
     insertBlock bd {blockDataMainChain = False}
     return ths
@@ -228,11 +229,10 @@ importBlock ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> Block
+    => Block
     -> BlockNode
     -> m [TxHash] -- ^ deleted transactions
-importBlock net b n = do
+importBlock b n = do
     mp <- filter (`elem` bths) . map blockTxHash <$> getMempool
     getBestBlock >>= \case
         Nothing
@@ -250,6 +250,8 @@ importBlock net b n = do
                     blockHashToHex (headerHash (blockHeader b))
                 throwError $
                     PrevBlockNotBest (blockHashToHex (prevBlock (nodeHeader n)))
+    net <- getNetwork
+    let subsidy = computeSubsidy net (nodeHeight n)
     insertBlock
         BlockData
             { blockDataHeight = nodeHeight n
@@ -259,8 +261,8 @@ importBlock net b n = do
             , blockDataSize = fromIntegral (B.length (encode b))
             , blockDataTxs = map txHash (blockTxns b)
             , blockDataWeight = fromIntegral w
-            , blockDataSubsidy = subsidy (nodeHeight n)
-            , blockDataFees = cb_out_val - subsidy (nodeHeight n)
+            , blockDataSubsidy = subsidy
+            , blockDataFees = cb_out_val - subsidy
             , blockDataOutputs = ts_out_val
             }
     bs <- getBlocksAtHeight (nodeHeight n)
@@ -275,18 +277,16 @@ importBlock net b n = do
     import_or_confirm mp x tx =
         if txHash tx `elem` mp
             then getTxData (txHash tx) >>= \case
-                     Just td -> confirmTx net td (br x) tx >> return []
+                     Just td -> confirmTx td (br x) tx >> return []
                      Nothing -> do
                          $(logErrorS) "BlockStore" $
                              "Cannot get data for mempool tx: " <>
                              txHashToHex (txHash tx)
                          throwError $ TxNotFound (txHashToHex (txHash tx))
             else importTx
-                     net
                      (br x)
                      (fromIntegral (blockTimestamp (nodeHeader n)))
                      tx
-    subsidy = computeSubsidy net
     cb_out_val = sum (map outValue (txOut (head (blockTxns b))))
     ts_out_val = sum (map (sum . map outValue . txOut) (tail (blockTxns b)))
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
@@ -307,12 +307,11 @@ importTx ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> BlockRef
+    => BlockRef
     -> Word64 -- ^ unix time
     -> Tx
     -> m [TxHash] -- ^ deleted transactions
-importTx net br tt tx = do
+importTx br tt tx = do
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
         $(logErrorS) "BlockStore" $
             "Transaction spends same output twice: " <> txHashToHex (txHash tx)
@@ -334,9 +333,9 @@ importTx net br tt tx = do
         $(logErrorS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError (InsufficientFunds (txHashToHex th))
-    zipWithM_ (spendOutput net br (txHash tx)) [0 ..] us
+    zipWithM_ (spendOutput br (txHash tx)) [0 ..] us
     zipWithM_
-        (\i o -> newOutput net br (OutPoint (txHash tx) i) o)
+        (\i o -> newOutput br (OutPoint (txHash tx) i) o)
         [0 ..]
         (txOut tx)
     rbf <- getrbf
@@ -356,7 +355,7 @@ importTx net br tt tx = do
                 }
     let (d, _) = fromTransaction t
     insertTx d
-    updateAddressCounts net (txAddresses t) (+ 1)
+    updateAddressCounts (txAddresses t) (+ 1)
     unless (confirmed br) $ insertIntoMempool (txHash tx) (memRefTime br)
     return ths
   where
@@ -378,7 +377,7 @@ importTx net br tt tx = do
                             fromString (show (outPointIndex op))
                         throwError (NoUnspent (cs (show op)))
                     Just Spender {spenderHash = s} -> do
-                        ths <- deleteTx net True s
+                        ths <- deleteTx True s
                         getUnspent op >>= \case
                             Nothing -> do
                                 $(logErrorS) "BlockStore" $
@@ -412,14 +411,15 @@ importTx net br tt tx = do
             , inputWitness = w
             }
     mkin u ip w =
-        StoreInput
-            { inputPoint = prevOutput ip
-            , inputSequence = txInSequence ip
-            , inputSigScript = scriptInput ip
-            , inputPkScript = B.Short.fromShort (unspentScript u)
-            , inputAmount = unspentAmount u
-            , inputWitness = w
-            }
+        let script = B.Short.fromShort (unspentScript u)
+         in StoreInput
+                { inputPoint = prevOutput ip
+                , inputSequence = txInSequence ip
+                , inputSigScript = scriptInput ip
+                , inputPkScript = script
+                , inputAmount = unspentAmount u
+                , inputWitness = w
+                }
     mkout o =
         StoreOutput
             { outputAmount = outValue o
@@ -433,12 +433,11 @@ confirmTx ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> TxData
+    => TxData
     -> BlockRef
     -> Tx
     -> m ()
-confirmTx net t br tx = do
+confirmTx t br tx = do
     forM_ (txDataPrevs t) $ \p ->
         case scriptToAddressBS (prevScript p) of
             Left _ -> return ()
@@ -455,12 +454,14 @@ confirmTx net t br tx = do
         s <- getSpender (OutPoint (txHash tx) n)
         when (isNothing s) $ do
             deleteUnspent op
+            net <- getNetwork
             insertUnspent
                 Unspent
                     { unspentBlock = br
                     , unspentPoint = op
                     , unspentAmount = outValue o
                     , unspentScript = B.Short.toShort (scriptOutput o)
+                    , unspentAddress = scriptToStringAddr net (scriptOutput o)
                     }
         case scriptToAddressBS (scriptOutput o) of
             Left _ -> return ()
@@ -473,6 +474,7 @@ confirmTx net t br tx = do
                     a
                     BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
                 when (isNothing s) $ do
+                    net <- getNetwork
                     deleteAddrUnspent
                         a
                         Unspent
@@ -480,6 +482,8 @@ confirmTx net t br tx = do
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
+                            , unspentAddress =
+                                  scriptToStringAddr net (scriptOutput o)
                             }
                     insertAddrUnspent
                         a
@@ -488,8 +492,10 @@ confirmTx net t br tx = do
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
+                            , unspentAddress =
+                                  scriptToStringAddr net (scriptOutput o)
                             }
-                    reduceBalance net False False a (outValue o)
+                    reduceBalance False False a (outValue o)
                     increaseBalance True False a (outValue o)
     insertTx t {txDataBlock = br}
     deleteFromMempool (txHash tx)
@@ -511,11 +517,10 @@ deleteTx ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> Bool -- ^ only delete transaction if unconfirmed
+    => Bool -- ^ only delete transaction if unconfirmed
     -> TxHash
     -> m [TxHash] -- ^ deleted transactions
-deleteTx net mo h = do
+deleteTx mo h = do
     getTxData h >>= \case
         Nothing -> do
             $(logErrorS) "BlockStore" $ "Cannot find tx to delete: " <> txHashToHex h
@@ -532,14 +537,14 @@ deleteTx net mo h = do
   where
     go t = do
         ss <- nub . map spenderHash . I.elems <$> getSpenders h
-        ths <- concat <$> mapM (deleteTx net True) ss
+        ths <- concat <$> mapM (deleteTx True) ss
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
-            delOutput net (OutPoint h n)
+            delOutput (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
-        mapM_ (unspendOutput net) ps
+        mapM_ unspendOutput ps
         unless (confirmed (txDataBlock t)) $ deleteFromMempool h
         insertTx t {txDataDeleted = True}
-        updateAddressCounts net (txDataAddresses t) (subtract 1)
+        updateAddressCounts (txDataAddresses t) (subtract 1)
         return $ nub (h : ths)
 
 insertDeletedMempoolTx ::
@@ -556,7 +561,8 @@ insertDeletedMempoolTx tx w = do
         forM (txIn tx) $ \TxIn {prevOutput = op} ->
             getImportTx (outPointHash op) >>= getTxOutput (outPointIndex op)
     rbf <- getrbf
-    let (d, _) =
+    let d =
+            fst $
             fromTransaction
                 Transaction
                     { transactionBlock = MemRef w
@@ -606,28 +612,29 @@ newOutput ::
        , StoreWrite m
        , MonadLogger m
        )
-    => Network
-    -> BlockRef
+    => BlockRef
     -> OutPoint
     -> TxOut
     -> m ()
-newOutput _ br op to = do
-    insertUnspent u
+newOutput br op to = do
+    net <- getNetwork
+    insertUnspent (u net)
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
         Right a -> do
-            insertAddrUnspent a u
+            insertAddrUnspent a (u net)
             insertAddrTx
                 a
                 BlockTx {blockTxHash = outPointHash op, blockTxBlock = br}
             increaseBalance (confirmed br) True a (outValue to)
   where
-    u =
+    u net =
         Unspent
             { unspentBlock = br
             , unspentAmount = outValue to
             , unspentScript = B.Short.toShort (scriptOutput to)
             , unspentPoint = op
+            , unspentAddress = scriptToStringAddr net (scriptOutput to)
             }
 
 delOutput ::
@@ -636,10 +643,10 @@ delOutput ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> OutPoint
+    => OutPoint
     -> m ()
-delOutput net op = do
+delOutput op = do
+    net <- getNetwork
     t <- getImportTx (outPointHash op)
     u <- getTxOutput (outPointIndex op) t
     deleteUnspent op
@@ -653,6 +660,7 @@ delOutput net op = do
                     , unspentBlock = transactionBlock t
                     , unspentPoint = op
                     , unspentAmount = outputAmount u
+                    , unspentAddress = scriptToStringAddr net (outputScript u)
                     }
             deleteAddrTx
                 a
@@ -661,7 +669,6 @@ delOutput net op = do
                     , blockTxBlock = transactionBlock t
                     }
             reduceBalance
-                net
                 (confirmed (transactionBlock t))
                 True
                 a
@@ -709,19 +716,17 @@ spendOutput ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> BlockRef
+    => BlockRef
     -> TxHash
     -> Word32
     -> Unspent
     -> m ()
-spendOutput net br th ix u = do
+spendOutput br th ix u = do
     insertSpender (unspentPoint u) Spender {spenderHash = th, spenderIndex = ix}
     case scriptToAddressBS (B.Short.fromShort (unspentScript u)) of
         Left _ -> return ()
         Right a -> do
             reduceBalance
-                net
                 (confirmed (unspentBlock u))
                 False
                 a
@@ -736,10 +741,9 @@ unspendOutput ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> OutPoint
+    => OutPoint
     -> m ()
-unspendOutput _ op = do
+unspendOutput op = do
     t <- getImportTx (outPointHash op)
     o <- getTxOutput (outPointIndex op) t
     s <-
@@ -753,12 +757,14 @@ unspendOutput _ op = do
             Just s -> return s
     x <- getImportTx (spenderHash s)
     deleteSpender op
+    net <- getNetwork
     let u =
             Unspent
                 { unspentAmount = outputAmount o
                 , unspentBlock = transactionBlock t
                 , unspentScript = B.Short.toShort (outputScript o)
                 , unspentPoint = op
+                , unspentAddress = scriptToStringAddr net (outputScript o)
                 }
     insertUnspent u
     case scriptToAddressBS (outputScript o) of
@@ -783,52 +789,51 @@ reduceBalance ::
        , MonadLogger m
        , MonadError ImportException m
        )
-    => Network
-    -> Bool -- ^ spend or delete confirmed output
+    => Bool -- ^ spend or delete confirmed output
     -> Bool -- ^ reduce total received
     -> Address
     -> Word64
     -> m ()
-reduceBalance net c t a v =
-    getBalance a >>= \b ->
-        if nullBalance b
-            then do
+reduceBalance c t a v = do
+    net <- getNetwork
+    b <- getBalance a
+    if nullBalance b
+        then do
+            $(logErrorS) "BlockStore" $
+                "Address balance not found: " <> addrText net a
+            throwError (BalanceNotFound (addrText net a))
+        else do
+            when (v > amnt b) $ do
                 $(logErrorS) "BlockStore" $
-                    "Address balance not found: " <> addrText net a
-                throwError (BalanceNotFound (addrText net a))
-            else do
-                when (v > amnt b) $ do
-                    $(logErrorS) "BlockStore" $
-                        "Insufficient " <> conf <> " balance: " <>
-                        addrText net a <>
-                        " (needs: " <>
-                        cs (show v) <>
-                        ", has: " <>
-                        cs (show (amnt b)) <>
-                        ")"
-                    throwError $
-                        if c
-                            then InsufficientBalance (addrText net a)
-                            else InsufficientZeroBalance (addrText net a)
-                setBalance
-                    b
-                        { balanceAmount =
-                              balanceAmount b -
-                              if c
-                                  then v
-                                  else 0
-                        , balanceZero =
-                              balanceZero b -
-                              if c
-                                  then 0
-                                  else v
-                        , balanceUnspentCount = balanceUnspentCount b - 1
-                        , balanceTotalReceived =
-                              balanceTotalReceived b -
-                              if t
-                                  then v
-                                  else 0
-                        }
+                    "Insufficient " <> conf <> " balance: " <> addrText net a <>
+                    " (needs: " <>
+                    cs (show v) <>
+                    ", has: " <>
+                    cs (show (amnt b)) <>
+                    ")"
+                throwError $
+                    if c
+                        then InsufficientBalance (addrText net a)
+                        else InsufficientZeroBalance (addrText net a)
+            setBalance
+                b
+                    { balanceAmount =
+                          balanceAmount b -
+                          if c
+                              then v
+                              else 0
+                    , balanceZero =
+                          balanceZero b -
+                          if c
+                              then 0
+                              else v
+                    , balanceUnspentCount = balanceUnspentCount b - 1
+                    , balanceTotalReceived =
+                          balanceTotalReceived b -
+                          if t
+                              then v
+                              else 0
+                    }
   where
     amnt =
         if c
@@ -873,16 +878,17 @@ increaseBalance c t a v = do
 
 updateAddressCounts ::
        (StoreWrite m, StoreRead m, Monad m, MonadError ImportException m)
-    => Network
-    -> [Address]
+    => [Address]
     -> (Word64 -> Word64)
     -> m ()
-updateAddressCounts net as f =
+updateAddressCounts as f =
     forM_ as $ \a -> do
         b <-
-            getBalance a >>= \b -> if nullBalance b
-                then throwError (BalanceNotFound (addrText net a))
-                else return b
+            do net <- getNetwork
+               b <- getBalance a
+               if nullBalance b
+                   then throwError (BalanceNotFound (addrText net a))
+                   else return b
         setBalance b {balanceTxCount = f (balanceTxCount b)}
 
 txAddresses :: Transaction -> [Address]
