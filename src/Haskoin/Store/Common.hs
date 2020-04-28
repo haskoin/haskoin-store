@@ -34,7 +34,7 @@ module Haskoin.Store.Common
     , transactionData
     , fromTransaction
     , toTransaction
-    , TxAfterHeight(..)
+    , GenericResult(..)
     , TxId(..)
     , PeerInformation(..)
     , XPubBal(..)
@@ -1164,16 +1164,16 @@ instance FromJSON Event where
                     return $ EventBlock i
                 _ -> fail $ "Could not recognize event type: " <> t
 
-newtype TxAfterHeight = TxAfterHeight
-    { txAfterHeight :: Maybe Bool
+newtype GenericResult a = GenericResult
+    { getResult :: a
     } deriving (Show, Eq, Generic, Serialize, NFData)
 
-instance ToJSON TxAfterHeight where
-    toJSON (TxAfterHeight b) = object ["result" .= b]
+instance ToJSON a => ToJSON (GenericResult a) where
+    toJSON (GenericResult b) = object ["result" .= b]
 
-instance FromJSON TxAfterHeight where
+instance FromJSON a => FromJSON (GenericResult a) where
     parseJSON =
-        A.withObject "txafterheight" $ \o -> TxAfterHeight <$> o .: "result"
+        A.withObject "result" $ \o -> GenericResult <$> o .: "result"
 
 newtype TxId =
     TxId TxHash

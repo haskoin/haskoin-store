@@ -20,10 +20,10 @@ import           Haskoin.Store.Common    (Balance (..), BlockData (..),
                                           PeerInformation (..), Prev (..),
                                           PubExcept (..), Spender (..),
                                           StoreInput (..), StoreOutput (..),
-                                          Transaction (..), TxAfterHeight (..),
-                                          TxData (..), TxId (..), Unspent (..),
-                                          XPubBal (..), XPubSpec (..),
-                                          XPubSummary (..), XPubUnspent (..))
+                                          Transaction (..), TxData (..),
+                                          TxId (..), Unspent (..), XPubBal (..),
+                                          XPubSpec (..), XPubSummary (..),
+                                          XPubUnspent (..))
 import           Network.Haskoin.Test    (arbitraryAddress, arbitraryBlockHash,
                                           arbitraryBlockHeader,
                                           arbitraryOutPoint,
@@ -59,8 +59,6 @@ spec = do
         prop "identity for xpub summary" $ \x -> testSerial (x :: XPubSummary)
         prop "identity for health check" $ \x -> testSerial (x :: HealthCheck)
         prop "identity for event" $ \x -> testSerial (x :: Event)
-        prop "identity for tx after height" $ \x ->
-            testSerial (x :: TxAfterHeight)
         prop "identity for txid" $ \x -> testSerial (x :: TxId)
         prop "identity for publish exception" $ \x ->
             testSerial (x :: PubExcept)
@@ -79,8 +77,6 @@ spec = do
         prop "identity for health check" $ \x -> testJSON (x :: HealthCheck)
         prop "identity for event" $ \x -> testJSON (x :: Event)
         prop "identity for txid" $ \x -> testJSON (x :: TxId)
-        prop "identity for tx after height" $ \x ->
-            testJSON (x :: TxAfterHeight)
         prop "identity for peer information" $ \x ->
             testJSON (x :: PeerInformation)
 
@@ -112,9 +108,6 @@ testNetJSON2 net x =
 
 testSerial :: (Eq a, Show a, Serialize a) => a -> Expectation
 testSerial input = (decode . encode) input `shouldBe` Right input
-
-instance Arbitrary TxAfterHeight where
-    arbitrary = TxAfterHeight <$> arbitrary
 
 instance Arbitrary DeriveType where
     arbitrary = elements [DeriveNormal, DeriveP2SH, DeriveP2WPKH]

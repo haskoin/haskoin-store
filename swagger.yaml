@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.23.0'
+  version: '0.23.1'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
@@ -683,7 +683,32 @@ paths:
               schema:
                 type: string
                 format: binary
-                
+
+  '/xpub/{xpub}/evict':
+    get:
+      tags:
+        - Address
+      operationId: evictXPub
+      summary: Evict extended public key from cache
+      parameters:
+        - $ref: '#/components/parameters/xpubParam'
+      responses:
+        '200':
+          description: Returns true if the xpub was in the cache prior to eviction
+            application/json:
+              schema:
+                type: object
+                required:
+                  - result
+                properties:
+                  result:
+                    type: boolean
+                    example: true
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
   '/transaction/{txid}/after/{height}':
     get:
       tags:

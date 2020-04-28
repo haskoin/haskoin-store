@@ -64,7 +64,7 @@ import           Haskoin                       (Address, Block (..),
 import           Haskoin.Node                  (Chain, Manager, OnlinePeer (..),
                                                 chainGetBest, managerGetPeers,
                                                 sendMessage)
-import           Haskoin.Store.Cache           (CacheT, withCache)
+import           Haskoin.Store.Cache           (CacheT, withCache, delXPubKeys)
 import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
                                                 Event (..), HealthCheck (..),
@@ -73,7 +73,7 @@ import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
                                                 PubExcept (..), StoreEvent (..),
                                                 StoreInput (..), StoreRead (..),
                                                 Transaction (..),
-                                                TxAfterHeight (..), TxData (..),
+                                                GenericResult (..), TxData (..),
                                                 TxId (..), UnixTime, Unspent,
                                                 XPubBal (..), XPubSpec (..),
                                                 applyOffset, blockAtOrBefore,
@@ -138,11 +138,11 @@ data WebConfig =
 
 data WebLimits =
     WebLimits
-        { maxLimitCount   :: !Word32
-        , maxLimitFull    :: !Word32
-        , maxLimitOffset  :: !Word32
-        , maxLimitDefault :: !Word32
-        , maxLimitGap     :: !Word32
+        { maxLimitCount      :: !Word32
+        , maxLimitFull       :: !Word32
+        , maxLimitOffset     :: !Word32
+        , maxLimitDefault    :: !Word32
+        , maxLimitGap        :: !Word32
         , maxLimitInitialGap :: !Word32
         }
     deriving (Eq, Show)
@@ -616,6 +616,18 @@ scottyXpubTxs full = do
             protoSerialNet proto txs'
         else protoSerial proto txs
 
+scottyXpubEvict :: MonadLoggerIO m => WebT m ()
+scottyXpubEvict =
+    lift (asks (storeCache . webStore)) >>= \case
+        Nothing -> S.raise ThingNotFound
+        Just cache -> do
+            setHeaders
+            xpub <- parseXpub
+            proto <- setupBin
+            n <- withCache cache (delXPubKeys [xpub])
+            protoSerial proto (GenericResult (n > 0))
+
+
 scottyXpubUnspents :: MonadLoggerIO m => WebT m ()
 scottyXpubUnspents = do
     setHeaders
@@ -764,6 +776,7 @@ runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
         S.get "/xpub/:xpub/transactions" $ scottyXpubTxs False
         S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs True
         S.get "/xpub/:xpub/unspent" scottyXpubUnspents
+        S.get "/xpub/:xpub/evict" scottyXpubEvict
         S.get "/xpub/:xpub" scottyXpubSummary
         S.post "/transactions" scottyPostTx
         S.get "/dbstats" scottyDbStats
@@ -1015,12 +1028,12 @@ cbAfterHeight ::
     => Int -- ^ how many ancestors to test before giving up
     -> BlockHeight
     -> TxHash
-    -> m TxAfterHeight
+    -> m (GenericResult (Maybe Bool))
 cbAfterHeight d h t
-    | d <= 0 = return $ TxAfterHeight Nothing
+    | d <= 0 = return $ GenericResult Nothing
     | otherwise = do
         x <- fmap snd <$> tst d t
-        return $ TxAfterHeight x
+        return $ GenericResult x
   where
     tst e x
         | e <= 0 = return Nothing

@@ -19,13 +19,14 @@ module Haskoin.Store.Cache
     , CacheWriterInbox
     , CacheWriterMessage (..)
     , cacheWriter
+    , isXPubCached
+    , delXPubKeys
     ) where
 
 import           Control.DeepSeq           (NFData)
-import           Control.Monad             (forM, forM_, forever, unless, void,
-                                            when)
-import           Control.Monad.Logger      (MonadLoggerIO, logDebugS, logErrorS,
-                                            logInfoS, logWarnS)
+import           Control.Monad             (forM, forM_, forever, void)
+import           Control.Monad.Logger      (MonadLoggerIO, logErrorS, logInfoS,
+                                            logWarnS)
 import           Control.Monad.Reader      (ReaderT (..), asks)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
@@ -33,10 +34,10 @@ import           Data.Bits                 (shift, (.&.), (.|.))
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Short     as BSS
 import           Data.Either               (rights)
+import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as HashMap
 import qualified Data.IntMap.Strict        as IntMap
 import           Data.List                 (nub, sort)
-import           Data.Map.Strict           (Map)
 import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (catMaybes, mapMaybe)
 import           Data.Serialize            (decode, encode)
@@ -176,11 +177,8 @@ getXPubTxs xpub start offset limit =
     isXPubCached xpub >>= \case
         True -> do
             txs <- cacheGetXPubTxs xpub start offset limit
-            $(logDebugS) "Cache" $
-                "Cache hit for " <> cs (show (length txs)) <> " xpub txs"
             return txs
         False -> do
-            $(logDebugS) "Cache" $ "Cache miss for xpub txs request"
             newXPubC xpub >>= \(bals, t) ->
                 if t
                     then cacheGetXPubTxs xpub start offset limit
@@ -197,13 +195,8 @@ getXPubUnspents xpub start offset limit =
     isXPubCached xpub >>= \case
         True -> do
             bals <- cacheGetXPubBalances xpub
-            $(logDebugS) "Cache" $
-                "Cache hit for unspents on an xpub with " <>
-                cs (show (length bals)) <>
-                " balances"
             process bals
         False -> do
-            $(logDebugS) "Cache" $ "Cache miss for xpub unspents request"
             newXPubC xpub >>= \(bals, t) ->
                 if t
                     then process bals
@@ -238,11 +231,8 @@ getXPubBalances xpub =
     isXPubCached xpub >>= \case
         True -> do
             bals <- cacheGetXPubBalances xpub
-            $(logDebugS) "Cache" $
-                "Cache hit for " <> cs (show (length bals)) <> " xpub balances"
             return bals
         False -> do
-            $(logDebugS) "Cache" "Cache miss for xpub balances request"
             fst <$> newXPubC xpub
 
 isXPubCached :: MonadIO m => XPubSpec -> CacheT m Bool
@@ -445,21 +435,21 @@ cacheWriter ::
     => CacheConfig
     -> CacheWriterInbox
     -> m ()
-cacheWriter cfg inbox =
-    runReaderT
-        (newBlockC >> forever (pruneDB >> receive inbox >>= cacheWriterReact))
-        cfg
+cacheWriter cfg inbox = runReaderT go cfg
+  where
+    go = do
+        newBlockC
+        forever $ do
+            pruneDB
+            x <- receive inbox
+            cacheWriterReact x
 
 pruneDB :: (MonadLoggerIO m, StoreRead m) => CacheT m Integer
 pruneDB = do
     x <- asks cacheMax
     s <- runRedis Redis.dbsize
     if s > x
-        then do
-            n <- flush (s - x)
-            when (n > 0) $
-                $(logDebugS) "Cache" $ "Pruned " <> cs (show n) <> " keys"
-            return n
+        then flush (s - x)
         else return 0
   where
     flush n =
@@ -505,13 +495,9 @@ newXPubC xpub = do
     let n = lenNotNull bals
     if x <= n
         then do
-            $(logDebugS) "Cache" $
-                "Caching xpub with " <> cs (show n) <> " used addresses"
             go bals
             return (bals, True)
         else do
-            $(logDebugS) "Cache" $
-                "Not caching xpub with " <> cs (show n) <> " used addresses"
             return (bals, False)
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
@@ -626,39 +612,40 @@ removeHeadC =
 importMultiTxC :: (StoreRead m, MonadLoggerIO m) => [TxData] -> CacheT m ()
 importMultiTxC txs = do
     addrmap <-
-        Map.fromList . catMaybes . zipWith (\a -> fmap (a, )) alladdrs <$>
+        HashMap.fromList . catMaybes . zipWith (\a -> fmap (a, )) alladdrs <$>
         cacheGetAddrsInfo alladdrs
+    let addrs = HashMap.keys addrmap
     balmap <-
-        Map.fromList . zipWith (,) alladdrs <$>
-        mapM (lift . getBalance) (Map.keys addrmap)
+        HashMap.fromList . zipWith (,) addrs <$> mapM (lift . getBalance) addrs
     unspentmap <-
-        Map.fromList . catMaybes . zipWith (\p -> fmap (p, )) allops <$>
+        HashMap.fromList . catMaybes . zipWith (\p -> fmap (p, )) allops <$>
         lift (mapM getUnspent allops)
     gap <- getMaxGap
     now <- systemSeconds <$> liftIO getSystemTime
-    newaddrs <-
-        runRedisTx (redisWatchXPubCached (allxpubs addrmap)) $ \ys ->
-            if or ys
-                then do
-                    let xpubs = map fst . filter snd $ zip (allxpubs addrmap) ys
-                        addrmap' = faddrmap xpubs addrmap
-                    x <- redisImportMultiTx addrmap' unspentmap txs
-                    y <- redisUpdateBalances addrmap' balmap
-                    z <- redisTouchKeys now (allxpubs addrmap')
-                    n <- redisGetNewAddrs gap addrmap'
-                    return $ x >> y >> z >> n
-                else return (pure Map.empty)
-    unless (Map.null newaddrs) $ cacheAddAddresses newaddrs
+    addrs' <-
+        runRedisTx (watchRedisXPubBalances (allxpubs addrmap)) $ \bals -> do
+            let xmap = HashMap.filter (not . null) (HashMap.fromList bals)
+                addrmap' = faddrmap (HashMap.keysSet xmap) addrmap
+            x <-
+                if not (HashMap.null xmap)
+                    then do
+                        x <- redisImportMultiTx addrmap' unspentmap txs
+                        y <- redisUpdateBalances addrmap' balmap
+                        z <- redisTouchKeys now (allxpubs addrmap')
+                        return $ x >> y >> z >> return ()
+                    else return (pure ())
+            return $ x >> return (getNewAddrs gap xmap (HashMap.elems addrmap'))
+    cacheAddAddresses addrs'
   where
-    faddrmap xpubs = Map.filter ((`elem` xpubs) . addressXPubSpec)
+    faddrmap xpubs = HashMap.filter ((`elem` xpubs) . addressXPubSpec)
     allops = map snd $ concatMap txInputs txs <> concatMap txOutputs txs
     alladdrs = nub . map fst $ concatMap txInputs txs <> concatMap txOutputs txs
-    allxpubs addrmap = nub . map addressXPubSpec $ Map.elems addrmap
+    allxpubs addrmap = nub . map addressXPubSpec $ HashMap.elems addrmap
 
 redisImportMultiTx ::
        (Monad f, RedisCtx m f)
-    => Map Address AddressXPub
-    -> Map OutPoint Unspent
+    => HashMap Address AddressXPub
+    -> HashMap OutPoint Unspent
     -> [TxData]
     -> m (f ())
 redisImportMultiTx addrmap unspentmap txs = do
@@ -666,12 +653,12 @@ redisImportMultiTx addrmap unspentmap txs = do
     return $ sequence xs >> return ()
   where
     uns p i =
-        case Map.lookup p unspentmap of
+        case HashMap.lookup p unspentmap of
             Just u ->
                 redisAddXPubUnspents (addressXPubSpec i) [(p, unspentBlock u)]
             Nothing -> redisRemXPubUnspents (addressXPubSpec i) [p]
     addtx tx a p =
-        case Map.lookup a addrmap of
+        case HashMap.lookup a addrmap of
             Just i -> do
                 x <-
                     redisAddXPubTxs
@@ -685,7 +672,7 @@ redisImportMultiTx addrmap unspentmap txs = do
                 return $ x >> y >> return ()
             Nothing -> return (pure ())
     remtx tx a p =
-        case Map.lookup a addrmap of
+        case HashMap.lookup a addrmap of
             Just i -> do
                 x <- redisRemXPubTxs (addressXPubSpec i) [txHash (txData tx)]
                 y <- uns p i
@@ -715,12 +702,12 @@ redisImportMultiTx addrmap unspentmap txs = do
 
 redisUpdateBalances ::
        (Monad f, RedisCtx m f)
-    => Map Address AddressXPub
-    -> Map Address Balance
+    => HashMap Address AddressXPub
+    -> HashMap Address Balance
     -> m (f ())
 redisUpdateBalances addrmap balmap =
-    fmap (void . sequence) . forM (Map.keys addrmap) $ \a ->
-        case (Map.lookup a addrmap, Map.lookup a balmap) of
+    fmap (fmap mconcat . sequence) . forM (HashMap.keys addrmap) $ \a ->
+        case (HashMap.lookup a addrmap, HashMap.lookup a balmap) of
             (Just ainfo, Just bal) ->
                 redisAddXPubBalances (addressXPubSpec ainfo) [xpubbal ainfo bal]
             _ -> return (pure ())
@@ -730,125 +717,74 @@ redisUpdateBalances addrmap balmap =
 
 cacheAddAddresses ::
        (StoreRead m, MonadLoggerIO m)
-    => Map Address AddressXPub
+    => [(Address, AddressXPub)]
     -> CacheT m ()
-cacheAddAddresses addrmap = do
+cacheAddAddresses [] = return ()
+cacheAddAddresses addrs = do
     gap <- getMaxGap
-    newmap <- runRedis (redisGetNewAddrs gap addrmap)
-    balmap <- Map.fromList <$> mapM getbal (Map.keys newmap)
-    utxomap <- Map.fromList <$> mapM getutxo (Map.keys newmap)
-    txmap <- Map.fromList <$> mapM gettxmap (Map.keys newmap)
-    let notnulls = getnotnull newmap balmap
-        xpubbals = getxpubbals newmap balmap
-        unspents = getunspents newmap utxomap
-        txs = gettxs newmap txmap
-        xpubs = map addressXPubSpec (Map.elems addrmap)
-    newaddrs <-
-        runRedisTx (redisWatchXPubCached xpubs) $ \ys -> do
-            let xpubs' = map fst . filter snd $ zip xpubs ys
-                xpubbals' =
-                    HashMap.filterWithKey (\x _ -> x `elem` xpubs') xpubbals
-                unspents' =
-                    HashMap.filterWithKey (\x _ -> x `elem` xpubs') unspents
-                txs' = HashMap.filterWithKey (\x _ -> x `elem` xpubs') txs
-                notnulls' =
-                    Map.filter (\x -> addressXPubSpec x `elem` xpubs') notnulls
+    balmap' <- HashMap.fromListWith (<>) <$> mapM (uncurry getbal) addrs
+    utxomap' <- HashMap.fromListWith (<>) <$> mapM (uncurry getutxo) addrs
+    txmap' <- HashMap.fromListWith (<>) <$> mapM (uncurry gettxmap) addrs
+    let xpubs' = nub (map addressXPubSpec (Map.elems amap))
+    addrs' <-
+        runRedisTx (watchRedisXPubBalances xpubs') $ \bals -> do
+            let xmap = HashMap.filter (not . null) (HashMap.fromList bals)
+                xpubs = HashMap.keysSet xmap
+                balmap = HashMap.filterWithKey (\k _ -> k `elem` xpubs) balmap'
+                utxomap =
+                    HashMap.filterWithKey (\k _ -> k `elem` xpubs) utxomap'
+                txmap = HashMap.filterWithKey (\k _ -> k `elem` xpubs) txmap'
+                notnulls = getnotnull balmap
             x' <-
-                forM (HashMap.toList xpubbals') $ \(x, bs) ->
+                forM (HashMap.toList balmap) $ \(x, bs) ->
                     redisAddXPubBalances x bs
             y' <-
-                forM (HashMap.toList unspents') $ \(x, us) ->
-                    redisAddXPubUnspents x (map uns us)
-            z' <- forM (HashMap.toList txs') $ \(x, ts) -> redisAddXPubTxs x ts
-            new <- redisGetNewAddrs gap notnulls'
+                forM (HashMap.toList utxomap) $ \(x, us) ->
+                    redisAddXPubUnspents x us
+            z' <- forM (HashMap.toList txmap) $ \(x, ts) -> redisAddXPubTxs x ts
             return $ do
                 _ <- sequence x'
                 _ <- sequence y'
                 _ <- sequence z'
-                new
-    unless (null newaddrs) $ cacheAddAddresses newaddrs
+                return $ getNewAddrs gap xmap notnulls
+    cacheAddAddresses addrs'
   where
-    uns u = (unspentPoint u, unspentBlock u)
-    gettxs newmap txmap =
-        let f a ts =
-                case Map.lookup a newmap of
-                    Nothing -> Nothing
-                    Just i  -> Just (addressXPubSpec i, ts)
-            g m (x, ts) = HashMap.insertWith (<>) x ts m
-         in foldl g HashMap.empty (mapMaybe (uncurry f) (Map.toList txmap))
-    getunspents newmap utxomap =
-        let f a us =
-                case Map.lookup a newmap of
-                    Nothing -> Nothing
-                    Just i  -> Just (addressXPubSpec i, us)
-            g m (x, us) = HashMap.insertWith (<>) x us m
-         in foldl g HashMap.empty (mapMaybe (uncurry f) (Map.toList utxomap))
-    getxpubbals newmap balmap =
-        let f a b =
-                case Map.lookup a newmap of
-                    Nothing -> Nothing
-                    Just i ->
-                        Just
-                            ( addressXPubSpec i
-                            , XPubBal
-                                  {xPubBal = b, xPubBalPath = addressXPubPath i})
-            g m (x, b) = HashMap.insertWith (<>) x [b] m
-         in foldl g HashMap.empty (mapMaybe (uncurry f) (Map.toList balmap))
-    getnotnull newmap balmap =
-        let f a _ =
-                case Map.lookup a newmap of
-                    Nothing -> Nothing
-                    Just i  -> Just (a, i)
-         in Map.fromList . mapMaybe (uncurry f) . Map.toList $
-            Map.filter (not . nullBalance) balmap
-    getbal a = (a, ) <$> lift (getBalance a)
-    getutxo a = (a, ) <$> lift (getAddressUnspents a Nothing Nothing)
-    gettxmap a = (a, ) <$> lift (getAddressTxs a Nothing Nothing)
+    amap = Map.fromList addrs
+    getnotnull =
+        let f xpub =
+                map $ \bal ->
+                    AddressXPub
+                        { addressXPubSpec = xpub
+                        , addressXPubPath = xPubBalPath bal
+                        }
+            g = filter (not . nullBalance . xPubBal)
+         in concatMap (uncurry f) . HashMap.toList . HashMap.map g
+    getbal a i =
+        let f b =
+                ( addressXPubSpec i
+                , [XPubBal {xPubBal = b, xPubBalPath = addressXPubPath i}])
+         in f <$> lift (getBalance a)
+    getutxo a i =
+        let f us =
+                ( addressXPubSpec i
+                , map (\u -> (unspentPoint u, unspentBlock u)) us)
+         in f <$> lift (getAddressUnspents a Nothing Nothing)
+    gettxmap a i =
+        let f ts = (addressXPubSpec i, ts)
+         in f <$> lift (getAddressTxs a Nothing Nothing)
 
-redisGetNewAddrs ::
-       (Monad f, RedisCtx m f)
-    => KeyIndex
-    -> Map Address AddressXPub
-    -> m (f (Map Address AddressXPub))
-redisGetNewAddrs gap addrmap =
-    xbalmap >>= \xbalmap' ->
-        return $ do
-            xbmap' <- xbalmap'
-            return . Map.fromList $
-                concatMap (uncurry newaddrs) (HashMap.toList xbmap')
+
+getNewAddrs ::
+       KeyIndex
+    -> HashMap XPubSpec [XPubBal]
+    -> [AddressXPub]
+    -> [(Address, AddressXPub)]
+getNewAddrs gap xpubs = concatMap f
   where
-    xbalmap = do
-        xbs <-
-            forM xpubs $ \xpub -> do
-                bals <- redisGetXPubBalances xpub
-                return $ bals >>= return . (xpub, )
-        return $ do
-            xbs' <- sequence xbs
-            return $ HashMap.fromList xbs'
-    newaddrs xpub bals =
-        let paths = HashMap.lookupDefault [] xpub xpubmap
-            ext = maximum . (0 :) . map (head . tail) $ filter ((== 0) . head) paths
-            chg = maximum . (0 :) . map (head . tail) $ filter ((== 1) . head) paths
-            extnew =
-                addrsToAdd
-                    bals
-                    gap
-                    AddressXPub
-                        {addressXPubSpec = xpub, addressXPubPath = [0, ext]}
-            intnew =
-                addrsToAdd
-                    bals
-                    gap
-                    AddressXPub
-                        {addressXPubSpec = xpub, addressXPubPath = [1, chg]}
-         in extnew <> intnew
-    xpubs = HashMap.keys xpubmap
-    xpubmap =
-        let f xmap ainfo =
-                let xpub = addressXPubSpec ainfo
-                    path = addressXPubPath ainfo
-                 in HashMap.insertWith (<>) xpub [path] xmap
-         in foldl f HashMap.empty (Map.elems addrmap)
+    f a =
+        case HashMap.lookup (addressXPubSpec a) xpubs of
+            Nothing   -> []
+            Just bals -> addrsToAdd gap bals a
 
 syncMempoolC :: (MonadLoggerIO m, StoreRead m) => CacheT m ()
 syncMempoolC = do
@@ -972,32 +908,26 @@ redisGetAddrsInfo as = do
         is' <- sequence is
         return $ map (eitherToMaybe . decode =<<) is'
 
-addrsToAdd ::
-       [XPubBal]
-    -> KeyIndex
-    -> AddressXPub
-    -> [(Address, AddressXPub)]
-addrsToAdd xbals gap addrinfo =
-    let headi = head (addressXPubPath addrinfo)
-        maxi =
-            maximum . (0 :) . map (head . tail . xPubBalPath) $
-            filter ((== headi) . head . xPubBalPath) xbals
-        xpub = addressXPubSpec addrinfo
-        newi = head (tail (addressXPubPath addrinfo))
-        genixs =
-            if maxi - newi < gap
-                then [maxi + 1 .. newi + gap]
-                else []
-        paths = map (Deriv :/ headi :/) genixs
-        keys = map (\p -> derivePubPath p (xPubSpecKey xpub)) paths
-        list = map pathToList paths
-        xpubf = xPubAddrFunction (xPubDeriveType xpub)
-        addrs = map xpubf keys
-     in zipWith
-            (\a p ->
-                 (a, AddressXPub {addressXPubSpec = xpub, addressXPubPath = p}))
-            addrs
-            list
+addrsToAdd :: KeyIndex -> [XPubBal] -> AddressXPub -> [(Address, AddressXPub)]
+addrsToAdd gap xbals addrinfo
+    | null fbals = []
+    | otherwise = zipWith f addrs list
+  where
+    f a p = (a, AddressXPub {addressXPubSpec = xpub, addressXPubPath = p})
+    dchain = head (addressXPubPath addrinfo)
+    fbals = filter ((== dchain) . head . xPubBalPath) xbals
+    maxidx = maximum (map (head . tail . xPubBalPath) fbals)
+    xpub = addressXPubSpec addrinfo
+    aidx = (head . tail) (addressXPubPath addrinfo)
+    ixs =
+        if gap > maxidx - aidx
+            then [maxidx + 1 .. aidx + gap]
+            else []
+    paths = map (Deriv :/ dchain :/) ixs
+    keys = map (\p -> derivePubPath p (xPubSpecKey xpub)) paths
+    list = map pathToList paths
+    xpubf = xPubAddrFunction (xPubDeriveType xpub)
+    addrs = map xpubf keys
 
 sortTxData :: [TxData] -> [TxData]
 sortTxData tds =

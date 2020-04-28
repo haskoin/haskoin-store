@@ -36,7 +36,7 @@ module Haskoin.Store
     , StoreEvent (..)
     , PubExcept (..)
     , TxId (..)
-    , TxAfterHeight (..)
+    , GenericResult (..)
 
     , StoreWrite (..)
 
