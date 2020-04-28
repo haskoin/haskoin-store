@@ -1,11 +1,12 @@
-{-# LANGUAGE DeriveAnyClass    #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE TemplateHaskell       #-}
 module Haskoin.Store.Web
     ( Except (..)
     , WebConfig (..)
@@ -64,16 +65,16 @@ import           Haskoin                       (Address, Block (..),
 import           Haskoin.Node                  (Chain, Manager, OnlinePeer (..),
                                                 chainGetBest, managerGetPeers,
                                                 sendMessage)
-import           Haskoin.Store.Cache           (CacheT, withCache, delXPubKeys)
+import           Haskoin.Store.Cache           (CacheT, delXPubKeys, withCache)
 import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
-                                                Event (..), HealthCheck (..),
-                                                Limit, NetWrap (..), Offset,
+                                                Event (..), GenericResult (..),
+                                                HealthCheck (..), Limit,
+                                                NetWrap (..), Offset,
                                                 PeerInformation (..),
                                                 PubExcept (..), StoreEvent (..),
                                                 StoreInput (..), StoreRead (..),
-                                                Transaction (..),
-                                                GenericResult (..), TxData (..),
+                                                Transaction (..), TxData (..),
                                                 TxId (..), UnixTime, Unspent,
                                                 XPubBal (..), XPubSpec (..),
                                                 applyOffset, blockAtOrBefore,
@@ -217,6 +218,11 @@ runInWebReader bf cf = do
         case mc of
             Nothing -> bf
             Just c  -> withCache c cf
+
+runNoCache :: MonadIO m => DatabaseReaderT m a -> WebT m a
+runNoCache f = lift $ do
+    bdb <- asks (storeDB . webStore)
+    lift $ withDatabaseReader bdb f
 
 instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
     getMaxGap = runInWebReader getMaxGap getMaxGap
@@ -597,14 +603,20 @@ scottyAddressesBalances = do
 scottyXpubBalances :: MonadLoggerIO m => WebT m ()
 scottyXpubBalances = do
     setHeaders
+    nocache <- parseNoCache
     xpub <- parseXpub
     proto <- setupBin
-    res <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
+    res <-
+        filter (not . nullBalance . xPubBal) <$>
+        if nocache
+            then runNoCache (xPubBals xpub)
+            else xPubBals xpub
     protoSerialNet proto res
 
 scottyXpubTxs :: MonadLoggerIO m => Bool -> WebT m ()
 scottyXpubTxs full = do
     setHeaders
+    nocache <- parseNoCache
     xpub <- parseXpub
     start <- getStart
     limit <- getLimit full
@@ -612,7 +624,11 @@ scottyXpubTxs full = do
     txs <- xPubTxs xpub start 0 limit
     if full
         then do
-            txs' <- catMaybes <$> mapM (getTransaction . blockTxHash) txs
+            txs' <-
+                catMaybes <$>
+                if nocache
+                    then runNoCache (mapM (getTransaction . blockTxHash) txs)
+                    else mapM (getTransaction . blockTxHash) txs
             protoSerialNet proto txs'
         else protoSerial proto txs
 
@@ -631,19 +647,27 @@ scottyXpubEvict =
 scottyXpubUnspents :: MonadLoggerIO m => WebT m ()
 scottyXpubUnspents = do
     setHeaders
+    nocache <- parseNoCache
     xpub <- parseXpub
     proto <- setupBin
     start <- getStart
     limit <- getLimit False
-    uns <- xPubUnspents xpub start 0 limit
+    uns <-
+        if nocache
+            then runNoCache (xPubUnspents xpub start 0 limit)
+            else xPubUnspents xpub start 0 limit
     protoSerial proto uns
 
 scottyXpubSummary :: MonadLoggerIO m => WebT m ()
 scottyXpubSummary = do
     setHeaders
+    nocache <- parseNoCache
     xpub <- parseXpub
     proto <- setupBin
-    res <- xPubSummary xpub
+    res <-
+        if nocache
+            then runNoCache (xPubSummary xpub)
+            else xPubSummary xpub
     protoSerial proto res
 
 scottyPostTx ::
@@ -884,6 +908,9 @@ parseDeriveAddrs =
                       "compat" -> DeriveP2SH
                       _        -> DeriveNormal
           | otherwise -> return DeriveNormal
+
+parseNoCache :: (Monad m, ScottyError e) => ActionT e m Bool
+parseNoCache = S.param "nocache" `S.rescue` const (return False)
 
 parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
 parseNoTx = S.param "notx" `S.rescue` const (return False)

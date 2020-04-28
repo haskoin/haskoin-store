@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.23.1'
+  version: '0.23.2'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
@@ -695,6 +695,7 @@ paths:
       responses:
         '200':
           description: Returns true if the xpub was in the cache prior to eviction
+          content:
             application/json:
               schema:
                 type: object
@@ -998,6 +999,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/xpubDerive'
+        - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
           description: Summary object for extended public key.
@@ -1031,6 +1033,7 @@ paths:
         - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
           description: List of transaction objects.
@@ -1066,6 +1069,7 @@ paths:
         - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
           description: List of transactions.
@@ -1112,6 +1116,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/xpubDerive'
+        - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
           description: List of address balances for extended public key provided.
@@ -1172,6 +1177,7 @@ paths:
         - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
           description: List of unspent outputs.
@@ -1860,6 +1866,14 @@ components:
         type: integer
       description: >
         Skip this many entries from the beginning of the result set.
+
+    nocacheParam:
+      name: nocache
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: Do not use the cache to retrieve this data
 
     notxParam:
       name: notx
