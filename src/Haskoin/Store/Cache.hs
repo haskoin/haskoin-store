@@ -77,17 +77,19 @@ import           Haskoin.Store.Common      (Balance (..), BlockData (..),
                                             xPubBalsTxs, xPubBalsUnspents,
                                             xPubTxs)
 import           NQE                       (Inbox, Mailbox, receive)
-import           System.Random             (randomIO, randomRIO)
+import           System.Random             (randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             bracket, liftIO, throwIO)
 import           UnliftIO.Concurrent       (threadDelay)
 
-runRedis :: MonadIO m => Redis (Either Reply a) -> CacheT m a
+runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheT m a
 runRedis action =
     asks cacheConn >>= \conn ->
         liftIO (Redis.runRedis conn action) >>= \case
             Right x -> return x
-            Left e -> throwIO (RedisError e)
+            Left e -> do
+                $(logErrorS) "Cache" $ "Got error from Redis: " <> cs (show e)
+                throwIO (RedisError e)
 
 data CacheConfig =
     CacheConfig
@@ -253,20 +255,20 @@ getXPubBalances xpub = do
             $(logDebugS) "Cache" $ "Caching balances for xpub " <> xpubtxt
             fst <$> newXPubC xpub
 
-isXPubCached :: MonadIO m => XPubSpec -> CacheT m Bool
+isXPubCached :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
 isXPubCached = runRedis . redisIsXPubCached
 
 redisIsXPubCached :: RedisCtx m f => XPubSpec -> m (f Bool)
 redisIsXPubCached xpub = Redis.exists (balancesPfx <> encode xpub)
 
-cacheGetXPubBalances :: MonadIO m => XPubSpec -> CacheT m [XPubBal]
+cacheGetXPubBalances :: MonadLoggerIO m => XPubSpec -> CacheT m [XPubBal]
 cacheGetXPubBalances xpub = do
     bals <- runRedis $ redisGetXPubBalances xpub
     touchKeys [xpub]
     return bals
 
 cacheGetXPubTxs ::
-       MonadIO m
+       MonadLoggerIO m
     => XPubSpec
     -> Maybe BlockRef
     -> Offset
@@ -278,7 +280,7 @@ cacheGetXPubTxs xpub start offset limit = do
     return txs
 
 cacheGetXPubUnspents ::
-       MonadIO m
+       MonadLoggerIO m
     => XPubSpec
     -> Maybe BlockRef
     -> Offset
@@ -427,8 +429,8 @@ data AddressXPub =
 mempoolSetKey :: ByteString
 mempoolSetKey = "mempool"
 
-deleteLockKey :: ByteString
-deleteLockKey = "deleted"
+lockKey :: ByteString
+lockKey = "lock"
 
 addrPfx :: ByteString
 addrPfx = "a"
@@ -458,36 +460,44 @@ cacheWriter cfg inbox = runReaderT go cfg
             x <- receive inbox
             cacheWriterReact x
 
-lockIt :: MonadIO m => CacheT m Bool
+lockIt :: MonadLoggerIO m => CacheT m Bool
 lockIt = do
-    r <- liftIO randomIO
-    mi <-
-        runRedis $ do
+    go >>= \case
+        Right Redis.Ok -> return True
+        Right Redis.Pong -> do
+            $(logErrorS) "Cache" $ "Got unexpected Pong from Redis"
+            return False
+        Right (Redis.Status s) -> do
+            $(logErrorS) "Cache" $ "Got unexpected status from Redis: " <> cs s
+            return False
+        Left (Redis.Bulk Nothing) -> return False
+        Left e -> do
+            $(logErrorS) "Cache" $ "Error when trying to acquire lock"
+            throwIO (RedisError e)
+  where
+    go = do
+        conn <- asks cacheConn
+        liftIO . Redis.runRedis conn $ do
             let opts =
                     Redis.SetOpts
                         { Redis.setSeconds = Just 30
                         , Redis.setMilliseconds = Nothing
                         , Redis.setCondition = Just Redis.Nx
                         }
-            a <- Redis.setOpts deleteLockKey (cs (show (r :: Integer))) opts
-            b <- Redis.get deleteLockKey
-            return $ a >> fmap (read . cs) <$> b
-    case mi of
-        Just i
-            | i == r -> return True
-        _ -> return False
+            Redis.setOpts lockKey "l" opts
 
 
-unlockIt :: MonadIO m => CacheT m ()
-unlockIt = runRedis (Redis.del [deleteLockKey]) >> return ()
+unlockIt :: MonadLoggerIO m => CacheT m ()
+unlockIt = runRedis (Redis.del [lockKey]) >> return ()
 
-withLock :: MonadUnliftIO m => CacheT m a -> CacheT m (Maybe a)
+withLock ::
+       (MonadLoggerIO m, MonadUnliftIO m) => CacheT m a -> CacheT m (Maybe a)
 withLock f =
     bracket lockIt (const unlockIt) $ \case
         True -> Just <$> f
         False -> return Nothing
 
-withLockWait :: MonadUnliftIO m => CacheT m a -> CacheT m a
+withLockWait :: (MonadLoggerIO m, MonadUnliftIO m) => CacheT m a -> CacheT m a
 withLockWait f =
     withLock f >>= \case
         Just x -> return x
@@ -519,7 +529,7 @@ pruneDB =
                     "Pruning " <> cs (show (length ks)) <> " old xpubs"
                 delXPubKeys ks
 
-touchKeys :: MonadIO m => [XPubSpec] -> CacheT m ()
+touchKeys :: MonadLoggerIO m => [XPubSpec] -> CacheT m ()
 touchKeys xpubs = do
     now <- systemSeconds <$> liftIO getSystemTime
     runRedis $ redisTouchKeys now xpubs
@@ -891,10 +901,10 @@ syncMempoolC = do
                 "Importing " <> cs (show (length txs)) <> " mempool transactions"
             importMultiTxC txs
 
-cacheGetMempool :: MonadIO m => CacheT m [BlockTx]
+cacheGetMempool :: MonadLoggerIO m => CacheT m [BlockTx]
 cacheGetMempool = runRedis redisGetMempool
 
-cacheGetHead :: MonadIO m => CacheT m (Maybe BlockHash)
+cacheGetHead :: MonadLoggerIO m => CacheT m (Maybe BlockHash)
 cacheGetHead = runRedis redisGetHead
 
 cacheSetHead :: (MonadLoggerIO m, StoreRead m) => BlockHash -> CacheT m ()
@@ -903,7 +913,7 @@ cacheSetHead bh = do
     runRedis (redisSetHead bh) >> return ()
 
 cacheGetAddrsInfo ::
-       MonadIO m => [Address] -> CacheT m [Maybe AddressXPub]
+       MonadLoggerIO m => [Address] -> CacheT m [Maybe AddressXPub]
 cacheGetAddrsInfo as = runRedis (redisGetAddrsInfo as)
 
 redisAddToMempool :: RedisCtx m f => BlockTx -> m (f Integer)
