@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.23.4
+### Added
+- Add extra debug logging for cache code.
+
+### Fixed
+- Fix a bug with xpub growing algorithm.
+
+### Changed
+- Use locks instead of transactions to update cache.
+
 ## 0.23.3
 ### Fixed
 - Reduce contention when many instances of Haskoin Store share a cache.

@@ -224,7 +224,8 @@ runNoCache f = lift $ do
     bdb <- asks (storeDB . webStore)
     lift $ withDatabaseReader bdb f
 
-instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
+instance (MonadUnliftIO m, MonadLoggerIO m) =>
+         StoreRead (ReaderT WebConfig m) where
     getMaxGap = runInWebReader getMaxGap getMaxGap
     getInitialGap = runInWebReader getInitialGap getInitialGap
     getNetwork = runInWebReader getNetwork getNetwork
@@ -250,8 +251,7 @@ instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
             (getAddressesUnspents addrs start limit)
     getOrphans = runInWebReader getOrphans getOrphans
     xPubBals xpub = runInWebReader (xPubBals xpub) (xPubBals xpub)
-    xPubSummary xpub =
-        runInWebReader (xPubSummary xpub) (xPubSummary xpub)
+    xPubSummary xpub = runInWebReader (xPubSummary xpub) (xPubSummary xpub)
     xPubUnspents xpub start offset limit =
         runInWebReader
             (xPubUnspents xpub start offset limit)
@@ -261,7 +261,7 @@ instance MonadLoggerIO m => StoreRead (ReaderT WebConfig m) where
             (xPubTxs xpub start offset limit)
             (xPubTxs xpub start offset limit)
 
-instance MonadLoggerIO m => StoreRead (WebT m) where
+instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getNetwork = lift getNetwork
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
@@ -335,7 +335,7 @@ protoSerialNet proto x = do
     S.raw (serialAnyNet net proto x)
 
 scottyBestBlock ::
-       (MonadLoggerIO m, MonadIO m) => Bool -> WebT m ()
+       (MonadUnliftIO m, MonadLoggerIO m, MonadIO m) => Bool -> WebT m ()
 scottyBestBlock raw = do
     limits <- lift $ asks webMaxLimits
     setHeaders
@@ -355,7 +355,7 @@ scottyBestBlock raw = do
             rawBlock b >>= protoSerial proto
         else protoSerial proto (pruneTx n b)
 
-scottyBlock :: MonadLoggerIO m => Bool -> WebT m ()
+scottyBlock :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyBlock raw = do
     limits <- lift $ asks webMaxLimits
     setHeaders
@@ -372,8 +372,7 @@ scottyBlock raw = do
             rawBlock b >>= protoSerial proto
         else protoSerial proto (pruneTx n b)
 
-scottyBlockHeight ::
-       MonadLoggerIO m => Bool -> WebT m ()
+scottyBlockHeight :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyBlockHeight raw = do
     limits <- lift $ asks webMaxLimits
     setHeaders
@@ -392,7 +391,7 @@ scottyBlockHeight raw = do
             let blocks' = map (pruneTx n) blocks
             protoSerial proto blocks'
 
-scottyBlockTime :: MonadLoggerIO m => Bool -> WebT m ()
+scottyBlockTime :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyBlockTime raw = do
     limits <- lift $ asks webMaxLimits
     setHeaders
@@ -409,7 +408,7 @@ scottyBlockTime raw = do
                      Just <$> rawBlock d
         else maybeSerial proto m
 
-scottyBlockHeights :: MonadLoggerIO m => WebT m ()
+scottyBlockHeights :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlockHeights = do
     setHeaders
     heights <- S.param "heights"
@@ -419,7 +418,7 @@ scottyBlockHeights = do
     blocks <- map (pruneTx n) . catMaybes <$> mapM getBlock bhs
     protoSerial proto blocks
 
-scottyBlockLatest :: MonadLoggerIO m => WebT m ()
+scottyBlockLatest :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlockLatest = do
     setHeaders
     n <- parseNoTx
@@ -443,7 +442,7 @@ scottyBlockLatest = do
                         else (b' :) <$> go i' n prev
 
 
-scottyBlocks :: MonadLoggerIO m => WebT m ()
+scottyBlocks :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlocks = do
     setHeaders
     bhs <- map (\(MyBlockHash h) -> h) <$> S.param "blocks"
@@ -452,14 +451,14 @@ scottyBlocks = do
     bks <- map (pruneTx n) . catMaybes <$> mapM getBlock (nub bhs)
     protoSerial proto bks
 
-scottyMempool :: MonadLoggerIO m => WebT m ()
+scottyMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMempool = do
     setHeaders
     proto <- setupBin
     txs <- map blockTxHash <$> getMempool
     protoSerial proto txs
 
-scottyTransaction :: MonadLoggerIO m => WebT m ()
+scottyTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyTransaction = do
     setHeaders
     MyTxHash txid <- S.param "txid"
@@ -467,7 +466,7 @@ scottyTransaction = do
     res <- getTransaction txid
     maybeSerialNet proto res
 
-scottyRawTransaction :: MonadLoggerIO m => WebT m ()
+scottyRawTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawTransaction = do
     setHeaders
     MyTxHash txid <- S.param "txid"
@@ -475,7 +474,7 @@ scottyRawTransaction = do
     res <- fmap transactionData <$> getTransaction txid
     maybeSerial proto res
 
-scottyTxAfterHeight :: MonadLoggerIO m => WebT m ()
+scottyTxAfterHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyTxAfterHeight = do
     setHeaders
     MyTxHash txid <- S.param "txid"
@@ -484,7 +483,7 @@ scottyTxAfterHeight = do
     res <- cbAfterHeight 10000 height txid
     protoSerial proto res
 
-scottyTransactions :: MonadLoggerIO m => WebT m ()
+scottyTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyTransactions = do
     setHeaders
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
@@ -492,7 +491,7 @@ scottyTransactions = do
     txs <- catMaybes <$> mapM getTransaction (nub txids)
     protoSerialNet proto txs
 
-scottyBlockTransactions :: MonadLoggerIO m => WebT m ()
+scottyBlockTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlockTransactions = do
     limits <- lift $ asks webMaxLimits
     setHeaders
@@ -507,7 +506,7 @@ scottyBlockTransactions = do
         Nothing -> S.raise ThingNotFound
 
 scottyRawTransactions ::
-       MonadLoggerIO m => WebT m ()
+       (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawTransactions = do
     setHeaders
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
@@ -523,7 +522,7 @@ rawBlock b = do
     return Block {blockHeader = h, blockTxns = txs}
 
 scottyRawBlockTransactions ::
-       MonadLoggerIO m => WebT m ()
+       (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawBlockTransactions = do
     limits <- lift $ asks webMaxLimits
     setHeaders
@@ -537,7 +536,7 @@ scottyRawBlockTransactions = do
             protoSerial proto txs
         Nothing -> S.raise ThingNotFound
 
-scottyAddressTxs :: MonadLoggerIO m => Bool -> WebT m ()
+scottyAddressTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyAddressTxs full = do
     setHeaders
     a <- parseAddress
@@ -552,7 +551,7 @@ scottyAddressTxs full = do
             getAddressTxsLimit o l s a >>= protoSerial proto
 
 scottyAddressesTxs ::
-       MonadLoggerIO m => Bool -> WebT m ()
+       (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyAddressesTxs full = do
     setHeaders
     as <- parseAddresses
@@ -563,7 +562,7 @@ scottyAddressesTxs full = do
         then getAddressesTxsFull l s as >>= protoSerialNet proto
         else getAddressesTxsLimit l s as >>= protoSerial proto
 
-scottyAddressUnspent :: MonadLoggerIO m => WebT m ()
+scottyAddressUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressUnspent = do
     setHeaders
     a <- parseAddress
@@ -574,7 +573,7 @@ scottyAddressUnspent = do
     uns <- getAddressUnspentsLimit o l s a
     protoSerial proto uns
 
-scottyAddressesUnspent :: MonadLoggerIO m => WebT m ()
+scottyAddressesUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressesUnspent = do
     setHeaders
     as <- parseAddresses
@@ -584,7 +583,7 @@ scottyAddressesUnspent = do
     uns <- getAddressesUnspentsLimit l s as
     protoSerial proto uns
 
-scottyAddressBalance :: MonadLoggerIO m => WebT m ()
+scottyAddressBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressBalance = do
     setHeaders
     a <- parseAddress
@@ -592,7 +591,7 @@ scottyAddressBalance = do
     res <- getBalance a
     protoSerialNet proto res
 
-scottyAddressesBalances :: MonadLoggerIO m => WebT m ()
+scottyAddressesBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressesBalances = do
     setHeaders
     as <- parseAddresses
@@ -600,7 +599,7 @@ scottyAddressesBalances = do
     res <- getBalances as
     protoSerialNet proto res
 
-scottyXpubBalances :: MonadLoggerIO m => WebT m ()
+scottyXpubBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubBalances = do
     setHeaders
     nocache <- parseNoCache
@@ -613,7 +612,7 @@ scottyXpubBalances = do
             else xPubBals xpub
     protoSerialNet proto res
 
-scottyXpubTxs :: MonadLoggerIO m => Bool -> WebT m ()
+scottyXpubTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyXpubTxs full = do
     setHeaders
     nocache <- parseNoCache
@@ -632,7 +631,7 @@ scottyXpubTxs full = do
             protoSerialNet proto txs'
         else protoSerial proto txs
 
-scottyXpubEvict :: MonadLoggerIO m => WebT m ()
+scottyXpubEvict :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubEvict =
     lift (asks (storeCache . webStore)) >>= \case
         Nothing -> S.raise ThingNotFound
@@ -640,11 +639,11 @@ scottyXpubEvict =
             setHeaders
             xpub <- parseXpub
             proto <- setupBin
-            n <- withCache cache (delXPubKeys [xpub])
+            n <- lift $ withCache cache (delXPubKeys [xpub])
             protoSerial proto (GenericResult (n > 0))
 
 
-scottyXpubUnspents :: MonadLoggerIO m => WebT m ()
+scottyXpubUnspents :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubUnspents = do
     setHeaders
     nocache <- parseNoCache
@@ -658,7 +657,7 @@ scottyXpubUnspents = do
             else xPubUnspents xpub start 0 limit
     protoSerial proto uns
 
-scottyXpubSummary :: MonadLoggerIO m => WebT m ()
+scottyXpubSummary :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubSummary = do
     setHeaders
     nocache <- parseNoCache
@@ -809,7 +808,7 @@ runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
         S.get "/health" scottyHealth
         S.notFound $ S.raise ThingNotFound
 
-getStart :: MonadLoggerIO m => WebT m (Maybe BlockRef)
+getStart :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m (Maybe BlockRef)
 getStart =
     runMaybeT $ do
         s <- MaybeT $ (Just <$> S.param "height") `S.rescue` const (return Nothing)
