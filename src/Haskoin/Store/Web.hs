@@ -236,7 +236,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     getTxData th = runInWebReader (getTxData th) (getTxData th)
     getSpender op = runInWebReader (getSpender op) (getSpender op)
     getSpenders th = runInWebReader (getSpenders th) (getSpenders th)
-    getOrphanTx th = runInWebReader (getOrphanTx th) (getOrphanTx th)
     getUnspent op = runInWebReader (getUnspent op) (getUnspent op)
     getBalance a = runInWebReader (getBalance a) (getBalance a)
     getBalances as = runInWebReader (getBalances as) (getBalances as)
@@ -249,7 +248,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
         runInWebReader
             (getAddressesUnspents addrs start limit)
             (getAddressesUnspents addrs start limit)
-    getOrphans = runInWebReader getOrphans getOrphans
     xPubBals xpub = runInWebReader (xPubBals xpub) (xPubBals xpub)
     xPubSummary xpub = runInWebReader (xPubSummary xpub) (xPubSummary xpub)
     xPubUnspents xpub start offset limit =
@@ -269,7 +267,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getTxData = lift . getTxData
     getSpender = lift . getSpender
     getSpenders = lift . getSpenders
-    getOrphanTx = lift . getOrphanTx
     getUnspent = lift . getUnspent
     getBalance = lift . getBalance
     getBalances = lift . getBalances
@@ -277,7 +274,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getAddressesTxs addrs start limit = lift (getAddressesTxs addrs start limit)
     getAddressesUnspents addrs start limit =
         lift (getAddressesUnspents addrs start limit)
-    getOrphans = lift getOrphans
     xPubBals = lift . xPubBals
     xPubSummary = lift . xPubSummary
     xPubUnspents xpub start offset limit =

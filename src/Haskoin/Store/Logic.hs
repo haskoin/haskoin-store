@@ -4,11 +4,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 module Haskoin.Store.Logic
-    ( ImportException
+    ( ImportException (..)
     , initBest
-    , getOldOrphans
     , getOldMempool
-    , importOrphan
     , revertBlock
     , importBlock
     , newMempoolTx
@@ -18,8 +16,8 @@ module Haskoin.Store.Logic
 import           Control.Monad                 (forM, forM_, unless, void, when,
                                                 zipWithM_)
 import           Control.Monad.Except          (MonadError (..))
-import           Control.Monad.Logger          (MonadLogger, logErrorS,
-                                                logWarnS)
+import           Control.Monad.Logger          (MonadLogger, logDebugS,
+                                                logErrorS, logWarnS)
 import qualified Data.ByteString               as B
 import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
@@ -58,6 +56,7 @@ import           UnliftIO                      (Exception)
 
 data ImportException
     = PrevBlockNotBest !Text
+    | TxOrphan
     | UnconfirmedCoinbase !Text
     | BestBlockUnknown
     | BestBlockNotFound !Text
@@ -92,39 +91,24 @@ initBest = do
         (isNothing m)
         (void (importBlock (genesisBlock net) (genesisNode net)))
 
-getOldOrphans :: StoreRead m => UnixTime -> m [TxHash]
-getOldOrphans now =
-    map (txHash . snd) . filter ((< now - 600) . fst) <$> getOrphans
-
 getOldMempool :: StoreRead m => UnixTime -> m [TxHash]
 getOldMempool now =
     map blockTxHash . filter ((< now - 3600 * 72) . memRefTime . blockTxBlock) <$>
     getMempool
 
-importOrphan ::
-       ( StoreRead m
-       , StoreWrite m
-       , MonadLogger m
-       , MonadError ImportException m
-       )
-    => UnixTime
-    -> Tx
-    -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
-importOrphan t tx = deleteOrphanTx (txHash tx) >> newMempoolTx tx t
-
 newMempoolTx ::
-       ( StoreRead m
-       , StoreWrite m
-       , MonadLogger m
-       , MonadError ImportException m
-       )
+       (StoreRead m, StoreWrite m, MonadLogger m, MonadError ImportException m)
     => Tx
     -> UnixTime
-    -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
+    -> m (Maybe [TxHash])
+    -- ^ deleted transactions or nothing if already imported
 newMempoolTx tx w =
     getTxData (txHash tx) >>= \case
         Just x
-            | not (txDataDeleted x) -> return Nothing
+            | not (txDataDeleted x) -> do
+                $(logDebugS) "BlockStore" $
+                    "Transaction already in store: " <> txHashToHex (txHash tx)
+                return Nothing
         _ -> go
   where
     go = do
@@ -135,8 +119,7 @@ newMempoolTx tx w =
             then do
                 $(logWarnS) "BlockStore" $
                     "Orphan tx: " <> txHashToHex (txHash tx)
-                insertOrphanTx tx w
-                return Nothing
+                throwError TxOrphan
             else f
     f = do
         us <-
@@ -144,14 +127,8 @@ newMempoolTx tx w =
                 t <- getImportTx (outPointHash op)
                 getTxOutput (outPointIndex op) t
         let ds = map spenderHash (mapMaybe outputSpender us)
-            h e = do
-                $(logErrorS) "BlockStore" $
-                    "Could not import mempool tx " <> txHashToHex (txHash tx) <>
-                    ": " <>
-                    cs (show e)
-                return Nothing
         if null ds
-            then fmap Just (importTx (MemRef w) w tx) `catchError` h
+            then fmap Just (importTx (MemRef w) w tx)
             else g ds
     g ds = do
         net <- getNetwork
@@ -297,6 +274,9 @@ importTx ::
     -> Tx
     -> m [TxHash] -- ^ deleted transactions
 importTx br tt tx = do
+    unless (confirmed br) $
+        $(logDebugS) "BlockStore" $
+        "Importing transaction " <> txHashToHex (txHash tx)
     when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
         $(logErrorS) "BlockStore" $
             "Transaction spends same output twice: " <> txHashToHex (txHash tx)
@@ -364,6 +344,10 @@ importTx br tt tx = do
                             fromString (show (outPointIndex op))
                         throwError (NoUnspent (cs (show op)))
                     Just Spender {spenderHash = s} -> do
+                        $(logWarnS) "BlockStore" $
+                            "Deleting transaction " <> txHashToHex s <>
+                            " because it conflicts with " <>
+                            txHashToHex (txHash tx)
                         ths <- deleteTx True s
                         getUnspent op >>= \case
                             Nothing -> do
@@ -513,11 +497,13 @@ deleteTx ::
 deleteTx mo h = do
     getTxData h >>= \case
         Nothing -> do
-            $(logErrorS) "BlockStore" $ "Cannot find tx to delete: " <> txHashToHex h
+            $(logErrorS) "BlockStore" $
+                "Cannot find tx to delete: " <> txHashToHex h
             throwError (TxNotFound (txHashToHex h))
         Just t
             | txDataDeleted t -> do
-                $(logWarnS) "BlockStore" $ "Already deleted tx: " <> txHashToHex h
+                $(logWarnS) "BlockStore" $
+                    "Already deleted tx: " <> txHashToHex h
                 return []
             | mo && confirmed (txDataBlock t) -> do
                 $(logErrorS) "BlockStore" $
@@ -526,8 +512,16 @@ deleteTx mo h = do
             | otherwise -> go t
   where
     go t = do
+        $(logWarnS) "BlockStore" $ "Deleting transaction: " <> txHashToHex h
         ss <- nub . map spenderHash . I.elems <$> getSpenders h
-        ths <- concat <$> mapM (deleteTx True) ss
+        ths <-
+            fmap concat $
+            forM ss $ \s -> do
+                $(logWarnS) "BlockStore" $
+                    "Deleting descendant " <> txHashToHex s <>
+                    " to delete parent " <>
+                    txHashToHex h
+                deleteTx True s
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
             delOutput (OutPoint h n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))

@@ -11,7 +11,6 @@ module Haskoin.Store.Database.Types
     , HeightKey(..)
     , MemKey(..)
     , OldMemKey(..)
-    , OrphanKey(..)
     , SpenderKey(..)
     , TxKey(..)
     , UnspentKey(..)
@@ -40,7 +39,7 @@ import           Data.Word              (Word32, Word64)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
-                                         Network, OutPoint (..), Tx, TxHash)
+                                         Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common   (Balance (..), BlockData, BlockRef,
                                          BlockTx (..), Spender, TxData,
                                          UnixTime, Unspent (..), getUnixTime,
@@ -240,29 +239,6 @@ instance Serialize MemKey where
 
 instance Key MemKey
 instance KeyValue MemKey [(UnixTime, TxHash)]
-
--- | Orphan pool transaction database key.
-data OrphanKey
-    = OrphanKey
-          { orphanKey  :: !TxHash
-          }
-    | OrphanKeyS
-    deriving (Show, Read, Eq, Ord, Generic, Hashable)
-
-instance Serialize OrphanKey
-    -- 0x08 · TxHash
-                     where
-    put (OrphanKey h) = do
-        putWord8 0x08
-        put h
-    -- 0x08
-    put OrphanKeyS = putWord8 0x08
-    get = do
-        guard . (== 0x08) =<< getWord8
-        OrphanKey <$> get
-
-instance Key OrphanKey
-instance KeyValue OrphanKey (UnixTime, Tx)
 
 -- | Block entry database key.
 newtype BlockKey = BlockKey

@@ -124,8 +124,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) =>
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
     getTxData = lift . getTxData
-    getOrphanTx = lift . getOrphanTx
-    getOrphans = lift getOrphans
     getSpenders = lift . getSpenders
     getSpender = lift . getSpender
     getBalance = lift . getBalance
@@ -441,6 +439,9 @@ bestBlockKey = "head"
 maxKey :: ByteString
 maxKey = "max"
 
+isAnythingCached :: MonadLoggerIO m => CacheT m Bool
+isAnythingCached = runRedis $ Redis.exists maxKey
+
 xPubAddrFunction :: DeriveType -> XPubKey -> Address
 xPubAddrFunction DeriveNormal = xPubAddr
 xPubAddrFunction DeriveP2SH   = xPubCompatWitnessAddr
@@ -508,12 +509,15 @@ withLockWait f =
 
 pruneDB :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m Integer
 pruneDB =
-    withLockWait $ do
-        x <- asks cacheMax
-        s <- runRedis Redis.dbsize
-        if s > x
-            then flush (s - x)
-            else return 0
+    withLockWait $
+    isAnythingCached >>= \case
+        True -> do
+            x <- asks cacheMax
+            s <- runRedis Redis.dbsize
+            if s > x
+                then flush (s - x)
+                else return 0
+        False -> return 0
   where
     flush n = do
         case min 1000 (n `div` 64) of
@@ -551,20 +555,22 @@ newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
     => XPubSpec
     -> CacheT m ([XPubBal], Bool)
-newXPubC xpub = do
-    bals <- lift $ xPubBals xpub
-    x <- asks cacheMin
-    xpubtxt <- xpubText xpub
-    let n = lenNotNull bals
-    if x <= n
-        then do
-            go bals
-            return (bals, True)
-        else do
-            $(logDebugS) "Cache" $
-                "Not caching xpub with " <> cs (show n) <> " used addresses: " <>
-                xpubtxt
-            return (bals, False)
+newXPubC xpub =
+    cachePrime >> do
+        bals <- lift $ xPubBals xpub
+        x <- asks cacheMin
+        xpubtxt <- xpubText xpub
+        let n = lenNotNull bals
+        if x <= n
+            then do
+                go bals
+                return (bals, True)
+            else do
+                $(logDebugS) "Cache" $
+                    "Not caching xpub with " <> cs (show n) <>
+                    " used addresses: " <>
+                    xpubtxt
+                return (bals, False)
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     go bals = do
@@ -593,15 +599,15 @@ newXPubC xpub = do
 
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m ()
 newBlockC =
-    lift getBestBlock >>= \case
-        Nothing -> $(logErrorS) "Cache" "Best block not set yet"
-        Just newhead -> do
-            cacheGetHead >>= \case
-                Nothing -> do
-                    $(logInfoS) "Cache" "Cache has no best block set"
-                    importBlockC newhead
-                    newBlockC
-                Just cachehead -> go newhead cachehead
+    isAnythingCached >>= \case
+        False -> return ()
+        True ->
+            cachePrime >>= \case
+                Nothing -> return ()
+                Just cachehead ->
+                    lift getBestBlock >>= \case
+                        Nothing -> return ()
+                        Just newhead -> go newhead cachehead
   where
     go newhead cachehead
         | cachehead == newhead = syncMempoolC
@@ -652,12 +658,17 @@ newBlockC =
 
 newTxC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => TxHash -> CacheT m ()
 newTxC th =
-    lift (getTxData th) >>= \case
-        Just txd -> do
-            $(logDebugS) "Cache" $ "Importing transaction: " <> txHashToHex th
-            importMultiTxC [txd]
-        Nothing ->
-            $(logErrorS) "Cache" $ "Transaction not found: " <> txHashToHex th
+    isAnythingCached >>= \case
+        True ->
+            lift (getTxData th) >>= \case
+                Just txd -> do
+                    $(logDebugS) "Cache" $
+                        "Importing transaction: " <> txHashToHex th
+                    importMultiTxC [txd]
+                Nothing ->
+                    $(logErrorS) "Cache" $
+                    "Transaction not found: " <> txHashToHex th
+        False -> return ()
 
 importBlockC :: (MonadUnliftIO m, StoreRead m, MonadLoggerIO m) => BlockHash -> CacheT m ()
 importBlockC bh =
@@ -716,17 +727,14 @@ importMultiTxC txs = do
             xpubtxt
     addrs' <-
         withLockWait $
-        getxbals xpubs >>= \xmap ->
-            if null xmap
-                then return []
-                else do
-                    let addrmap' = faddrmap (HashMap.keysSet xmap) addrmap
-                    runRedis $ do
-                        x <- redisImportMultiTx addrmap' unspentmap txs
-                        y <- redisUpdateBalances addrmap' balmap
-                        z <- redisTouchKeys now (HashMap.keys xmap)
-                        return $ x >> y >> z >> return ()
-                    return $ getNewAddrs gap xmap (HashMap.elems addrmap')
+        getxbals xpubs >>= \xmap -> do
+            let addrmap' = faddrmap (HashMap.keysSet xmap) addrmap
+            runRedis $ do
+                x <- redisImportMultiTx addrmap' unspentmap txs
+                y <- redisUpdateBalances addrmap' balmap
+                z <- redisTouchKeys now (HashMap.keys xmap)
+                return $ x >> y >> z >> return ()
+            return $ getNewAddrs gap xmap (HashMap.elems addrmap')
     cacheAddAddresses addrs'
   where
     faddrmap xmap = HashMap.filter (\a -> addressXPubSpec a `elem` xmap)
@@ -795,7 +803,8 @@ redisImportMultiTx addrmap unspentmap txs = do
                 b <-
                     case txDataBlock tx of
                         b@MemRef {} ->
-                            redisAddToMempool
+                            redisAddToMempool $
+                            (: [])
                                 BlockTx
                                     { blockTxHash = txHash (txData tx)
                                     , blockTxBlock = b
@@ -905,6 +914,25 @@ cacheGetMempool = runRedis redisGetMempool
 cacheGetHead :: MonadLoggerIO m => CacheT m (Maybe BlockHash)
 cacheGetHead = runRedis redisGetHead
 
+cachePrime ::
+       (StoreRead m, MonadUnliftIO m, MonadLoggerIO m)
+    => CacheT m (Maybe BlockHash)
+cachePrime =
+    cacheGetHead >>= \case
+        Nothing -> do
+            $(logInfoS) "Cache" "Cache has no best block set"
+            lift getBestBlock >>= \case
+                Nothing -> do
+                    $(logInfoS) "Cache" "Best block not set yet"
+                    return Nothing
+                Just newhead -> do
+                    mem <- lift getMempool
+                    withLockWait . runRedis $ do
+                        a <- redisAddToMempool mem
+                        b <- redisSetHead newhead
+                        return $ a >> b >> return (Just newhead)
+        Just cachehead -> return $ Just cachehead
+
 cacheSetHead :: (MonadLoggerIO m, StoreRead m) => BlockHash -> CacheT m ()
 cacheSetHead bh = do
     $(logDebugS) "Cache" $ "Cache head set to: " <> blockHashToHex bh
@@ -914,11 +942,13 @@ cacheGetAddrsInfo ::
        MonadLoggerIO m => [Address] -> CacheT m [Maybe AddressXPub]
 cacheGetAddrsInfo as = runRedis (redisGetAddrsInfo as)
 
-redisAddToMempool :: RedisCtx m f => BlockTx -> m (f Integer)
-redisAddToMempool btx =
+redisAddToMempool :: RedisCtx m f => [BlockTx] -> m (f Integer)
+redisAddToMempool btxs =
     zadd
         mempoolSetKey
-        [(blockRefScore (blockTxBlock btx), encode (blockTxHash btx))]
+        (map (\btx ->
+                  (blockRefScore (blockTxBlock btx), encode (blockTxHash btx)))
+             btxs)
 
 redisRemFromMempool :: RedisCtx m f => TxHash -> m (f Integer)
 redisRemFromMempool th = zrem mempoolSetKey [encode th]

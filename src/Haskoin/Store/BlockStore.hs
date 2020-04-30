@@ -20,8 +20,10 @@ import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (MaybeT), runMaybeT)
+import           Data.HashMap.Strict           (HashMap)
+import qualified Data.HashMap.Strict           as HashMap
 import           Data.Maybe                    (catMaybes, isNothing,
-                                                listToMaybe)
+                                                listToMaybe, mapMaybe)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
@@ -43,16 +45,15 @@ import           Haskoin.Node                  (Chain, Manager)
 import           Haskoin.Store.Common          (BlockStore,
                                                 BlockStoreMessage (..),
                                                 BlockTx (..), StoreEvent (..),
-                                                StoreRead (..), StoreWrite (..),
-                                                UnixTime)
+                                                StoreRead (..), UnixTime,
+                                                sortTxs)
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)
-import           Haskoin.Store.Logic           (ImportException, deleteTx,
-                                                getOldMempool, getOldOrphans,
-                                                importBlock, importOrphan,
-                                                initBest, newMempoolTx,
-                                                revertBlock)
+import           Haskoin.Store.Logic           (ImportException (TxOrphan),
+                                                deleteTx, getOldMempool,
+                                                importBlock, initBest,
+                                                newMempoolTx, revertBlock)
 import           NQE                           (Inbox, Listen, inboxToMailbox,
                                                 query, receive)
 import           System.Random                 (randomRIO)
@@ -77,13 +78,21 @@ data Syncing = Syncing
     , syncingHead :: !BlockNode
     }
 
+data PendingTx =
+    PendingTx
+        { pendingTxTime :: !UnixTime
+        , pendingTx     :: !Tx
+        }
+    deriving (Show, Eq, Ord)
+
 -- | Block store process state.
 data BlockRead =
     BlockRead
-        { mySelf   :: !BlockStore
-        , myConfig :: !BlockStoreConfig
-        , myPeer   :: !(TVar (Maybe Syncing))
-        , myTxs    :: !(TVar [Tx])
+        { mySelf    :: !BlockStore
+        , myConfig  :: !BlockStoreConfig
+        , myPeer    :: !(TVar (Maybe Syncing))
+        , myTxs     :: !(TVar (HashMap TxHash PendingTx))
+        , myPending :: !(TVar (HashMap TxHash UnixTime))
         }
 
 -- | Configuration for a block store.
@@ -126,7 +135,6 @@ instance MonadIO m => StoreRead (ReaderT BlockRead m) where
     getTxData = runRocksDB . getTxData
     getSpender = runRocksDB . getSpender
     getSpenders = runRocksDB . getSpenders
-    getOrphanTx = runRocksDB . getOrphanTx
     getUnspent = runRocksDB . getUnspent
     getBalance = runRocksDB . getBalance
     getMempool = runRocksDB getMempool
@@ -134,7 +142,6 @@ instance MonadIO m => StoreRead (ReaderT BlockRead m) where
         runRocksDB (getAddressesTxs addrs start limit)
     getAddressesUnspents addrs start limit =
         runRocksDB (getAddressesUnspents addrs start limit)
-    getOrphans = runRocksDB getOrphans
     getAddressUnspents a s = runRocksDB . getAddressUnspents a s
     getAddressTxs a s = runRocksDB . getAddressTxs a s
 
@@ -146,7 +153,8 @@ blockStore ::
     -> m ()
 blockStore cfg inbox = do
     pb <- newTVarIO Nothing
-    ts <- newTVarIO []
+    ts <- newTVarIO HashMap.empty
+    ps <- newTVarIO HashMap.empty
     runReaderT
         (ini >> wipe >> run)
         BlockRead
@@ -154,6 +162,7 @@ blockStore cfg inbox = do
             , myConfig = cfg
             , myPeer = pb
             , myTxs = ts
+            , myPending = ps
             }
   where
     del txs =
@@ -164,22 +173,20 @@ blockStore cfg inbox = do
                 ": " <>
                 txHashToHex (blockTxHash tx)
             deleteTx True (blockTxHash tx)
+    wipeit txs = do
+        let (txs1, txs2) = splitAt 1000 txs
+        case txs1 of
+            [] -> return ()
+            _ ->
+                runImport (del txs1) >>= \case
+                    Left e -> do
+                        $(logErrorS) "BlockStore" $
+                            "Could not delete mempool, database corrupt: " <>
+                            cs (show e)
+                        throwIO CorruptDatabase
+                    Right _ -> wipeit txs2
     wipe
-        | blockConfWipeMempool cfg = do
-            mem <- getMempool
-            let go txs = do
-                    let (txs1, txs2) = splitAt 1000 txs
-                    case txs1 of
-                        [] -> return ()
-                        _ ->
-                            runImport (del txs1) >>= \case
-                                Left e -> do
-                                    $(logErrorS) "BlockStore" $
-                                        "Could not delete mempool, database corrupt: " <>
-                                        cs (show e)
-                                    throwIO CorruptDatabase
-                                Right _ -> go txs2
-            go mem
+        | blockConfWipeMempool cfg = getMempool >>= wipeit
         | otherwise = return ()
     ini = do
         runImport initBest >>= \case
@@ -264,104 +271,134 @@ processNoBlocks p _bs = do
     m = "I do not like peers that cannot find them blocks"
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
-processTx _p tx = asks myTxs >>= \b -> atomically (modifyTVar b (tx :))
+processTx _p tx = do
+    t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    addPendingTx $ PendingTx t tx
+
+addPendingHash :: MonadIO m => UnixTime -> TxHash -> BlockT m ()
+addPendingHash t th = do
+    ts <- asks myTxs
+    ps <- asks myPending
+    atomically $
+        HashMap.member th <$> readTVar ts >>= \case
+            True -> modifyTVar ps $ HashMap.delete th
+            False -> modifyTVar ps $ HashMap.insert th t
+
+prunePendingTxs :: MonadIO m => BlockT m ()
+prunePendingTxs = do
+    ts <- asks myTxs
+    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    atomically . modifyTVar ts $ HashMap.filter ((> now - 600) . pendingTxTime)
+
+prunePendingHashes :: MonadIO m => BlockT m ()
+prunePendingHashes = do
+    ps <- asks myPending
+    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    atomically . modifyTVar ps $ HashMap.filter (> now - 10)
+
+addPendingTx :: MonadIO m => PendingTx -> BlockT m ()
+addPendingTx p = do
+    ts <- asks myTxs
+    ps <- asks myPending
+    atomically $ do
+        modifyTVar ts $ HashMap.insert th p
+        modifyTVar ps $ HashMap.delete th
+  where
+    th = txHash (pendingTx p)
+
+isPending :: MonadIO m => TxHash -> BlockT m Bool
+isPending th = do
+    ts <- asks myTxs
+    ps <- asks myPending
+    atomically $ do
+        a <- HashMap.member th <$> readTVar ts
+        b <- HashMap.member th <$> readTVar ps
+        return $ a && b
+
+allPendingTxs :: MonadIO m => BlockT m [PendingTx]
+allPendingTxs = do
+    ts <- asks myTxs
+    ps <- asks myPending
+    atomically $ do
+        pend <- readTVar ts
+        writeTVar ts HashMap.empty
+        forM_ pend $ modifyTVar ps . HashMap.delete . txHash . pendingTx
+        return $ sortit pend
+  where
+    sortit pend =
+        mapMaybe (flip HashMap.lookup pend . txHash . snd) .
+        sortTxs . map (pendingTx) $
+        HashMap.elems pend
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processMempool = do
-    g >>= \case
-        [] -> return ()
-        txs -> do
-            output <-
-                runImport . forM (zip [(1 :: Int) ..] txs) $ \(i, tx) -> do
-                    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-                    $(logInfoS) "BlockStore" $
-                        "New mempool tx " <> cs (show i) <> "/" <>
-                        cs (show (length txs)) <>
-                        ": " <>
-                        txHashToHex (txHash tx)
-                    fmap (txHash tx, ) <$> newMempoolTx tx now `catchError` h
-            case output of
-                Left e -> do
-                    $(logErrorS) "BlockStore" $
-                        "Importing mempool failed: " <> cs (show e)
-                Right xs -> do
-                    l <- asks (blockConfListener . myConfig)
-                    atomically $ forM_ (catMaybes xs) $ \(th, deleted) -> do
-                            mapM_ (l . StoreTxDeleted) deleted
-                            l (StoreMempoolNew th)
+    prunePendingHashes
+    allPendingTxs >>= \txs ->
+        if null txs
+            then return ()
+            else go txs >> prunePendingTxs
   where
-    h _ = return Nothing
-    g =
-        asks myTxs >>= \b ->
-            atomically $ do
-                txs <- readTVar b
-                writeTVar b []
-                return txs
-
-processOrphans ::
-       (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
-processOrphans =
-    isInSync >>= \sync ->
-        when sync $ do
-            now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            old <- getOldOrphans now
-            case old of
-                [] -> return ()
-                _ -> do
-                    $(logInfoS) "BlockStore" $
-                        "Removing " <> cs (show (length old)) <>
-                        " expired orphan transactions"
-                    void . runImport $ mapM_ deleteOrphanTx old
-            orphans <- getOrphans
-            case orphans of
-                [] -> return ()
-                _  -> go orphans
-  where
-    h _ = return Nothing
-    go os = do
+    go ps = do
         output <-
-            runImport . forM (zip [(1 :: Int) ..] os) $ \(i, (t, tx)) -> do
+            runImport . forM (zip [(1 :: Int) ..] ps) $ \(i, p) -> do
+                let tx = pendingTx p
+                    t = pendingTxTime p
+                    th = txHash tx
+                    h x TxOrphan = return (Left (Just x))
+                    h _ _ = return (Left Nothing)
                 $(logInfoS) "BlockStore" $
-                    "Attempting to import orphan tx " <> cs (show i) <> "/" <>
-                    cs (show (length os)) <>
+                    "New mempool tx " <> cs (show i) <> "/" <>
+                    cs (show (length ps)) <>
                     ": " <>
-                    txHashToHex (txHash tx)
-                fmap (txHash tx, ) <$> importOrphan t tx `catchError` h
+                    txHashToHex th
+                catchError
+                    (maybe (Left Nothing) (Right . (th, )) <$> newMempoolTx tx t)
+                    (h p)
         case output of
             Left e -> do
                 $(logErrorS) "BlockStore" $
-                    "Importing orphans failed: " <> cs (show e)
+                    "Importing mempool failed: " <> cs (show e)
             Right xs -> do
-                l <- asks (blockConfListener . myConfig)
-                atomically $
-                    forM_ (catMaybes xs) $ \(th, deleted) -> do
-                        mapM_ (l . StoreTxDeleted) deleted
-                        l (StoreMempoolNew th)
+                forM_ xs $ \case
+                    Left (Just p) -> addPendingTx p
+                    Left Nothing -> return ()
+                    Right (th, deleted) -> do
+                        l <- asks (blockConfListener . myConfig)
+                        atomically $ do
+                            mapM_ (l . StoreTxDeleted) deleted
+                            l (StoreMempoolNew th)
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => Peer
     -> [TxHash]
     -> ReaderT BlockRead m ()
-processTxs p hs =
-    isInSync >>= \sync ->
-        when sync $ do
-            xs <-
-                fmap catMaybes . forM hs $ \h ->
-                    runMaybeT $ do
-                        t <- lift $ getTxData h
-                        guard (isNothing t)
-                        return (getTxHash h)
-            unless (null xs) $ do
-                $(logInfoS) "BlockStore" $
-                    "Requesting " <> fromString (show (length xs)) <>
-                    " new transactions"
-                net <- blockConfNet <$> asks myConfig
-                let inv =
-                        if getSegWit net
-                            then InvWitnessTx
-                            else InvTx
-                MGetData (GetData (map (InvVector inv) xs)) `sendMessage` p
+processTxs p hs = do
+    sync <- isInSync
+    when sync $ do
+        xs <-
+            fmap catMaybes . forM hs $ \h ->
+                runMaybeT $ do
+                    guard . not =<< lift (isPending h)
+                    guard . isNothing =<< lift (getTxData h)
+                    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+                    lift $ addPendingHash now h
+                    return h
+        unless (null xs) (go xs)
+  where
+    go xs = do
+        forM_ (zip [(1 :: Int) ..] xs) $ \(i, h) ->
+            $(logInfoS) "BlockStore" $
+            "Requesting transaction " <> cs (show i) <> "/" <>
+            cs (show (length xs)) <>
+            ": " <>
+            txHashToHex h
+        net <- blockConfNet <$> asks myConfig
+        let inv =
+                if getSegWit net
+                    then InvWitnessTx
+                    else InvTx
+        MGetData (GetData (map (InvVector inv . getTxHash) xs)) `sendMessage` p
 
 checkTime :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 checkTime =
@@ -560,7 +597,6 @@ processBlockStoreMessage (BlockTxReceived p tx) = processTx p tx
 processBlockStoreMessage (BlockTxAvailable p ts) = processTxs p ts
 processBlockStoreMessage (BlockPing r) = do
     processMempool
-    processOrphans
     checkTime
     pruneMempool
     atomically (r ())

@@ -5,7 +5,6 @@ module Haskoin.Store.Database.Memory
     , withMemoryDatabase
     , emptyMemoryDatabase
     , getMempoolH
-    , getOrphanTxH
     , getSpenderH
     , getSpendersH
     , getUnspentH
@@ -25,15 +24,14 @@ import           Data.Maybe                   (catMaybes, fromJust, fromMaybe,
                                                isJust)
 import           Data.Word                    (Word32)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
-                                               Network, OutPoint (..), Tx,
-                                               TxHash, headerHash, txHash)
+                                               Network, OutPoint (..), TxHash,
+                                               headerHash, txHash)
 import           Haskoin.Store.Common         (Balance (..), BlockData (..),
                                                BlockRef, BlockTx (..), Limit,
                                                Spender, StoreRead (..),
                                                StoreWrite (..), TxData (..),
-                                               UnixTime, Unspent (..),
-                                               applyLimit, scriptToStringAddr,
-                                               zeroBalance)
+                                               Unspent (..), applyLimit,
+                                               scriptToStringAddr, zeroBalance)
 import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
                                                balanceToVal, unspentToVal,
                                                valToBalance, valToUnspent)
@@ -65,7 +63,6 @@ data MemoryDatabase = MemoryDatabase
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
     , hMempool :: !(Maybe [BlockTx])
-    , hOrphans :: !(HashMap TxHash (Maybe (UnixTime, Tx)))
     } deriving (Eq, Show)
 
 emptyMemoryDatabase :: MemoryDatabase
@@ -81,7 +78,6 @@ emptyMemoryDatabase =
         , hAddrTx = M.empty
         , hAddrOut = M.empty
         , hMempool = Nothing
-        , hOrphans = M.empty
         }
 
 getBestBlockH :: MemoryDatabase -> Maybe BlockHash
@@ -111,12 +107,6 @@ getBalanceH a mem =
 
 getMempoolH :: MemoryDatabase -> Maybe [BlockTx]
 getMempoolH = hMempool
-
-getOrphansH :: MemoryDatabase -> [(UnixTime, Tx)]
-getOrphansH = catMaybes . M.elems . hOrphans
-
-getOrphanTxH :: TxHash -> MemoryDatabase -> Maybe (Maybe (UnixTime, Tx))
-getOrphanTxH h = M.lookup h . hOrphans
 
 getAddressesTxsH ::
        [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [BlockTx]
@@ -268,13 +258,6 @@ deleteAddrUnspentH a u db =
 setMempoolH :: [BlockTx] -> MemoryDatabase -> MemoryDatabase
 setMempoolH xs db = db {hMempool = Just xs}
 
-insertOrphanTxH :: Tx -> UnixTime -> MemoryDatabase -> MemoryDatabase
-insertOrphanTxH tx u db =
-    db {hOrphans = M.insert (txHash tx) (Just (u, tx)) (hOrphans db)}
-
-deleteOrphanTxH :: TxHash -> MemoryDatabase -> MemoryDatabase
-deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
-
 getUnspentH :: Network -> OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
 getUnspentH net op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
@@ -323,9 +306,6 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
     getSpenders t = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return . I.map fromJust . I.filter isJust $ getSpendersH t v
-    getOrphanTx h = do
-        v <- R.asks memoryDatabase >>= readTVarIO
-        return . join $ getOrphanTxH h v
     getUnspent p = do
         v <- R.asks memoryDatabase >>= readTVarIO
         net <- R.asks memoryNetwork
@@ -343,9 +323,6 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
         v <- R.asks memoryDatabase >>= readTVarIO
         net <- R.asks memoryNetwork
         return $ getAddressesUnspentsH net addr start limit v
-    getOrphans = do
-        v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getOrphansH v
     getAddressTxs addr start limit = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getAddressTxsH addr start limit v
@@ -391,12 +368,6 @@ instance MonadIO m => StoreWrite (ReaderT MemoryState m) where
     setMempool xs = do
         v <- R.asks memoryDatabase
         atomically $ modifyTVar v (setMempoolH xs)
-    insertOrphanTx t u = do
-        v <- R.asks memoryDatabase
-        atomically $ modifyTVar v (insertOrphanTxH t u)
-    deleteOrphanTx h = do
-        v <- R.asks memoryDatabase
-        atomically $ modifyTVar v (deleteOrphanTxH h)
     setBalance b = do
         v <- R.asks memoryDatabase
         atomically $ modifyTVar v (setBalanceH b)

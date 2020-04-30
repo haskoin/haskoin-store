@@ -23,28 +23,27 @@ import           Data.Maybe                    (fromJust, fromMaybe, isJust,
 import           Database.RocksDB              (BatchOp)
 import           Database.RocksDB.Query        (deleteOp, insertOp, writeBatch)
 import           Haskoin                       (Address, BlockHash, BlockHeight,
-                                                OutPoint (..), Tx, TxHash)
+                                                OutPoint (..), TxHash)
 import           Haskoin.Store.Common          (Balance, BlockData,
                                                 BlockRef (..), BlockTx (..),
                                                 Spender, StoreRead (..),
                                                 StoreWrite (..), TxData,
-                                                UnixTime, Unspent, nullBalance,
+                                                Unspent, nullBalance,
                                                 zeroBalance)
 import           Haskoin.Store.Database.Memory (MemoryDatabase (..),
                                                 MemoryState (..),
                                                 emptyMemoryDatabase,
-                                                getMempoolH, getOrphanTxH,
-                                                getSpenderH, getSpendersH,
-                                                getUnspentH, withMemoryDatabase)
+                                                getMempoolH, getSpenderH,
+                                                getSpendersH, getUnspentH,
+                                                withMemoryDatabase)
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 withDatabaseReader)
 import           Haskoin.Store.Database.Types  (AddrOutKey (..), AddrTxKey (..),
                                                 BalKey (..), BalVal (..),
                                                 BestKey (..), BlockKey (..),
                                                 HeightKey (..), MemKey (..),
-                                                OrphanKey (..), OutVal,
-                                                SpenderKey (..), TxKey (..),
-                                                UnspentKey (..),
+                                                OutVal, SpenderKey (..),
+                                                TxKey (..), UnspentKey (..),
                                                 UnspentVal (..))
 import           UnliftIO                      (MonadIO, newTVarIO, readTVarIO)
 
@@ -91,7 +90,6 @@ hashMapOps db =
     addrTxOps (hAddrTx db) <>
     addrOutOps (hAddrOut db) <>
     maybeToList (mempoolOp <$> hMempool db) <>
-    orphanOps (hOrphans db) <>
     unspentOps (hUnspent db)
 
 bestBlockOp :: Maybe BlockHash -> [BatchOp]
@@ -172,12 +170,6 @@ mempoolOp =
     insertOp MemKey .
     map (\BlockTx {blockTxBlock = MemRef t, blockTxHash = h} -> (t, h))
 
-orphanOps :: HashMap TxHash (Maybe (UnixTime, Tx)) -> [BatchOp]
-orphanOps = map (uncurry f) . M.toList
-  where
-    f h (Just x) = insertOp (OrphanKey h) x
-    f h Nothing  = deleteOp (OrphanKey h)
-
 unspentOps :: HashMap TxHash (IntMap (Maybe UnspentVal)) -> [BatchOp]
 unspentOps = concatMap (uncurry f) . M.toList
   where
@@ -228,14 +220,6 @@ deleteAddrUnspentI a u DatabaseWriter {databaseWriterState = hm} =
 setMempoolI :: MonadIO m => [BlockTx] -> DatabaseWriter -> m ()
 setMempoolI xs DatabaseWriter {databaseWriterState = hm} = withMemoryDatabase hm $ setMempool xs
 
-insertOrphanTxI :: MonadIO m => Tx -> UnixTime -> DatabaseWriter -> m ()
-insertOrphanTxI t p DatabaseWriter {databaseWriterState = hm} =
-    withMemoryDatabase hm $ insertOrphanTx t p
-
-deleteOrphanTxI :: MonadIO m => TxHash -> DatabaseWriter -> m ()
-deleteOrphanTxI t DatabaseWriter {databaseWriterState = hm} =
-    withMemoryDatabase hm $ deleteOrphanTx t
-
 getBestBlockI :: MonadIO m => DatabaseWriter -> m (Maybe BlockHash)
 getBestBlockI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
     runMaybeT $ MaybeT f <|> MaybeT g
@@ -263,13 +247,6 @@ getTxDataI th DatabaseWriter {databaseWriterReader = db, databaseWriterState = h
   where
     f = withMemoryDatabase hm $ getTxData th
     g = withDatabaseReader db $ getTxData th
-
-getOrphanTxI :: MonadIO m => TxHash -> DatabaseWriter -> m (Maybe (UnixTime, Tx))
-getOrphanTxI h DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
-    fmap join . runMaybeT $ MaybeT f <|> MaybeT g
-  where
-    f = getOrphanTxH h <$> readTVarIO (memoryDatabase hm)
-    g = Just <$> withDatabaseReader db (getOrphanTx h)
 
 getSpenderI :: MonadIO m => OutPoint -> DatabaseWriter -> m (Maybe Spender)
 getSpenderI op DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
@@ -344,13 +321,11 @@ instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
     getTxData t = R.ask >>= getTxDataI t
     getSpender p = R.ask >>= getSpenderI p
     getSpenders t = R.ask >>= getSpendersI t
-    getOrphanTx h = R.ask >>= getOrphanTxI h
     getUnspent a = R.ask >>= getUnspentI a
     getBalance a = R.ask >>= getBalanceI a
     getMempool = R.ask >>= getMempoolI
     getAddressesTxs = undefined
     getAddressesUnspents = undefined
-    getOrphans = undefined
     getMaxGap = R.asks (databaseMaxGap . databaseWriterReader)
 
 instance MonadIO m => StoreWrite (ReaderT DatabaseWriter m) where
@@ -365,8 +340,6 @@ instance MonadIO m => StoreWrite (ReaderT DatabaseWriter m) where
     insertAddrUnspent a u = R.ask >>= insertAddrUnspentI a u
     deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentI a u
     setMempool xs = R.ask >>= setMempoolI xs
-    insertOrphanTx t p = R.ask >>= insertOrphanTxI t p
-    deleteOrphanTx t = R.ask >>= deleteOrphanTxI t
     insertUnspent u = R.ask >>= insertUnspentI u
     deleteUnspent p = R.ask >>= deleteUnspentI p
     setBalance b = R.ask >>= setBalanceI b

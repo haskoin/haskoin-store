@@ -24,22 +24,20 @@ import           Database.RocksDB             (Compression (..), DB,
 import           Database.RocksDB.Query       (insert, matching, matchingAsList,
                                                matchingSkip, retrieve)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
-                                               Network, OutPoint (..), Tx,
-                                               TxHash)
+                                               Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common         (Balance, BlockData,
                                                BlockRef (..), BlockTx (..),
                                                Limit, Spender, StoreRead (..),
-                                               TxData, UnixTime, Unspent (..),
-                                               applyLimit, applyLimitC,
-                                               zeroBalance)
+                                               TxData, Unspent (..), applyLimit,
+                                               applyLimitC, zeroBalance)
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),
                                                MemKey (..), OldMemKey (..),
-                                               OrphanKey (..), SpenderKey (..),
-                                               TxKey (..), UnspentKey (..),
-                                               VersionKey (..), toUnspent,
-                                               valToBalance, valToUnspent)
+                                               SpenderKey (..), TxKey (..),
+                                               UnspentKey (..), VersionKey (..),
+                                               toUnspent, valToBalance,
+                                               valToUnspent)
 import           UnliftIO                     (MonadIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -150,18 +148,6 @@ getMempoolDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
   where
     f (t, h) = BlockTx {blockTxBlock = MemRef t, blockTxHash = h}
 
-getOrphansDB ::
-       MonadIO m
-    => DatabaseReader
-    -> m [(UnixTime, Tx)]
-getOrphansDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
-    liftIO . runResourceT . runConduit $
-    matching db opts OrphanKeyS .| mapC snd .| sinkList
-
-getOrphanTxDB :: MonadIO m => TxHash -> DatabaseReader -> m (Maybe (UnixTime, Tx))
-getOrphanTxDB h DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
-    retrieve db opts (OrphanKey h)
-
 getAddressesTxsDB ::
        MonadIO m
     => [Address]
@@ -238,7 +224,6 @@ instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getTxData t = ask >>= getTxDataDB t
     getSpender p = ask >>= getSpenderDB p
     getSpenders t = ask >>= getSpendersDB t
-    getOrphanTx h = ask >>= getOrphanTxDB h
     getUnspent a = ask >>= getUnspentDB a
     getBalance a = ask >>= getBalanceDB a
     getMempool = ask >>= getMempoolDB
@@ -246,8 +231,8 @@ instance MonadIO m => StoreRead (DatabaseReaderT m) where
         ask >>= getAddressesTxsDB addrs start limit
     getAddressesUnspents addrs start limit =
         ask >>= getAddressesUnspentsDB addrs start limit
-    getOrphans = ask >>= getOrphansDB
     getAddressUnspents a b c = ask >>= getAddressUnspentsDB a b c
     getAddressTxs a b c = ask >>= getAddressTxsDB a b c
     getMaxGap = asks databaseMaxGap
     getInitialGap = asks databaseInitialGap
+

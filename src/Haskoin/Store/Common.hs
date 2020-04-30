@@ -194,8 +194,6 @@ class Monad m =>
     getBlocksAtHeight :: BlockHeight -> m [BlockHash]
     getBlock :: BlockHash -> m (Maybe BlockData)
     getTxData :: TxHash -> m (Maybe TxData)
-    getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
-    getOrphans :: m [(UnixTime, Tx)]
     getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
     getBalance :: Address -> m Balance
@@ -308,8 +306,6 @@ class StoreWrite m where
     insertAddrUnspent :: Address -> Unspent -> m ()
     deleteAddrUnspent :: Address -> Unspent -> m ()
     setMempool :: [BlockTx] -> m ()
-    insertOrphanTx :: Tx -> UnixTime -> m ()
-    deleteOrphanTx :: TxHash -> m ()
     setBalance :: Balance -> m ()
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()

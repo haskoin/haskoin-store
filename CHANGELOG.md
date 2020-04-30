@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.23.10
+### Fixed
+- Fix transactions not recorded in cache mempool set.
+- Fix transactions being downloaded multiple times.
+
+### Removed
+- Do not store orphan transactions in database.
+
+### Changed
+- Use sets for incoming transactions instead of lists.
+- Do not do anything to the cache if there are no xpubs in it.
+
 ## 0.23.9
 ### Fixed
 - Wiping mempool fixed.
