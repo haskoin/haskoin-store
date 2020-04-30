@@ -17,8 +17,7 @@ module Haskoin.Store.Logic
 
 import           Control.Monad                 (forM, forM_, unless, void, when,
                                                 zipWithM_)
-import           Control.Monad.Except          (MonadError, catchError,
-                                                throwError)
+import           Control.Monad.Except          (MonadError (..))
 import           Control.Monad.Logger          (MonadLogger, logErrorS,
                                                 logWarnS)
 import qualified Data.ByteString               as B
@@ -38,11 +37,10 @@ import           Haskoin                       (Address, Block (..), BlockHash,
                                                 OutPoint (..), Tx (..), TxHash,
                                                 TxIn (..), TxOut (..),
                                                 addrToString, blockHashToHex,
-                                                genesisBlock,
-                                                genesisNode, headerHash,
-                                                isGenesis, nullOutPoint,
-                                                scriptToAddressBS, txHash,
-                                                txHashToHex)
+                                                genesisBlock, genesisNode,
+                                                headerHash, isGenesis,
+                                                nullOutPoint, scriptToAddressBS,
+                                                txHash, txHashToHex)
 import           Haskoin.Store.Common          (Balance (..), BlockData (..),
                                                 BlockRef (..), BlockTx (..),
                                                 Prev (..), Spender (..),
@@ -64,7 +62,6 @@ data ImportException
     | BestBlockUnknown
     | BestBlockNotFound !Text
     | BlockNotBest !Text
-    | OrphanTx !Text
     | TxNotFound !Text
     | NoUnspent !Text
     | TxInvalidOp !Text
@@ -113,23 +110,7 @@ importOrphan ::
     => UnixTime
     -> Tx
     -> m (Maybe [TxHash]) -- ^ deleted transactions or nothing if import failed
-importOrphan t tx = do
-    go `catchError` ex
-  where
-    go = do
-        maybetxids <-
-            newMempoolTx tx t >>= \case
-                Just ths -> return (Just ths)
-                Nothing -> return Nothing
-        deleteOrphanTx (txHash tx)
-        return maybetxids
-    ex (OrphanTx _) = do
-        return Nothing
-    ex _ = do
-        $(logWarnS) "BlockStore" $
-            "Deleted bad orphan tx: " <> txHashToHex (txHash tx)
-        deleteOrphanTx (txHash tx)
-        return Nothing
+importOrphan t tx = deleteOrphanTx (txHash tx) >> newMempoolTx tx t
 
 newMempoolTx ::
        ( StoreRead m
@@ -155,7 +136,7 @@ newMempoolTx tx w =
                 $(logWarnS) "BlockStore" $
                     "Orphan tx: " <> txHashToHex (txHash tx)
                 insertOrphanTx tx w
-                throwError $ OrphanTx (txHashToHex (txHash tx))
+                return Nothing
             else f
     f = do
         us <-
@@ -163,10 +144,14 @@ newMempoolTx tx w =
                 t <- getImportTx (outPointHash op)
                 getTxOutput (outPointIndex op) t
         let ds = map spenderHash (mapMaybe outputSpender us)
+            h e = do
+                $(logErrorS) "BlockStore" $
+                    "Could not import mempool tx " <> txHashToHex (txHash tx) <>
+                    ": " <>
+                    cs (show e)
+                return Nothing
         if null ds
-            then do
-                ths <- importTx (MemRef w) w tx
-                return (Just ths)
+            then fmap Just (importTx (MemRef w) w tx) `catchError` h
             else g ds
     g ds = do
         net <- getNetwork
@@ -333,32 +318,34 @@ importTx br tt tx = do
         $(logErrorS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError (InsufficientFunds (txHashToHex th))
-    zipWithM_ (spendOutput br (txHash tx)) [0 ..] us
-    zipWithM_
-        (\i o -> newOutput br (OutPoint (txHash tx) i) o)
-        [0 ..]
-        (txOut tx)
-    rbf <- getrbf
-    let t =
-            Transaction
-                { transactionBlock = br
-                , transactionVersion = txVersion tx
-                , transactionLockTime = txLockTime tx
-                , transactionInputs =
-                      if iscb
-                          then zipWith mkcb (txIn tx) ws
-                          else zipWith3 mkin us (txIn tx) ws
-                , transactionOutputs = map mkout (txOut tx)
-                , transactionDeleted = False
-                , transactionRBF = rbf
-                , transactionTime = tt
-                }
-    let (d, _) = fromTransaction t
-    insertTx d
-    updateAddressCounts (txAddresses t) (+ 1)
-    unless (confirmed br) $ insertIntoMempool (txHash tx) (memRefTime br)
+    commit us
     return ths
   where
+    commit us = do
+        zipWithM_ (spendOutput br (txHash tx)) [0 ..] us
+        zipWithM_
+            (\i o -> newOutput br (OutPoint (txHash tx) i) o)
+            [0 ..]
+            (txOut tx)
+        rbf <- getrbf
+        let t =
+                Transaction
+                    { transactionBlock = br
+                    , transactionVersion = txVersion tx
+                    , transactionLockTime = txLockTime tx
+                    , transactionInputs =
+                          if iscb
+                              then zipWith mkcb (txIn tx) ws
+                              else zipWith3 mkin us (txIn tx) ws
+                    , transactionOutputs = map mkout (txOut tx)
+                    , transactionDeleted = False
+                    , transactionRBF = rbf
+                    , transactionTime = tt
+                    }
+        let (d, _) = fromTransaction t
+        insertTx d
+        updateAddressCounts (txAddresses t) (+ 1)
+        unless (confirmed br) $ insertIntoMempool (txHash tx) (memRefTime br)
     uns op =
         getUnspent op >>= \case
             Just u -> return (u, [])
@@ -398,7 +385,10 @@ importTx br tt tx = do
             let hs = nub $ map (outPointHash . prevOutput) (txIn tx)
              in fmap or . forM hs $ \h ->
                     getTxData h >>= \case
-                        Nothing -> throwError (TxNotFound (txHashToHex h))
+                        Nothing -> do
+                            $(logErrorS) "BlockStore" $
+                                "Transaction not found: " <> txHashToHex h
+                            throwError (TxNotFound (txHashToHex h))
                         Just t
                             | confirmed (txDataBlock t) -> return False
                             | txDataRBF t -> return True

@@ -58,26 +58,28 @@ data Store =
 -- | Configuration for a 'Store'.
 data StoreConfig =
     StoreConfig
-        { storeConfMaxPeers  :: !Int
+        { storeConfMaxPeers    :: !Int
       -- ^ max peers to connect to
-        , storeConfInitPeers :: ![HostPort]
+        , storeConfInitPeers   :: ![HostPort]
       -- ^ static set of peers to connect to
-        , storeConfDiscover  :: !Bool
+        , storeConfDiscover    :: !Bool
       -- ^ discover new peers
-        , storeConfDB        :: !FilePath
+        , storeConfDB          :: !FilePath
       -- ^ RocksDB database path
-        , storeConfNetwork   :: !Network
+        , storeConfNetwork     :: !Network
       -- ^ network constants
-        , storeConfCache     :: !(Maybe String)
+        , storeConfCache       :: !(Maybe String)
       -- ^ Redis cache configuration
-        , storeConfInitialGap :: !Word32
+        , storeConfInitialGap  :: !Word32
       -- ^ gap on extended public key with no transactions
-        , storeConfGap       :: !Word32
+        , storeConfGap         :: !Word32
       -- ^ gap for extended public keys
-        , storeConfCacheMin  :: !Int
+        , storeConfCacheMin    :: !Int
       -- ^ cache xpubs with more than this many used addresses
-        , storeConfMaxKeys   :: !Integer
+        , storeConfMaxKeys     :: !Integer
       -- ^ maximum number of keys in Redis cache
+        , storeConfWipeMempool :: !Bool
+      -- ^ wipe mempool when starting
         }
 
 withStore ::
@@ -90,7 +92,7 @@ withStore cfg action = do
     let chain = inboxToMailbox chaininbox
     maybecacheconn <-
         case storeConfCache cfg of
-            Nothing -> return Nothing
+            Nothing       -> return Nothing
             Just redisurl -> Just <$> connectRedis redisurl
     db <-
         connectRocksDB
@@ -142,6 +144,7 @@ withStore cfg action = do
                             , blockConfListener = (`sendSTM` pub) . Event
                             , blockConfDB = db
                             , blockConfNet = storeConfNetwork cfg
+                            , blockConfWipeMempool = storeConfWipeMempool cfg
                             }
                     runaction =
                         action

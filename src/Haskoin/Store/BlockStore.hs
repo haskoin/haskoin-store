@@ -13,7 +13,8 @@ module Haskoin.Store.BlockStore
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forM, forM_, forever, guard,
                                                 mzero, unless, void, when)
-import           Control.Monad.Except          (ExceptT, runExceptT)
+import           Control.Monad.Except          (ExceptT, MonadError (..),
+                                                runExceptT)
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
                                                 logErrorS, logInfoS, logWarnS)
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
@@ -41,8 +42,9 @@ import           Haskoin.Node                  (OnlinePeer (..), Peer,
 import           Haskoin.Node                  (Chain, Manager)
 import           Haskoin.Store.Common          (BlockStore,
                                                 BlockStoreMessage (..),
-                                                StoreEvent (..), StoreRead (..),
-                                                StoreWrite (..), UnixTime)
+                                                BlockTx (..), StoreEvent (..),
+                                                StoreRead (..), StoreWrite (..),
+                                                UnixTime)
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)
@@ -56,13 +58,15 @@ import           NQE                           (Inbox, Listen, inboxToMailbox,
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, TVar, atomically,
-                                                liftIO, newTVarIO, readTVarIO,
-                                                throwIO, withAsync, writeTVar)
+                                                liftIO, modifyTVar, newTVarIO,
+                                                readTVar, readTVarIO, throwIO,
+                                                withAsync, writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 
 data BlockException
     = BlockNotInChain !BlockHash
     | Uninitialized
+    | CorruptDatabase
     | AncestorNotInChain !BlockHeight
                          !BlockHash
     deriving (Show, Eq, Ord, Exception)
@@ -74,25 +78,28 @@ data Syncing = Syncing
     }
 
 -- | Block store process state.
-data BlockRead = BlockRead
-    { mySelf   :: !BlockStore
-    , myConfig :: !BlockStoreConfig
-    , myPeer   :: !(TVar (Maybe Syncing))
-    }
+data BlockRead =
+    BlockRead
+        { mySelf   :: !BlockStore
+        , myConfig :: !BlockStoreConfig
+        , myPeer   :: !(TVar (Maybe Syncing))
+        , myTxs    :: !(TVar [Tx])
+        }
 
 -- | Configuration for a block store.
 data BlockStoreConfig =
     BlockStoreConfig
-        { blockConfManager  :: !Manager
+        { blockConfManager     :: !Manager
       -- ^ peer manager from running node
-        , blockConfChain    :: !Chain
+        , blockConfChain       :: !Chain
       -- ^ chain from a running node
-        , blockConfListener :: !(Listen StoreEvent)
+        , blockConfListener    :: !(Listen StoreEvent)
       -- ^ listener for store events
-        , blockConfDB       :: !DatabaseReader
+        , blockConfDB          :: !DatabaseReader
       -- ^ RocksDB database handle
-        , blockConfNet      :: !Network
+        , blockConfNet         :: !Network
       -- ^ network constants
+        , blockConfWipeMempool :: !Bool
         }
 
 type BlockT m = ReaderT BlockRead m
@@ -139,10 +146,35 @@ blockStore ::
     -> m ()
 blockStore cfg inbox = do
     pb <- newTVarIO Nothing
+    ts <- newTVarIO []
     runReaderT
-        (ini >> run)
-        BlockRead {mySelf = inboxToMailbox inbox, myConfig = cfg, myPeer = pb}
+        (ini >> wipe >> run)
+        BlockRead
+            { mySelf = inboxToMailbox inbox
+            , myConfig = cfg
+            , myPeer = pb
+            , myTxs = ts
+            }
   where
+    del txs =
+        forM (zip [(1 :: Integer) ..] txs) $ \(i, tx) -> do
+            $(logDebugS) "BlockStore" $
+                "Wiping mempool tx " <> cs (show i) <> "/" <>
+                cs (show (length txs)) <>
+                ": " <>
+                txHashToHex (blockTxHash tx)
+            deleteTx True (blockTxHash tx)
+    wipe
+        | blockConfWipeMempool cfg = do
+            txs <- getMempool
+            runImport (del txs) >>= \case
+                Left e -> do
+                    $(logErrorS) "BlockStore" $
+                        "Could not delete mempool, database corrupt: " <>
+                        cs (show e)
+                    throwIO CorruptDatabase
+                Right _ -> return ()
+        | otherwise = return ()
     ini = do
         runImport initBest >>= \case
             Left e -> do
@@ -226,19 +258,39 @@ processNoBlocks p _bs = do
     m = "I do not like peers that cannot find them blocks"
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
-processTx _p tx =
-    isInSync >>= \sync ->
-        when sync $ do
-            now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            runImport (newMempoolTx tx now) >>= \case
-                Right (Just deleted) -> do
-                    l <- blockConfListener <$> asks myConfig
+processTx _p tx = asks myTxs >>= \b -> atomically (modifyTVar b (tx :))
+
+processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
+processMempool = do
+    g >>= \case
+        [] -> return ()
+        txs -> do
+            output <-
+                runImport . forM (zip [(1 :: Int) ..] txs) $ \(i, tx) -> do
+                    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
                     $(logInfoS) "BlockStore" $
-                        "New mempool tx: " <> txHashToHex (txHash tx)
-                    atomically $ do
-                        mapM_ (l . StoreTxDeleted) deleted
-                        l (StoreMempoolNew (txHash tx))
-                _ -> return ()
+                        "New mempool tx " <> cs (show i) <> "/" <>
+                        cs (show (length txs)) <>
+                        ": " <>
+                        txHashToHex (txHash tx)
+                    fmap (txHash tx, ) <$> newMempoolTx tx now `catchError` h
+            case output of
+                Left e -> do
+                    $(logErrorS) "BlockStore" $
+                        "Importing mempool failed: " <> cs (show e)
+                Right xs -> do
+                    l <- asks (blockConfListener . myConfig)
+                    atomically $ forM_ (catMaybes xs) $ \(th, deleted) -> do
+                            mapM_ (l . StoreTxDeleted) deleted
+                            l (StoreMempoolNew th)
+  where
+    h _ = return Nothing
+    g =
+        asks myTxs >>= \b ->
+            atomically $ do
+                txs <- readTVar b
+                writeTVar b []
+                return txs
 
 processOrphans ::
        (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
@@ -257,25 +309,28 @@ processOrphans =
             orphans <- getOrphans
             case orphans of
                 [] -> return ()
-                _ ->
-                    $(logInfoS) "BlockStore" $
-                    "Attempting to import " <> cs (show (length orphans)) <>
-                    " orphan transactions"
-            ops <-
-                zip (map snd orphans) <$>
-                mapM (runImport . uncurry importOrphan) orphans
-            let tths =
-                    [ (txHash tx, hs)
-                    | (tx, emths) <- ops
-                    , let Right (Just hs) = emths
-                    ]
-                ihs = map fst tths
-                dhs = concatMap snd tths
-            l <- blockConfListener <$> asks myConfig
-            atomically $ do
-                mapM_ (l . StoreTxDeleted) dhs
-                mapM_ (l . StoreMempoolNew) ihs
-
+                _  -> go orphans
+  where
+    h _ = return Nothing
+    go os = do
+        output <-
+            runImport . forM (zip [(1 :: Int) ..] os) $ \(i, (t, tx)) -> do
+                $(logInfoS) "BlockStore" $
+                    "Attempting to import orphan tx " <> cs (show i) <> "/" <>
+                    cs (show (length os)) <>
+                    ": " <>
+                    txHashToHex (txHash tx)
+                fmap (txHash tx, ) <$> importOrphan t tx `catchError` h
+        case output of
+            Left e -> do
+                $(logErrorS) "BlockStore" $
+                    "Importing orphans failed: " <> cs (show e)
+            Right xs -> do
+                l <- asks (blockConfListener . myConfig)
+                atomically $
+                    forM_ (catMaybes xs) $ \(th, deleted) -> do
+                        mapM_ (l . StoreTxDeleted) deleted
+                        l (StoreMempoolNew th)
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -498,6 +553,7 @@ processBlockStoreMessage (BlockNotFound p bs) = processNoBlocks p bs
 processBlockStoreMessage (BlockTxReceived p tx) = processTx p tx
 processBlockStoreMessage (BlockTxAvailable p ts) = processTxs p ts
 processBlockStoreMessage (BlockPing r) = do
+    processMempool
     processOrphans
     checkTime
     pruneMempool
@@ -506,5 +562,5 @@ processBlockStoreMessage (BlockPing r) = do
 pingMe :: MonadLoggerIO m => BlockStore -> m ()
 pingMe mbox =
     forever $ do
-        threadDelay =<< liftIO (randomRIO (5 * 1000 * 1000, 10 * 1000 * 1000))
+        threadDelay =<< liftIO (randomRIO (100 * 1000, 1000 * 1000))
         BlockPing `query` mbox

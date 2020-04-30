@@ -49,6 +49,7 @@ data Config = Config
     , configRedisURL    :: !String
     , configRedisMin    :: !Int
     , configRedisMax    :: !Integer
+    , configWipeMempool :: !Bool
     }
 
 defPort :: Int
@@ -155,6 +156,8 @@ config = do
         help "Maximum number of keys in Redis xpub cache" <>
         showDefault <>
         value defRedisMax
+    configWipeMempool <-
+        switch $ long "wipemempool" <> help "Wipe mempool when starting"
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -220,6 +223,7 @@ run Config { configPort = port
            , configRedisURL = redisurl
            , configRedisMin = cachemin
            , configRedisMax = redismax
+           , configWipeMempool = wipemempool
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -241,6 +245,7 @@ run Config { configPort = port
                     , storeConfInitialGap = maxLimitInitialGap limits
                     , storeConfCacheMin = cachemin
                     , storeConfMaxKeys = redismax
+                    , storeConfWipeMempool = wipemempool
                     }
          in withStore scfg $ \st ->
                 let wcfg =
