@@ -166,16 +166,20 @@ blockStore cfg inbox = do
             deleteTx True (blockTxHash tx)
     wipe
         | blockConfWipeMempool cfg = do
-            take 1000 <$> getMempool >>= \case
-                [] -> return ()
-                txs ->
-                    runImport (del txs) >>= \case
-                        Left e -> do
-                            $(logErrorS) "BlockStore" $
-                                "Could not delete mempool, database corrupt: " <>
-                                cs (show e)
-                            throwIO CorruptDatabase
-                        Right _ -> return ()
+            mem <- getMempool
+            let go txs = do
+                    let (txs1, txs2) = splitAt 1000 txs
+                    case txs1 of
+                        [] -> return ()
+                        _ ->
+                            runImport (del txs1) >>= \case
+                                Left e -> do
+                                    $(logErrorS) "BlockStore" $
+                                        "Could not delete mempool, database corrupt: " <>
+                                        cs (show e)
+                                    throwIO CorruptDatabase
+                                Right _ -> go txs2
+            go mem
         | otherwise = return ()
     ini = do
         runImport initBest >>= \case
