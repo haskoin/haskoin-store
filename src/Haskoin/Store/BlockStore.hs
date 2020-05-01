@@ -281,7 +281,7 @@ pruneOrphans = do
     ts <- asks myTxs
     now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     atomically . modifyTVar ts . HashMap.filter $ \p ->
-        null (pendingDeps p) || pendingTxTime p > now - 7200
+        pendingTxTime p > now - 600
 
 addPendingTx :: MonadIO m => PendingTx -> BlockT m ()
 addPendingTx p = do

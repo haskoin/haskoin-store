@@ -24,8 +24,8 @@ import           Haskoin.Node                  (Chain, ChainEvent (..),
 import           Haskoin.Store.BlockStore      (BlockStoreConfig (..),
                                                 blockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
-                                                CacheWriterMessage (..),
-                                                cacheWriter, connectRedis)
+                                                cacheNewBlock, cacheWriter,
+                                                connectRedis)
 import           Haskoin.Store.Common          (BlockStore,
                                                 BlockStoreMessage (..),
                                                 StoreEvent (..))
@@ -37,9 +37,8 @@ import           NQE                           (Inbox, Listen, Process (..),
                                                 Publisher,
                                                 PublisherMessage (Event),
                                                 inboxToMailbox, newInbox,
-                                                receive, send, sendSTM,
-                                                withProcess, withPublisher,
-                                                withSubscription)
+                                                receive, sendSTM, withProcess,
+                                                withPublisher, withSubscription)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, link,
                                                 withAsync)
 
@@ -176,10 +175,8 @@ cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents evts cwm = forever $ receive evts >>= (`cacheWriterDispatch` cwm)
 
 cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
-cacheWriterDispatch (StoreBestBlock _)    = send CacheNewBlock
-cacheWriterDispatch (StoreMempoolNew txh) = send (CacheNewTx txh)
-cacheWriterDispatch (StoreTxDeleted txh)  = send (CacheDelTx txh)
-cacheWriterDispatch _                     = const (return ())
+cacheWriterDispatch (StoreBestBlock _) = cacheNewBlock
+cacheWriterDispatch _                  = const (return ())
 
 -- | Dispatcher of node events.
 storeDispatch :: BlockStore -> Listen StoreEvent -> Listen NodeEvent

@@ -17,14 +17,14 @@ module Haskoin.Store.Cache
     , scoreBlockRef
     , CacheWriter
     , CacheWriterInbox
-    , CacheWriterMessage (..)
+    , cacheNewBlock
     , cacheWriter
     , isXPubCached
     , delXPubKeys
     ) where
 
 import           Control.DeepSeq           (NFData)
-import           Control.Monad             (forM, forM_, forever, void)
+import           Control.Monad             (forM, forM_, forever, unless, void)
 import           Control.Monad.Logger      (MonadLoggerIO, logDebugS, logErrorS,
                                             logInfoS, logWarnS)
 import           Control.Monad.Reader      (ReaderT (..), asks)
@@ -33,11 +33,12 @@ import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import           Data.Bits                 (shift, (.&.), (.|.))
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Short     as BSS
-import           Data.Either               (rights)
+import           Data.Either               (lefts, rights)
 import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as HashMap
+import qualified Data.HashSet              as HashSet
 import qualified Data.IntMap.Strict        as IntMap
-import           Data.List                 (nub, sort, (\\))
+import           Data.List                 (nub, sort)
 import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (catMaybes, mapMaybe)
 import           Data.Serialize            (decode, encode)
@@ -76,10 +77,13 @@ import           Haskoin.Store.Common      (Balance (..), BlockData (..),
                                             nullBalance, sortTxs, xPubBals,
                                             xPubBalsTxs, xPubBalsUnspents,
                                             xPubTxs)
-import           NQE                       (Inbox, Mailbox, receive)
+import           NQE                       (Inbox, Listen, Mailbox,
+                                            inboxToMailbox, query, receive,
+                                            send)
 import           System.Random             (randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
-                                            bracket, liftIO, throwIO)
+                                            atomically, bracket, liftIO,
+                                            throwIO, withAsync)
 import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheT m a
@@ -410,10 +414,8 @@ getAllFromMap n = do
             ]
 
 data CacheWriterMessage
-    = CacheNewTx !TxHash
-    | CacheDelTx !TxHash
-    | CacheNewBlock
-    deriving (Show, Eq, Generic, NFData)
+    = CacheNewBlock
+    | CachePing (Listen ())
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 type CacheWriter = Mailbox CacheWriterMessage
@@ -456,7 +458,7 @@ cacheWriter cfg inbox = runReaderT go cfg
   where
     go = do
         newBlockC
-        forever $ do
+        withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
             pruneDB
             x <- receive inbox
             cacheWriterReact x
@@ -544,9 +546,8 @@ cacheWriterReact ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
     => CacheWriterMessage
     -> CacheT m ()
-cacheWriterReact CacheNewBlock    = newBlockC
-cacheWriterReact (CacheNewTx txh) = newTxC txh
-cacheWriterReact (CacheDelTx txh) = newTxC txh
+cacheWriterReact CacheNewBlock = newBlockC
+cacheWriterReact (CachePing r) = newBlockC >> atomically (r ())
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
@@ -655,20 +656,6 @@ newBlockC =
             Just a -> do
                 importBlockC (headerHash (nodeHeader a))
                 newBlockC
-
-newTxC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => TxHash -> CacheT m ()
-newTxC th =
-    isAnythingCached >>= \case
-        True ->
-            lift (getTxData th) >>= \case
-                Just txd -> do
-                    $(logDebugS) "Cache" $
-                        "Importing transaction: " <> txHashToHex th
-                    importMultiTxC [txd]
-                Nothing ->
-                    $(logErrorS) "Cache" $
-                    "Transaction not found: " <> txHashToHex th
-        False -> return ()
 
 importBlockC :: (MonadUnliftIO m, StoreRead m, MonadLoggerIO m) => BlockHash -> CacheT m ()
 importBlockC bh =
@@ -796,7 +783,7 @@ redisImportMultiTx addrmap unspentmap txs = do
         if txDataDeleted tx
             then do
                 x <- mapM (uncurry (remtx tx)) (txaddrops tx)
-                y <- redisRemFromMempool (txHash (txData tx))
+                y <- redisRemFromMempool [txHash (txData tx)]
                 return $ sequence x >> y >> return ()
             else do
                 a <- sequence <$> mapM (uncurry (addtx tx)) (txaddrops tx)
@@ -809,7 +796,7 @@ redisImportMultiTx addrmap unspentmap txs = do
                                     { blockTxHash = txHash (txData tx)
                                     , blockTxBlock = b
                                     }
-                        _ -> redisRemFromMempool (txHash (txData tx))
+                        _ -> redisRemFromMempool [txHash (txData tx)]
                 return $ a >> b >> return ()
     txaddrops td = spnts td <> utxos td
     spnts td = txInputs td
@@ -898,15 +885,28 @@ getNewAddrs gap xpubs = concatMap f
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m ()
 syncMempoolC = do
-    nodepool <- map blockTxHash <$> lift getMempool
-    cachepool <- map blockTxHash <$> cacheGetMempool
-    txs <- catMaybes <$> mapM (lift . getTxData) (nodepool \\ cachepool)
-    if null txs
-        then $(logDebugS) "Cache" "Cache mempool in sync"
-        else do
+    nodepool <- (HashSet.fromList . map blockTxHash) <$> lift getMempool
+    cachepool <- (HashSet.fromList . map blockTxHash) <$> cacheGetMempool
+    txs <-
+        mapM getit . HashSet.toList $
+        mappend
+            (HashSet.difference nodepool cachepool)
+            (HashSet.difference cachepool nodepool)
+    unless (null txs) $ do
+        $(logDebugS) "Cache" $
+            "Importing " <> cs (show (length txs)) <> " mempool transactions"
+        importMultiTxC (rights txs)
+        forM_ (zip [(1 :: Int) ..] (lefts txs)) $ \(i, h) ->
             $(logDebugS) "Cache" $
-                "Importing " <> cs (show (length txs)) <> " mempool transactions"
-            importMultiTxC txs
+            "Ignoring cache mempool tx " <> cs (show i) <> "/" <>
+            cs (show (length txs)) <>
+            ": " <>
+            txHashToHex h
+  where
+    getit th =
+        lift (getTxData th) >>= \case
+            Nothing -> return (Left th)
+            Just tx -> return (Right tx)
 
 cacheGetMempool :: MonadLoggerIO m => CacheT m [BlockTx]
 cacheGetMempool = runRedis redisGetMempool
@@ -944,14 +944,12 @@ cacheGetAddrsInfo as = runRedis (redisGetAddrsInfo as)
 
 redisAddToMempool :: RedisCtx m f => [BlockTx] -> m (f Integer)
 redisAddToMempool btxs =
-    zadd
-        mempoolSetKey
-        (map (\btx ->
-                  (blockRefScore (blockTxBlock btx), encode (blockTxHash btx)))
-             btxs)
+    zadd mempoolSetKey $
+    map (\btx -> (blockRefScore (blockTxBlock btx), encode (blockTxHash btx)))
+        btxs
 
-redisRemFromMempool :: RedisCtx m f => TxHash -> m (f Integer)
-redisRemFromMempool th = zrem mempoolSetKey [encode th]
+redisRemFromMempool :: RedisCtx m f => [TxHash] -> m (f Integer)
+redisRemFromMempool = zrem mempoolSetKey . map encode
 
 redisSetAddrInfo ::
        (Functor f, RedisCtx m f) => Address -> AddressXPub -> m (f ())
@@ -1113,3 +1111,15 @@ xpubText :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => XPubSpec -> Cache
 xpubText xpub = do
     net <- getNetwork
     return . cs $ xPubExport net (xPubSpecKey xpub)
+
+pingMe :: MonadLoggerIO m => CacheWriter -> m ()
+pingMe mbox =
+    forever $ do
+        threadDelay =<< liftIO (randomRIO (100 * 1000, 1000 * 1000))
+        cachePing mbox
+
+cacheNewBlock :: MonadIO m => CacheWriter -> m ()
+cacheNewBlock = send CacheNewBlock
+
+cachePing :: MonadIO m => CacheWriter -> m ()
+cachePing = query CachePing
