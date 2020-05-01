@@ -311,7 +311,7 @@ importTx br tt tx = do
                             "Deleting transaction " <> txHashToHex s <>
                             " because it conflicts with " <>
                             txHashToHex (txHash tx)
-                        ths <- deleteTx True True s
+                        ths <- deleteTx True (not (confirmed br)) s
                         getUnspent op >>= \case
                             Nothing -> do
                                 $(logErrorS) "BlockStore" $

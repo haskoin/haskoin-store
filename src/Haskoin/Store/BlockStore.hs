@@ -166,28 +166,28 @@ blockStore cfg inbox = do
             , myTxs = ts
             }
   where
-    del n txs =
-        forM (zip [(1 :: Integer) ..] txs) $ \(i, tx) -> do
+    del x n txs =
+        forM (zip [x ..] txs) $ \(i, tx) -> do
             $(logDebugS) "BlockStore" $
                 "Wiping mempool tx " <> cs (show i) <> "/" <> cs (show n) <>
                 ": " <>
                 txHashToHex (blockTxHash tx)
             deleteTx True False (blockTxHash tx)
-    wipeit n txs = do
+    wipeit x n txs = do
         let (txs1, txs2) = splitAt 1000 txs
         case txs1 of
             [] -> return ()
             _ ->
-                runImport (del n txs1) >>= \case
+                runImport (del x n txs1) >>= \case
                     Left e -> do
                         $(logErrorS) "BlockStore" $
                             "Could not delete mempool, database corrupt: " <>
                             cs (show e)
                         throwIO CorruptDatabase
-                    Right _ -> wipeit n txs2
+                    Right _ -> wipeit (x + length txs1) n txs2
     wipe
         | blockConfWipeMempool cfg =
-            getMempool >>= \mem -> wipeit (length mem) mem
+            getMempool >>= \mem -> wipeit 1 (length mem) mem
         | otherwise = return ()
     ini = do
         runImport initBest >>= \case
