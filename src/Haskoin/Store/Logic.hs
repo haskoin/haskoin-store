@@ -23,7 +23,7 @@ import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
 import qualified Data.IntMap.Strict            as I
 import           Data.List                     (nub, sort)
-import           Data.Maybe                    (fromMaybe, isNothing, mapMaybe)
+import           Data.Maybe                    (fromMaybe, isNothing)
 import           Data.Serialize                (encode)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
@@ -56,13 +56,14 @@ import           UnliftIO                      (Exception)
 
 data ImportException
     = PrevBlockNotBest !Text
-    | TxOrphan
+    | TxOrphan !Text
     | UnconfirmedCoinbase !Text
     | BestBlockUnknown
     | BestBlockNotFound !Text
     | BlockNotBest !Text
     | TxNotFound !Text
-    | NoUnspent !Text
+    | OutputSpent !Text
+    | CannotDeleteNonRBF !Text
     | TxInvalidOp !Text
     | TxDeleted !Text
     | TxDoubleSpend !Text
@@ -109,47 +110,7 @@ newMempoolTx tx w =
                 $(logDebugS) "BlockStore" $
                     "Transaction already in store: " <> txHashToHex (txHash tx)
                 return Nothing
-        _ -> go
-  where
-    go = do
-        orp <-
-            any isNothing <$>
-            mapM (getTxData . outPointHash . prevOutput) (txIn tx)
-        if orp
-            then do
-                $(logWarnS) "BlockStore" $
-                    "Orphan tx: " <> txHashToHex (txHash tx)
-                throwError TxOrphan
-            else f
-    f = do
-        us <-
-            forM (txIn tx) $ \TxIn {prevOutput = op} -> do
-                t <- getImportTx (outPointHash op)
-                getTxOutput (outPointIndex op) t
-        let ds = map spenderHash (mapMaybe outputSpender us)
-        if null ds
-            then fmap Just (importTx (MemRef w) w tx)
-            else g ds
-    g ds = do
-        net <- getNetwork
-        rbf <-
-            if getReplaceByFee net
-                then and <$> mapM isrbf ds
-                else return False
-        if rbf
-            then r ds
-            else n
-    r ds = do
-        $(logWarnS) "BlockStore" $
-            "Replace by fee tx: " <> txHashToHex (txHash tx)
-        ths <- concat <$> forM ds (deleteTx True)
-        dts <- importTx (MemRef w) w tx
-        return (Just (nub (ths <> dts)))
-    n = do
-        $(logWarnS) "BlockStore" $ "Conflicting tx: " <> txHashToHex (txHash tx)
-        insertDeletedMempoolTx tx w
-        return Nothing
-    isrbf th = transactionRBF <$> getImportTx th
+        _ -> Just <$> importTx (MemRef w) w tx
 
 revertBlock ::
        ( StoreRead m
@@ -180,7 +141,7 @@ revertBlock bh = do
     txs <- mapM (fmap transactionData . getImportTx) (blockDataTxs bd)
     ths <-
         nub . concat <$>
-        mapM (deleteTx False . txHash . snd) (reverse (sortTxs txs))
+        mapM (deleteTx False False . txHash . snd) (reverse (sortTxs txs))
     setBest (prevBlock (blockDataHeader bd))
     insertBlock bd {blockDataMainChain = False}
     return ths
@@ -298,16 +259,16 @@ importTx br tt tx = do
         $(logErrorS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError (InsufficientFunds (txHashToHex th))
-    commit us
+    rbf <- isRBF br tx
+    commit rbf us
     return ths
   where
-    commit us = do
+    commit rbf us = do
         zipWithM_ (spendOutput br (txHash tx)) [0 ..] us
         zipWithM_
             (\i o -> newOutput br (OutPoint (txHash tx) i) o)
             [0 ..]
             (txOut tx)
-        rbf <- getrbf
         let t =
                 Transaction
                     { transactionBlock = br
@@ -342,13 +303,15 @@ importTx br tt tx = do
                             txHashToHex (outPointHash op) <>
                             " " <>
                             fromString (show (outPointIndex op))
-                        throwError (NoUnspent (cs (show op)))
+                        $(logErrorS) "BlockStore" $
+                            "Orphan tx: " <> txHashToHex (txHash tx)
+                        throwError (TxOrphan (txHashToHex (txHash tx)))
                     Just Spender {spenderHash = s} -> do
                         $(logWarnS) "BlockStore" $
                             "Deleting transaction " <> txHashToHex s <>
                             " because it conflicts with " <>
                             txHashToHex (txHash tx)
-                        ths <- deleteTx True s
+                        ths <- deleteTx True True s
                         getUnspent op >>= \case
                             Nothing -> do
                                 $(logErrorS) "BlockStore" $
@@ -356,27 +319,11 @@ importTx br tt tx = do
                                     txHashToHex (outPointHash op) <>
                                     " " <>
                                     fromString (show (outPointIndex op))
-                                throwError (NoUnspent (cs (show op)))
+                                throwError (OutputSpent (cs (show op)))
                             Just u -> return (u, ths)
     th = txHash tx
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
     ws = map Just (txWitness tx) <> repeat Nothing
-    getrbf
-        | iscb = return False
-        | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) = return True
-        | confirmed br = return False
-        | otherwise =
-            let hs = nub $ map (outPointHash . prevOutput) (txIn tx)
-             in fmap or . forM hs $ \h ->
-                    getTxData h >>= \case
-                        Nothing -> do
-                            $(logErrorS) "BlockStore" $
-                                "Transaction not found: " <> txHashToHex h
-                            throwError (TxNotFound (txHashToHex h))
-                        Just t
-                            | confirmed (txDataBlock t) -> return False
-                            | txDataRBF t -> return True
-                            | otherwise -> return False
     mkcb ip w =
         StoreCoinbase
             { inputPoint = prevOutput ip
@@ -492,104 +439,85 @@ deleteTx ::
        , MonadError ImportException m
        )
     => Bool -- ^ only delete transaction if unconfirmed
+    -> Bool -- ^ do RBF check before deleting transaction
     -> TxHash
     -> m [TxHash] -- ^ deleted transactions
-deleteTx mo h = do
-    getTxData h >>= \case
+deleteTx memonly rbfcheck txhash = do
+    getTxData txhash >>= \case
         Nothing -> do
             $(logErrorS) "BlockStore" $
-                "Cannot find tx to delete: " <> txHashToHex h
-            throwError (TxNotFound (txHashToHex h))
+                "Cannot find tx to delete: " <> txHashToHex txhash
+            throwError (TxNotFound (txHashToHex txhash))
         Just t
             | txDataDeleted t -> do
                 $(logWarnS) "BlockStore" $
-                    "Already deleted tx: " <> txHashToHex h
+                    "Already deleted tx: " <> txHashToHex txhash
                 return []
-            | mo && confirmed (txDataBlock t) -> do
+            | memonly && confirmed (txDataBlock t) -> do
                 $(logErrorS) "BlockStore" $
-                    "Will not delete confirmed tx: " <> txHashToHex h
-                throwError (TxConfirmed (txHashToHex h))
+                    "Will not delete confirmed tx: " <> txHashToHex txhash
+                throwError (TxConfirmed (txHashToHex txhash))
+            | rbfcheck ->
+                isRBF (txDataBlock t) (txData t) >>= \case
+                    True -> go t
+                    False -> do
+                        $(logErrorS) "BlockStore" $
+                            "Delete non-RBF transaction attempted: " <>
+                            txHashToHex txhash
+                        throwError $ CannotDeleteNonRBF (txHashToHex txhash)
             | otherwise -> go t
   where
     go t = do
-        $(logWarnS) "BlockStore" $ "Deleting transaction: " <> txHashToHex h
-        ss <- nub . map spenderHash . I.elems <$> getSpenders h
+        $(logWarnS) "BlockStore" $
+            "Deleting transaction: " <> txHashToHex txhash
+        ss <- nub . map spenderHash . I.elems <$> getSpenders txhash
         ths <-
             fmap concat $
             forM ss $ \s -> do
                 $(logWarnS) "BlockStore" $
                     "Deleting descendant " <> txHashToHex s <>
                     " to delete parent " <>
-                    txHashToHex h
-                deleteTx True s
+                    txHashToHex txhash
+                deleteTx True rbfcheck s
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
-            delOutput (OutPoint h n)
+            delOutput (OutPoint txhash n)
         let ps = filter (/= nullOutPoint) (map prevOutput (txIn (txData t)))
         mapM_ unspendOutput ps
-        unless (confirmed (txDataBlock t)) $ deleteFromMempool h
+        unless (confirmed (txDataBlock t)) $ deleteFromMempool txhash
         insertTx t {txDataDeleted = True}
         updateAddressCounts (txDataAddresses t) (subtract 1)
-        return $ nub (h : ths)
+        return $ nub (txhash : ths)
 
-insertDeletedMempoolTx ::
-       ( StoreRead m
-       , StoreWrite m
-       , MonadLogger m
-       , MonadError ImportException m
-       )
-    => Tx
-    -> UnixTime
-    -> m ()
-insertDeletedMempoolTx tx w = do
-    us <-
-        forM (txIn tx) $ \TxIn {prevOutput = op} ->
-            getImportTx (outPointHash op) >>= getTxOutput (outPointIndex op)
-    rbf <- getrbf
-    let d =
-            fst $
-            fromTransaction
-                Transaction
-                    { transactionBlock = MemRef w
-                    , transactionVersion = txVersion tx
-                    , transactionLockTime = txLockTime tx
-                    , transactionInputs = zipWith3 mkin us (txIn tx) ws
-                    , transactionOutputs = map mkout (txOut tx)
-                    , transactionDeleted = True
-                    , transactionRBF = rbf
-                    , transactionTime = w
-                    }
-    insertTx d
+
+isRBF ::
+       (StoreRead m, MonadLogger m, MonadError ImportException m)
+    => BlockRef
+    -> Tx
+    -> m Bool
+isRBF br tx =
+    getNetwork >>= \net ->
+        if getReplaceByFee net
+            then go
+            else return False
   where
-    ws = map Just (txWitness tx) <> repeat Nothing
-    getrbf
+    go
+        | all (== nullOutPoint) (map prevOutput (txIn tx)) = return False
         | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) = return True
+        | confirmed br = return False
         | otherwise =
             let hs = nub $ map (outPointHash . prevOutput) (txIn tx)
-             in fmap or . forM hs $ \h ->
+                ck [] = return False
+                ck (h:hs') =
                     getTxData h >>= \case
                         Nothing -> do
                             $(logErrorS) "BlockStore" $
-                                "Tx not found: " <> txHashToHex h
+                                "Transaction not found: " <> txHashToHex h
                             throwError (TxNotFound (txHashToHex h))
                         Just t
-                            | confirmed (txDataBlock t) -> return False
+                            | confirmed (txDataBlock t) -> ck hs'
                             | txDataRBF t -> return True
-                            | otherwise -> return False
-    mkin u ip wit =
-        StoreInput
-            { inputPoint = prevOutput ip
-            , inputSequence = txInSequence ip
-            , inputSigScript = scriptInput ip
-            , inputPkScript = outputScript u
-            , inputAmount = outputAmount u
-            , inputWitness = wit
-            }
-    mkout o =
-        StoreOutput
-            { outputAmount = outValue o
-            , outputScript = scriptOutput o
-            , outputSpender = Nothing
-            }
+                            | otherwise -> ck hs'
+             in ck hs
 
 newOutput ::
        ( StoreRead m
