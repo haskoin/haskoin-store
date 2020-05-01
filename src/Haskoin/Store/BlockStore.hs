@@ -11,8 +11,8 @@ module Haskoin.Store.BlockStore
     ) where
 
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forM, forM_, forever, guard,
-                                                mzero, unless, void, when)
+import           Control.Monad                 (forM, forM_, forever, mzero,
+                                                unless, void, when)
 import           Control.Monad.Except          (ExceptT, MonadError (..),
                                                 runExceptT)
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
@@ -24,8 +24,8 @@ import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as HashMap
 import           Data.HashSet                  (HashSet)
 import qualified Data.HashSet                  as HashSet
-import           Data.Maybe                    (catMaybes, isNothing,
-                                                listToMaybe, mapMaybe)
+import           Data.Maybe                    (catMaybes, listToMaybe,
+                                                mapMaybe)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
@@ -48,8 +48,8 @@ import           Haskoin.Node                  (Chain, Manager, managerGetPeer)
 import           Haskoin.Store.Common          (BlockStore,
                                                 BlockStoreMessage (..),
                                                 BlockTx (..), StoreEvent (..),
-                                                StoreRead (..), UnixTime,
-                                                sortTxs)
+                                                StoreRead (..), TxData (..),
+                                                UnixTime, Unspent (..), sortTxs)
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)
@@ -276,11 +276,12 @@ processTx _p tx = do
     t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     addPendingTx $ PendingTx t tx HashSet.empty
 
-prunePendingTxs :: MonadIO m => BlockT m ()
-prunePendingTxs = do
+pruneOrphans :: MonadIO m => BlockT m ()
+pruneOrphans = do
     ts <- asks myTxs
     now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-    atomically . modifyTVar ts $ HashMap.filter ((> now - 600) . pendingTxTime)
+    atomically . modifyTVar ts . HashMap.filter $ \p ->
+        null (pendingDeps p) || pendingTxTime p > now - 7200
 
 addPendingTx :: MonadIO m => PendingTx -> BlockT m ()
 addPendingTx p = do
@@ -317,6 +318,37 @@ fulfillOrphans th = do
   where
     upd p = p {pendingDeps = HashSet.delete th (pendingDeps p)}
 
+updateOrphans :: (StoreRead m, MonadLoggerIO m, MonadReader BlockRead m) => m ()
+updateOrphans = do
+    tb <- asks myTxs
+    pend1 <- readTVarIO tb
+    let pend2 = HashMap.filter (not . null . pendingDeps) pend1
+    pend3 <-
+        fmap (HashMap.fromList . catMaybes) $
+        forM (HashMap.elems pend2) $ \p -> do
+            let tx = pendingTx p
+            e <- exists (txHash tx)
+            if e
+                then return Nothing
+                else do
+                    uns <-
+                        fmap catMaybes $
+                        forM (txIn tx) (getUnspent . prevOutput)
+                    let f p1 u =
+                            p1
+                                { pendingDeps =
+                                      HashSet.delete
+                                          (outPointHash (unspentPoint u))
+                                          (pendingDeps p1)
+                                }
+                    return $ Just (txHash tx, foldl f p uns)
+    atomically $ writeTVar tb pend3
+  where
+    exists th =
+        getTxData th >>= \case
+            Nothing -> return False
+            Just TxData {txDataDeleted = True} -> return False
+            Just TxData {txDataDeleted = False} -> return True
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processMempool = do
@@ -342,7 +374,7 @@ processMempool = do
                     t = pendingTxTime p
                     th = txHash tx
                     h x TxOrphan {} = return (Left (Just x))
-                    h _ _ = return (Left Nothing)
+                    h _ _           = return (Left Nothing)
                 $(logInfoS) "BlockStore" $
                     "New mempool tx " <> cs (show i) <> "/" <>
                     cs (show (length ps)) <>
@@ -376,12 +408,21 @@ processTxs p hs = do
     when sync $ do
         xs <-
             fmap catMaybes . forM hs $ \h ->
-                runMaybeT $ do
-                    guard . not =<< lift (isPending h)
-                    guard . isNothing =<< lift (getTxData h)
-                    return h
+                haveit h >>= \case
+                    True -> do
+                        $(logDebugS) "BlockStore" $
+                            "Ignoring already downloaded tx: " <> txHashToHex h
+                        return Nothing
+                    False -> return (Just h)
         unless (null xs) $ go xs
   where
+    haveit h =
+        isPending h >>= \case
+            True -> return True
+            False ->
+                getTxData h >>= \case
+                    Nothing -> return False
+                    Just txd -> return (not (txDataDeleted txd))
     go xs = do
         p' <-
             do mgr <- asks (blockConfManager . myConfig)
@@ -506,7 +547,7 @@ syncMe peer =
             Nothing -> bestblocknode
     end syncbest bestblock chainbest
         | nodeHeader bestblock == nodeHeader chainbest = do
-            resetPeer >> mempool peer >> mzero
+            lift updateOrphans >> resetPeer >> mempool peer >> mzero
         | nodeHeader syncbest == nodeHeader chainbest = do mzero
         | otherwise =
             when (nodeHeight syncbest > nodeHeight bestblock + 500) mzero
@@ -600,7 +641,7 @@ processBlockStoreMessage (BlockTxReceived p tx) = processTx p tx
 processBlockStoreMessage (BlockTxAvailable p ts) = processTxs p ts
 processBlockStoreMessage (BlockPing r) = do
     processMempool
-    prunePendingTxs
+    pruneOrphans
     checkTime
     pruneMempool
     atomically (r ())
