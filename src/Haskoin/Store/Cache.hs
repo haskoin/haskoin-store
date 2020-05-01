@@ -432,6 +432,9 @@ mempoolSetKey = "mempool"
 lockKey :: ByteString
 lockKey = "lock"
 
+importLockKey :: ByteString
+importLockKey = "import"
+
 addrPfx :: ByteString
 addrPfx = "a"
 
@@ -463,8 +466,8 @@ cacheWriter cfg inbox = runReaderT go cfg
             x <- receive inbox
             cacheWriterReact x
 
-lockIt :: MonadLoggerIO m => CacheT m Bool
-lockIt = do
+lockIt :: MonadLoggerIO m => ByteString -> CacheT m Bool
+lockIt k = do
     go >>= \case
         Right Redis.Ok -> return True
         Right Redis.Pong -> do
@@ -487,31 +490,35 @@ lockIt = do
                         , Redis.setMilliseconds = Nothing
                         , Redis.setCondition = Just Redis.Nx
                         }
-            Redis.setOpts lockKey "l" opts
+            Redis.setOpts k "l" opts
 
 
-unlockIt :: MonadLoggerIO m => CacheT m ()
-unlockIt = runRedis (Redis.del [lockKey]) >> return ()
+unlockIt :: MonadLoggerIO m => ByteString -> CacheT m ()
+unlockIt k = runRedis (Redis.del [k]) >> return ()
 
 withLock ::
-       (MonadLoggerIO m, MonadUnliftIO m) => CacheT m a -> CacheT m (Maybe a)
-withLock f =
-    bracket lockIt (const unlockIt) $ \case
+       (MonadLoggerIO m, MonadUnliftIO m) => ByteString -> CacheT m a -> CacheT m (Maybe a)
+withLock k f =
+    bracket (lockIt k) (const (unlockIt k)) $ \case
         True -> Just <$> f
         False -> return Nothing
 
-withLockWait :: (MonadLoggerIO m, MonadUnliftIO m) => CacheT m a -> CacheT m a
-withLockWait f =
-    withLock f >>= \case
+withLockWait ::
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => ByteString
+    -> CacheT m a
+    -> CacheT m a
+withLockWait k f =
+    withLock k f >>= \case
         Just x -> return x
         Nothing -> do
             r <- liftIO $ randomRIO (500, 10000)
             threadDelay r
-            withLockWait f
+            withLockWait k f
 
 pruneDB :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m Integer
 pruneDB =
-    withLockWait $
+    withLockWait lockKey $
     isAnythingCached >>= \case
         True -> do
             x <- asks cacheMax
@@ -591,7 +598,7 @@ newXPubC xpub =
             "Caching xpub with " <> cs (show (length xtxs)) <> " txs: " <>
             xpubtxt
         now <- systemSeconds <$> liftIO getSystemTime
-        withLockWait . runRedis $ do
+        withLockWait lockKey . runRedis $ do
             b <- redisTouchKeys now [xpub]
             c <- redisAddXPubBalances xpub bals
             d <- redisAddXPubUnspents xpub (map op utxo)
@@ -600,6 +607,7 @@ newXPubC xpub =
 
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m ()
 newBlockC =
+    withLockWait importLockKey $
     isAnythingCached >>= \case
         False -> return ()
         True ->
@@ -713,7 +721,7 @@ importMultiTxC txs = do
             ": " <>
             xpubtxt
     addrs' <-
-        withLockWait $
+        withLockWait lockKey $
         getxbals xpubs >>= \xmap -> do
             let addrmap' = faddrmap (HashMap.keysSet xmap) addrmap
             runRedis $ do
@@ -927,7 +935,7 @@ cachePrime =
                     return Nothing
                 Just newhead -> do
                     mem <- lift getMempool
-                    withLockWait . runRedis $ do
+                    withLockWait lockKey . runRedis $ do
                         a <- redisAddToMempool mem
                         b <- redisSetHead newhead
                         return $ a >> b >> return (Just newhead)
