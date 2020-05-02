@@ -406,14 +406,36 @@ processTxs ::
 processTxs p hs = do
     sync <- isInSync
     when sync $ do
+        p' <-
+            do mgr <- asks (blockConfManager . myConfig)
+               managerGetPeer p mgr >>= \case
+                   Nothing -> return "???"
+                   Just op -> return . cs . show $ onlinePeerAddress op
+        $(logDebugS) "BlockStore" $
+            "Received inventory with " <> cs (show (length hs)) <>
+            " transactions from peer " <>
+            p'
         xs <-
-            fmap catMaybes . forM hs $ \h ->
+            fmap catMaybes . forM (zip [(1 :: Int) ..] hs) $ \(i, h) ->
                 haveit h >>= \case
                     True -> do
                         $(logDebugS) "BlockStore" $
-                            "Ignoring already downloaded tx: " <> txHashToHex h
+                            "Already have tx " <> cs (show i) <> "/" <>
+                            cs (show (length hs)) <>
+                            " " <>
+                            txHashToHex h <>
+                            " offered by peer " <>
+                            p'
                         return Nothing
-                    False -> return (Just h)
+                    False -> do
+                        $(logInfoS) "BlockStore" $
+                            "Requesting transaction " <> cs (show i) <> "/" <>
+                            cs (show (length hs)) <>
+                            " " <>
+                            txHashToHex h <>
+                            " from peer " <>
+                            p'
+                        return (Just h)
         unless (null xs) $ go xs
   where
     haveit h =
@@ -424,19 +446,6 @@ processTxs p hs = do
                     Nothing -> return False
                     Just txd -> return (not (txDataDeleted txd))
     go xs = do
-        p' <-
-            do mgr <- asks (blockConfManager . myConfig)
-               managerGetPeer p mgr >>= \case
-                   Nothing -> return "???"
-                   Just op -> return . cs . show $ onlinePeerAddress op
-        forM_ (zip [(1 :: Int) ..] xs) $ \(i, h) ->
-            $(logInfoS) "BlockStore" $
-            "Requesting transaction " <> cs (show i) <> "/" <>
-            cs (show (length xs)) <>
-            " " <>
-            txHashToHex h <>
-            " from peer " <>
-            p'
         net <- asks (blockConfNet . myConfig)
         let inv =
                 if getSegWit net
