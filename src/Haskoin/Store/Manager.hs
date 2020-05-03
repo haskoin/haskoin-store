@@ -132,7 +132,8 @@ withStore cfg action = do
                                   0
                                   (sockToHostAddress (SockAddrInet 0 0))
                         , nodeConfNet = storeConfNetwork cfg
-                        , nodeConfTimeout = 10
+                        , nodeConfTimeout = 60
+                        , nodeConfPeerOld = 48 * 3600
                         }
             withAsync (node nodeconfig managerinbox chaininbox) $ \nodeasync -> do
                 link nodeasync
