@@ -149,6 +149,7 @@ withStore cfg action = do
                             , blockConfDB = db
                             , blockConfNet = storeConfNetwork cfg
                             , blockConfWipeMempool = storeConfWipeMempool cfg
+                            , blockConfPeerTimeout = storeConfPeerTimeout cfg
                             }
                     runaction =
                         action

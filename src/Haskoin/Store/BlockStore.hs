@@ -113,6 +113,9 @@ data BlockStoreConfig =
         , blockConfNet         :: !Network
       -- ^ network constants
         , blockConfWipeMempool :: !Bool
+      -- ^ wipe mempool at start
+        , blockConfPeerTimeout :: !Int
+      -- ^ disconnect syncing peer if inactive for this long
         }
 
 type BlockT m = ReaderT BlockRead m
@@ -490,7 +493,8 @@ checkTime =
         Nothing -> return ()
         Just Syncing {syncingTime = t, syncingPeer = p} -> do
             n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            when (n > t + 60) $ do
+            peertout <- asks (blockConfPeerTimeout . myConfig)
+            when (n > t + fromIntegral peertout) $ do
                 p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
                 $(logErrorS) "BlockStore" $ "Timeout syncing peer " <> p'
                 resetPeer
