@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.23.16
 ### Changed
 - Better algorithm to avoid importing transaction multiple times in cache.
+- Depend on latest Haskoin Node.
 
 ## 0.23.15
 ### Changed
