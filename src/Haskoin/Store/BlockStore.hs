@@ -42,9 +42,10 @@ import           Haskoin.Node                  (OnlinePeer (..), Peer,
                                                 chainBlockMain,
                                                 chainGetAncestor, chainGetBest,
                                                 chainGetBlock, chainGetParents,
-                                                killPeer, managerGetPeers,
-                                                sendMessage)
-import           Haskoin.Node                  (Chain, Manager, managerGetPeer)
+                                                killPeer, managerGetPeer,
+                                                managerGetPeers, sendMessage)
+import           Haskoin.Node                  (Chain, PeerManager,
+                                                managerPeerText)
 import           Haskoin.Store.Common          (BlockStore,
                                                 BlockStoreMessage (..),
                                                 BlockTx (..), StoreEvent (..),
@@ -101,7 +102,7 @@ data BlockRead =
 -- | Configuration for a block store.
 data BlockStoreConfig =
     BlockStoreConfig
-        { blockConfManager     :: !Manager
+        { blockConfManager     :: !PeerManager
       -- ^ peer manager from running node
         , blockConfChain       :: !Chain
       -- ^ chain from a running node
@@ -227,10 +228,12 @@ processBlock peer block = do
     void . runMaybeT $ do
         checkpeer
         blocknode <- getblocknode
+        p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
         lift (runImport (importBlock block blocknode)) >>= \case
             Right deletedtxids -> do
                 listener <- asks (blockConfListener . myConfig)
-                $(logInfoS) "BlockStore" $ "Best block indexed: " <> hexhash
+                $(logInfoS) "BlockStore" $
+                    "Best block indexed: " <> hexhash <> " from peer " <> p'
                 atomically $ do
                     mapM_ (listener . StoreTxDeleted) deletedtxids
                     listener (StoreBestBlock blockhash)
@@ -238,24 +241,43 @@ processBlock peer block = do
             Left e -> do
                 $(logErrorS) "BlockStore" $
                     "Error importing block: " <> hexhash <> ": " <>
-                    fromString (show e)
+                    fromString (show e) <>
+                    " from peer " <>
+                    p'
                 killPeer (PeerMisbehaving (show e)) peer
   where
     header = blockHeader block
     blockhash = headerHash header
     hexhash = blockHashToHex blockhash
-    checkpeer =
-        getSyncingState >>= \case
-            Just Syncing {syncingPeer = syncingpeer}
-                | peer == syncingpeer -> return ()
-            _ -> do
-                $(logErrorS) "BlockStore" $ "Peer sent unexpected block: " <> hexhash
-                killPeer (PeerMisbehaving "Sent unpexpected block") peer
+    checkpeer = do
+        pm <- managerGetPeer peer =<< asks (blockConfManager . myConfig)
+        case pm of
+            Nothing -> do
+                $(logWarnS) "BlockStore" $
+                    "Ignoring block " <> hexhash <> " from disconnected peer"
                 mzero
+            Just _ ->
+                getSyncingState >>= \case
+                    Just Syncing {syncingPeer = syncingpeer}
+                        | peer == syncingpeer -> return ()
+                    _ -> do
+                        p' <-
+                            managerPeerText peer =<<
+                            asks (blockConfManager . myConfig)
+                        $(logDebugS) "BlockStore" $
+                            "Ignoring block " <> hexhash <>
+                            " from non-syncing peer " <>
+                            p'
+                        killPeer (PeerMisbehaving "Sent unpexpected block") peer
+                        mzero
     getblocknode =
         asks (blockConfChain . myConfig) >>= chainGetBlock blockhash >>= \case
             Nothing -> do
-                $(logErrorS) "BlockStore" $ "Block header not found: " <> hexhash
+                p' <-
+                    managerPeerText peer =<< asks (blockConfManager . myConfig)
+                $(logErrorS) "BlockStore" $
+                    "Header not found for block " <> hexhash <> " sent by peer " <>
+                    p'
                 killPeer (PeerMisbehaving "Sent unknown block") peer
                 mzero
             Just n -> return n
@@ -265,15 +287,22 @@ processNoBlocks ::
     => Peer
     -> [BlockHash]
     -> ReaderT BlockRead m ()
-processNoBlocks p _bs = do
-    $(logErrorS) "BlockStore" (cs m)
-    killPeer (PeerMisbehaving m) p
-  where
-    m = "I do not like peers that cannot find them blocks"
+processNoBlocks p hs = do
+    p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
+    forM_ (zip [(1 :: Int) ..] hs) $ \(i, h) ->
+        $(logErrorS) "BlockStore" $
+        "Block " <> cs (show i) <> "/" <> cs (show (length hs)) <> " " <>
+        blockHashToHex h <>
+        " not found by peer " <>
+        p'
+    killPeer (PeerMisbehaving "Did not find requested block(s)") p
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
-processTx _p tx = do
+processTx p tx = do
     t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
+    $(logDebugS) "BlockManager" $
+        "Received tx " <> txHashToHex (txHash tx) <> " from peer " <> p'
     addPendingTx $ PendingTx t tx HashSet.empty
 
 pruneOrphans :: MonadIO m => BlockT m ()
@@ -406,11 +435,7 @@ processTxs ::
 processTxs p hs = do
     sync <- isInSync
     when sync $ do
-        p' <-
-            do mgr <- asks (blockConfManager . myConfig)
-               managerGetPeer p mgr >>= \case
-                   Nothing -> return "???"
-                   Just op -> return . cs . show $ onlinePeerAddress op
+        p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
         $(logDebugS) "BlockStore" $
             "Received inventory with " <> cs (show (length hs)) <>
             " transactions from peer " <>
@@ -460,7 +485,8 @@ checkTime =
         Just Syncing {syncingTime = t, syncingPeer = p} -> do
             n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             when (n > t + 60) $ do
-                $(logErrorS) "BlockStore" "Syncing peer timeout"
+                p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
+                $(logErrorS) "BlockStore" $ "Timeout syncing peer " <> p'
                 resetPeer
                 killPeer PeerTimeout p
 
@@ -473,14 +499,16 @@ processDisconnect p =
         Nothing -> return ()
         Just Syncing {syncingPeer = p'}
             | p == p' -> do
+                $(logWarnS) "BlockStore" "Syncing peer disconnected"
                 resetPeer
                 getPeer >>= \case
-                    Nothing ->
-                        $(logWarnS)
-                            "BlockStore"
-                            "No peers available after syncing peer disconnected"
+                    Nothing -> do
+                        $(logWarnS) "BlockStore" "No new syncing peer available"
                     Just peer -> do
-                        $(logWarnS) "BlockStore" "Selected another peer to sync"
+                        ns <-
+                            managerPeerText peer =<<
+                            asks (blockConfManager . myConfig)
+                        $(logWarnS) "BlockStore" $ "New syncing peer " <> ns
                         syncMe peer
             | otherwise -> return ()
 
@@ -494,9 +522,11 @@ pruneMempool =
                 old -> deletetxs old
   where
     deletetxs old = do
-        $(logInfoS) "BlockStore" $
-            "Removing " <> cs (show (length old)) <> " old mempool transactions"
-        forM_ old $ \txid ->
+        forM_ (zip [(1 :: Int) ..] old) $ \(i, txid) -> do
+            $(logInfoS) "BlockStore" $
+                "Removing " <> cs (show i) <> "/" <> cs (show (length old)) <>
+                " old mempool tx " <>
+                txHashToHex txid
             runImport (deleteTx True False txid) >>= \case
                 Left _ -> return ()
                 Right txids -> do
@@ -523,8 +553,19 @@ syncMe peer =
                 map
                     (InvVector inv . getBlockHash . headerHash . nodeHeader)
                     blocknodes
+        p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
         $(logInfoS) "BlockStore" $
-            "Requesting " <> fromString (show (length vectors)) <> " blocks"
+            "Requesting " <> fromString (show (length vectors)) <>
+            " blocks from peer " <>
+            p'
+        forM_ (zip [(1 :: Int) ..] blocknodes) $ \(i, bn) -> do
+            $(logDebugS) "BlockStore" $
+                "Requesting block " <> cs (show i) <> "/" <>
+                cs (show (length vectors)) <>
+                ": " <>
+                blockHashToHex (headerHash (nodeHeader bn)) <>
+                " from peer " <>
+                p'
         MGetData (GetData vectors) `sendMessage` peer
   where
     checksyncingpeer =
@@ -532,9 +573,7 @@ syncMe peer =
             Nothing -> return ()
             Just Syncing {syncingPeer = p}
                 | p == peer -> return ()
-                | otherwise -> do
-                    $(logInfoS) "BlockStore" "Already syncing against another peer"
-                    mzero
+                | otherwise -> mzero
     chainbestnode = chainGetBest =<< asks (blockConfChain . myConfig)
     bestblocknode = do
         bb <-
@@ -635,12 +674,9 @@ processBlockStoreMessage ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => BlockStoreMessage
     -> BlockT m ()
-processBlockStoreMessage (BlockNewBest _) = do
+processBlockStoreMessage (BlockNewBest _) =
     getPeer >>= \case
-        Nothing -> do
-            $(logDebugS)
-                "BlockStore"
-                "New best block event received but no peers available"
+        Nothing -> return ()
         Just p -> syncMe p
 processBlockStoreMessage (BlockPeerConnect p _) = syncMe p
 processBlockStoreMessage (BlockPeerDisconnect p _sa) = processDisconnect p

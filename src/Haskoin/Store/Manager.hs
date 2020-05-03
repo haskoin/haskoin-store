@@ -18,7 +18,7 @@ import           Haskoin                       (BlockHash (..), Inv (..),
                                                 VarString (..),
                                                 sockToHostAddress)
 import           Haskoin.Node                  (Chain, ChainEvent (..),
-                                                HostPort, Manager,
+                                                HostPort, PeerManager,
                                                 NodeConfig (..), NodeEvent (..),
                                                 PeerEvent (..), node)
 import           Haskoin.Store.BlockStore      (BlockStoreConfig (..),
@@ -45,7 +45,7 @@ import           UnliftIO                      (MonadIO, MonadUnliftIO, link,
 -- | Store mailboxes.
 data Store =
     Store
-        { storeManager   :: !Manager
+        { storeManager   :: !PeerManager
         , storeChain     :: !Chain
         , storeBlock     :: !BlockStore
         , storeDB        :: !DatabaseReader

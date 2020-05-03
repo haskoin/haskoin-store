@@ -62,9 +62,9 @@ import           Haskoin                       (Address, Block (..),
                                                 hexToBlockHash, hexToTxHash,
                                                 stringToAddr, txHash,
                                                 xPubImport)
-import           Haskoin.Node                  (Chain, Manager, OnlinePeer (..),
-                                                chainGetBest, managerGetPeers,
-                                                sendMessage)
+import           Haskoin.Node                  (Chain, OnlinePeer (..),
+                                                PeerManager, chainGetBest,
+                                                managerGetPeers, sendMessage)
 import           Haskoin.Store.Cache           (CacheT, delXPubKeys, withCache)
 import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
@@ -956,7 +956,7 @@ instance MonadLogger m => MonadLogger (WebT m) where
 healthCheck ::
        (MonadUnliftIO m, StoreRead m)
     => Network
-    -> Manager
+    -> PeerManager
     -> Chain
     -> WebTimeouts
     -> m HealthCheck
@@ -1023,7 +1023,7 @@ healthCheck net mgr ch tos = do
     compute_delta a b = if b > a then b - a else 0
 
 -- | Obtain information about connected peers from peer manager process.
-getPeersInformation :: MonadIO m => Manager -> m [PeerInformation]
+getPeersInformation :: MonadIO m => PeerManager -> m [PeerInformation]
 getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
   where
     toInfo op = do
@@ -1149,7 +1149,7 @@ publishTx ::
        (MonadUnliftIO m, StoreRead m)
     => Network
     -> Publisher StoreEvent
-    -> Manager
+    -> PeerManager
     -> Tx
     -> m (Either PubExcept ())
 publishTx net pub mgr tx =
