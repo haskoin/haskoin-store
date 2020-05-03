@@ -259,7 +259,13 @@ processBlock peer block = do
             Just _ ->
                 getSyncingState >>= \case
                     Just Syncing {syncingPeer = syncingpeer}
-                        | peer == syncingpeer -> return ()
+                        | peer == syncingpeer -> do
+                            box <- asks myPeer
+                            now <-
+                                fromIntegral . systemSeconds <$>
+                                liftIO getSystemTime
+                            atomically . modifyTVar box . fmap $ \s ->
+                                s {syncingTime = now}
                     _ -> do
                         p' <-
                             managerPeerText peer =<<
