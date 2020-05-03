@@ -5,12 +5,12 @@
 
 packages:
 - completed:
-    hackage: haskoin-node-0.10.0@sha256:a0dd836aa19cb49e315a217c9bc89aebf79ace83fb5b381d0da6f7451437beb4,2282
+    hackage: haskoin-node-0.10.1@sha256:3b3c09246ceff1385c758cc5ef0daa6892a384ee6b34a9d81a9a0055f3ac692e,2282
     pantry-tree:
       size: 704
-      sha256: b7420e18893d7fe0570ba8831615639ecf211ac7ef569236c95f52c2a9d27fe5
+      sha256: d917ea344b617d371d27643fdcb12278975842fea933a3891e02ad681af5a735
   original:
-    hackage: haskoin-node-0.10.0
+    hackage: haskoin-node-0.10.1
 - completed:
     hackage: haskoin-core-0.12.0@sha256:1699f67338b1ed31f5b76c12058ed28098d0cd4767bd0dbfceb9e74d4ac5ee6c,4247
     pantry-tree:
@@ -27,7 +27,7 @@ packages:
     hackage: secp256k1-haskell-0.2.2
 snapshots:
 - completed:
-    size: 492027
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/15/9.yaml
-    sha256: 11394dc975e96c2fea90f7f2b3229630d46351a092ebcec78f0a56403930b429
-  original: lts-15.9
+    size: 494638
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/15/11.yaml
+    sha256: 5747328cdcbb8fe9c96fc048b5566167c80dd176a41b52d3b363058e3cc1dc5d
+  original: lts-15.11
