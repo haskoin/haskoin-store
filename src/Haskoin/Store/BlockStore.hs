@@ -462,7 +462,7 @@ processTxs p hs = do
                             p'
                         return Nothing
                     False -> do
-                        $(logInfoS) "BlockStore" $
+                        $(logDebugS) "BlockStore" $
                             "Requesting transaction " <> cs (show i) <> "/" <>
                             cs (show (length hs)) <>
                             " " <>
