@@ -87,6 +87,8 @@ withTestStore net t f =
                         , storeConfCacheMin = 100
                         , storeConfMaxKeys = 100 * 1000 * 1000
                         , storeConfWipeMempool = False
+                        , storeConfPeerTimeout = 60
+                        , storeConfPeerTooOld = 48 * 3600
                         }
             withStore cfg $ \Store {..} -> withSubscription storePublisher $ \sub ->
                 lift $

@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.23.18
 ### Changed
-- Set peer too old timeout by hand
+- Allow setting peer timeouts in command line.
 
 ### Fixed
 - Bump Haskoin Node dependency to fix another premature timeout condition.

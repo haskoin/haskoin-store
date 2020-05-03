@@ -18,9 +18,9 @@ import           Haskoin                       (BlockHash (..), Inv (..),
                                                 VarString (..),
                                                 sockToHostAddress)
 import           Haskoin.Node                  (Chain, ChainEvent (..),
-                                                HostPort, PeerManager,
-                                                NodeConfig (..), NodeEvent (..),
-                                                PeerEvent (..), node)
+                                                HostPort, NodeConfig (..),
+                                                NodeEvent (..), PeerEvent (..),
+                                                PeerManager, node)
 import           Haskoin.Store.BlockStore      (BlockStoreConfig (..),
                                                 blockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
@@ -79,6 +79,10 @@ data StoreConfig =
       -- ^ maximum number of keys in Redis cache
         , storeConfWipeMempool :: !Bool
       -- ^ wipe mempool when starting
+        , storeConfPeerTimeout :: !Int
+      -- ^ disconnect peer if message not received for this many seconds
+        , storeConfPeerTooOld  :: !Int
+      -- ^ disconnect peer if it has been connected this long
         }
 
 withStore ::
@@ -132,8 +136,8 @@ withStore cfg action = do
                                   0
                                   (sockToHostAddress (SockAddrInet 0 0))
                         , nodeConfNet = storeConfNetwork cfg
-                        , nodeConfTimeout = 60
-                        , nodeConfPeerOld = 48 * 3600
+                        , nodeConfTimeout = storeConfPeerTimeout cfg
+                        , nodeConfPeerOld = storeConfPeerTooOld cfg
                         }
             withAsync (node nodeconfig managerinbox chaininbox) $ \nodeasync -> do
                 link nodeasync

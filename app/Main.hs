@@ -50,6 +50,8 @@ data Config = Config
     , configRedisMin    :: !Int
     , configRedisMax    :: !Integer
     , configWipeMempool :: !Bool
+    , configPeerTimeout :: !Int
+    , configPeerTooOld  :: !Int
     }
 
 defPort :: Int
@@ -66,6 +68,12 @@ defRedisMin = 100
 
 defRedisMax :: Integer
 defRedisMax = 100 * 1000 * 1000
+
+defPeerTimeout :: Int
+defPeerTimeout = 120
+
+defPeerTooOld :: Int
+defPeerTooOld = 48 * 3600
 
 config :: Parser Config
 config = do
@@ -139,6 +147,18 @@ config = do
         help "Last transaction broadcast timeout (0 for infinite)" <>
         showDefault <>
         value (txTimeout def)
+    configPeerTimeout <-
+        option auto $
+        metavar "TIMEOUT" <> long "peertimeout" <>
+        help "Disconnect if peer doesn't send message for this many seconds" <>
+        showDefault <>
+        value defPeerTimeout
+    configPeerTooOld <-
+        option auto $
+        metavar "TIMEOUT" <> long "peertooold" <>
+        help "Disconnect if peer has been connected for this many seconds" <>
+        showDefault <>
+        value defPeerTooOld
     configRedis <-
         switch $ long "cache" <> help "Redis cache for extended public keys"
     configRedisURL <-
@@ -224,6 +244,8 @@ run Config { configPort = port
            , configRedisMin = cachemin
            , configRedisMax = redismax
            , configWipeMempool = wipemempool
+           , configPeerTimeout = peertimeout
+           , configPeerTooOld = peerold
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -246,6 +268,8 @@ run Config { configPort = port
                     , storeConfCacheMin = cachemin
                     , storeConfMaxKeys = redismax
                     , storeConfWipeMempool = wipemempool
+                    , storeConfPeerTimeout = peertimeout
+                    , storeConfPeerTooOld = peerold
                     }
          in withStore scfg $ \st ->
                 let wcfg =
