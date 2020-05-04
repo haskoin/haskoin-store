@@ -412,15 +412,19 @@ processMempool = do
                     t = pendingTxTime p
                     th = txHash tx
                     h x TxOrphan {} = return (Left (Just x))
-                    h _ _           = return (Left Nothing)
-                $(logInfoS) "BlockStore" $
-                    "New mempool tx " <> cs (show i) <> "/" <>
-                    cs (show (length ps)) <>
-                    ": " <>
-                    txHashToHex th
-                catchError
-                    (maybe (Left Nothing) (Right . (th, )) <$> newMempoolTx tx t)
-                    (h p)
+                    h _ _ = return (Left Nothing)
+                let f = do
+                        x <- newMempoolTx tx t
+                        $(logInfoS) "BlockStore" $
+                            "New mempool tx " <> cs (show i) <> "/" <>
+                            cs (show (length ps)) <>
+                            ": " <>
+                            txHashToHex th
+                        return $
+                            case x of
+                                Just ls -> Right (th, ls)
+                                Nothing -> Left Nothing
+                catchError f (h p)
         case output of
             Left e -> do
                 $(logErrorS) "BlockStore" $

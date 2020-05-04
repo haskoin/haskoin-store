@@ -18,6 +18,7 @@ module Haskoin.Store.Cache
     , CacheWriter
     , CacheWriterInbox
     , cacheNewBlock
+    , cacheNewTx
     , cacheWriter
     , isXPubCached
     , delXPubKeys
@@ -77,13 +78,10 @@ import           Haskoin.Store.Common      (Balance (..), BlockData (..),
                                             nullBalance, sortTxs, xPubBals,
                                             xPubBalsTxs, xPubBalsUnspents,
                                             xPubTxs)
-import           NQE                       (Inbox, Listen, Mailbox,
-                                            inboxToMailbox, query, receive,
-                                            send)
+import           NQE                       (Inbox, Mailbox, receive, send)
 import           System.Random             (randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
-                                            atomically, bracket, liftIO,
-                                            throwIO, withAsync)
+                                            bracket, liftIO, throwIO)
 import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheT m a
@@ -415,7 +413,7 @@ getAllFromMap n = do
 
 data CacheWriterMessage
     = CacheNewBlock
-    | CachePing (Listen ())
+    | CacheNewTx !TxHash
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 type CacheWriter = Mailbox CacheWriterMessage
@@ -461,7 +459,7 @@ cacheWriter cfg inbox = runReaderT go cfg
   where
     go = do
         newBlockC
-        withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
+        forever $ do
             pruneDB
             x <- receive inbox
             cacheWriterReact x
@@ -554,7 +552,20 @@ cacheWriterReact ::
     => CacheWriterMessage
     -> CacheT m ()
 cacheWriterReact CacheNewBlock = newBlockC
-cacheWriterReact (CachePing r) = newBlockC >> atomically (r ())
+cacheWriterReact (CacheNewTx th) =
+    withLockWait importLockKey $ do
+        runRedis (Redis.zscore mempoolSetKey (encode th)) >>= \case
+            Nothing ->
+                lift (getTxData th) >>= \case
+                    Just td -> do
+                        $(logDebugS) "Cache" $
+                            "Updating cache with tx: " <> txHashToHex th
+                        importMultiTxC [td]
+                    Nothing ->
+                        $(logErrorS) "Cache" $
+                        "Tx not found in db: " <> txHashToHex th
+            Just _ ->
+                $(logDebugS) "Cache" $ "Tx already in cache: " <> txHashToHex th
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
@@ -1120,14 +1131,8 @@ xpubText xpub = do
     net <- getNetwork
     return . cs $ xPubExport net (xPubSpecKey xpub)
 
-pingMe :: MonadLoggerIO m => CacheWriter -> m ()
-pingMe mbox =
-    forever $ do
-        threadDelay =<< liftIO (randomRIO (100 * 1000, 1000 * 1000))
-        cachePing mbox
-
 cacheNewBlock :: MonadIO m => CacheWriter -> m ()
 cacheNewBlock = send CacheNewBlock
 
-cachePing :: MonadIO m => CacheWriter -> m ()
-cachePing = query CachePing
+cacheNewTx :: MonadIO m => TxHash -> CacheWriter -> m ()
+cacheNewTx th = send (CacheNewTx th)

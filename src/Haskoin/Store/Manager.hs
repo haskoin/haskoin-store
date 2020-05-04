@@ -24,8 +24,8 @@ import           Haskoin.Node                  (Chain, ChainEvent (..),
 import           Haskoin.Store.BlockStore      (BlockStoreConfig (..),
                                                 blockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
-                                                cacheNewBlock, cacheWriter,
-                                                connectRedis)
+                                                cacheNewBlock, cacheNewTx,
+                                                cacheWriter, connectRedis)
 import           Haskoin.Store.Common          (BlockStore,
                                                 BlockStoreMessage (..),
                                                 StoreEvent (..))
@@ -181,8 +181,10 @@ cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents evts cwm = forever $ receive evts >>= (`cacheWriterDispatch` cwm)
 
 cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
-cacheWriterDispatch (StoreBestBlock _) = cacheNewBlock
-cacheWriterDispatch _                  = const (return ())
+cacheWriterDispatch (StoreBestBlock _)   = cacheNewBlock
+cacheWriterDispatch (StoreMempoolNew th) = cacheNewTx th
+cacheWriterDispatch (StoreTxDeleted th)  = cacheNewTx th
+cacheWriterDispatch _                    = const (return ())
 
 -- | Dispatcher of node events.
 storeDispatch :: BlockStore -> Listen StoreEvent -> Listen NodeEvent
