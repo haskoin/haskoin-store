@@ -68,9 +68,10 @@ import           Control.Monad             (guard, join, mzero)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import           Data.Aeson                (FromJSON (..), ToJSON (..),
-                                            Value (..), object, (.!=), (.:),
-                                            (.:?), (.=))
+                                            Value (..), object, pairs, (.!=),
+                                            (.:), (.:?), (.=))
 import qualified Data.Aeson                as A
+import           Data.Aeson.Encoding       (null_, pair, text)
 import           Data.Aeson.Types          (Parser)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B
@@ -99,12 +100,12 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             Tx (..), TxHash (..), TxIn (..),
                                             TxOut (..), WitnessStack,
                                             XPubKey (..), addrToString,
-                                            decodeHex, deriveAddr,
-                                            deriveCompatWitnessAddr,
+                                            blockHashToHex, decodeHex,
+                                            deriveAddr, deriveCompatWitnessAddr,
                                             deriveWitnessAddr, eitherToMaybe,
                                             encodeHex, headerHash, pubSubKey,
                                             scriptToAddressBS, stringToAddr,
-                                            txHash, wrapPubKey)
+                                            txHash, txHashToHex, wrapPubKey)
 import           Haskoin.Node              (Peer)
 import           Network.Socket            (SockAddr)
 import           NQE                       (Listen, Mailbox)
@@ -184,7 +185,8 @@ type Limit = Word32
 data NetWrap a = NetWrap Network a
 
 instance ToJSON (NetWrap a) => ToJSON (NetWrap [a]) where
-    toJSON (NetWrap net xs) = toJSON $ map (toJSON . NetWrap net) xs
+    toJSON (NetWrap net xs) = toJSONList $ map (NetWrap net) xs
+    toEncoding (NetWrap net xs) = toEncodingList $ map (NetWrap net) xs
 
 class Monad m =>
       StoreRead m
@@ -425,6 +427,9 @@ instance ToJSON BlockRef where
     toJSON BlockRef {blockRefHeight = h, blockRefPos = p} =
         object ["height" .= h, "position" .= p]
     toJSON MemRef {memRefTime = t} = object ["mempool" .= t]
+    toEncoding BlockRef {blockRefHeight = h, blockRefPos = p} =
+        pairs ("height" .= h <> "position" .= p)
+    toEncoding MemRef {memRefTime = t} = pairs ("mempool" .= t)
 
 instance FromJSON BlockRef where
     parseJSON = A.withObject "blockref" $ \o -> b o <|> m o
@@ -447,6 +452,11 @@ data BlockTx = BlockTx
 
 instance ToJSON BlockTx where
     toJSON btx = object ["txid" .= blockTxHash btx, "block" .= blockTxBlock btx]
+    toEncoding btx =
+        pairs
+            (  "txid" `pair` text (txHashToHex (blockTxHash btx))
+            <> "block" .= blockTxBlock btx
+            )
 
 instance FromJSON BlockTx where
     parseJSON =
@@ -503,6 +513,14 @@ instance ToJSON (NetWrap Balance) where
         , "txs" .= balanceTxCount b
         , "received" .= balanceTotalReceived b
         ]
+    toEncoding (NetWrap net b) =
+        pairs
+            ("address" .= addrToString net (balanceAddress b) <>
+             "confirmed" .= balanceAmount b <>
+             "unconfirmed" .= balanceZero b <>
+             "utxo" .= balanceUnspentCount b <>
+             "txs" .= balanceTxCount b <>
+             "received" .= balanceTotalReceived b)
 
 instance FromJSON (Network -> Maybe Balance) where
     parseJSON =
@@ -546,7 +564,18 @@ instance ToJSON Unspent where
         ]
       where
         bsscript = BSS.fromShort (unspentScript u)
-        script = String (encodeHex bsscript)
+        script = encodeHex bsscript
+    toEncoding u =
+        pairs
+            ("address" .= unspentAddress u <>
+             "block" .= unspentBlock u <>
+             "txid" `pair` text (txHashToHex (outPointHash (unspentPoint u))) <>
+             "index" .= outPointIndex (unspentPoint u) <>
+             "pkscript" `pair` text script <>
+             "value" .= unspentAmount u)
+      where
+        bsscript = BSS.fromShort (unspentScript u)
+        script = encodeHex bsscript
 
 instance FromJSON Unspent where
     parseJSON =
@@ -607,9 +636,27 @@ instance ToJSON BlockData where
             , "subsidy" .= blockDataSubsidy bv
             , "fees" .= blockDataFees bv
             , "outputs" .= blockDataOutputs bv
-            , "work" .= String (cs (show (blockDataWork bv)))
+            , "work" .= show (blockDataWork bv)
             , "weight" .= blockDataWeight bv
             ]
+    toEncoding bv =
+        pairs
+            (  "hash" `pair` text (blockHashToHex (headerHash (blockDataHeader bv)))
+            <> "height" .= blockDataHeight bv
+            <> "mainchain" .= blockDataMainChain bv
+            <> "previous" .= prevBlock (blockDataHeader bv)
+            <> "time" .= blockTimestamp (blockDataHeader bv)
+            <> "version" .= blockVersion (blockDataHeader bv)
+            <> "bits" .= blockBits (blockDataHeader bv)
+            <> "nonce" .= bhNonce (blockDataHeader bv)
+            <> "size" .= blockDataSize bv
+            <> "tx" .= blockDataTxs bv
+            <> "merkle" `pair` text (txHashToHex (TxHash (merkleRoot (blockDataHeader bv))))
+            <> "subsidy" .= blockDataSubsidy bv
+            <> "fees" .= blockDataFees bv
+            <> "outputs" .= blockDataOutputs bv
+            <> "work" .= blockDataWork bv
+            <> "weight" .= blockDataWeight bv)
 
 instance FromJSON BlockData where
     parseJSON =
@@ -641,7 +688,7 @@ instance FromJSON BlockData where
                               , merkleRoot = merkle
                               }
                     , blockDataMainChain = mainchain
-                    , blockDataWork = read work
+                    , blockDataWork = work
                     , blockDataSize = size
                     , blockDataWeight = weight
                     , blockDataTxs = tx
@@ -705,6 +752,39 @@ instance ToJSON (NetWrap StoreInput) where
             , "address" .= Null
             , "witness" .= fmap (map encodeHex) wit
             ]
+    toEncoding (NetWrap net StoreInput { inputPoint = OutPoint oph opi
+                                   , inputSequence = sq
+                                   , inputSigScript = ss
+                                   , inputPkScript = ps
+                                   , inputAmount = val
+                                   , inputWitness = wit
+                                   }) =
+        pairs
+            ( "coinbase" .= False
+            <> "txid" `pair` text (txHashToHex oph)
+            <> "output" .= opi
+            <> "sigscript" `pair` text (encodeHex ss)
+            <> "sequence" .= sq
+            <> "pkscript" `pair` text (encodeHex ps)
+            <> "value" .= val
+            <> "address" .= scriptToStringAddr net ps
+            <> "witness" .= fmap (map encodeHex) wit)
+    toEncoding (NetWrap _ StoreCoinbase { inputPoint = OutPoint oph opi
+                                    , inputSequence = sq
+                                    , inputSigScript = ss
+                                    , inputWitness = wit
+                                    }) =
+        pairs
+            ( "coinbase" .= True
+            <> "txid" `pair` text (txHashToHex oph)
+            <> "output" .= opi
+            <> "sigscript" `pair` text (encodeHex ss)
+            <> "sequence" .= sq
+            <> "pkscript" `pair` null_
+            <> "value" `pair` null_
+            <> "address" `pair` null_
+            <> "witness" .= fmap (map encodeHex) wit
+            )
 
 instance FromJSON StoreInput where
     parseJSON =
@@ -754,7 +834,8 @@ data Spender = Spender
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 instance ToJSON Spender where
-    toJSON n = object ["txid" .= spenderHash n, "input" .= spenderIndex n]
+    toJSON n = object ["txid" .= txHashToHex (spenderHash n), "input" .= spenderIndex n]
+    toEncoding n = pairs ("txid" .= txHashToHex (spenderHash n) <> "input" .= spenderIndex n)
 
 instance FromJSON Spender where
     parseJSON =
@@ -771,11 +852,19 @@ instance ToJSON (NetWrap StoreOutput) where
     toJSON (NetWrap net d) =
         object
             [ "address" .= scriptToStringAddr net (outputScript d)
-            , "pkscript" .= String (encodeHex (outputScript d))
+            , "pkscript" .= encodeHex (outputScript d)
             , "value" .= outputAmount d
             , "spent" .= isJust (outputSpender d)
             , "spender" .= outputSpender d
             ]
+    toEncoding (NetWrap net d) =
+        pairs
+            (  "address" .= scriptToStringAddr net (outputScript d)
+            <> "pkscript" .= encodeHex (outputScript d)
+            <> "value" .= outputAmount d
+            <> "spent" .= isJust (outputSpender d)
+            <> "spender" .= outputSpender d
+            )
 
 instance FromJSON StoreOutput where
     parseJSON =
@@ -934,6 +1023,28 @@ instance ToJSON (NetWrap Transaction) where
             let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
                 x = B.length $ S.encode (transactionData dtx)
              in b * 3 + x
+    toEncoding (NetWrap net dtx) =
+        pairs
+            (  "txid" `pair` text (txHashToHex (txHash (transactionData dtx)))
+            <> "size" .= B.length (S.encode (transactionData dtx))
+            <> "version" .= transactionVersion dtx
+            <> "locktime" .= transactionLockTime dtx
+            <> "fee" .= (if any isCoinbase (transactionInputs dtx) then 0 else inv - outv)
+            <> "inputs" `pair` toEncodingList (map (NetWrap net) (transactionInputs dtx))
+            <> "outputs" `pair` toEncodingList (map (NetWrap net) (transactionOutputs dtx))
+            <> "block" .= transactionBlock dtx
+            <> "deleted" .= transactionDeleted dtx
+            <> "time" .= transactionTime dtx
+            <> "rbf" .= transactionRBF dtx
+            <> "weight" .= w
+            )
+      where
+        inv = sum (map inputAmount (transactionInputs dtx))
+        outv = sum (map outputAmount (transactionOutputs dtx))
+        w =
+            let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
+                x = B.length $ S.encode (transactionData dtx)
+             in b * 3 + x
 
 instance FromJSON Transaction where
     parseJSON =
@@ -981,6 +1092,13 @@ instance ToJSON PeerInformation where
         , "services"    .= String (encodeHex (S.encode (peerServices p)))
         , "relay"       .= peerRelay p
         ]
+    toEncoding p = pairs
+        (  "useragent"   `pair` text (cs (peerUserAgent p))
+        <> "address"     .= peerAddress p
+        <> "version"     .= peerVersion p
+        <> "services"    `pair` text (encodeHex (S.encode (peerServices p)))
+        <> "relay"       .= peerRelay p
+        )
 
 instance FromJSON PeerInformation where
     parseJSON =
@@ -1022,6 +1140,8 @@ data XPubUnspent = XPubUnspent
 instance ToJSON XPubUnspent where
     toJSON XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
         object ["path" .= p, "unspent" .= toJSON u]
+    toEncoding XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
+        pairs ("path" .= p <> "unspent" .= toJSON u)
 
 data XPubSummary =
     XPubSummary
@@ -1052,6 +1172,25 @@ instance ToJSON XPubSummary where
                   ]
             , "indices" .= object ["change" .= ch, "external" .= ext]
             ]
+    toEncoding XPubSummary { xPubSummaryConfirmed = c
+                       , xPubSummaryZero = z
+                       , xPubSummaryReceived = r
+                       , xPubUnspentCount = u
+                       , xPubExternalIndex = ext
+                       , xPubChangeIndex = ch
+                       } =
+        pairs
+            (  "balance" `pair` pairs
+                (  "confirmed" .= c
+                <> "unconfirmed" .= z
+                <> "received" .= r
+                <> "utxo" .= u
+                )
+            <> "indices" `pair` pairs
+                (  "change" .= ch
+                <> "external" .= ext
+                )
+            )
 
 instance FromJSON XPubSummary where
     parseJSON =
@@ -1108,6 +1247,26 @@ instance ToJSON HealthCheck where
             , "lastblock" .= healthLastBlock h
             , "lasttx" .= healthLastTx h
             ]
+    toEncoding h =
+        pairs
+            (  "headers" `pair`
+              pairs
+                  (  "hash" .= healthHeaderBest h
+                  <> "height" .= healthHeaderHeight h
+                  )
+            <> "blocks" `pair`
+              pairs
+                  (  "hash" .= healthBlockBest h
+                  <> "height" .= healthBlockHeight h
+                  )
+            <> "peers" .= healthPeers h
+            <> "net" .= healthNetwork h
+            <> "ok" .= healthOK h
+            <> "synced" .= healthSynced h
+            <> "version" .= P.version
+            <> "lastblock" .= healthLastBlock h
+            <> "lasttx" .= healthLastTx h
+            )
 
 instance FromJSON HealthCheck where
     parseJSON =
@@ -1146,6 +1305,11 @@ data Event
 instance ToJSON Event where
     toJSON (EventTx h)    = object ["type" .= String "tx", "id" .= h]
     toJSON (EventBlock h) = object ["type" .= String "block", "id" .= h]
+    toEncoding (EventTx h) =
+        pairs ("type" `pair` text "tx" <> "id" `pair` text (txHashToHex h))
+    toEncoding (EventBlock h) =
+        pairs
+            ("type" `pair` text "block" <> "id" `pair` text (blockHashToHex h))
 
 instance FromJSON Event where
     parseJSON =
@@ -1166,6 +1330,7 @@ newtype GenericResult a = GenericResult
 
 instance ToJSON a => ToJSON (GenericResult a) where
     toJSON (GenericResult b) = object ["result" .= b]
+    toEncoding (GenericResult b) = pairs ("result" .= b)
 
 instance FromJSON a => FromJSON (GenericResult a) where
     parseJSON =
@@ -1177,6 +1342,7 @@ newtype TxId =
 
 instance ToJSON TxId where
     toJSON (TxId h) = object ["txid" .= h]
+    toEncoding (TxId h) = pairs ("txid" `pair` text (txHashToHex h))
 
 instance FromJSON TxId where
     parseJSON = A.withObject "txid" $ \o -> TxId <$> o .: "txid"
