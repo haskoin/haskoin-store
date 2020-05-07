@@ -31,7 +31,7 @@ import           Haskoin.Store.Common         (Balance (..), BlockData (..),
                                                Spender, StoreRead (..),
                                                StoreWrite (..), TxData (..),
                                                Unspent (..), applyLimit,
-                                               scriptToStringAddr, zeroBalance)
+                                               zeroBalance)
 import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
                                                balanceToVal, unspentToVal,
                                                valToBalance, valToUnspent)
@@ -133,21 +133,16 @@ getAddressTxsH addr start limit db =
             Just br -> b > br
 
 getAddressesUnspentsH ::
-       Network
-    -> [Address]
-    -> Maybe BlockRef
-    -> Maybe Limit
-    -> MemoryDatabase
-    -> [Unspent]
-getAddressesUnspentsH net addrs start limit db = applyLimit limit xs
+       [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
+getAddressesUnspentsH addrs start limit db = applyLimit limit xs
   where
     xs =
         nub . sortBy (flip compare `on` unspentBlock) . concat $
-        map (\a -> getAddressUnspentsH net a start limit db) addrs
+        map (\a -> getAddressUnspentsH a start limit db) addrs
 
 getAddressUnspentsH ::
-       Network -> Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
-getAddressUnspentsH net addr start limit db =
+       Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
+getAddressUnspentsH addr start limit db =
     applyLimit limit .
     dropWhile h .
     sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
@@ -161,7 +156,6 @@ getAddressUnspentsH net addr start limit db =
                 , unspentAmount = outValAmount u
                 , unspentScript = B.Short.toShort (outValScript u)
                 , unspentPoint = p
-                , unspentAddress = scriptToStringAddr net (outValScript u)
                 }
     g _ _ Nothing = Nothing
     h Unspent {unspentBlock = b} =
@@ -258,10 +252,10 @@ deleteAddrUnspentH a u db =
 setMempoolH :: [BlockTx] -> MemoryDatabase -> MemoryDatabase
 setMempoolH xs db = db {hMempool = Just xs}
 
-getUnspentH :: Network -> OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
-getUnspentH net op db = do
+getUnspentH :: OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)
+getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
-    fmap (valToUnspent net op) <$> I.lookup (fromIntegral (outPointIndex op)) m
+    fmap (valToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
 
 insertUnspentH :: Unspent -> MemoryDatabase -> MemoryDatabase
 insertUnspentH u db =
@@ -308,8 +302,7 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
         return . I.map fromJust . I.filter isJust $ getSpendersH t v
     getUnspent p = do
         v <- R.asks memoryDatabase >>= readTVarIO
-        net <- R.asks memoryNetwork
-        return . join $ getUnspentH net p v
+        return . join $ getUnspentH p v
     getBalance a = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBalanceH a v
@@ -321,15 +314,13 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
         return $ getAddressesTxsH addr start limit v
     getAddressesUnspents addr start limit = do
         v <- R.asks memoryDatabase >>= readTVarIO
-        net <- R.asks memoryNetwork
-        return $ getAddressesUnspentsH net addr start limit v
+        return $ getAddressesUnspentsH addr start limit v
     getAddressTxs addr start limit = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getAddressTxsH addr start limit v
     getAddressUnspents addr start limit = do
         v <- R.asks memoryDatabase >>= readTVarIO
-        net <- R.asks memoryNetwork
-        return $ getAddressUnspentsH net addr start limit v
+        return $ getAddressUnspentsH addr start limit v
     getMaxGap = R.asks memoryMaxGap
     getInitialGap = R.asks memoryInitialGap
     getNetwork = R.asks memoryNetwork

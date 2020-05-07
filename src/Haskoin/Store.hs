@@ -4,23 +4,35 @@ module Haskoin.Store
     , TxData (..)
     , Spender (..)
     , Balance (..)
+    , balanceToJSON
+    , balanceToEncoding
+    , balanceParseJSON
     , Unspent (..)
+    , unspentToJSON
+    , unspentToEncoding
     , BlockTx (..)
     , BlockRef (..)
     , XPubSpec (..)
     , XPubBal (..)
     , XPubSummary (..)
     , XPubUnspent (..)
+    , xPubUnspentToJSON
+    , xPubUnspentToEncoding
     , DeriveType (..)
-    , NetWrap (..)
     , UnixTime
     , Limit
     , Offset
     , BlockPos
 
     , Transaction (..)
+    , transactionToJSON
+    , transactionToEncoding
     , StoreInput (..)
+    , storeInputToJSON
+    , storeInputToEncoding
     , StoreOutput (..)
+    , storeOutputToJSON
+    , storeOutputToEncoding
     , getTransaction
     , transactionData
     , fromTransaction

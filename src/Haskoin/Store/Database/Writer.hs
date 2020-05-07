@@ -291,8 +291,7 @@ getUnspentI op DatabaseWriter { databaseWriterReader = db
                               , databaseWriterState = hm
                               } = fmap join . runMaybeT $ MaybeT f <|> MaybeT g
   where
-    net = databaseNetwork db
-    f = getUnspentH net op <$> readTVarIO (memoryDatabase hm)
+    f = getUnspentH op <$> readTVarIO (memoryDatabase hm)
     g = Just <$> withDatabaseReader db (getUnspent op)
 
 insertUnspentI :: MonadIO m => Unspent -> DatabaseWriter -> m ()

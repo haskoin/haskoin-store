@@ -181,9 +181,8 @@ getAddressTxsDB a start limit DatabaseReader {databaseReadOptions = opts, databa
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
 getUnspentDB p DatabaseReader { databaseReadOptions = opts
                               , databaseHandle = db
-                              , databaseNetwork = net
                               } =
-    fmap (valToUnspent net p) <$> retrieve db opts (UnspentKey p)
+    fmap (valToUnspent p) <$> retrieve db opts (UnspentKey p)
 
 getAddressesUnspentsDB ::
        MonadIO m
@@ -206,10 +205,9 @@ getAddressUnspentsDB ::
     -> m [Unspent]
 getAddressUnspentsDB a start limit DatabaseReader { databaseReadOptions = opts
                                                   , databaseHandle = db
-                                                  , databaseNetwork = net
                                                   } =
     liftIO . runResourceT . runConduit $
-    x .| applyLimitC limit .| mapC (uncurry (toUnspent net)) .| sinkList
+    x .| applyLimitC limit .| mapC (uncurry toUnspent) .| sinkList
   where
     x =
         case start of

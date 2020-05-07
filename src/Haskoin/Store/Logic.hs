@@ -46,8 +46,7 @@ import           Haskoin.Store.Common    (Balance (..), BlockData (..),
                                           Transaction (..), TxData (..),
                                           UnixTime, Unspent (..), confirmed,
                                           fromTransaction, isCoinbase,
-                                          nullBalance, scriptToStringAddr,
-                                          sortTxs, toTransaction,
+                                          nullBalance, sortTxs, toTransaction,
                                           transactionData)
 import           UnliftIO                (Exception)
 
@@ -372,14 +371,12 @@ confirmTx t br tx = do
         s <- getSpender (OutPoint (txHash tx) n)
         when (isNothing s) $ do
             deleteUnspent op
-            net <- getNetwork
             insertUnspent
                 Unspent
                     { unspentBlock = br
                     , unspentPoint = op
                     , unspentAmount = outValue o
                     , unspentScript = B.Short.toShort (scriptOutput o)
-                    , unspentAddress = scriptToStringAddr net (scriptOutput o)
                     }
         case scriptToAddressBS (scriptOutput o) of
             Left _ -> return ()
@@ -392,7 +389,6 @@ confirmTx t br tx = do
                     a
                     BlockTx {blockTxBlock = br, blockTxHash = txHash tx}
                 when (isNothing s) $ do
-                    net <- getNetwork
                     deleteAddrUnspent
                         a
                         Unspent
@@ -400,8 +396,6 @@ confirmTx t br tx = do
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
-                            , unspentAddress =
-                                  scriptToStringAddr net (scriptOutput o)
                             }
                     insertAddrUnspent
                         a
@@ -410,8 +404,6 @@ confirmTx t br tx = do
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
-                            , unspentAddress =
-                                  scriptToStringAddr net (scriptOutput o)
                             }
                     reduceBalance False False a (outValue o)
                     increaseBalance True False a (outValue o)
@@ -526,24 +518,22 @@ newOutput ::
     -> TxOut
     -> m ()
 newOutput br op to = do
-    net <- getNetwork
-    insertUnspent (u net)
+    insertUnspent u
     case scriptToAddressBS (scriptOutput to) of
         Left _ -> return ()
         Right a -> do
-            insertAddrUnspent a (u net)
+            insertAddrUnspent a u
             insertAddrTx
                 a
                 BlockTx {blockTxHash = outPointHash op, blockTxBlock = br}
             increaseBalance (confirmed br) True a (outValue to)
   where
-    u net =
+    u =
         Unspent
             { unspentBlock = br
             , unspentAmount = outValue to
             , unspentScript = B.Short.toShort (scriptOutput to)
             , unspentPoint = op
-            , unspentAddress = scriptToStringAddr net (scriptOutput to)
             }
 
 delOutput ::
@@ -555,7 +545,6 @@ delOutput ::
     => OutPoint
     -> m ()
 delOutput op = do
-    net <- getNetwork
     t <- getImportTx (outPointHash op)
     u <- getTxOutput (outPointIndex op) t
     deleteUnspent op
@@ -569,7 +558,6 @@ delOutput op = do
                     , unspentBlock = transactionBlock t
                     , unspentPoint = op
                     , unspentAmount = outputAmount u
-                    , unspentAddress = scriptToStringAddr net (outputScript u)
                     }
             deleteAddrTx
                 a
@@ -666,14 +654,12 @@ unspendOutput op = do
             Just s -> return s
     x <- getImportTx (spenderHash s)
     deleteSpender op
-    net <- getNetwork
     let u =
             Unspent
                 { unspentAmount = outputAmount o
                 , unspentBlock = transactionBlock t
                 , unspentScript = B.Short.toShort (outputScript o)
                 , unspentPoint = op
-                , unspentAddress = scriptToStringAddr net (outputScript o)
                 }
     insertUnspent u
     case scriptToAddressBS (outputScript o) of

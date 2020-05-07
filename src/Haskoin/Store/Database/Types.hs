@@ -39,11 +39,11 @@ import           Data.Word              (Word32, Word64)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
-                                         Network, OutPoint (..), TxHash)
+                                         OutPoint (..), TxHash)
 import           Haskoin.Store.Common   (Balance (..), BlockData, BlockRef,
                                          BlockTx (..), Spender, TxData,
                                          UnixTime, Unspent (..), getUnixTime,
-                                         putUnixTime, scriptToStringAddr)
+                                         putUnixTime)
 
 -- | Database key for an address transaction.
 data AddrTxKey
@@ -192,9 +192,8 @@ data UnspentKey
     | UnspentKeyB
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
-instance Serialize UnspentKey
+instance Serialize UnspentKey where
     -- 0x09 · TxHash · Index
-                             where
     put UnspentKey {unspentKey = OutPoint {outPointHash = h, outPointIndex = i}} = do
         putWord8 0x09
         put h
@@ -214,14 +213,13 @@ instance Serialize UnspentKey
 instance Key UnspentKey
 instance KeyValue UnspentKey UnspentVal
 
-toUnspent :: Network -> AddrOutKey -> OutVal -> Unspent
-toUnspent net b v =
+toUnspent :: AddrOutKey -> OutVal -> Unspent
+toUnspent b v =
     Unspent
         { unspentBlock = addrOutKeyB b
         , unspentAmount = outValAmount v
         , unspentScript = BSS.toShort (outValScript v)
         , unspentPoint = addrOutKeyP b
-        , unspentAddress = scriptToStringAddr net (outValScript v)
         }
 
 -- | Mempool transaction database key.
@@ -423,15 +421,14 @@ unspentToVal Unspent { unspentBlock = b
     , UnspentVal
           {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
 
-valToUnspent :: Network -> OutPoint -> UnspentVal -> Unspent
-valToUnspent net p UnspentVal { unspentValBlock = b
-                              , unspentValAmount = v
-                              , unspentValScript = s
-                              } =
+valToUnspent :: OutPoint -> UnspentVal -> Unspent
+valToUnspent p UnspentVal { unspentValBlock = b
+                          , unspentValAmount = v
+                          , unspentValScript = s
+                          } =
     Unspent
         { unspentBlock = b
         , unspentPoint = p
         , unspentAmount = v
         , unspentScript = s
-        , unspentAddress = scriptToStringAddr net (BSS.fromShort s)
         }

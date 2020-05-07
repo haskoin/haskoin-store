@@ -14,7 +14,6 @@ module Haskoin.Store.Common
     , getUnixTime
     , putUnixTime
     , BlockPos
-    , NetWrap(..)
     , XPubSpec(..)
     , StoreRead(..)
     , StoreWrite(..)
@@ -22,15 +21,26 @@ module Haskoin.Store.Common
     , BlockTx(..)
     , confirmed
     , Balance(..)
+    , balanceToJSON
+    , balanceToEncoding
+    , balanceParseJSON
     , BlockData(..)
     , StoreInput(..)
+    , storeInputToJSON
+    , storeInputToEncoding
     , isCoinbase
     , Spender(..)
     , StoreOutput(..)
+    , storeOutputToJSON
+    , storeOutputToEncoding
     , Prev(..)
     , TxData(..)
     , Unspent(..)
+    , unspentToJSON
+    , unspentToEncoding
     , Transaction(..)
+    , transactionToJSON
+    , transactionToEncoding
     , transactionData
     , fromTransaction
     , toTransaction
@@ -38,8 +48,13 @@ module Haskoin.Store.Common
     , TxId(..)
     , PeerInformation(..)
     , XPubBal(..)
+    , xPubBalToJSON
+    , xPubBalToEncoding
+    , xPubBalParseJSON
     , xPubBalsTxs
     , XPubUnspent(..)
+    , xPubUnspentToJSON
+    , xPubUnspentToEncoding
     , xPubBalsUnspents
     , XPubSummary(..)
     , HealthCheck(..)
@@ -57,7 +72,6 @@ module Haskoin.Store.Common
     , applyLimitC
     , applyOffsetLimitC
     , sortTxs
-    , scriptToStringAddr
     ) where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
@@ -67,11 +81,11 @@ import           Control.Exception         (Exception)
 import           Control.Monad             (guard, join, mzero)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
-import           Data.Aeson                (FromJSON (..), ToJSON (..),
-                                            Value (..), object, pairs, (.!=),
-                                            (.:), (.:?), (.=))
+import           Data.Aeson                (Encoding, FromJSON (..),
+                                            ToJSON (..), Value (..), object,
+                                            pairs, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson                as A
-import           Data.Aeson.Encoding       (null_, pair, text)
+import           Data.Aeson.Encoding       (list, null_, pair, text)
 import           Data.Aeson.Types          (Parser)
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as B
@@ -99,14 +113,14 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             PubKeyI (..), RejectCode (..),
                                             Tx (..), TxHash (..), TxIn (..),
                                             TxOut (..), WitnessStack,
-                                            XPubKey (..), addrToEncoding,
-                                            addrToString, blockHashToHex,
-                                            decodeHex, deriveAddr,
-                                            deriveCompatWitnessAddr,
-                                            deriveWitnessAddr, eitherToMaybe,
-                                            encodeHex, headerHash, pubSubKey,
-                                            scriptToAddressBS, stringToAddr,
-                                            txHash, txHashToHex, wrapPubKey)
+                                            XPubKey (..), addrFromJSON,
+                                            addrToEncoding, addrToJSON,
+                                            blockHashToHex, decodeHex,
+                                            deriveAddr, deriveCompatWitnessAddr,
+                                            deriveWitnessAddr, encodeHex,
+                                            headerHash, pubSubKey,
+                                            scriptToAddressBS, txHash,
+                                            txHashToHex, wrapPubKey)
 import           Haskoin.Node              (Peer)
 import           Network.Socket            (SockAddr)
 import           NQE                       (Listen, Mailbox)
@@ -182,12 +196,6 @@ type BlockPos = Word32
 
 type Offset = Word32
 type Limit = Word32
-
-data NetWrap a = NetWrap Network a
-
-instance ToJSON (NetWrap a) => ToJSON (NetWrap [a]) where
-    toJSON (NetWrap net xs) = toJSONList $ map (NetWrap net) xs
-    toEncoding (NetWrap net xs) = toEncodingList $ map (NetWrap net) xs
 
 class Monad m =>
       StoreRead m
@@ -504,79 +512,82 @@ nullBalance Balance { balanceAmount = 0
                     } = True
 nullBalance _ = False
 
-instance ToJSON (NetWrap Balance) where
-    toJSON (NetWrap net b) =
+balanceToJSON :: Network -> Balance -> Value
+balanceToJSON net b =
         object $
-        [ "address" .= addrToString net (balanceAddress b)
+        [ "address" .= addrToJSON net (balanceAddress b)
         , "confirmed" .= balanceAmount b
         , "unconfirmed" .= balanceZero b
         , "utxo" .= balanceUnspentCount b
         , "txs" .= balanceTxCount b
         , "received" .= balanceTotalReceived b
         ]
-    toEncoding (NetWrap net b) =
-        pairs
-            ("address" `pair` addrToEncoding net (balanceAddress b) <>
-             "confirmed" .= balanceAmount b <>
-             "unconfirmed" .= balanceZero b <>
-             "utxo" .= balanceUnspentCount b <>
-             "txs" .= balanceTxCount b <>
-             "received" .= balanceTotalReceived b)
 
-instance FromJSON (Network -> Maybe Balance) where
-    parseJSON =
-        A.withObject "balance" $ \o -> do
-            amount <- o .: "confirmed"
-            unconfirmed <- o .: "unconfirmed"
-            utxo <- o .: "utxo"
-            txs <- o .: "txs"
-            received <- o .: "received"
-            address <- o .: "address"
-            return $ \net ->
-                stringToAddr net address >>= \a ->
-                    return
-                        Balance
-                            { balanceAddress = a
-                            , balanceAmount = amount
-                            , balanceUnspentCount = utxo
-                            , balanceZero = unconfirmed
-                            , balanceTxCount = txs
-                            , balanceTotalReceived = received
-                            }
+balanceToEncoding :: Network -> Balance -> Encoding
+balanceToEncoding net b =
+    pairs
+        (  "address" `pair` addrToEncoding net (balanceAddress b)
+        <> "confirmed" .= balanceAmount b
+        <> "unconfirmed" .= balanceZero b
+        <> "utxo" .= balanceUnspentCount b
+        <> "txs" .= balanceTxCount b
+        <> "received" .= balanceTotalReceived b
+        )
+
+balanceParseJSON :: Network -> Value -> Parser Balance
+balanceParseJSON net =
+    A.withObject "balance" $ \o -> do
+        amount <- o .: "confirmed"
+        unconfirmed <- o .: "unconfirmed"
+        utxo <- o .: "utxo"
+        txs <- o .: "txs"
+        received <- o .: "received"
+        address <- addrFromJSON net =<< o .: "address"
+        return
+            Balance
+                { balanceAddress = address
+                , balanceAmount = amount
+                , balanceUnspentCount = utxo
+                , balanceZero = unconfirmed
+                , balanceTxCount = txs
+                , balanceTotalReceived = received
+                }
 
 -- | Unspent output.
 data Unspent = Unspent
-    { unspentBlock   :: !BlockRef
-    , unspentPoint   :: !OutPoint
-    , unspentAmount  :: !Word64
-    , unspentScript  :: !ShortByteString
-    , unspentAddress :: !(Maybe String)
+    { unspentBlock  :: !BlockRef
+    , unspentPoint  :: !OutPoint
+    , unspentAmount :: !Word64
+    , unspentScript :: !ShortByteString
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
-instance ToJSON Unspent where
-    toJSON u =
-        object $
-        [ "address" .= unspentAddress u
+unspentToJSON :: Network -> Unspent -> Value
+unspentToJSON net u =
+    object
+        [ "address" .= scriptToAddrJSON net bsscript
         , "block" .= unspentBlock u
         , "txid" .= outPointHash (unspentPoint u)
         , "index" .= outPointIndex (unspentPoint u)
         , "pkscript" .= script
         , "value" .= unspentAmount u
         ]
-      where
-        bsscript = BSS.fromShort (unspentScript u)
-        script = encodeHex bsscript
-    toEncoding u =
-        pairs
-            ("address" .= unspentAddress u <>
-             "block" .= unspentBlock u <>
-             "txid" `pair` text (txHashToHex (outPointHash (unspentPoint u))) <>
-             "index" .= outPointIndex (unspentPoint u) <>
-             "pkscript" `pair` text script <>
-             "value" .= unspentAmount u)
-      where
-        bsscript = BSS.fromShort (unspentScript u)
-        script = encodeHex bsscript
+  where
+    bsscript = BSS.fromShort (unspentScript u)
+    script = encodeHex bsscript
+
+unspentToEncoding :: Network -> Unspent -> Encoding
+unspentToEncoding net u =
+    pairs
+        (  "address" `pair` scriptToAddrEncoding net bsscript
+        <> "block" .= unspentBlock u
+        <> "txid" .= outPointHash (unspentPoint u)
+        <> "index" .= outPointIndex (unspentPoint u)
+        <> "pkscript" `pair` text script
+        <> "value" .= unspentAmount u
+        )
+  where
+    bsscript = BSS.fromShort (unspentScript u)
+    script = encodeHex bsscript
 
 instance FromJSON Unspent where
     parseJSON =
@@ -586,14 +597,12 @@ instance FromJSON Unspent where
             index <- o .: "index"
             value <- o .: "value"
             script <- BSS.toShort <$> (o .: "pkscript" >>= jsonHex)
-            address <- o .: "address"
             return
                 Unspent
                     { unspentBlock = block
                     , unspentPoint = OutPoint txid index
                     , unspentAmount = value
                     , unspentScript = script
-                    , unspentAddress = address
                     }
 
 -- | Database value for a block entry.
@@ -718,74 +727,78 @@ isCoinbase :: StoreInput -> Bool
 isCoinbase StoreCoinbase {} = True
 isCoinbase StoreInput {}    = False
 
-instance ToJSON (NetWrap StoreInput) where
-    toJSON (NetWrap net StoreInput { inputPoint = OutPoint oph opi
-                                   , inputSequence = sq
-                                   , inputSigScript = ss
-                                   , inputPkScript = ps
-                                   , inputAmount = val
-                                   , inputWitness = wit
-                                   }) =
-        object
-            [ "coinbase" .= False
-            , "txid" .= oph
-            , "output" .= opi
-            , "sigscript" .= String (encodeHex ss)
-            , "sequence" .= sq
-            , "pkscript" .= String (encodeHex ps)
-            , "value" .= val
-            , "address" .= scriptToStringAddr net ps
-            , "witness" .= fmap (map encodeHex) wit
-            ]
-    toJSON (NetWrap _ StoreCoinbase { inputPoint = OutPoint oph opi
+storeInputToJSON :: Network -> StoreInput -> Value
+storeInputToJSON net StoreInput { inputPoint = OutPoint oph opi
+                                , inputSequence = sq
+                                , inputSigScript = ss
+                                , inputPkScript = ps
+                                , inputAmount = val
+                                , inputWitness = wit
+                                } =
+    object
+        [ "coinbase" .= False
+        , "txid" .= oph
+        , "output" .= opi
+        , "sigscript" .= String (encodeHex ss)
+        , "sequence" .= sq
+        , "pkscript" .= String (encodeHex ps)
+        , "value" .= val
+        , "address" .= scriptToAddrJSON net ps
+        , "witness" .= fmap (map encodeHex) wit
+        ]
+storeInputToJSON _ StoreCoinbase { inputPoint = OutPoint oph opi
+                                 , inputSequence = sq
+                                 , inputSigScript = ss
+                                 , inputWitness = wit
+                                 } =
+    object
+        [ "coinbase" .= True
+        , "txid" .= oph
+        , "output" .= opi
+        , "sigscript" .= String (encodeHex ss)
+        , "sequence" .= sq
+        , "pkscript" .= Null
+        , "value" .= Null
+        , "address" .= Null
+        , "witness" .= fmap (map encodeHex) wit
+        ]
+
+storeInputToEncoding :: Network -> StoreInput -> Encoding
+storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
                                     , inputSequence = sq
                                     , inputSigScript = ss
+                                    , inputPkScript = ps
+                                    , inputAmount = val
                                     , inputWitness = wit
-                                    }) =
-        object
-            [ "coinbase" .= True
-            , "txid" .= oph
-            , "output" .= opi
-            , "sigscript" .= String (encodeHex ss)
-            , "sequence" .= sq
-            , "pkscript" .= Null
-            , "value" .= Null
-            , "address" .= Null
-            , "witness" .= fmap (map encodeHex) wit
-            ]
-    toEncoding (NetWrap net StoreInput { inputPoint = OutPoint oph opi
-                                   , inputSequence = sq
-                                   , inputSigScript = ss
-                                   , inputPkScript = ps
-                                   , inputAmount = val
-                                   , inputWitness = wit
-                                   }) =
-        pairs
-            ( "coinbase" .= False
-            <> "txid" `pair` text (txHashToHex oph)
-            <> "output" .= opi
-            <> "sigscript" `pair` text (encodeHex ss)
-            <> "sequence" .= sq
-            <> "pkscript" `pair` text (encodeHex ps)
-            <> "value" .= val
-            <> "address" .= scriptToStringAddr net ps
-            <> "witness" .= fmap (map encodeHex) wit)
-    toEncoding (NetWrap _ StoreCoinbase { inputPoint = OutPoint oph opi
-                                    , inputSequence = sq
-                                    , inputSigScript = ss
-                                    , inputWitness = wit
-                                    }) =
-        pairs
-            ( "coinbase" .= True
-            <> "txid" `pair` text (txHashToHex oph)
-            <> "output" .= opi
-            <> "sigscript" `pair` text (encodeHex ss)
-            <> "sequence" .= sq
-            <> "pkscript" `pair` null_
-            <> "value" `pair` null_
-            <> "address" `pair` null_
-            <> "witness" .= fmap (map encodeHex) wit
-            )
+                                    } =
+    pairs
+        (  "coinbase" .= False
+        <> "txid" .= oph
+        <> "output" .= opi
+        <> "sigscript" `pair` text (encodeHex ss)
+        <> "sequence" .= sq
+        <> "pkscript" `pair` text (encodeHex ps)
+        <> "value" .= val
+        <> "address" `pair` scriptToAddrEncoding net ps
+        <> "witness" .= fmap (map encodeHex) wit
+        )
+
+storeInputToEncoding _ StoreCoinbase { inputPoint = OutPoint oph opi
+                                     , inputSequence = sq
+                                     , inputSigScript = ss
+                                     , inputWitness = wit
+                                     } =
+    pairs
+        (  "coinbase" .= True
+        <> "txid" `pair` text (txHashToHex oph)
+        <> "output" .= opi
+        <> "sigscript" `pair` text (encodeHex ss)
+        <> "sequence" .= sq
+        <> "pkscript" `pair` null_
+        <> "value" `pair` null_
+        <> "address" `pair` null_
+        <> "witness" .= fmap (map encodeHex) wit
+        )
 
 instance FromJSON StoreInput where
     parseJSON =
@@ -849,23 +862,25 @@ data StoreOutput = StoreOutput
     , outputSpender :: !(Maybe Spender)
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
-instance ToJSON (NetWrap StoreOutput) where
-    toJSON (NetWrap net d) =
-        object
-            [ "address" .= scriptToStringAddr net (outputScript d)
-            , "pkscript" .= encodeHex (outputScript d)
-            , "value" .= outputAmount d
-            , "spent" .= isJust (outputSpender d)
-            , "spender" .= outputSpender d
-            ]
-    toEncoding (NetWrap net d) =
-        pairs
-            (  "address" .= scriptToStringAddr net (outputScript d)
-            <> "pkscript" .= encodeHex (outputScript d)
-            <> "value" .= outputAmount d
-            <> "spent" .= isJust (outputSpender d)
-            <> "spender" .= outputSpender d
-            )
+storeOutputToJSON :: Network -> StoreOutput -> Value
+storeOutputToJSON net d =
+    object
+        [ "address" .= scriptToAddrJSON net (outputScript d)
+        , "pkscript" .= encodeHex (outputScript d)
+        , "value" .= outputAmount d
+        , "spent" .= isJust (outputSpender d)
+        , "spender" .= outputSpender d
+        ]
+
+storeOutputToEncoding :: Network -> StoreOutput -> Encoding
+storeOutputToEncoding net d =
+    pairs
+        (  "address" `pair` scriptToAddrEncoding net (outputScript d)
+        <> "pkscript" `pair` text (encodeHex (outputScript d))
+        <> "value" .= outputAmount d
+        <> "spent" .= isJust (outputSpender d)
+        <> "spender" .= outputSpender d
+        )
 
 instance FromJSON StoreOutput where
     parseJSON =
@@ -998,54 +1013,56 @@ transactionData t =
     o StoreOutput {outputAmount = v, outputScript = s} =
         TxOut {outValue = v, scriptOutput = s}
 
-instance ToJSON (NetWrap Transaction) where
-    toJSON (NetWrap net dtx) =
-        object
-            [ "txid" .= txHash (transactionData dtx)
-            , "size" .= B.length (S.encode (transactionData dtx))
-            , "version" .= transactionVersion dtx
-            , "locktime" .= transactionLockTime dtx
-            , "fee" .=
-              if any isCoinbase (transactionInputs dtx)
-                  then 0
-                  else inv - outv
-            , "inputs" .= map (NetWrap net) (transactionInputs dtx)
-            , "outputs" .= map (NetWrap net) (transactionOutputs dtx)
-            , "block" .= transactionBlock dtx
-            , "deleted" .= transactionDeleted dtx
-            , "time" .= transactionTime dtx
-            , "rbf" .= transactionRBF dtx
-            , "weight" .= w
-            ]
-      where
-        inv = sum (map inputAmount (transactionInputs dtx))
-        outv = sum (map outputAmount (transactionOutputs dtx))
-        w =
-            let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
-                x = B.length $ S.encode (transactionData dtx)
-             in b * 3 + x
-    toEncoding (NetWrap net dtx) =
-        pairs
-            (  "txid" `pair` text (txHashToHex (txHash (transactionData dtx)))
-            <> "size" .= B.length (S.encode (transactionData dtx))
-            <> "version" .= transactionVersion dtx
-            <> "locktime" .= transactionLockTime dtx
-            <> "fee" .= (if any isCoinbase (transactionInputs dtx) then 0 else inv - outv)
-            <> "inputs" `pair` toEncodingList (map (NetWrap net) (transactionInputs dtx))
-            <> "outputs" `pair` toEncodingList (map (NetWrap net) (transactionOutputs dtx))
-            <> "block" .= transactionBlock dtx
-            <> "deleted" .= transactionDeleted dtx
-            <> "time" .= transactionTime dtx
-            <> "rbf" .= transactionRBF dtx
-            <> "weight" .= w
-            )
-      where
-        inv = sum (map inputAmount (transactionInputs dtx))
-        outv = sum (map outputAmount (transactionOutputs dtx))
-        w =
-            let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
-                x = B.length $ S.encode (transactionData dtx)
-             in b * 3 + x
+transactionToJSON :: Network -> Transaction -> Value
+transactionToJSON net dtx =
+    object
+        [ "txid" .= txHash (transactionData dtx)
+        , "size" .= B.length (S.encode (transactionData dtx))
+        , "version" .= transactionVersion dtx
+        , "locktime" .= transactionLockTime dtx
+        , "fee" .=
+          if any isCoinbase (transactionInputs dtx)
+              then 0
+              else inv - outv
+        , "inputs" .= map (storeInputToJSON net) (transactionInputs dtx)
+        , "outputs" .= map (storeOutputToJSON net) (transactionOutputs dtx)
+        , "block" .= transactionBlock dtx
+        , "deleted" .= transactionDeleted dtx
+        , "time" .= transactionTime dtx
+        , "rbf" .= transactionRBF dtx
+        , "weight" .= w
+        ]
+  where
+    inv = sum (map inputAmount (transactionInputs dtx))
+    outv = sum (map outputAmount (transactionOutputs dtx))
+    w =
+        let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
+            x = B.length $ S.encode (transactionData dtx)
+          in b * 3 + x
+
+transactionToEncoding :: Network -> Transaction -> Encoding
+transactionToEncoding net dtx =
+    pairs
+        (  "txid" `pair` text (txHashToHex (txHash (transactionData dtx)))
+        <> "size" .= B.length (S.encode (transactionData dtx))
+        <> "version" .= transactionVersion dtx
+        <> "locktime" .= transactionLockTime dtx
+        <> "fee" .= (if any isCoinbase (transactionInputs dtx) then 0 else inv - outv)
+        <> "inputs" `pair` list (storeInputToEncoding net) (transactionInputs dtx)
+        <> "outputs" `pair` list (storeOutputToEncoding net) (transactionOutputs dtx)
+        <> "block" .= transactionBlock dtx
+        <> "deleted" .= transactionDeleted dtx
+        <> "time" .= transactionTime dtx
+        <> "rbf" .= transactionRBF dtx
+        <> "weight" .= w
+        )
+  where
+    inv = sum (map inputAmount (transactionInputs dtx))
+    outv = sum (map outputAmount (transactionOutputs dtx))
+    w =
+        let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
+            x = B.length $ S.encode (transactionData dtx)
+          in b * 3 + x
 
 instance FromJSON Transaction where
     parseJSON =
@@ -1128,9 +1145,20 @@ data XPubBal = XPubBal
     , xPubBal     :: !Balance
     } deriving (Show, Ord, Eq, Generic, Serialize, NFData)
 
-instance ToJSON (NetWrap XPubBal) where
-    toJSON (NetWrap net XPubBal {xPubBalPath = p, xPubBal = b}) =
-        object ["path" .= p, "balance" .= toJSON (NetWrap net b)]
+xPubBalToJSON :: Network -> XPubBal -> Value
+xPubBalToJSON net XPubBal {xPubBalPath = p, xPubBal = b} =
+    object ["path" .= p, "balance" .= balanceToJSON net b]
+
+xPubBalToEncoding :: Network -> XPubBal -> Encoding
+xPubBalToEncoding net XPubBal {xPubBalPath = p, xPubBal = b} =
+    pairs ("path" .= p <> "balance" `pair` balanceToEncoding net b)
+
+xPubBalParseJSON :: Network -> Value -> Parser XPubBal
+xPubBalParseJSON net =
+    A.withObject "xpubbal" $ \o -> do
+        path <- o .: "path"
+        balance <- balanceParseJSON net =<< o .: "balance"
+        return XPubBal {xPubBalPath = path, xPubBal = balance}
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
@@ -1138,11 +1166,20 @@ data XPubUnspent = XPubUnspent
     , xPubUnspent     :: !Unspent
     } deriving (Show, Eq, Generic, Serialize, NFData)
 
-instance ToJSON XPubUnspent where
-    toJSON XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
-        object ["path" .= p, "unspent" .= toJSON u]
-    toEncoding XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
-        pairs ("path" .= p <> "unspent" .= toJSON u)
+xPubUnspentToJSON :: Network -> XPubUnspent -> Value
+xPubUnspentToJSON net XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
+    object ["path" .= p, "unspent" .= unspentToJSON net u]
+
+xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
+xPubUnspentToEncoding net XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
+    pairs ("path" .= p <> "unspent" `pair` unspentToEncoding net u)
+
+instance FromJSON XPubUnspent where
+    parseJSON =
+        A.withObject "xpubunspent" $ \o -> do
+            p <- o .: "path"
+            u <- o .: "unspent"
+            return XPubUnspent {xPubUnspentPath = p, xPubUnspent = u}
 
 data XPubSummary =
     XPubSummary
@@ -1427,6 +1464,14 @@ sortTxs txs = go $ zip [0 ..] txs
                     ts
          in is <> go ds
 
-scriptToStringAddr :: Network -> ByteString -> Maybe String
-scriptToStringAddr net bs =
-    cs <$> (addrToString net =<< eitherToMaybe (scriptToAddressBS bs))
+scriptToAddrJSON :: Network -> ByteString -> Value
+scriptToAddrJSON net bs =
+    case scriptToAddressBS bs of
+        Left _  -> Null
+        Right a -> addrToJSON net a
+
+scriptToAddrEncoding :: Network -> ByteString -> Encoding
+scriptToAddrEncoding net bs =
+    case scriptToAddressBS bs of
+        Left _  -> null_
+        Right a -> addrToEncoding net a

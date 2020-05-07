@@ -26,8 +26,9 @@ import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
 import           Control.Monad.Reader          (ReaderT, asks, runReaderT)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
-import           Data.Aeson                    (ToJSON (..), object, (.=))
-import           Data.Aeson.Encoding           (encodingToLazyByteString)
+import           Data.Aeson                    (Encoding, ToJSON (..), object,
+                                                (.=))
+import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
 import qualified Data.ByteString               as B
 import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
@@ -70,16 +71,21 @@ import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
                                                 Event (..), GenericResult (..),
                                                 HealthCheck (..), Limit,
-                                                NetWrap (..), Offset,
+                                                Offset,
                                                 PeerInformation (..),
                                                 PubExcept (..), StoreEvent (..),
                                                 StoreInput (..), StoreRead (..),
                                                 Transaction (..), TxData (..),
                                                 TxId (..), UnixTime, Unspent,
                                                 XPubBal (..), XPubSpec (..),
-                                                applyOffset, blockAtOrBefore,
-                                                getTransaction, isCoinbase,
-                                                nullBalance, transactionData)
+                                                applyOffset, balanceToEncoding,
+                                                blockAtOrBefore, getTransaction,
+                                                isCoinbase, nullBalance,
+                                                transactionData,
+                                                transactionToEncoding,
+                                                unspentToEncoding,
+                                                xPubBalToEncoding,
+                                                xPubUnspentToEncoding)
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
                                                 withDatabaseReader)
@@ -304,14 +310,15 @@ maybeSerial proto (Just x) = do
     S.raw (serialAny proto x)
 
 maybeSerialNet ::
-       (Monad m, ToJSON (NetWrap a), Serialize a)
+       (Monad m, Serialize a)
     => Bool
+    -> (Network -> a -> Encoding)
     -> Maybe a
     -> WebT m ()
-maybeSerialNet _ Nothing = S.raise ThingNotFound
-maybeSerialNet proto (Just x) = do
+maybeSerialNet _ _ Nothing = S.raise ThingNotFound
+maybeSerialNet proto f (Just x) = do
     net <- lift $ asks (storeNetwork . webStore)
-    S.raw (serialAnyNet net proto x)
+    S.raw (serialAnyNet proto (f net) x)
 
 protoSerial ::
        (Monad m, ToJSON a, Serialize a)
@@ -322,13 +329,14 @@ protoSerial proto x = do
     S.raw (serialAny proto x)
 
 protoSerialNet ::
-       (Monad m, ToJSON (NetWrap a), Serialize a)
+       (Monad m, Serialize a)
     => Bool
+    -> (Network -> a -> Encoding)
     -> a
     -> WebT m ()
-protoSerialNet proto x = do
+protoSerialNet proto f x = do
     net <- lift $ asks (storeNetwork . webStore)
-    S.raw (serialAnyNet net proto x)
+    S.raw (serialAnyNet proto (f net) x)
 
 scottyBestBlock ::
        (MonadUnliftIO m, MonadLoggerIO m, MonadIO m) => Bool -> WebT m ()
@@ -460,7 +468,7 @@ scottyTransaction = do
     MyTxHash txid <- S.param "txid"
     proto <- setupBin
     res <- getTransaction txid
-    maybeSerialNet proto res
+    maybeSerialNet proto transactionToEncoding res
 
 scottyRawTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawTransaction = do
@@ -485,7 +493,7 @@ scottyTransactions = do
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
     txs <- catMaybes <$> mapM getTransaction (nub txids)
-    protoSerialNet proto txs
+    protoSerialNet proto (list . transactionToEncoding) txs
 
 scottyBlockTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlockTransactions = do
@@ -498,7 +506,7 @@ scottyBlockTransactions = do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
             txs <- catMaybes <$> mapM getTransaction ths
-            protoSerialNet proto txs
+            protoSerialNet proto (list . transactionToEncoding) txs
         Nothing -> S.raise ThingNotFound
 
 scottyRawTransactions ::
@@ -542,7 +550,8 @@ scottyAddressTxs full = do
     proto <- setupBin
     if full
         then do
-            getAddressTxsFull o l s a >>= protoSerialNet proto
+            getAddressTxsFull o l s a >>=
+                protoSerialNet proto (list . transactionToEncoding)
         else do
             getAddressTxsLimit o l s a >>= protoSerial proto
 
@@ -555,7 +564,8 @@ scottyAddressesTxs full = do
     l <- getLimit full
     proto <- setupBin
     if full
-        then getAddressesTxsFull l s as >>= protoSerialNet proto
+        then getAddressesTxsFull l s as >>=
+             protoSerialNet proto (list . transactionToEncoding)
         else getAddressesTxsLimit l s as >>= protoSerial proto
 
 scottyAddressUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -567,7 +577,7 @@ scottyAddressUnspent = do
     l <- getLimit False
     proto <- setupBin
     uns <- getAddressUnspentsLimit o l s a
-    protoSerial proto uns
+    protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressesUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressesUnspent = do
@@ -577,7 +587,7 @@ scottyAddressesUnspent = do
     l <- getLimit False
     proto <- setupBin
     uns <- getAddressesUnspentsLimit l s as
-    protoSerial proto uns
+    protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressBalance = do
@@ -585,7 +595,7 @@ scottyAddressBalance = do
     a <- parseAddress
     proto <- setupBin
     res <- getBalance a
-    protoSerialNet proto res
+    protoSerialNet proto balanceToEncoding res
 
 scottyAddressesBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressesBalances = do
@@ -593,7 +603,7 @@ scottyAddressesBalances = do
     as <- parseAddresses
     proto <- setupBin
     res <- getBalances as
-    protoSerialNet proto res
+    protoSerialNet proto (list . balanceToEncoding) res
 
 scottyXpubBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubBalances = do
@@ -606,7 +616,7 @@ scottyXpubBalances = do
         if nocache
             then runNoCache (xPubBals xpub)
             else xPubBals xpub
-    protoSerialNet proto res
+    protoSerialNet proto (list . xPubBalToEncoding) res
 
 scottyXpubTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyXpubTxs full = do
@@ -624,7 +634,7 @@ scottyXpubTxs full = do
                 if nocache
                     then runNoCache (mapM (getTransaction . blockTxHash) txs)
                     else mapM (getTransaction . blockTxHash) txs
-            protoSerialNet proto txs'
+            protoSerialNet proto (list . transactionToEncoding) txs'
         else protoSerial proto txs
 
 scottyXpubEvict :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -651,7 +661,7 @@ scottyXpubUnspents = do
         if nocache
             then runNoCache (xPubUnspents xpub start 0 limit)
             else xPubUnspents xpub start 0 limit
-    protoSerial proto uns
+    protoSerialNet proto (list . xPubUnspentToEncoding) uns
 
 scottyXpubSummary :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubSummary = do
@@ -926,9 +936,10 @@ serialAny ::
 serialAny True  = runPutLazy . put
 serialAny False = encodingToLazyByteString . toEncoding
 
-serialAnyNet :: (ToJSON (NetWrap a), Serialize a) => Network -> Bool -> a -> L.ByteString
-serialAnyNet _ True    = runPutLazy . put
-serialAnyNet net False = encodingToLazyByteString . toEncoding . NetWrap net
+serialAnyNet ::
+       Serialize a => Bool -> (a -> Encoding) -> a -> L.ByteString
+serialAnyNet True _  = runPutLazy . put
+serialAnyNet False f = encodingToLazyByteString . f
 
 setupBin :: Monad m => ActionT Except m Bool
 setupBin =

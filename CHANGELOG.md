@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Use mocking to simulate peers instead of connecting to the network while testing.
 - Depend on latest version of Haskoin Core for faster JSON serialisation.
+- Clean up confusing JSON encoding/decoding codebase.
 
 ## 0.23.24
 ### Changed

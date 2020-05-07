@@ -5,56 +5,47 @@ module Haskoin.Store.CommonSpec
     ( spec
     ) where
 
-import           Control.Monad           (join)
-import           Data.Aeson              (FromJSON, ToJSON)
+import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
+                                          Value)
 import qualified Data.Aeson              as A
-import           Data.ByteString         (ByteString, pack)
+import           Data.Aeson.Encoding     (encodingToLazyByteString)
+import           Data.Aeson.Parser       (decodeWith, json)
+import           Data.Aeson.Types        (Parser, parse)
+import           Data.ByteString         (pack)
 import qualified Data.ByteString.Short   as BSS
-import           Data.Either             (fromRight)
-import           Data.List               (nubBy)
-import           Data.Maybe              (isNothing)
-import           Data.Serialize          (Serialize (..), decode, encode, runGet)
+import           Data.Serialize          (Serialize (..), decode, encode)
 import           Data.String.Conversions (cs)
-import           Data.Word               (Word64, Word8)
-import           Haskoin                 (Address (..), Block (..),
-                                          BlockHash (..), BlockHeader (..),
-                                          Hash160 (..), Hash256 (..),
-                                          Network (..), OutPoint (..),
-                                          PubKeyI (..), RejectCode (..),
-                                          Script (..), ScriptInput (..),
-                                          ScriptOp (..), ScriptOutput (..),
-                                          SecKey, SecKeyI (..), Sig,
-                                          SimpleInput (..), Tx (..),
-                                          TxHash (..), TxIn (..), TxOut (..),
-                                          TxSignature (..), XPrvKey (..),
-                                          XPubKey (..), bch, bchRegTest,
-                                          bchTest, btc, btcRegTest, btcTest,
-                                          derivePubKeyI, deriveXPubKey,
-                                          encodeInputBS, encodeOutputBS,
-                                          getSigHashForkId, hasForkIdFlag,
-                                          isSigHashUnknown, lst3, opPushData,
-                                          p2shAddr, ripemd160, sha256, signHash,
-                                          wrapSecKey)
+import           Haskoin                 (Address (..), BlockHash (..),
+                                          BlockHeader (..), Hash160 (..),
+                                          Hash256 (..), Network (..),
+                                          OutPoint (..), RejectCode (..),
+                                          Tx (..), TxHash (..), TxIn (..),
+                                          TxOut (..), XPubKey (..), bch,
+                                          bchRegTest, bchTest, btc, btcRegTest,
+                                          btcTest, ripemd160, sha256)
 import           Haskoin.Store.Common    (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),
                                           DeriveType (..), Event (..),
-                                          HealthCheck (..), NetWrap (..),
+                                          HealthCheck (..),
                                           PeerInformation (..), Prev (..),
                                           PubExcept (..), Spender (..),
                                           StoreInput (..), StoreOutput (..),
                                           Transaction (..), TxData (..),
                                           TxId (..), Unspent (..), XPubBal (..),
                                           XPubSpec (..), XPubSummary (..),
-                                          XPubUnspent (..))
+                                          XPubUnspent (..), balanceParseJSON,
+                                          balanceToEncoding, balanceToJSON,
+                                          transactionToEncoding,
+                                          transactionToJSON, unspentToEncoding,
+                                          unspentToJSON, xPubUnspentToEncoding,
+                                          xPubUnspentToJSON)
 import           NQE                     ()
 import           Test.Hspec              (Expectation, Spec, describe, shouldBe)
 import           Test.Hspec.QuickCheck   (prop)
 import           Test.QuickCheck         (Arbitrary (..), Gen,
-                                          arbitraryASCIIChar,
                                           arbitraryPrintableChar,
-                                          arbitraryUnicodeChar, choose,
-                                          elements, forAll, frequency, listOf,
-                                          listOf1, oneof, suchThat, vectorOf)
+                                          arbitraryUnicodeChar, elements,
+                                          forAll, listOf, listOf1, oneof)
 
 spec :: Spec
 spec = do
@@ -83,15 +74,30 @@ spec = do
         prop "identity for peer info" $ \x -> testSerial (x :: PeerInformation)
     describe "JSON serialization" $ do
         prop "identity for balance" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON2 net (x :: Balance)
+            testNetJSON
+                (balanceParseJSON net)
+                (balanceToJSON net)
+                (balanceToEncoding net)
+                x
         prop "identity for block tx" $ \x -> testJSON (x :: BlockTx)
         prop "identity for block ref" $ \x -> testJSON (x :: BlockRef)
-        prop "identity for unspent" $ \x -> testJSON (x :: Unspent)
+        prop "identity for unspent" . forAll arbitraryNetData $ \(net, x) ->
+            testNetJSON parseJSON (unspentToJSON net) (unspentToEncoding net) x
         prop "identity for block data" $ \x -> testJSON (x :: BlockData)
         prop "identity for spender" $ \x -> testJSON (x :: Spender)
         prop "identity for transaction" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON1 net (x :: Transaction)
+            testNetJSON
+                parseJSON
+                (transactionToJSON net)
+                (transactionToEncoding net)
+                x
         prop "identity for xpub summary" $ \x -> testJSON (x :: XPubSummary)
+        prop "identity for xpub unspent" . forAll arbitraryNetData $ \(net, x) ->
+            testNetJSON
+                parseJSON
+                (xPubUnspentToJSON net)
+                (xPubUnspentToEncoding net)
+                x
         prop "identity for health check" $ \x -> testJSON (x :: HealthCheck)
         prop "identity for event" $ \x -> testJSON (x :: Event)
         prop "identity for txid" $ \x -> testJSON (x :: TxId)
@@ -101,22 +107,21 @@ spec = do
 testJSON :: (Eq a, Show a, ToJSON a, FromJSON a) => a -> Expectation
 testJSON input = (A.decode . A.encode) input `shouldBe` Just input
 
-testNetJSON1 ::
-       (Eq a, Show a, ToJSON (NetWrap a), FromJSON a) => Network -> a -> Expectation
-testNetJSON1 net x =
-    let encoded = A.encode (NetWrap net x)
-        decoded = A.decode encoded
-     in decoded `shouldBe` Just x
-
-testNetJSON2 ::
-       (Eq a, Show a, ToJSON (NetWrap a), FromJSON (Network -> Maybe a))
-    => Network
+testNetJSON ::
+       (Eq a, Show a)
+    => (Value -> Parser a)
+    -> (a -> Value)
+    -> (a -> Encoding)
     -> a
     -> Expectation
-testNetJSON2 net x =
-    let encoded = A.encode (NetWrap net x)
-        decoder = A.decode encoded
-     in join (($ net) <$> decoder) `shouldBe` Just x
+testNetJSON parsejson tojson toenc x =
+    let encval = A.encode (tojson x)
+        encenc = encodingToLazyByteString (toenc x)
+        decval = decodeWith json (parse parsejson) encval
+        decenc = decodeWith json (parse parsejson) encenc
+     in do
+        decval `shouldBe` Just x
+        decenc `shouldBe` Just x
 
 testSerial :: (Eq a, Show a, Serialize a) => a -> Expectation
 testSerial input = (decode . encode) input `shouldBe` Right input
@@ -309,8 +314,7 @@ instance Arbitrary Balance where
 instance Arbitrary Unspent where
     arbitrary =
         Unspent <$> arbitrary <*> arbitrary <*> arbitrary <*>
-        (BSS.toShort . pack <$> listOf1 arbitrary) <*>
-        arbitrary
+        (BSS.toShort . pack <$> listOf1 arbitrary)
 
 instance Arbitrary BlockHeader where
     arbitrary =
