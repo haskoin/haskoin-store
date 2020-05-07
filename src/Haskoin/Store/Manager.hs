@@ -20,7 +20,8 @@ import           Haskoin                       (BlockHash (..), Inv (..),
 import           Haskoin.Node                  (Chain, ChainEvent (..),
                                                 HostPort, NodeConfig (..),
                                                 NodeEvent (..), PeerEvent (..),
-                                                PeerManager, node)
+                                                PeerManager, WithConnection,
+                                                node)
 import           Haskoin.Store.BlockStore      (BlockStoreConfig (..),
                                                 blockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
@@ -83,6 +84,8 @@ data StoreConfig =
       -- ^ disconnect peer if message not received for this many seconds
         , storeConfPeerTooOld  :: !Int
       -- ^ disconnect peer if it has been connected this long
+        , storeConfConnect     :: !WithConnection
+      -- ^ connect to peers using the function 'withConnection'
         }
 
 withStore ::
@@ -138,6 +141,7 @@ withStore cfg action = do
                         , nodeConfNet = storeConfNetwork cfg
                         , nodeConfTimeout = storeConfPeerTimeout cfg
                         , nodeConfPeerOld = storeConfPeerTooOld cfg
+                        , nodeConfConnect = storeConfConnect cfg
                         }
             withAsync (node nodeconfig managerinbox chaininbox) $ \nodeasync -> do
                 link nodeasync

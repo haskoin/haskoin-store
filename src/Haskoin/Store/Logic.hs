@@ -13,46 +13,43 @@ module Haskoin.Store.Logic
     , deleteTx
     ) where
 
-import           Control.Monad                 (forM, forM_, unless, void, when,
-                                                zipWithM_)
-import           Control.Monad.Except          (MonadError (..))
-import           Control.Monad.Logger          (MonadLogger, logDebugS,
-                                                logErrorS, logWarnS)
-import qualified Data.ByteString               as B
-import qualified Data.ByteString.Short         as B.Short
-import           Data.Either                   (rights)
-import qualified Data.IntMap.Strict            as I
-import           Data.List                     (nub, sort)
-import           Data.Maybe                    (fromMaybe, isNothing)
-import           Data.Serialize                (encode)
-import           Data.String                   (fromString)
-import           Data.String.Conversions       (cs)
-import           Data.Text                     (Text)
-import           Data.Word                     (Word32, Word64)
-import           Haskoin                       (Address, Block (..), BlockHash,
-                                                BlockHeader (..),
-                                                BlockNode (..), Network (..),
-                                                OutPoint (..), Tx (..), TxHash,
-                                                TxIn (..), TxOut (..),
-                                                addrToString, blockHashToHex,
-                                                genesisBlock, genesisNode,
-                                                headerHash, isGenesis,
-                                                nullOutPoint, scriptToAddressBS,
-                                                txHash, txHashToHex)
-import           Haskoin.Store.Common          (Balance (..), BlockData (..),
-                                                BlockRef (..), BlockTx (..),
-                                                Prev (..), Spender (..),
-                                                StoreInput (..),
-                                                StoreOutput (..),
-                                                StoreRead (..), StoreWrite (..),
-                                                Transaction (..), TxData (..),
-                                                UnixTime, Unspent (..),
-                                                confirmed, fromTransaction,
-                                                isCoinbase, nullBalance,
-                                                scriptToStringAddr, sortTxs,
-                                                toTransaction, transactionData)
-import           Network.Haskoin.Block.Headers (computeSubsidy)
-import           UnliftIO                      (Exception)
+import           Control.Monad           (forM, forM_, unless, void, when,
+                                          zipWithM_)
+import           Control.Monad.Except    (MonadError (..))
+import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS,
+                                          logWarnS)
+import qualified Data.ByteString         as B
+import qualified Data.ByteString.Short   as B.Short
+import           Data.Either             (rights)
+import qualified Data.IntMap.Strict      as I
+import           Data.List               (nub, sort)
+import           Data.Maybe              (fromMaybe, isNothing)
+import           Data.Serialize          (encode)
+import           Data.String             (fromString)
+import           Data.String.Conversions (cs)
+import           Data.Text               (Text)
+import           Data.Word               (Word32, Word64)
+import           Haskoin                 (Address, Block (..), BlockHash,
+                                          BlockHeader (..), BlockNode (..),
+                                          Network (..), OutPoint (..), Tx (..),
+                                          TxHash, TxIn (..), TxOut (..),
+                                          addrToString, blockHashToHex,
+                                          computeSubsidy, genesisBlock,
+                                          genesisNode, headerHash, isGenesis,
+                                          nullOutPoint, scriptToAddressBS,
+                                          txHash, txHashToHex)
+import           Haskoin.Store.Common    (Balance (..), BlockData (..),
+                                          BlockRef (..), BlockTx (..),
+                                          Prev (..), Spender (..),
+                                          StoreInput (..), StoreOutput (..),
+                                          StoreRead (..), StoreWrite (..),
+                                          Transaction (..), TxData (..),
+                                          UnixTime, Unspent (..), confirmed,
+                                          fromTransaction, isCoinbase,
+                                          nullBalance, scriptToStringAddr,
+                                          sortTxs, toTransaction,
+                                          transactionData)
+import           UnliftIO                (Exception)
 
 data ImportException
     = PrevBlockNotBest !Text

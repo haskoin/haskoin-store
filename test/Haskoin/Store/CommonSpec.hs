@@ -8,11 +8,33 @@ module Haskoin.Store.CommonSpec
 import           Control.Monad           (join)
 import           Data.Aeson              (FromJSON, ToJSON)
 import qualified Data.Aeson              as A
+import           Data.ByteString         (ByteString, pack)
 import qualified Data.ByteString.Short   as BSS
-import           Data.Serialize          (Serialize (..), decode, encode)
+import           Data.Either             (fromRight)
+import           Data.List               (nubBy)
+import           Data.Maybe              (isNothing)
+import           Data.Serialize          (Serialize (..), decode, encode, runGet)
 import           Data.String.Conversions (cs)
-import           Haskoin                 (Network, bch, bchRegTest, bchTest,
-                                          btc, btcRegTest, btcTest)
+import           Data.Word               (Word64, Word8)
+import           Haskoin                 (Address (..), Block (..),
+                                          BlockHash (..), BlockHeader (..),
+                                          Hash160 (..), Hash256 (..),
+                                          Network (..), OutPoint (..),
+                                          PubKeyI (..), RejectCode (..),
+                                          Script (..), ScriptInput (..),
+                                          ScriptOp (..), ScriptOutput (..),
+                                          SecKey, SecKeyI (..), Sig,
+                                          SimpleInput (..), Tx (..),
+                                          TxHash (..), TxIn (..), TxOut (..),
+                                          TxSignature (..), XPrvKey (..),
+                                          XPubKey (..), bch, bchRegTest,
+                                          bchTest, btc, btcRegTest, btcTest,
+                                          derivePubKeyI, deriveXPubKey,
+                                          encodeInputBS, encodeOutputBS,
+                                          getSigHashForkId, hasForkIdFlag,
+                                          isSigHashUnknown, lst3, opPushData,
+                                          p2shAddr, ripemd160, sha256, signHash,
+                                          wrapSecKey)
 import           Haskoin.Store.Common    (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),
                                           DeriveType (..), Event (..),
@@ -24,19 +46,15 @@ import           Haskoin.Store.Common    (Balance (..), BlockData (..),
                                           TxId (..), Unspent (..), XPubBal (..),
                                           XPubSpec (..), XPubSummary (..),
                                           XPubUnspent (..))
-import           Network.Haskoin.Test    (arbitraryAddress, arbitraryBlockHash,
-                                          arbitraryBlockHeader,
-                                          arbitraryOutPoint,
-                                          arbitraryRejectCode, arbitraryScript,
-                                          arbitraryTx, arbitraryTxHash,
-                                          arbitraryXPubKey)
 import           NQE                     ()
 import           Test.Hspec              (Expectation, Spec, describe, shouldBe)
 import           Test.Hspec.QuickCheck   (prop)
 import           Test.QuickCheck         (Arbitrary (..), Gen,
+                                          arbitraryASCIIChar,
                                           arbitraryPrintableChar,
-                                          arbitraryUnicodeChar, elements,
-                                          forAll, listOf, listOf1, oneof)
+                                          arbitraryUnicodeChar, choose,
+                                          elements, forAll, frequency, listOf,
+                                          listOf1, oneof, suchThat, vectorOf)
 
 spec :: Spec
 spec = do
@@ -80,12 +98,6 @@ spec = do
         prop "identity for peer information" $ \x ->
             testJSON (x :: PeerInformation)
 
-arbitraryNetData :: Arbitrary a => Gen (Network, a)
-arbitraryNetData = do
-    net <- arbitraryNetwork
-    x <- arbitrary
-    return (net, x)
-
 testJSON :: (Eq a, Show a, ToJSON a, FromJSON a) => a -> Expectation
 testJSON input = (A.decode . A.encode) input `shouldBe` Just input
 
@@ -109,127 +121,89 @@ testNetJSON2 net x =
 testSerial :: (Eq a, Show a, Serialize a) => a -> Expectation
 testSerial input = (decode . encode) input `shouldBe` Right input
 
-instance Arbitrary DeriveType where
-    arbitrary = elements [DeriveNormal, DeriveP2SH, DeriveP2WPKH]
-
-instance Arbitrary XPubSpec where
-    arbitrary = do
-        (_, k) <- arbitraryXPubKey
-        t <- arbitrary
-        return XPubSpec {xPubSpecKey = k, xPubDeriveType = t}
-
-instance Arbitrary XPubBal where
-    arbitrary = XPubBal <$> arbitrary <*> arbitrary
-
-instance Arbitrary XPubUnspent where
-    arbitrary = XPubUnspent <$> arbitrary <*> arbitrary
-
-instance Arbitrary Event where
-    arbitrary =
-        oneof [EventBlock <$> arbitraryBlockHash, EventTx <$> arbitraryTxHash]
-
-instance Arbitrary XPubSummary where
-    arbitrary =
-        XPubSummary
-        <$> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-
-instance Arbitrary BlockRef where
-    arbitrary = oneof [br, mr]
-      where
-        br = BlockRef <$> arbitrary <*> arbitrary
-        mr = MemRef <$> arbitrary
-
-instance Arbitrary BlockTx where
-    arbitrary = do
-        br <- arbitrary
-        th <- arbitraryTxHash
-        return BlockTx { blockTxBlock = br, blockTxHash = th}
-
 arbitraryNetwork :: Gen Network
 arbitraryNetwork = elements [bch, btc, bchTest, btcTest, bchRegTest, btcRegTest]
 
-instance Arbitrary Balance where
+arbitraryNetData :: Arbitrary a => Gen (Network, a)
+arbitraryNetData = do
+    net <- arbitraryNetwork
+    x <- arbitrary
+    return (net, x)
+
+instance Arbitrary BlockRef where
     arbitrary =
-        Balance
-            <$> arbitraryAddress
-            <*> arbitrary
-            <*> arbitrary
-            <*> arbitrary
-            <*> arbitrary
-            <*> arbitrary
+        oneof [BlockRef <$> arbitrary <*> arbitrary, MemRef <$> arbitrary]
 
-instance Arbitrary Unspent where
+instance Arbitrary Hash256 where
+    arbitrary = sha256 . pack <$> listOf1 arbitrary
+
+instance Arbitrary TxHash where
+    arbitrary = TxHash <$> arbitrary
+
+instance Arbitrary OutPoint where
+    arbitrary = OutPoint <$> arbitrary <*> arbitrary
+
+instance Arbitrary TxIn where
     arbitrary =
-        Unspent
-        <$> arbitrary
-        <*> arbitraryOutPoint
-        <*> arbitrary
-        <*> (BSS.toShort . encode <$> arbitraryScript)
-        <*> arbitrary
+        TxIn <$> arbitrary <*> (pack <$> listOf1 arbitrary) <*>
+        arbitrary
 
-instance Arbitrary BlockData where
-    arbitrary =
-        BlockData
-        <$> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitraryBlockHeader
-        <*> arbitrary
-        <*> arbitrary
-        <*> listOf1 arbitraryTxHash
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+instance Arbitrary TxOut where
+    arbitrary = TxOut <$> arbitrary <*> (pack <$> listOf1 arbitrary)
 
-instance Arbitrary StoreInput where
-    arbitrary = oneof [cb, si]
-      where
-        cb = do
-            st <- map encode <$> listOf arbitraryScript
-            ws <- elements [Just st, Nothing]
-            StoreCoinbase
-                <$> arbitraryOutPoint
-                <*> arbitrary
-                <*> (encode <$> arbitraryScript)
-                <*> pure ws
-        si = do
-            st <- map encode <$> listOf arbitraryScript
-            ws <- elements [Just st, Nothing]
-            StoreInput
-                <$> arbitraryOutPoint
-                <*> arbitrary
-                <*> (encode <$> arbitraryScript)
-                <*> (encode <$> arbitraryScript)
-                <*> arbitrary
-                <*> pure ws
-
-instance Arbitrary Spender where
-    arbitrary = Spender <$> arbitraryTxHash <*> arbitrary
+instance Arbitrary Tx where
+    arbitrary = do
+        ver <- arbitrary
+        txin <- listOf1 arbitrary
+        txout <- listOf1 arbitrary
+        txlock <- arbitrary
+        return
+            Tx
+                { txVersion = ver
+                , txIn = txin
+                , txOut = txout
+                , txWitness = []
+                , txLockTime = txlock
+                }
 
 instance Arbitrary Prev where
-    arbitrary = Prev <$> (encode <$> arbitraryScript) <*> arbitrary
-
-instance Arbitrary StoreOutput where
-    arbitrary =
-        StoreOutput
-            <$> arbitrary
-            <*> (encode <$> arbitraryScript)
-            <*> arbitrary
+    arbitrary = Prev <$> (pack <$> listOf1 arbitrary) <*> arbitrary
 
 instance Arbitrary TxData where
     arbitrary =
         TxData
             <$> arbitrary
-            <*> (arbitraryTx =<< arbitraryNetwork)
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
+            <*> arbitrary
+
+instance Arbitrary StoreInput where
+    arbitrary =
+        oneof
+            [ StoreCoinbase <$> arbitrary <*> arbitrary <*>
+              (pack <$> listOf1 arbitrary) <*>
+              (oneof
+                   [ Just <$> (listOf $ pack <$> listOf1 arbitrary)
+                   , return Nothing
+                   ])
+            , StoreInput <$> arbitrary <*> arbitrary <*>
+              (pack <$> listOf1 arbitrary) <*>
+              (pack <$> listOf1 arbitrary) <*>
+              arbitrary <*>
+              (oneof
+                   [ Just <$> (listOf $ pack <$> listOf1 arbitrary)
+                   , return Nothing
+                   ])
+            ]
+
+instance Arbitrary Spender where
+    arbitrary = Spender <$> arbitrary <*> arbitrary
+
+instance Arbitrary StoreOutput where
+    arbitrary =
+        StoreOutput <$> arbitrary <*> (pack <$> listOf1 arbitrary) <*> arbitrary
 
 instance Arbitrary Transaction where
     arbitrary =
@@ -252,10 +226,13 @@ instance Arbitrary PeerInformation where
             <*> arbitrary
             <*> arbitrary
 
+instance Arbitrary BlockHash where
+    arbitrary = BlockHash <$> arbitrary
+
 instance Arbitrary HealthCheck where
     arbitrary = do
-        bh <- arbitraryBlockHash
-        hh <- arbitraryBlockHash
+        bh <- arbitrary
+        hh <- arbitrary
         let mb = elements [Nothing, Just bh]
             mh = elements [Nothing, Just hh]
         HealthCheck
@@ -270,14 +247,107 @@ instance Arbitrary HealthCheck where
             <*> arbitrary
             <*> arbitrary
 
+instance Arbitrary RejectCode where
+    arbitrary =
+        elements
+            [ RejectMalformed
+            , RejectInvalid
+            , RejectObsolete
+            , RejectDuplicate
+            , RejectNonStandard
+            , RejectDust
+            , RejectInsufficientFee
+            , RejectCheckpoint
+            ]
+
 instance Arbitrary PubExcept where
     arbitrary =
         oneof
             [ pure PubNoPeers
-            , PubReject <$> arbitraryRejectCode
+            , PubReject <$> arbitrary
             , pure PubTimeout
             , pure PubPeerDisconnected
             ]
 
+instance Arbitrary XPubKey where
+    arbitrary =
+        XPubKey <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary
+
+instance Arbitrary XPubSpec where
+    arbitrary = XPubSpec <$> arbitrary <*> arbitrary
+
+instance Arbitrary DeriveType where
+    arbitrary = elements [DeriveNormal, DeriveP2SH, DeriveP2WPKH]
+
 instance Arbitrary TxId where
-    arbitrary = TxId <$> arbitraryTxHash
+    arbitrary = TxId <$> arbitrary
+
+instance Arbitrary BlockTx where
+    arbitrary = BlockTx <$> arbitrary <*> arbitrary
+
+instance Arbitrary Hash160 where
+    arbitrary = ripemd160 . pack <$> listOf1 arbitrary
+
+instance Arbitrary Address where
+    arbitrary =
+        oneof
+            [ PubKeyAddress <$> arbitrary
+            , ScriptAddress <$> arbitrary
+            ]
+
+instance Arbitrary Balance where
+    arbitrary =
+        Balance
+            <$> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+
+instance Arbitrary Unspent where
+    arbitrary =
+        Unspent <$> arbitrary <*> arbitrary <*> arbitrary <*>
+        (BSS.toShort . pack <$> listOf1 arbitrary) <*>
+        arbitrary
+
+instance Arbitrary BlockHeader where
+    arbitrary =
+        BlockHeader <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary
+
+instance Arbitrary BlockData where
+    arbitrary =
+        BlockData
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> listOf1 arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+
+instance Arbitrary XPubBal where
+    arbitrary = XPubBal <$> arbitrary <*> arbitrary
+
+instance Arbitrary XPubUnspent where
+    arbitrary = XPubUnspent <$> arbitrary <*> arbitrary
+
+instance Arbitrary XPubSummary where
+    arbitrary =
+        XPubSummary
+        <$> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+
+instance Arbitrary Event where
+    arbitrary =
+        oneof [EventBlock <$> arbitrary, EventTx <$> arbitrary]

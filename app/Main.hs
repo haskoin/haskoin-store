@@ -17,6 +17,7 @@ import           Data.Version            (showVersion)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest)
+import           Haskoin.Node            (withConnection)
 import           Haskoin.Store           (StoreConfig (..), WebConfig (..),
                                           WebLimits (..), WebTimeouts (..),
                                           runWeb, withStore)
@@ -270,6 +271,7 @@ run Config { configPort = port
                     , storeConfWipeMempool = wipemempool
                     , storeConfPeerTimeout = peertimeout
                     , storeConfPeerTooOld = peerold
+                    , storeConfConnect = withConnection
                     }
          in withStore scfg $ \st ->
                 let wcfg =

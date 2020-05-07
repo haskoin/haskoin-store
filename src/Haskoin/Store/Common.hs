@@ -99,9 +99,10 @@ import           Haskoin                   (Address, Block, BlockHash,
                                             PubKeyI (..), RejectCode (..),
                                             Tx (..), TxHash (..), TxIn (..),
                                             TxOut (..), WitnessStack,
-                                            XPubKey (..), addrToString,
-                                            blockHashToHex, decodeHex,
-                                            deriveAddr, deriveCompatWitnessAddr,
+                                            XPubKey (..), addrToEncoding,
+                                            addrToString, blockHashToHex,
+                                            decodeHex, deriveAddr,
+                                            deriveCompatWitnessAddr,
                                             deriveWitnessAddr, eitherToMaybe,
                                             encodeHex, headerHash, pubSubKey,
                                             scriptToAddressBS, stringToAddr,
@@ -454,7 +455,7 @@ instance ToJSON BlockTx where
     toJSON btx = object ["txid" .= blockTxHash btx, "block" .= blockTxBlock btx]
     toEncoding btx =
         pairs
-            (  "txid" `pair` text (txHashToHex (blockTxHash btx))
+            (  "txid" .= blockTxHash btx
             <> "block" .= blockTxBlock btx
             )
 
@@ -515,7 +516,7 @@ instance ToJSON (NetWrap Balance) where
         ]
     toEncoding (NetWrap net b) =
         pairs
-            ("address" .= addrToString net (balanceAddress b) <>
+            ("address" `pair` addrToEncoding net (balanceAddress b) <>
              "confirmed" .= balanceAmount b <>
              "unconfirmed" .= balanceZero b <>
              "utxo" .= balanceUnspentCount b <>
