@@ -39,6 +39,7 @@ import qualified Data.Text.Encoding            as T
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
+import           Data.Version                  (showVersion)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
 import           Haskoin                       (Address, Block (..),
@@ -964,7 +965,7 @@ healthCheck net mgr ch tos = do
             , healthSynced = sy
             , healthLastBlock = bd
             , healthLastTx = td
-            , healthVersion = show P.version
+            , healthVersion = showVersion P.version
             }
   where
     block_hash = headerHash . blockDataHeader
