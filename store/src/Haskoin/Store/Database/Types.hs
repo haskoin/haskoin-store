@@ -39,7 +39,8 @@ import           Data.Word              (Word32, Word64)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
-                                         OutPoint (..), TxHash)
+                                         OutPoint (..), TxHash, eitherToMaybe,
+                                         scriptToAddressBS)
 import           Haskoin.Store.Data     (Balance (..), BlockData, BlockRef,
                                          BlockTx (..), Spender, TxData,
                                          UnixTime, Unspent (..), getUnixTime,
@@ -220,6 +221,7 @@ toUnspent b v =
         , unspentAmount = outValAmount v
         , unspentScript = BSS.toShort (outValScript v)
         , unspentPoint = addrOutKeyP b
+        , unspentAddress = eitherToMaybe (scriptToAddressBS (outValScript v))
         }
 
 -- | Mempool transaction database key.
@@ -431,4 +433,5 @@ valToUnspent p UnspentVal { unspentValBlock = b
         , unspentPoint = p
         , unspentAmount = v
         , unspentScript = s
+        , unspentAddress = eitherToMaybe (scriptToAddressBS (BSS.fromShort s))
         }

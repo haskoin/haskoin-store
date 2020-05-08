@@ -280,7 +280,7 @@ processBlock peer block = do
                 atomically $ do
                     mapM_ (listener . StoreTxDeleted) deletedtxids
                     listener (StoreBestBlock blockhash)
-                lift (syncMe peer)
+                lift (touchPeer peer >> syncMe peer)
             Left e -> do
                 $(logErrorS) "BlockStore" $
                     "Error importing block: " <> hexhash <> ": " <>
@@ -300,16 +300,9 @@ processBlock peer block = do
                     "Ignoring block " <> hexhash <> " from disconnected peer"
                 mzero
             Just _ ->
-                getSyncingState >>= \case
-                    Just Syncing {syncingPeer = syncingpeer}
-                        | peer == syncingpeer -> do
-                            box <- asks myPeer
-                            now <-
-                                fromIntegral . systemSeconds <$>
-                                liftIO getSystemTime
-                            atomically . modifyTVar box . fmap $ \s ->
-                                s {syncingTime = now}
-                    _ -> do
+                lift (touchPeer peer) >>= \case
+                    True -> return ()
+                    False -> do
                         p' <-
                             managerPeerText peer =<<
                             asks (blockConfManager . myConfig)
@@ -530,6 +523,17 @@ processTxs p hs = do
                     then InvWitnessTx
                     else InvTx
         MGetData (GetData (map (InvVector inv . getTxHash) xs)) `sendMessage` p
+
+touchPeer :: MonadIO m => Peer -> ReaderT BlockRead m Bool
+touchPeer p =
+    getSyncingState >>= \case
+        Just Syncing {syncingPeer = s}
+            | p == s -> do
+                box <- asks myPeer
+                now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+                atomically . modifyTVar box . fmap $ \x -> x {syncingTime = now}
+                return True
+        _ -> return False
 
 checkTime :: (MonadUnliftIO m, MonadLoggerIO m) => ReaderT BlockRead m ()
 checkTime =

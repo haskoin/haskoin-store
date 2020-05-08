@@ -35,10 +35,12 @@ import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           XPubSummary (..), XPubUnspent (..),
                                           balanceParseJSON, balanceToEncoding,
                                           balanceToJSON, blockDataToEncoding,
-                                          blockDataToJSON,
+                                          blockDataToJSON, transactionParseJSON,
                                           transactionToEncoding,
-                                          transactionToJSON, unspentToEncoding,
-                                          unspentToJSON, xPubUnspentToEncoding,
+                                          transactionToJSON, unspentParseJSON,
+                                          unspentToEncoding, unspentToJSON,
+                                          xPubUnspentParseJSON,
+                                          xPubUnspentToEncoding,
                                           xPubUnspentToJSON)
 import           Test.Hspec              (Expectation, Spec, describe, shouldBe)
 import           Test.Hspec.QuickCheck   (prop)
@@ -80,7 +82,11 @@ spec = do
         prop "identity for block tx" $ \x -> testJSON (x :: BlockTx)
         prop "identity for block ref" $ \x -> testJSON (x :: BlockRef)
         prop "identity for unspent" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON parseJSON (unspentToJSON net) (unspentToEncoding net) x
+            testNetJSON
+                (unspentParseJSON net)
+                (unspentToJSON net)
+                (unspentToEncoding net)
+                x
         prop "identity for block data" . forAll arbitraryNetData $ \(net, x) ->
             let x' =
                     if getSegWit net
@@ -97,16 +103,24 @@ spec = do
                 x' =
                     if getSegWit net
                         then x
-                        else x {transactionInputs = map f (transactionInputs x)}
+                        else x
+                                 { transactionInputs =
+                                       map f (transactionInputs x)
+                                 , transactionWeight = 0
+                                 }
+                x'' =
+                    if getReplaceByFee net
+                        then x'
+                        else x' {transactionRBF = False}
              in testNetJSON
-                    parseJSON
+                    (transactionParseJSON net)
                     (transactionToJSON net)
                     (transactionToEncoding net)
-                    x'
+                    x''
         prop "identity for xpub summary" $ \x -> testJSON (x :: XPubSummary)
         prop "identity for xpub unspent" . forAll arbitraryNetData $ \(net, x) ->
             testNetJSON
-                parseJSON
+                (xPubUnspentParseJSON net)
                 (xPubUnspentToJSON net)
                 (xPubUnspentToEncoding net)
                 x
@@ -212,7 +226,8 @@ instance Arbitrary StoreInput where
               (oneof
                    [ Just <$> (listOf $ pack <$> listOf1 arbitrary)
                    , return Nothing
-                   ])
+                   ]) <*>
+              arbitrary
             ]
 
 instance Arbitrary Spender where
@@ -220,12 +235,17 @@ instance Arbitrary Spender where
 
 instance Arbitrary StoreOutput where
     arbitrary =
-        StoreOutput <$> arbitrary <*> (pack <$> listOf1 arbitrary) <*> arbitrary
+        StoreOutput <$> arbitrary <*> (pack <$> listOf1 arbitrary) <*> arbitrary <*>
+        arbitrary
 
 instance Arbitrary Transaction where
     arbitrary =
         Transaction
             <$> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
@@ -318,7 +338,7 @@ instance Arbitrary Balance where
 instance Arbitrary Unspent where
     arbitrary =
         Unspent <$> arbitrary <*> arbitrary <*> arbitrary <*>
-        (BSS.toShort . pack <$> listOf1 arbitrary)
+        (BSS.toShort . pack <$> listOf1 arbitrary) <*> arbitrary
 
 instance Arbitrary BlockHeader where
     arbitrary =

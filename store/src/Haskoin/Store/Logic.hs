@@ -13,8 +13,8 @@ module Haskoin.Store.Logic
     , deleteTx
     ) where
 
-import           Control.Monad           (forM, forM_, unless, void, when,
-                                          zipWithM_)
+import           Control.Monad           (forM, forM_, guard, unless, void,
+                                          when, zipWithM_)
 import           Control.Monad.Except    (MonadError (..))
 import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS,
                                           logWarnS)
@@ -34,20 +34,19 @@ import           Haskoin                 (Address, Block (..), BlockHash,
                                           Network (..), OutPoint (..), Tx (..),
                                           TxHash, TxIn (..), TxOut (..),
                                           addrToString, blockHashToHex,
-                                          computeSubsidy, genesisBlock,
-                                          genesisNode, headerHash, isGenesis,
-                                          nullOutPoint, scriptToAddressBS,
-                                          txHash, txHashToHex)
+                                          computeSubsidy, eitherToMaybe,
+                                          genesisBlock, genesisNode, headerHash,
+                                          isGenesis, nullOutPoint,
+                                          scriptToAddressBS, txHash,
+                                          txHashToHex)
 import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..),
                                           sortTxs)
 import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),
                                           Prev (..), Spender (..),
-                                          StoreInput (..), StoreOutput (..),
-                                          Transaction (..), TxData (..),
-                                          UnixTime, Unspent (..), confirmed,
-                                          fromTransaction, isCoinbase,
-                                          nullBalance, toTransaction,
+                                          StoreOutput (..), Transaction (..),
+                                          TxData (..), UnixTime, Unspent (..),
+                                          confirmed, nullBalance, toTransaction,
                                           transactionData)
 import           UnliftIO                (Exception)
 
@@ -135,7 +134,7 @@ revertBlock bh = do
                                 "Cannot delete block that is not head: " <>
                                 blockHashToHex h
                             throwError (BlockNotBest (blockHashToHex bh))
-    txs <- mapM (fmap transactionData . getImportTx) (blockDataTxs bd)
+    txs <- mapM (fmap txData . getImportTxData) (blockDataTxs bd)
     ths <-
         nub . concat <$>
         mapM (deleteTx False False . txHash . snd) (reverse (sortTxs txs))
@@ -263,23 +262,22 @@ importTx br tt tx = do
             (\i o -> newOutput br (OutPoint (txHash tx) i) o)
             [0 ..]
             (txOut tx)
-        let t =
-                Transaction
-                    { transactionBlock = br
-                    , transactionVersion = txVersion tx
-                    , transactionLockTime = txLockTime tx
-                    , transactionInputs =
-                          if iscb
-                              then zipWith mkcb (txIn tx) ws
-                              else zipWith3 mkin us (txIn tx) ws
-                    , transactionOutputs = map mkout (txOut tx)
-                    , transactionDeleted = False
-                    , transactionRBF = rbf
-                    , transactionTime = tt
+        let ps =
+                I.fromList . zip [0 ..] $
+                if iscb
+                    then []
+                    else map mkprv us
+            d =
+                TxData
+                    { txDataBlock = br
+                    , txData = tx
+                    , txDataPrevs = ps
+                    , txDataDeleted = False
+                    , txDataRBF = rbf
+                    , txDataTime = tt
                     }
-        let (d, _) = fromTransaction t
         insertTx d
-        updateAddressCounts (txAddresses t) (+ 1)
+        updateAddressCounts (txDataAddresses d) (+ 1)
         unless (confirmed br) $ insertIntoMempool (txHash tx) (memRefTime br)
     uns op =
         getUnspent op >>= \case
@@ -317,30 +315,7 @@ importTx br tt tx = do
                             Just u -> return (u, ths)
     th = txHash tx
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
-    ws = map Just (txWitness tx) <> repeat Nothing
-    mkcb ip w =
-        StoreCoinbase
-            { inputPoint = prevOutput ip
-            , inputSequence = txInSequence ip
-            , inputSigScript = scriptInput ip
-            , inputWitness = w
-            }
-    mkin u ip w =
-        let script = B.Short.fromShort (unspentScript u)
-         in StoreInput
-                { inputPoint = prevOutput ip
-                , inputSequence = txInSequence ip
-                , inputSigScript = scriptInput ip
-                , inputPkScript = script
-                , inputAmount = unspentAmount u
-                , inputWitness = w
-                }
-    mkout o =
-        StoreOutput
-            { outputAmount = outValue o
-            , outputScript = scriptOutput o
-            , outputSpender = Nothing
-            }
+    mkprv u = Prev (B.Short.fromShort (unspentScript u)) (unspentAmount u)
 
 confirmTx ::
        ( StoreRead m
@@ -375,6 +350,8 @@ confirmTx t br tx = do
                     , unspentPoint = op
                     , unspentAmount = outValue o
                     , unspentScript = B.Short.toShort (scriptOutput o)
+                    , unspentAddress =
+                          eitherToMaybe (scriptToAddressBS (scriptOutput o))
                     }
         case scriptToAddressBS (scriptOutput o) of
             Left _ -> return ()
@@ -394,6 +371,9 @@ confirmTx t br tx = do
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
+                            , unspentAddress =
+                                  eitherToMaybe
+                                      (scriptToAddressBS (scriptOutput o))
                             }
                     insertAddrUnspent
                         a
@@ -402,6 +382,9 @@ confirmTx t br tx = do
                             , unspentPoint = op
                             , unspentAmount = outValue o
                             , unspentScript = B.Short.toShort (scriptOutput o)
+                            , unspentAddress =
+                                  eitherToMaybe
+                                      (scriptToAddressBS (scriptOutput o))
                             }
                     reduceBalance False False a (outValue o)
                     increaseBalance True False a (outValue o)
@@ -532,6 +515,8 @@ newOutput br op to = do
             , unspentAmount = outValue to
             , unspentScript = B.Short.toShort (scriptOutput to)
             , unspentPoint = op
+            , unspentAddress =
+                  eitherToMaybe (scriptToAddressBS (scriptOutput to))
             }
 
 delOutput ::
@@ -543,31 +528,52 @@ delOutput ::
     => OutPoint
     -> m ()
 delOutput op = do
-    t <- getImportTx (outPointHash op)
-    u <- getTxOutput (outPointIndex op) t
+    t <- getImportTxData (outPointHash op)
+    u <-
+        case getTxOut (outPointIndex op) (txData t) of
+            Just u -> return u
+            Nothing -> do
+                $(logErrorS) "BlockStore" $
+                    "Output out of range: " <> txHashToHex (txHash (txData t)) <>
+                    " " <>
+                    fromString (show (outPointIndex op))
+                throwError . OutputOutOfRange . cs $ show op
     deleteUnspent op
-    case scriptToAddressBS (outputScript u) of
+    case scriptToAddressBS (scriptOutput u) of
         Left _ -> return ()
         Right a -> do
             deleteAddrUnspent
                 a
                 Unspent
-                    { unspentScript = B.Short.toShort (outputScript u)
-                    , unspentBlock = transactionBlock t
+                    { unspentScript = B.Short.toShort (scriptOutput u)
+                    , unspentBlock = txDataBlock t
                     , unspentPoint = op
-                    , unspentAmount = outputAmount u
+                    , unspentAmount = outValue u
+                    , unspentAddress =
+                          eitherToMaybe (scriptToAddressBS (scriptOutput u))
                     }
             deleteAddrTx
                 a
                 BlockTx
                     { blockTxHash = outPointHash op
-                    , blockTxBlock = transactionBlock t
+                    , blockTxBlock = txDataBlock t
                     }
-            reduceBalance
-                (confirmed (transactionBlock t))
-                True
-                a
-                (outputAmount u)
+            reduceBalance (confirmed (txDataBlock t)) True a (outValue u)
+
+getImportTxData ::
+       (StoreRead m, MonadLogger m, MonadError ImportException m)
+    => TxHash
+    -> m TxData
+getImportTxData th =
+    getTxData th >>= \case
+        Nothing -> do
+            $(logErrorS) "BlockStore" $ "Tx not found: " <> txHashToHex th
+            throwError $ TxNotFound (txHashToHex th)
+        Just d
+            | txDataDeleted d -> do
+                $(logErrorS) "BlockStore" $ "Tx deleted: " <> txHashToHex th
+                throwError $ TxDeleted (txHashToHex th)
+            | otherwise -> return d
 
 getImportTx ::
        (StoreRead m, MonadLogger m, MonadError ImportException m)
@@ -585,6 +591,14 @@ getImportTx th =
             | otherwise -> do
                 sm <- getSpenders th
                 return $ toTransaction d sm
+
+getTxOut
+    :: Word32
+    -> Tx
+    -> Maybe TxOut
+getTxOut i tx = do
+    guard (fromIntegral i < length (txOut tx))
+    return $ txOut tx !! fromIntegral i
 
 getTxOutput ::
        (MonadLogger m, MonadError ImportException m)
@@ -650,7 +664,7 @@ unspendOutput op = do
                     fromString (show (outPointIndex op))
                 throwError (AlreadyUnspent (cs (show op)))
             Just s -> return s
-    x <- getImportTx (spenderHash s)
+    x <- getImportTxData (spenderHash s)
     deleteSpender op
     let u =
             Unspent
@@ -658,6 +672,8 @@ unspendOutput op = do
                 , unspentBlock = transactionBlock t
                 , unspentScript = B.Short.toShort (outputScript o)
                 , unspentPoint = op
+                , unspentAddress =
+                      eitherToMaybe (scriptToAddressBS (outputScript o))
                 }
     insertUnspent u
     case scriptToAddressBS (outputScript o) of
@@ -668,7 +684,7 @@ unspendOutput op = do
                 a
                 BlockTx
                     { blockTxHash = spenderHash s
-                    , blockTxBlock = transactionBlock x
+                    , blockTxBlock = txDataBlock x
                     }
             increaseBalance
                 (confirmed (unspentBlock u))
@@ -783,13 +799,6 @@ updateAddressCounts as f =
                    then throwError (BalanceNotFound (addrText net a))
                    else return b
         setBalance b {balanceTxCount = f (balanceTxCount b)}
-
-txAddresses :: Transaction -> [Address]
-txAddresses t =
-    nub . rights $
-    map (scriptToAddressBS . inputPkScript)
-        (filter (not . isCoinbase) (transactionInputs t)) <>
-    map (scriptToAddressBS . outputScript) (transactionOutputs t)
 
 txDataAddresses :: TxData -> [Address]
 txDataAddresses t =

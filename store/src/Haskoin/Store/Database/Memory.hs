@@ -25,7 +25,8 @@ import           Data.Maybe                   (catMaybes, fromJust, fromMaybe,
 import           Data.Word                    (Word32)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash,
-                                               headerHash, txHash)
+                                               eitherToMaybe, headerHash,
+                                               scriptToAddressBS, txHash)
 import           Haskoin.Store.Common         (Limit, StoreRead (..),
                                                StoreWrite (..), applyLimit)
 import           Haskoin.Store.Data           (Balance (..), BlockData (..),
@@ -156,6 +157,8 @@ getAddressUnspentsH addr start limit db =
                 , unspentAmount = outValAmount u
                 , unspentScript = B.Short.toShort (outValScript u)
                 , unspentPoint = p
+                , unspentAddress =
+                      eitherToMaybe (scriptToAddressBS (outValScript u))
                 }
     g _ _ Nothing = Nothing
     h Unspent {unspentBlock = b} =

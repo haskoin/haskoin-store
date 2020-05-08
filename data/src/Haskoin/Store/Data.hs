@@ -25,16 +25,19 @@ module Haskoin.Store.Data
     , Transaction(..)
     , transactionToJSON
     , transactionToEncoding
+    , transactionParseJSON
     , transactionData
     , fromTransaction
     , toTransaction
     , StoreInput(..)
     , storeInputToJSON
     , storeInputToEncoding
+    , storeInputParseJSON
     , isCoinbase
     , StoreOutput(..)
     , storeOutputToJSON
     , storeOutputToEncoding
+    , storeOutputParseJSON
     , Prev(..)
     , Spender(..)
     , BlockRef(..)
@@ -47,6 +50,7 @@ module Haskoin.Store.Data
     , Unspent(..)
     , unspentToJSON
     , unspentToEncoding
+    , unspentParseJSON
 
       -- * Extended Public Keys
     , XPubSpec(..)
@@ -57,6 +61,7 @@ module Haskoin.Store.Data
     , XPubUnspent(..)
     , xPubUnspentToJSON
     , xPubUnspentToEncoding
+    , xPubUnspentParseJSON
     , XPubSummary(..)
     , DeriveType(..)
 
@@ -103,8 +108,9 @@ import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           TxIn (..), TxOut (..), WitnessStack,
                                           XPubKey (..), addrFromJSON,
                                           addrToEncoding, addrToJSON,
-                                          blockHashToHex, decodeHex, encodeHex,
-                                          headerHash, scriptToAddressBS, txHash,
+                                          blockHashToHex, decodeHex,
+                                          eitherToMaybe, encodeHex, headerHash,
+                                          scriptToAddressBS, txHash,
                                           txHashToHex, wrapPubKey)
 import           Web.Scotty.Trans        (ScottyError (..))
 
@@ -319,16 +325,17 @@ balanceParseJSON net =
 
 -- | Unspent output.
 data Unspent = Unspent
-    { unspentBlock  :: !BlockRef
-    , unspentPoint  :: !OutPoint
-    , unspentAmount :: !Word64
-    , unspentScript :: !ShortByteString
+    { unspentBlock   :: !BlockRef
+    , unspentPoint   :: !OutPoint
+    , unspentAmount  :: !Word64
+    , unspentScript  :: !ShortByteString
+    , unspentAddress :: !(Maybe Address)
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 unspentToJSON :: Network -> Unspent -> Value
 unspentToJSON net u =
     object
-        [ "address" .= scriptToAddrJSON net bsscript
+        [ "address" .= (addrToJSON net <$> unspentAddress u)
         , "block" .= unspentBlock u
         , "txid" .= outPointHash (unspentPoint u)
         , "index" .= outPointIndex (unspentPoint u)
@@ -342,7 +349,7 @@ unspentToJSON net u =
 unspentToEncoding :: Network -> Unspent -> Encoding
 unspentToEncoding net u =
     pairs
-        (  "address" `pair` scriptToAddrEncoding net bsscript
+        (  "address" `pair` maybe null_ (addrToEncoding net) (unspentAddress u)
         <> "block" .= unspentBlock u
         <> "txid" .= outPointHash (unspentPoint u)
         <> "index" .= outPointIndex (unspentPoint u)
@@ -353,21 +360,25 @@ unspentToEncoding net u =
     bsscript = BSS.fromShort (unspentScript u)
     script = encodeHex bsscript
 
-instance FromJSON Unspent where
-    parseJSON =
-        A.withObject "unspent" $ \o -> do
-            block <- o .: "block"
-            txid <- o .: "txid"
-            index <- o .: "index"
-            value <- o .: "value"
-            script <- BSS.toShort <$> (o .: "pkscript" >>= jsonHex)
-            return
-                Unspent
-                    { unspentBlock = block
-                    , unspentPoint = OutPoint txid index
-                    , unspentAmount = value
-                    , unspentScript = script
-                    }
+unspentParseJSON :: Network -> Value -> Parser Unspent
+unspentParseJSON net =
+    A.withObject "unspent" $ \o -> do
+        block <- o .: "block"
+        txid <- o .: "txid"
+        index <- o .: "index"
+        value <- o .: "value"
+        script <- BSS.toShort <$> (o .: "pkscript" >>= jsonHex)
+        addr <- o .: "address" >>= \case
+            Nothing -> return Nothing
+            Just a -> Just <$> addrFromJSON net a <|> return Nothing
+        return
+            Unspent
+                { unspentBlock = block
+                , unspentPoint = OutPoint txid index
+                , unspentAmount = value
+                , unspentScript = script
+                , unspentAddress = addr
+                }
 
 -- | Database value for a block entry.
 data BlockData = BlockData
@@ -432,7 +443,7 @@ blockDataToEncoding net bv =
         <> "fees" .= blockDataFees bv
         <> "outputs" .= blockDataOutputs bv
         <> "work" .= blockDataWork bv
-        <> if getSegWit net then "weight" .= blockDataWeight bv else mempty
+        <> (if getSegWit net then "weight" .= blockDataWeight bv else mempty)
         )
 
 instance FromJSON BlockData where
@@ -476,18 +487,21 @@ instance FromJSON BlockData where
                     }
 
 data StoreInput
-    = StoreCoinbase { inputPoint     :: !OutPoint
-                    , inputSequence  :: !Word32
-                    , inputSigScript :: !ByteString
-                    , inputWitness   :: !(Maybe WitnessStack)
-                     }
-    | StoreInput { inputPoint     :: !OutPoint
-                 , inputSequence  :: !Word32
-                 , inputSigScript :: !ByteString
-                 , inputPkScript  :: !ByteString
-                 , inputAmount    :: !Word64
-                 , inputWitness   :: !(Maybe WitnessStack)
-                  }
+    = StoreCoinbase
+          { inputPoint     :: !OutPoint
+          , inputSequence  :: !Word32
+          , inputSigScript :: !ByteString
+          , inputWitness   :: !(Maybe WitnessStack)
+          }
+    | StoreInput
+          { inputPoint     :: !OutPoint
+          , inputSequence  :: !Word32
+          , inputSigScript :: !ByteString
+          , inputPkScript  :: !ByteString
+          , inputAmount    :: !Word64
+          , inputWitness   :: !(Maybe WitnessStack)
+          , inputAddress   :: !(Maybe Address)
+          }
     deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 isCoinbase :: StoreInput -> Bool
@@ -501,6 +515,7 @@ storeInputToJSON net StoreInput { inputPoint = OutPoint oph opi
                                 , inputPkScript = ps
                                 , inputAmount = val
                                 , inputWitness = wit
+                                , inputAddress = a
                                 } =
     object $
     [ "coinbase" .= False
@@ -510,7 +525,7 @@ storeInputToJSON net StoreInput { inputPoint = OutPoint oph opi
     , "sequence" .= sq
     , "pkscript" .= String (encodeHex ps)
     , "value" .= val
-    , "address" .= scriptToAddrJSON net ps
+    , "address" .= (addrToJSON net <$> a)
     ] <>
     ["witness" .= fmap (map encodeHex) wit | getSegWit net]
 storeInputToJSON net StoreCoinbase { inputPoint = OutPoint oph opi
@@ -537,6 +552,7 @@ storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
                                     , inputPkScript = ps
                                     , inputAmount = val
                                     , inputWitness = wit
+                                    , inputAddress = a
                                     } =
     pairs
         (  "coinbase" .= False
@@ -546,10 +562,10 @@ storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
         <> "sequence" .= sq
         <> "pkscript" `pair` text (encodeHex ps)
         <> "value" .= val
-        <> "address" `pair` scriptToAddrEncoding net ps
-        <> if getSegWit net
+        <> "address" `pair` (maybe null_ (addrToEncoding net) a)
+        <> (if getSegWit net
            then "witness" .= fmap (map encodeHex) wit
-           else mempty
+           else mempty)
         )
 
 storeInputToEncoding net StoreCoinbase { inputPoint = OutPoint oph opi
@@ -566,43 +582,47 @@ storeInputToEncoding net StoreCoinbase { inputPoint = OutPoint oph opi
         <> "pkscript" `pair` null_
         <> "value" `pair` null_
         <> "address" `pair` null_
-        <> if getSegWit net
+        <> (if getSegWit net
            then "witness" .= fmap (map encodeHex) wit
-           else mempty
+           else mempty)
         )
 
-instance FromJSON StoreInput where
-    parseJSON =
-        A.withObject "storeinput" $ \o -> do
-            coinbase <- o .: "coinbase"
-            outpoint <- OutPoint <$> o .: "txid" <*> o .: "output"
-            sequ <- o .: "sequence"
-            witness <-
-                o .:? "witness" >>= \mmxs ->
-                    case join mmxs of
-                        Nothing -> return Nothing
-                        Just xs -> Just <$> mapM jsonHex xs
-            sigscript <- o .: "sigscript" >>= jsonHex
-            if coinbase
-                then return
-                        StoreCoinbase
-                            { inputPoint = outpoint
-                            , inputSequence = sequ
-                            , inputSigScript = sigscript
-                            , inputWitness = witness
-                            }
-                else do
-                    pkscript <- o .: "pkscript" >>= jsonHex
-                    value <- o .: "value"
-                    return
-                        StoreInput
-                            { inputPoint = outpoint
-                            , inputSequence = sequ
-                            , inputSigScript = sigscript
-                            , inputPkScript = pkscript
-                            , inputAmount = value
-                            , inputWitness = witness
-                            }
+storeInputParseJSON :: Network -> Value -> Parser StoreInput
+storeInputParseJSON net =
+    A.withObject "storeinput" $ \o -> do
+        coinbase <- o .: "coinbase"
+        outpoint <- OutPoint <$> o .: "txid" <*> o .: "output"
+        sequ <- o .: "sequence"
+        witness <-
+            o .:? "witness" >>= \mmxs ->
+                case join mmxs of
+                    Nothing -> return Nothing
+                    Just xs -> Just <$> mapM jsonHex xs
+        sigscript <- o .: "sigscript" >>= jsonHex
+        if coinbase
+            then return
+                    StoreCoinbase
+                        { inputPoint = outpoint
+                        , inputSequence = sequ
+                        , inputSigScript = sigscript
+                        , inputWitness = witness
+                        }
+            else do
+                pkscript <- o .: "pkscript" >>= jsonHex
+                value <- o .: "value"
+                addr <- o .: "address" >>= \case
+                    Nothing -> return Nothing
+                    Just a -> Just <$> addrFromJSON net a <|> return Nothing
+                return
+                    StoreInput
+                        { inputPoint = outpoint
+                        , inputSequence = sequ
+                        , inputSigScript = sigscript
+                        , inputPkScript = pkscript
+                        , inputAmount = value
+                        , inputWitness = witness
+                        , inputAddress = addr
+                        }
 
 jsonHex :: Text -> Parser ByteString
 jsonHex s =
@@ -631,12 +651,13 @@ data StoreOutput = StoreOutput
     { outputAmount  :: !Word64
     , outputScript  :: !ByteString
     , outputSpender :: !(Maybe Spender)
+    , outputAddress :: !(Maybe Address)
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 storeOutputToJSON :: Network -> StoreOutput -> Value
 storeOutputToJSON net d =
     object
-        [ "address" .= scriptToAddrJSON net (outputScript d)
+        [ "address" .= (addrToJSON net <$> outputAddress d)
         , "pkscript" .= encodeHex (outputScript d)
         , "value" .= outputAmount d
         , "spent" .= isJust (outputSpender d)
@@ -646,25 +667,29 @@ storeOutputToJSON net d =
 storeOutputToEncoding :: Network -> StoreOutput -> Encoding
 storeOutputToEncoding net d =
     pairs
-        (  "address" `pair` scriptToAddrEncoding net (outputScript d)
+        (  "address" `pair` maybe null_ (addrToEncoding net) (outputAddress d)
         <> "pkscript" `pair` text (encodeHex (outputScript d))
         <> "value" .= outputAmount d
         <> "spent" .= isJust (outputSpender d)
         <> "spender" .= outputSpender d
         )
 
-instance FromJSON StoreOutput where
-    parseJSON =
-        A.withObject "storeoutput" $ \o -> do
-            value <- o .: "value"
-            pkscript <- o .: "pkscript" >>= jsonHex
-            spender <- o .: "spender"
-            return
-                StoreOutput
-                    { outputAmount = value
-                    , outputScript = pkscript
-                    , outputSpender = spender
-                    }
+storeOutputParseJSON :: Network -> Value -> Parser StoreOutput
+storeOutputParseJSON net =
+    A.withObject "storeoutput" $ \o -> do
+        value <- o .: "value"
+        pkscript <- o .: "pkscript" >>= jsonHex
+        spender <- o .: "spender"
+        addr <- o .: "address" >>= \case
+            Nothing -> return Nothing
+            Just a -> Just <$> addrFromJSON net a <|> return Nothing
+        return
+            StoreOutput
+                { outputAmount = value
+                , outputScript = pkscript
+                , outputSpender = spender
+                , outputAddress = addr
+                }
 
 data Prev = Prev
     { prevScript :: !ByteString
@@ -687,6 +712,7 @@ toInput i (Just p) w =
         , inputPkScript = prevScript p
         , inputAmount = prevAmount p
         , inputWitness = w
+        , inputAddress = eitherToMaybe (scriptToAddressBS (prevScript p))
         }
 
 toOutput :: TxOut -> Maybe Spender -> StoreOutput
@@ -695,6 +721,7 @@ toOutput o s =
         { outputAmount = outValue o
         , outputScript = scriptOutput o
         , outputSpender = s
+        , outputAddress = eitherToMaybe (scriptToAddressBS (scriptOutput o))
         }
 
 data TxData = TxData
@@ -717,8 +744,24 @@ toTransaction t sm =
         , transactionDeleted = txDataDeleted t
         , transactionRBF = txDataRBF t
         , transactionTime = txDataTime t
+        , transactionId = txid
+        , transactionSize = txsize
+        , transactionWeight = txweight
+        , transactionFees = fees
         }
   where
+    txid = txHash (txData t)
+    txsize = fromIntegral $ B.length (S.encode (txData t))
+    txweight =
+        let b = B.length $ S.encode (txData t) {txWitness = []}
+            x = B.length $ S.encode (txData t)
+         in fromIntegral $ b * 3 + x
+    inv = sum (map inputAmount ins)
+    outv = sum (map outputAmount outs)
+    fees =
+      if any isCoinbase ins
+          then 0
+          else inv - outv
     ws =
         take (length (txIn (txData t))) $
         map Just (txWitness (txData t)) <> repeat Nothing
@@ -765,6 +808,14 @@ data Transaction = Transaction
       -- ^ this transaction can be replaced in the mempool
     , transactionTime     :: !Word64
       -- ^ time the transaction was first seen or time of block
+    , transactionId       :: !TxHash
+      -- ^ transaction id
+    , transactionSize     :: !Word32
+      -- ^ serialized transaction size (includes witness data)
+    , transactionWeight   :: !Word32
+      -- ^ transaction weight
+    , transactionFees     :: !Word64
+      -- ^ fees that this transaction pays (0 for coinbase)
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 transactionData :: Transaction -> Tx
@@ -787,78 +838,71 @@ transactionData t =
 transactionToJSON :: Network -> Transaction -> Value
 transactionToJSON net dtx =
     object $
-    [ "txid" .= txHash (transactionData dtx)
-    , "size" .= B.length (S.encode (transactionData dtx))
+    [ "txid" .= transactionId dtx
+    , "size" .= transactionSize dtx
     , "version" .= transactionVersion dtx
     , "locktime" .= transactionLockTime dtx
-    , "fee" .=
-      if any isCoinbase (transactionInputs dtx)
-          then 0
-          else inv - outv
+    , "fee" .= transactionFees dtx
     , "inputs" .= map (storeInputToJSON net) (transactionInputs dtx)
     , "outputs" .= map (storeOutputToJSON net) (transactionOutputs dtx)
     , "block" .= transactionBlock dtx
     , "deleted" .= transactionDeleted dtx
     , "time" .= transactionTime dtx
-    , "rbf" .= transactionRBF dtx
     ] <>
-    ["weight" .= w | getSegWit net]
-  where
-    inv = sum (map inputAmount (transactionInputs dtx))
-    outv = sum (map outputAmount (transactionOutputs dtx))
-    w =
-        let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
-            x = B.length $ S.encode (transactionData dtx)
-         in b * 3 + x
+    [ "rbf" .= transactionRBF dtx | getReplaceByFee net] <>
+    [ "weight" .= transactionWeight dtx | getSegWit net]
 
 transactionToEncoding :: Network -> Transaction -> Encoding
 transactionToEncoding net dtx =
     pairs
-        (  "txid" `pair` text (txHashToHex (txHash (transactionData dtx)))
-        <> "size" .= B.length (S.encode (transactionData dtx))
+        (  "txid" .= transactionId dtx
+        <> "size" .= transactionSize dtx
         <> "version" .= transactionVersion dtx
         <> "locktime" .= transactionLockTime dtx
-        <> "fee" .= (if any isCoinbase (transactionInputs dtx) then 0 else inv - outv)
+        <> "fee" .= transactionFees dtx
         <> "inputs" `pair` list (storeInputToEncoding net) (transactionInputs dtx)
         <> "outputs" `pair` list (storeOutputToEncoding net) (transactionOutputs dtx)
         <> "block" .= transactionBlock dtx
         <> "deleted" .= transactionDeleted dtx
         <> "time" .= transactionTime dtx
-        <> "rbf" .= transactionRBF dtx
-        <> if getSegWit net
-           then "weight" .= w
-           else mempty
+        <> (if getReplaceByFee net
+            then "rbf" .= transactionRBF dtx
+            else mempty)
+        <> (if getSegWit net
+           then "weight" .= transactionWeight dtx
+           else mempty)
         )
-  where
-    inv = sum (map inputAmount (transactionInputs dtx))
-    outv = sum (map outputAmount (transactionOutputs dtx))
-    w =
-        let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
-            x = B.length $ S.encode (transactionData dtx)
-          in b * 3 + x
 
-instance FromJSON Transaction where
-    parseJSON =
-        A.withObject "transaction" $ \o -> do
-            version <- o .: "version"
-            locktime <- o .: "locktime"
-            inputs <- o .: "inputs"
-            outputs <- o .: "outputs"
-            block <- o .: "block"
-            deleted <- o .: "deleted"
-            time <- o .: "time"
-            rbf <- o .:? "rbf" .!= False
-            return
-                Transaction
-                    { transactionBlock = block
-                    , transactionVersion = version
-                    , transactionLockTime = locktime
-                    , transactionInputs = inputs
-                    , transactionOutputs = outputs
-                    , transactionDeleted = deleted
-                    , transactionTime = time
-                    , transactionRBF = rbf
-                    }
+transactionParseJSON :: Network -> Value -> Parser Transaction
+transactionParseJSON net =
+    A.withObject "transaction" $ \o -> do
+        version <- o .: "version"
+        locktime <- o .: "locktime"
+        inputs <- o .: "inputs" >>= mapM (storeInputParseJSON net)
+        outputs <- o .: "outputs" >>= mapM (storeOutputParseJSON net)
+        block <- o .: "block"
+        deleted <- o .: "deleted"
+        time <- o .: "time"
+        rbf <- o .:? "rbf" .!= False
+        weight <- o .:? "weight" .!= 0
+        size <- o .: "size"
+        txid <- o .: "txid"
+        fees <- o .: "fee"
+        return
+            Transaction
+                { transactionBlock = block
+                , transactionVersion = version
+                , transactionLockTime = locktime
+                , transactionInputs = inputs
+                , transactionOutputs = outputs
+                , transactionDeleted = deleted
+                , transactionTime = time
+                , transactionRBF = rbf
+                , transactionWeight = weight
+                , transactionSize = size
+                , transactionId = txid
+                , transactionFees = fees
+                }
 
 -- | Information about a connected peer.
 data PeerInformation
@@ -947,12 +991,12 @@ xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
 xPubUnspentToEncoding net XPubUnspent {xPubUnspentPath = p, xPubUnspent = u} =
     pairs ("path" .= p <> "unspent" `pair` unspentToEncoding net u)
 
-instance FromJSON XPubUnspent where
-    parseJSON =
-        A.withObject "xpubunspent" $ \o -> do
-            p <- o .: "path"
-            u <- o .: "unspent"
-            return XPubUnspent {xPubUnspentPath = p, xPubUnspent = u}
+xPubUnspentParseJSON :: Network -> Value -> Parser XPubUnspent
+xPubUnspentParseJSON net =
+    A.withObject "xpubunspent" $ \o -> do
+        p <- o .: "path"
+        u <- o .: "unspent" >>= unspentParseJSON net
+        return XPubUnspent {xPubUnspentPath = p, xPubUnspent = u}
 
 data XPubSummary =
     XPubSummary
@@ -1160,18 +1204,6 @@ instance ToJSON TxId where
 
 instance FromJSON TxId where
     parseJSON = A.withObject "txid" $ \o -> TxId <$> o .: "txid"
-
-scriptToAddrJSON :: Network -> ByteString -> Value
-scriptToAddrJSON net bs =
-    case scriptToAddressBS bs of
-        Left _  -> Null
-        Right a -> addrToJSON net a
-
-scriptToAddrEncoding :: Network -> ByteString -> Encoding
-scriptToAddrEncoding net bs =
-    case scriptToAddressBS bs of
-        Left _  -> null_
-        Right a -> addrToEncoding net a
 
 data Except
     = ThingNotFound
