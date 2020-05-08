@@ -1,6 +1,7 @@
 name: haskoin-store-data
-version: 0.25.0
+version: 0.25.2
 synopsis: Data for Haskoin Store
+description: Data and its (de)serialisation functions for Haskoin Store
 category: Bitcoin, Finance, Network
 author: Jean-Pierre Rupp
 maintainer: jprupp@protonmail.ch
