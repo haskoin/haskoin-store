@@ -960,14 +960,17 @@ cacheGetAddrsInfo ::
        MonadLoggerIO m => [Address] -> CacheT m [Maybe AddressXPub]
 cacheGetAddrsInfo as = runRedis (redisGetAddrsInfo as)
 
-redisAddToMempool :: RedisCtx m f => [BlockTx] -> m (f Integer)
+redisAddToMempool :: (Applicative f, RedisCtx m f) => [BlockTx] -> m (f Integer)
+redisAddToMempool [] = return (pure 0)
 redisAddToMempool btxs =
     zadd mempoolSetKey $
     map (\btx -> (blockRefScore (blockTxBlock btx), encode (blockTxHash btx)))
         btxs
 
-redisRemFromMempool :: RedisCtx m f => [TxHash] -> m (f Integer)
-redisRemFromMempool = zrem mempoolSetKey . map encode
+redisRemFromMempool ::
+       (Applicative f, RedisCtx m f) => [TxHash] -> m (f Integer)
+redisRemFromMempool [] = return (pure 0)
+redisRemFromMempool xs = zrem mempoolSetKey $ map encode xs
 
 redisSetAddrInfo ::
        (Functor f, RedisCtx m f) => Address -> AddressXPub -> m (f ())
@@ -1016,7 +1019,9 @@ redisAddXPubTxs xpub btxs =
     zadd (txSetPfx <> encode xpub) $
     map (\t -> (blockRefScore (blockTxBlock t), encode (blockTxHash t))) btxs
 
-redisRemXPubTxs :: RedisCtx m f => XPubSpec -> [TxHash] -> m (f Integer)
+redisRemXPubTxs ::
+       (Applicative f, RedisCtx m f) => XPubSpec -> [TxHash] -> m (f Integer)
+redisRemXPubTxs _ [] = return (pure 0)
 redisRemXPubTxs xpub txhs = zrem (txSetPfx <> encode xpub) (map encode txhs)
 
 redisAddXPubUnspents ::
