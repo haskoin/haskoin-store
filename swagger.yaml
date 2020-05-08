@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.25.3'
+  version: '0.25.4'
   title: Blockchain API
   contact:
     name: Jean-Pierre Rupp
@@ -1452,7 +1452,6 @@ components:
         - subsidy
         - fees
         - outputs
-        - weight
         - work
       properties:
         hash:
@@ -1518,7 +1517,7 @@ components:
           example: 470103316006
         weight:
           type: integer
-          description: SegWit block weight.
+          description: SegWit block weight (only on SegWit networks).
         work:
           type: integer
           description: Accumulated proof-of-work.
@@ -1565,7 +1564,7 @@ components:
           nullable: true
           example: '76a9148836437a157981dfa0a885d8b89f1e7dbeb19f6a88ac'
         witness:
-          description: Witness Data.
+          description: Witness Data. Only on SegWit networks.
           type: array
           example: []
           items:
@@ -1692,7 +1691,7 @@ components:
         weight:
           type: integer
           example: 980
-          description: SegWit transaction weight.
+          description: SegWit transaction weight. Only on SegWit networks.
 
     Event:
       type: object

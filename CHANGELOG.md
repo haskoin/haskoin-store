@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.25.4
+### Changed
+- Hide segwit data on non-segwit networks.
+
+### Fixed
+- Fix work which now always serialises as a number literal.
+
 ## 0.25.3
 ### Changed
 - Fix version display on health check.

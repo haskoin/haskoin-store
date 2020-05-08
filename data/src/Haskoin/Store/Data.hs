@@ -15,6 +15,8 @@ module Haskoin.Store.Data
 
       -- * Block Data
     , BlockData(..)
+    , blockDataToJSON
+    , blockDataToEncoding
     , confirmed
 
       -- * Transactions
@@ -391,44 +393,47 @@ data BlockData = BlockData
       -- ^ block subsidy
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
-instance ToJSON BlockData where
-    toJSON bv =
-        object
-            [ "hash" .= headerHash (blockDataHeader bv)
-            , "height" .= blockDataHeight bv
-            , "mainchain" .= blockDataMainChain bv
-            , "previous" .= prevBlock (blockDataHeader bv)
-            , "time" .= blockTimestamp (blockDataHeader bv)
-            , "version" .= blockVersion (blockDataHeader bv)
-            , "bits" .= blockBits (blockDataHeader bv)
-            , "nonce" .= bhNonce (blockDataHeader bv)
-            , "size" .= blockDataSize bv
-            , "tx" .= blockDataTxs bv
-            , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
-            , "subsidy" .= blockDataSubsidy bv
-            , "fees" .= blockDataFees bv
-            , "outputs" .= blockDataOutputs bv
-            , "work" .= show (blockDataWork bv)
-            , "weight" .= blockDataWeight bv
-            ]
-    toEncoding bv =
-        pairs
-            (  "hash" `pair` text (blockHashToHex (headerHash (blockDataHeader bv)))
-            <> "height" .= blockDataHeight bv
-            <> "mainchain" .= blockDataMainChain bv
-            <> "previous" .= prevBlock (blockDataHeader bv)
-            <> "time" .= blockTimestamp (blockDataHeader bv)
-            <> "version" .= blockVersion (blockDataHeader bv)
-            <> "bits" .= blockBits (blockDataHeader bv)
-            <> "nonce" .= bhNonce (blockDataHeader bv)
-            <> "size" .= blockDataSize bv
-            <> "tx" .= blockDataTxs bv
-            <> "merkle" `pair` text (txHashToHex (TxHash (merkleRoot (blockDataHeader bv))))
-            <> "subsidy" .= blockDataSubsidy bv
-            <> "fees" .= blockDataFees bv
-            <> "outputs" .= blockDataOutputs bv
-            <> "work" .= blockDataWork bv
-            <> "weight" .= blockDataWeight bv)
+blockDataToJSON :: Network -> BlockData -> Value
+blockDataToJSON net bv =
+    object $
+    [ "hash" .= headerHash (blockDataHeader bv)
+    , "height" .= blockDataHeight bv
+    , "mainchain" .= blockDataMainChain bv
+    , "previous" .= prevBlock (blockDataHeader bv)
+    , "time" .= blockTimestamp (blockDataHeader bv)
+    , "version" .= blockVersion (blockDataHeader bv)
+    , "bits" .= blockBits (blockDataHeader bv)
+    , "nonce" .= bhNonce (blockDataHeader bv)
+    , "size" .= blockDataSize bv
+    , "tx" .= blockDataTxs bv
+    , "merkle" .= TxHash (merkleRoot (blockDataHeader bv))
+    , "subsidy" .= blockDataSubsidy bv
+    , "fees" .= blockDataFees bv
+    , "outputs" .= blockDataOutputs bv
+    , "work" .= blockDataWork bv
+    ] <>
+    ["weight" .= blockDataWeight bv | getSegWit net]
+
+blockDataToEncoding :: Network -> BlockData -> Encoding
+blockDataToEncoding net bv =
+    pairs
+        (  "hash" `pair` text (blockHashToHex (headerHash (blockDataHeader bv)))
+        <> "height" .= blockDataHeight bv
+        <> "mainchain" .= blockDataMainChain bv
+        <> "previous" .= prevBlock (blockDataHeader bv)
+        <> "time" .= blockTimestamp (blockDataHeader bv)
+        <> "version" .= blockVersion (blockDataHeader bv)
+        <> "bits" .= blockBits (blockDataHeader bv)
+        <> "nonce" .= bhNonce (blockDataHeader bv)
+        <> "size" .= blockDataSize bv
+        <> "tx" .= blockDataTxs bv
+        <> "merkle" `pair` text (txHashToHex (TxHash (merkleRoot (blockDataHeader bv))))
+        <> "subsidy" .= blockDataSubsidy bv
+        <> "fees" .= blockDataFees bv
+        <> "outputs" .= blockDataOutputs bv
+        <> "work" .= blockDataWork bv
+        <> if getSegWit net then "weight" .= blockDataWeight bv else mempty
+        )
 
 instance FromJSON BlockData where
     parseJSON =
@@ -447,7 +452,7 @@ instance FromJSON BlockData where
             fees <- o .: "fees"
             outputs <- o .: "outputs"
             work <- o .: "work"
-            weight <- o .: "weight"
+            weight <- o .:? "weight" .!= 0
             return
                 BlockData
                     { blockDataHeader =
@@ -497,33 +502,33 @@ storeInputToJSON net StoreInput { inputPoint = OutPoint oph opi
                                 , inputAmount = val
                                 , inputWitness = wit
                                 } =
-    object
-        [ "coinbase" .= False
-        , "txid" .= oph
-        , "output" .= opi
-        , "sigscript" .= String (encodeHex ss)
-        , "sequence" .= sq
-        , "pkscript" .= String (encodeHex ps)
-        , "value" .= val
-        , "address" .= scriptToAddrJSON net ps
-        , "witness" .= fmap (map encodeHex) wit
-        ]
-storeInputToJSON _ StoreCoinbase { inputPoint = OutPoint oph opi
-                                 , inputSequence = sq
-                                 , inputSigScript = ss
-                                 , inputWitness = wit
-                                 } =
-    object
-        [ "coinbase" .= True
-        , "txid" .= oph
-        , "output" .= opi
-        , "sigscript" .= String (encodeHex ss)
-        , "sequence" .= sq
-        , "pkscript" .= Null
-        , "value" .= Null
-        , "address" .= Null
-        , "witness" .= fmap (map encodeHex) wit
-        ]
+    object $
+    [ "coinbase" .= False
+    , "txid" .= oph
+    , "output" .= opi
+    , "sigscript" .= String (encodeHex ss)
+    , "sequence" .= sq
+    , "pkscript" .= String (encodeHex ps)
+    , "value" .= val
+    , "address" .= scriptToAddrJSON net ps
+    ] <>
+    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+storeInputToJSON net StoreCoinbase { inputPoint = OutPoint oph opi
+                                   , inputSequence = sq
+                                   , inputSigScript = ss
+                                   , inputWitness = wit
+                                   } =
+    object $
+    [ "coinbase" .= True
+    , "txid" .= oph
+    , "output" .= opi
+    , "sigscript" .= String (encodeHex ss)
+    , "sequence" .= sq
+    , "pkscript" .= Null
+    , "value" .= Null
+    , "address" .= Null
+    ] <>
+    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
 
 storeInputToEncoding :: Network -> StoreInput -> Encoding
 storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
@@ -542,10 +547,12 @@ storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
         <> "pkscript" `pair` text (encodeHex ps)
         <> "value" .= val
         <> "address" `pair` scriptToAddrEncoding net ps
-        <> "witness" .= fmap (map encodeHex) wit
+        <> if getSegWit net
+           then "witness" .= fmap (map encodeHex) wit
+           else mempty
         )
 
-storeInputToEncoding _ StoreCoinbase { inputPoint = OutPoint oph opi
+storeInputToEncoding net StoreCoinbase { inputPoint = OutPoint oph opi
                                      , inputSequence = sq
                                      , inputSigScript = ss
                                      , inputWitness = wit
@@ -559,7 +566,9 @@ storeInputToEncoding _ StoreCoinbase { inputPoint = OutPoint oph opi
         <> "pkscript" `pair` null_
         <> "value" `pair` null_
         <> "address" `pair` null_
-        <> "witness" .= fmap (map encodeHex) wit
+        <> if getSegWit net
+           then "witness" .= fmap (map encodeHex) wit
+           else mempty
         )
 
 instance FromJSON StoreInput where
@@ -777,30 +786,30 @@ transactionData t =
 
 transactionToJSON :: Network -> Transaction -> Value
 transactionToJSON net dtx =
-    object
-        [ "txid" .= txHash (transactionData dtx)
-        , "size" .= B.length (S.encode (transactionData dtx))
-        , "version" .= transactionVersion dtx
-        , "locktime" .= transactionLockTime dtx
-        , "fee" .=
-          if any isCoinbase (transactionInputs dtx)
-              then 0
-              else inv - outv
-        , "inputs" .= map (storeInputToJSON net) (transactionInputs dtx)
-        , "outputs" .= map (storeOutputToJSON net) (transactionOutputs dtx)
-        , "block" .= transactionBlock dtx
-        , "deleted" .= transactionDeleted dtx
-        , "time" .= transactionTime dtx
-        , "rbf" .= transactionRBF dtx
-        , "weight" .= w
-        ]
+    object $
+    [ "txid" .= txHash (transactionData dtx)
+    , "size" .= B.length (S.encode (transactionData dtx))
+    , "version" .= transactionVersion dtx
+    , "locktime" .= transactionLockTime dtx
+    , "fee" .=
+      if any isCoinbase (transactionInputs dtx)
+          then 0
+          else inv - outv
+    , "inputs" .= map (storeInputToJSON net) (transactionInputs dtx)
+    , "outputs" .= map (storeOutputToJSON net) (transactionOutputs dtx)
+    , "block" .= transactionBlock dtx
+    , "deleted" .= transactionDeleted dtx
+    , "time" .= transactionTime dtx
+    , "rbf" .= transactionRBF dtx
+    ] <>
+    ["weight" .= w | getSegWit net]
   where
     inv = sum (map inputAmount (transactionInputs dtx))
     outv = sum (map outputAmount (transactionOutputs dtx))
     w =
         let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
             x = B.length $ S.encode (transactionData dtx)
-          in b * 3 + x
+         in b * 3 + x
 
 transactionToEncoding :: Network -> Transaction -> Encoding
 transactionToEncoding net dtx =
@@ -816,7 +825,9 @@ transactionToEncoding net dtx =
         <> "deleted" .= transactionDeleted dtx
         <> "time" .= transactionTime dtx
         <> "rbf" .= transactionRBF dtx
-        <> "weight" .= w
+        <> if getSegWit net
+           then "weight" .= w
+           else mempty
         )
   where
     inv = sum (map inputAmount (transactionInputs dtx))

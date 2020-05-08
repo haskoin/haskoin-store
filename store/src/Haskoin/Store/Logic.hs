@@ -180,7 +180,7 @@ importBlock b n = do
             , blockDataHeader = nodeHeader n
             , blockDataSize = fromIntegral (B.length (encode b))
             , blockDataTxs = map txHash (blockTxns b)
-            , blockDataWeight = fromIntegral w
+            , blockDataWeight = if getSegWit net then fromIntegral w else 0
             , blockDataSubsidy = subsidy
             , blockDataFees = cb_out_val - subsidy
             , blockDataOutputs = ts_out_val
@@ -212,12 +212,9 @@ importBlock b n = do
     br pos = BlockRef {blockRefHeight = nodeHeight n, blockRefPos = pos}
     w =
         let s =
-                B.length
-                    (encode
-                         b
-                             { blockTxns =
-                                   map (\t -> t {txWitness = []}) (blockTxns b)
-                             })
+                B.length $
+                encode
+                    b {blockTxns = map (\t -> t {txWitness = []}) (blockTxns b)}
             x = B.length (encode b)
          in s * 3 + x
 

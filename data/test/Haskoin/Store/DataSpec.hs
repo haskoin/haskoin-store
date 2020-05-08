@@ -34,7 +34,9 @@ import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           XPubBal (..), XPubSpec (..),
                                           XPubSummary (..), XPubUnspent (..),
                                           balanceParseJSON, balanceToEncoding,
-                                          balanceToJSON, transactionToEncoding,
+                                          balanceToJSON, blockDataToEncoding,
+                                          blockDataToJSON,
+                                          transactionToEncoding,
                                           transactionToJSON, unspentToEncoding,
                                           unspentToJSON, xPubUnspentToEncoding,
                                           xPubUnspentToJSON)
@@ -79,14 +81,28 @@ spec = do
         prop "identity for block ref" $ \x -> testJSON (x :: BlockRef)
         prop "identity for unspent" . forAll arbitraryNetData $ \(net, x) ->
             testNetJSON parseJSON (unspentToJSON net) (unspentToEncoding net) x
-        prop "identity for block data" $ \x -> testJSON (x :: BlockData)
+        prop "identity for block data" . forAll arbitraryNetData $ \(net, x) ->
+            let x' =
+                    if getSegWit net
+                        then x
+                        else x {blockDataWeight = 0}
+             in testNetJSON
+                    parseJSON
+                    (blockDataToJSON net)
+                    (blockDataToEncoding net)
+                    x'
         prop "identity for spender" $ \x -> testJSON (x :: Spender)
         prop "identity for transaction" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON
-                parseJSON
-                (transactionToJSON net)
-                (transactionToEncoding net)
-                x
+            let f i = i {inputWitness = Nothing}
+                x' =
+                    if getSegWit net
+                        then x
+                        else x {transactionInputs = map f (transactionInputs x)}
+             in testNetJSON
+                    parseJSON
+                    (transactionToJSON net)
+                    (transactionToEncoding net)
+                    x'
         prop "identity for xpub summary" $ \x -> testJSON (x :: XPubSummary)
         prop "identity for xpub unspent" . forAll arbitraryNetData $ \(net, x) ->
             testNetJSON

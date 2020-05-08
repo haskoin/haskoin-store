@@ -73,7 +73,8 @@ import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
                                                 Transaction (..), TxData (..),
                                                 TxId (..), UnixTime, Unspent,
                                                 XPubBal (..), XPubSpec (..),
-                                                balanceToEncoding, isCoinbase,
+                                                balanceToEncoding,
+                                                blockDataToEncoding, isCoinbase,
                                                 nullBalance, transactionData,
                                                 transactionToEncoding,
                                                 unspentToEncoding,
@@ -324,7 +325,7 @@ scottyBestBlock raw = do
         then do
             refuseLargeBlock limits b
             rawBlock b >>= protoSerial proto
-        else protoSerial proto (pruneTx n b)
+        else protoSerialNet proto blockDataToEncoding (pruneTx n b)
 
 scottyBlock :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyBlock raw = do
@@ -341,7 +342,7 @@ scottyBlock raw = do
         then do
             refuseLargeBlock limits b
             rawBlock b >>= protoSerial proto
-        else protoSerial proto (pruneTx n b)
+        else protoSerialNet proto blockDataToEncoding (pruneTx n b)
 
 scottyBlockHeight :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyBlockHeight raw = do
@@ -360,7 +361,7 @@ scottyBlockHeight raw = do
         else do
             blocks <- catMaybes <$> mapM getBlock hs
             let blocks' = map (pruneTx n) blocks
-            protoSerial proto blocks'
+            protoSerialNet proto (list . blockDataToEncoding) blocks'
 
 scottyBlockTime :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyBlockTime raw = do
@@ -377,7 +378,7 @@ scottyBlockTime raw = do
                  Just d -> do
                      refuseLargeBlock limits d
                      Just <$> rawBlock d
-        else maybeSerial proto m
+        else maybeSerialNet proto blockDataToEncoding m
 
 scottyBlockHeights :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlockHeights = do
@@ -387,7 +388,7 @@ scottyBlockHeights = do
     proto <- setupBin
     bhs <- concat <$> mapM getBlocksAtHeight (heights :: [BlockHeight])
     blocks <- map (pruneTx n) . catMaybes <$> mapM getBlock bhs
-    protoSerial proto blocks
+    protoSerialNet proto (list . blockDataToEncoding) blocks
 
 scottyBlockLatest :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBlockLatest = do
@@ -397,7 +398,7 @@ scottyBlockLatest = do
     getBestBlock >>= \case
         Just h -> do
             blocks <- reverse <$> go 100 n h
-            protoSerial proto blocks
+            protoSerialNet proto (list . blockDataToEncoding) blocks
         Nothing -> S.raise ThingNotFound
   where
     go 0 _ _ = return []
@@ -420,7 +421,7 @@ scottyBlocks = do
     n <- parseNoTx
     proto <- setupBin
     bks <- map (pruneTx n) . catMaybes <$> mapM getBlock (nub bhs)
-    protoSerial proto bks
+    protoSerialNet proto (list . blockDataToEncoding) bks
 
 scottyMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMempool = do
