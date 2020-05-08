@@ -40,7 +40,7 @@ import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
                                          OutPoint (..), TxHash)
-import           Haskoin.Store.Common   (Balance (..), BlockData, BlockRef,
+import           Haskoin.Store.Data     (Balance (..), BlockData, BlockRef,
                                          BlockTx (..), Spender, TxData,
                                          UnixTime, Unspent (..), getUnixTime,
                                          putUnixTime)

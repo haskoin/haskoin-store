@@ -26,11 +26,11 @@ import           Data.Word                    (Word32)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash,
                                                headerHash, txHash)
-import           Haskoin.Store.Common         (Balance (..), BlockData (..),
-                                               BlockRef, BlockTx (..), Limit,
-                                               Spender, StoreRead (..),
-                                               StoreWrite (..), TxData (..),
-                                               Unspent (..), applyLimit,
+import           Haskoin.Store.Common         (Limit, StoreRead (..),
+                                               StoreWrite (..), applyLimit)
+import           Haskoin.Store.Data           (Balance (..), BlockData (..),
+                                               BlockRef, BlockTx (..), Spender,
+                                               TxData (..), Unspent (..),
                                                zeroBalance)
 import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
                                                balanceToVal, unspentToVal,

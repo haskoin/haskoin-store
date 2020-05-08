@@ -26,11 +26,12 @@ import           Database.RocksDB.Query       (insert, matching, matchingAsList,
                                                matchingSkip, retrieve)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
-import           Haskoin.Store.Common         (Balance, BlockData,
+import           Haskoin.Store.Common         (Limit, StoreRead (..),
+                                               applyLimit, applyLimitC)
+import           Haskoin.Store.Data           (Balance, BlockData,
                                                BlockRef (..), BlockTx (..),
-                                               Limit, Spender, StoreRead (..),
-                                               TxData, Unspent (..), applyLimit,
-                                               applyLimitC, zeroBalance)
+                                               Spender, TxData, Unspent (..),
+                                               zeroBalance)
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),

@@ -63,9 +63,10 @@ import           Haskoin.Node                  (OnlinePeer (..), Peer,
                                                 managerGetPeers, sendMessage)
 import           Haskoin.Node                  (Chain, PeerManager,
                                                 managerPeerText)
-import           Haskoin.Store.Common          (BlockTx (..), StoreEvent (..),
-                                                StoreRead (..), TxData (..),
-                                                UnixTime, Unspent (..), sortTxs)
+import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
+                                                sortTxs)
+import           Haskoin.Store.Data            (BlockTx (..), TxData (..),
+                                                UnixTime, Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)

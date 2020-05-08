@@ -38,7 +38,7 @@ import           Data.Either               (lefts, rights)
 import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as HashMap
 import qualified Data.HashSet              as HashSet
-import qualified Data.IntMap.Strict        as IntMap
+import qualified Data.IntMap.Strict        as I
 import           Data.List                 (nub, sort)
 import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (catMaybes, mapMaybe)
@@ -68,16 +68,15 @@ import           Haskoin                   (Address, BlockHash,
                                             xPubWitnessAddr)
 import           Haskoin.Node              (Chain, chainGetAncestor,
                                             chainGetBlock, chainGetSplitBlock)
-import           Haskoin.Store.Common      (Balance (..), BlockData (..),
+import           Haskoin.Store.Common      (Limit, Offset, StoreRead (..),
+                                            sortTxs, xPubBals, xPubBalsTxs,
+                                            xPubBalsUnspents, xPubTxs)
+import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             BlockRef (..), BlockTx (..),
-                                            DeriveType (..), Limit, Offset,
-                                            Prev (..), StoreRead (..),
-                                            StoreRead (..), TxData (..),
-                                            Unspent (..), XPubBal (..),
-                                            XPubSpec (..), XPubUnspent (..),
-                                            nullBalance, sortTxs, xPubBals,
-                                            xPubBalsTxs, xPubBalsUnspents,
-                                            xPubTxs)
+                                            DeriveType (..), Prev (..),
+                                            TxData (..), Unspent (..),
+                                            XPubBal (..), XPubSpec (..),
+                                            XPubUnspent (..), nullBalance)
 import           NQE                       (Inbox, Mailbox, receive, send)
 import           System.Random             (randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
@@ -1092,7 +1091,7 @@ sortTxData tds =
 txInputs :: TxData -> [(Address, OutPoint)]
 txInputs td =
     let is = txIn (txData td)
-        ps = IntMap.toAscList (txDataPrevs td)
+        ps = I.toAscList (txDataPrevs td)
         as = map (scriptToAddressBS . prevScript . snd) ps
         f (Right a) i = Just (a, prevOutput i)
         f (Left _) _  = Nothing

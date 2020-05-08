@@ -38,15 +38,16 @@ import           Haskoin                 (Address, Block (..), BlockHash,
                                           genesisNode, headerHash, isGenesis,
                                           nullOutPoint, scriptToAddressBS,
                                           txHash, txHashToHex)
-import           Haskoin.Store.Common    (Balance (..), BlockData (..),
+import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..),
+                                          sortTxs)
+import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),
                                           Prev (..), Spender (..),
                                           StoreInput (..), StoreOutput (..),
-                                          StoreRead (..), StoreWrite (..),
                                           Transaction (..), TxData (..),
                                           UnixTime, Unspent (..), confirmed,
                                           fromTransaction, isCoinbase,
-                                          nullBalance, sortTxs, toTransaction,
+                                          nullBalance, toTransaction,
                                           transactionData)
 import           UnliftIO                (Exception)
 

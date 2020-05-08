@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.25.0
 ### Changed
 - Improve code organisation.
+- Split data definitions and serialisation into its own package.
 
 ## 0.24.0
 ### Changed

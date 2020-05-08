@@ -2,7 +2,7 @@ module Haskoin.Store.CacheSpec (spec) where
 
 import           Data.List             (sort)
 import           Haskoin.Store.Cache   (blockRefScore, scoreBlockRef)
-import           Haskoin.Store.Common  (BlockRef (..))
+import           Haskoin.Store.Data    (BlockRef (..))
 import           Test.Hspec            (Spec, describe)
 import           Test.Hspec.QuickCheck (prop)
 import           Test.QuickCheck       (Gen, choose, forAll, listOf, oneof)

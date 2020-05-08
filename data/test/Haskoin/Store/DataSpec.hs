@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Haskoin.Store.CommonSpec
+module Haskoin.Store.DataSpec
     ( spec
     ) where
 
@@ -23,23 +23,21 @@ import           Haskoin                 (Address (..), BlockHash (..),
                                           TxOut (..), XPubKey (..), bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest, ripemd160, sha256)
-import           Haskoin.Store.Common    (Balance (..), BlockData (..),
+import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),
                                           DeriveType (..), Event (..),
                                           HealthCheck (..),
                                           PeerInformation (..), Prev (..),
-                                          PubExcept (..), Spender (..),
-                                          StoreInput (..), StoreOutput (..),
-                                          Transaction (..), TxData (..),
-                                          TxId (..), Unspent (..), XPubBal (..),
-                                          XPubSpec (..), XPubSummary (..),
-                                          XPubUnspent (..), balanceParseJSON,
-                                          balanceToEncoding, balanceToJSON,
-                                          transactionToEncoding,
+                                          Spender (..), StoreInput (..),
+                                          StoreOutput (..), Transaction (..),
+                                          TxData (..), TxId (..), Unspent (..),
+                                          XPubBal (..), XPubSpec (..),
+                                          XPubSummary (..), XPubUnspent (..),
+                                          balanceParseJSON, balanceToEncoding,
+                                          balanceToJSON, transactionToEncoding,
                                           transactionToJSON, unspentToEncoding,
                                           unspentToJSON, xPubUnspentToEncoding,
                                           xPubUnspentToJSON)
-import           NQE                     ()
 import           Test.Hspec              (Expectation, Spec, describe, shouldBe)
 import           Test.Hspec.QuickCheck   (prop)
 import           Test.QuickCheck         (Arbitrary (..), Gen,
@@ -69,8 +67,6 @@ spec = do
         prop "identity for health check" $ \x -> testSerial (x :: HealthCheck)
         prop "identity for event" $ \x -> testSerial (x :: Event)
         prop "identity for txid" $ \x -> testSerial (x :: TxId)
-        prop "identity for publish exception" $ \x ->
-            testSerial (x :: PubExcept)
         prop "identity for peer info" $ \x -> testSerial (x :: PeerInformation)
     describe "JSON serialization" $ do
         prop "identity for balance" . forAll arbitraryNetData $ \(net, x) ->
@@ -251,6 +247,7 @@ instance Arbitrary HealthCheck where
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
+            <*> arbitrary
 
 instance Arbitrary RejectCode where
     arbitrary =
@@ -263,15 +260,6 @@ instance Arbitrary RejectCode where
             , RejectDust
             , RejectInsufficientFee
             , RejectCheckpoint
-            ]
-
-instance Arbitrary PubExcept where
-    arbitrary =
-        oneof
-            [ pure PubNoPeers
-            , PubReject <$> arbitrary
-            , pure PubTimeout
-            , pure PubPeerDisconnected
             ]
 
 instance Arbitrary XPubKey where

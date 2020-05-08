@@ -1,12 +1,7 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell   #-}
 module Haskoin.Store.Web
     ( -- * Web
       WebConfig (..)
@@ -18,7 +13,6 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.DeepSeq               (NFData)
 import           Control.Monad                 (forever, guard, unless, when,
                                                 (<=<))
 import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
@@ -27,8 +21,7 @@ import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
 import           Control.Monad.Reader          (ReaderT, asks, runReaderT)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
-import           Data.Aeson                    (Encoding, ToJSON (..), object,
-                                                (.=))
+import           Data.Aeson                    (Encoding, ToJSON (..))
 import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
 import qualified Data.ByteString               as B
 import           Data.ByteString.Builder       (lazyByteString)
@@ -42,15 +35,12 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
 import           Data.Serialize                as Serialize
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
-import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
-import qualified Data.Text.Lazy                as T.Lazy
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
-import           GHC.Generics                  (Generic)
 import           Haskoin                       (Address, Block (..),
                                                 BlockHash (..),
                                                 BlockHeader (..), BlockHeight,
@@ -68,21 +58,22 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
                                                 managerGetPeers, sendMessage)
 import           Haskoin.Store.Cache           (CacheT, delXPubKeys, withCache)
-import           Haskoin.Store.Common          (BlockData (..), BlockRef (..),
+import           Haskoin.Store.Common          (Limit, Offset, PubExcept (..),
+                                                StoreEvent (..), StoreRead (..),
+                                                applyOffset, blockAtOrBefore,
+                                                getTransaction)
+import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
-                                                Event (..), GenericResult (..),
-                                                HealthCheck (..), Limit,
-                                                Offset,
+                                                Event (..), Except (..),
+                                                GenericResult (..),
+                                                HealthCheck (..),
                                                 PeerInformation (..),
-                                                PubExcept (..), StoreEvent (..),
-                                                StoreInput (..), StoreRead (..),
+                                                StoreInput (..),
                                                 Transaction (..), TxData (..),
                                                 TxId (..), UnixTime, Unspent,
                                                 XPubBal (..), XPubSpec (..),
-                                                applyOffset, balanceToEncoding,
-                                                blockAtOrBefore, getTransaction,
-                                                isCoinbase, nullBalance,
-                                                transactionData,
+                                                balanceToEncoding, isCoinbase,
+                                                nullBalance, transactionData,
                                                 transactionToEncoding,
                                                 unspentToEncoding,
                                                 xPubBalToEncoding,
@@ -98,42 +89,16 @@ import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
 import           NQE                           (Publisher, receive,
                                                 withSubscription)
+import qualified Paths_haskoin_store           as P (version)
 import           Text.Printf                   (printf)
 import           Text.Read                     (readMaybe)
-import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, askRunInIO,
-                                                liftIO, timeout)
+import           UnliftIO                      (MonadIO, MonadUnliftIO,
+                                                askRunInIO, liftIO, timeout)
 import           Web.Scotty.Internal.Types     (ActionT)
 import           Web.Scotty.Trans              (Parsable, ScottyError)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
-
-data Except
-    = ThingNotFound
-    | ServerError
-    | BadRequest
-    | UserError String
-    | StringError String
-    | BlockTooLarge
-    deriving (Eq, Ord, Serialize, Generic, NFData)
-
-instance Show Except where
-    show ThingNotFound   = "not found"
-    show ServerError     = "you made me kill a unicorn"
-    show BadRequest      = "bad request"
-    show (UserError s)   = s
-    show (StringError _) = "you killed the dragon with your bare hands"
-    show BlockTooLarge   = "block too large"
-
-instance Exception Except
-
-instance ScottyError Except where
-    stringError = StringError
-    showError = T.Lazy.pack . show
-
-instance ToJSON Except where
-    toJSON e = object ["error" .= T.pack (show e)]
 
 data WebConfig =
     WebConfig
@@ -999,6 +964,7 @@ healthCheck net mgr ch tos = do
             , healthSynced = sy
             , healthLastBlock = bd
             , healthLastTx = td
+            , healthVersion = show P.version
             }
   where
     block_hash = headerHash . blockDataHeader

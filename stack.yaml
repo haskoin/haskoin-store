@@ -6,6 +6,9 @@ nix:
     - secp256k1
     - zlib
     - pkg-config
+packages:
+  - store
+  - data
 extra-deps:
   - haskoin-node-0.13.0
   - haskoin-core-0.13.3

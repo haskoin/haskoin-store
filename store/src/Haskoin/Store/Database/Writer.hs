@@ -24,12 +24,11 @@ import           Database.RocksDB              (BatchOp)
 import           Database.RocksDB.Query        (deleteOp, insertOp, writeBatch)
 import           Haskoin                       (Address, BlockHash, BlockHeight,
                                                 OutPoint (..), TxHash)
-import           Haskoin.Store.Common          (Balance, BlockData,
+import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..))
+import           Haskoin.Store.Data            (Balance, BlockData,
                                                 BlockRef (..), BlockTx (..),
-                                                Spender, StoreRead (..),
-                                                StoreWrite (..), TxData,
-                                                Unspent, nullBalance,
-                                                zeroBalance)
+                                                Spender, TxData, Unspent,
+                                                nullBalance, zeroBalance)
 import           Haskoin.Store.Database.Memory (MemoryDatabase (..),
                                                 MemoryState (..),
                                                 emptyMemoryDatabase,
