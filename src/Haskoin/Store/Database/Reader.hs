@@ -1,7 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 module Haskoin.Store.Database.Reader
-    ( DatabaseReader (..)
+    ( -- * RocksDB Database Access
+      DatabaseReader (..)
     , DatabaseReaderT
     , connectRocksDB
     , withDatabaseReader

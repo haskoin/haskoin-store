@@ -6,8 +6,25 @@
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
 module Haskoin.Store.BlockStore
-    ( BlockStoreConfig(..)
+    ( -- * Block Store
+      BlockStore
+    , BlockStoreMessage
+    , BlockStoreConfig(..)
     , blockStore
+    , blockStorePeerConnect
+    , blockStorePeerConnectSTM
+    , blockStorePeerDisconnect
+    , blockStorePeerDisconnectSTM
+    , blockStoreHead
+    , blockStoreHeadSTM
+    , blockStoreBlock
+    , blockStoreBlockSTM
+    , blockStoreNotFound
+    , blockStoreNotFoundSTM
+    , blockStoreTx
+    , blockStoreTxSTM
+    , blockStoreTxHash
+    , blockStoreTxHashSTM
     ) where
 
 import           Control.Applicative           ((<|>))
@@ -46,9 +63,7 @@ import           Haskoin.Node                  (OnlinePeer (..), Peer,
                                                 managerGetPeers, sendMessage)
 import           Haskoin.Node                  (Chain, PeerManager,
                                                 managerPeerText)
-import           Haskoin.Store.Common          (BlockStore,
-                                                BlockStoreMessage (..),
-                                                BlockTx (..), StoreEvent (..),
+import           Haskoin.Store.Common          (BlockTx (..), StoreEvent (..),
                                                 StoreRead (..), TxData (..),
                                                 UnixTime, Unspent (..), sortTxs)
 import           Haskoin.Store.Database.Reader (DatabaseReader)
@@ -58,15 +73,39 @@ import           Haskoin.Store.Logic           (ImportException (TxOrphan),
                                                 deleteTx, getOldMempool,
                                                 importBlock, initBest,
                                                 newMempoolTx, revertBlock)
-import           NQE                           (Inbox, Listen, inboxToMailbox,
-                                                query, receive)
+import           Network.Socket                (SockAddr)
+import           NQE                           (Inbox, Listen, Mailbox,
+                                                inboxToMailbox, query, receive,
+                                                send, sendSTM)
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, TVar, atomically,
-                                                liftIO, modifyTVar, newTVarIO,
-                                                readTVar, readTVarIO, throwIO,
-                                                withAsync, writeTVar)
+                                                MonadUnliftIO, STM, TVar,
+                                                atomically, liftIO, modifyTVar,
+                                                newTVarIO, readTVar, readTVarIO,
+                                                throwIO, withAsync, writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
+
+-- | Messages for block store actor.
+data BlockStoreMessage
+    = BlockNewBest !BlockNode
+      -- ^ new block header in chain
+    | BlockPeerConnect !Peer !SockAddr
+      -- ^ new peer connected
+    | BlockPeerDisconnect !Peer !SockAddr
+      -- ^ peer disconnected
+    | BlockReceived !Peer !Block
+      -- ^ new block received from a peer
+    | BlockNotFound !Peer ![BlockHash]
+      -- ^ block not found
+    | BlockTxReceived !Peer !Tx
+      -- ^ transaction received from peer
+    | BlockTxAvailable !Peer ![TxHash]
+      -- ^ peer has transactions available
+    | BlockPing !(Listen ())
+      -- ^ internal housekeeping ping
+
+-- | Mailbox for block store.
+type BlockStore = Mailbox BlockStoreMessage
 
 data BlockException
     = BlockNotInChain !BlockHash
@@ -412,7 +451,7 @@ processMempool = do
                     t = pendingTxTime p
                     th = txHash tx
                     h x TxOrphan {} = return (Left (Just x))
-                    h _ _ = return (Left Nothing)
+                    h _ _           = return (Left Nothing)
                 let f = do
                         x <- newMempoolTx tx t
                         $(logInfoS) "BlockStore" $
@@ -710,3 +749,49 @@ pingMe mbox =
     forever $ do
         threadDelay =<< liftIO (randomRIO (100 * 1000, 1000 * 1000))
         BlockPing `query` mbox
+
+blockStorePeerConnect :: MonadIO m => Peer -> SockAddr -> BlockStore -> m ()
+blockStorePeerConnect peer addr store = BlockPeerConnect peer addr `send` store
+
+blockStorePeerDisconnect :: MonadIO m => Peer -> SockAddr -> BlockStore -> m ()
+blockStorePeerDisconnect peer addr store =
+    BlockPeerDisconnect peer addr `send` store
+
+blockStoreHead :: MonadIO m => BlockNode -> BlockStore -> m ()
+blockStoreHead node store = BlockNewBest node `send` store
+
+blockStoreBlock :: MonadIO m => Peer -> Block -> BlockStore -> m ()
+blockStoreBlock peer block store = BlockReceived peer block `send` store
+
+blockStoreNotFound :: MonadIO m => Peer -> [BlockHash] -> BlockStore -> m ()
+blockStoreNotFound peer blocks store = BlockNotFound peer blocks `send` store
+
+blockStoreTx :: MonadIO m => Peer -> Tx -> BlockStore -> m ()
+blockStoreTx peer tx store = BlockTxReceived peer tx `send` store
+
+blockStoreTxHash :: MonadIO m => Peer -> [TxHash] -> BlockStore -> m ()
+blockStoreTxHash peer txhashes store =
+    BlockTxAvailable peer txhashes `send` store
+
+blockStorePeerConnectSTM :: Peer -> SockAddr -> BlockStore -> STM ()
+blockStorePeerConnectSTM peer addr store = BlockPeerConnect peer addr `sendSTM` store
+
+blockStorePeerDisconnectSTM :: Peer -> SockAddr -> BlockStore -> STM ()
+blockStorePeerDisconnectSTM peer addr store =
+    BlockPeerDisconnect peer addr `sendSTM` store
+
+blockStoreHeadSTM :: BlockNode -> BlockStore -> STM ()
+blockStoreHeadSTM node store = BlockNewBest node `sendSTM` store
+
+blockStoreBlockSTM :: Peer -> Block -> BlockStore -> STM ()
+blockStoreBlockSTM peer block store = BlockReceived peer block `sendSTM` store
+
+blockStoreNotFoundSTM :: Peer -> [BlockHash] -> BlockStore -> STM ()
+blockStoreNotFoundSTM peer blocks store = BlockNotFound peer blocks `sendSTM` store
+
+blockStoreTxSTM :: Peer -> Tx -> BlockStore -> STM ()
+blockStoreTxSTM peer tx store = BlockTxReceived peer tx `sendSTM` store
+
+blockStoreTxHashSTM :: Peer -> [TxHash] -> BlockStore -> STM ()
+blockStoreTxHashSTM peer txhashes store =
+    BlockTxAvailable peer txhashes `sendSTM` store

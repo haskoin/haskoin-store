@@ -5,11 +5,9 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Haskoin.Store.Common
-    ( BlockStoreMessage(..)
-    , DeriveType(..)
+    ( DeriveType(..)
     , Limit
     , Offset
-    , BlockStore
     , UnixTime
     , getUnixTime
     , putUnixTime
@@ -106,24 +104,23 @@ import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
 import           Data.Word                 (Word32, Word64)
 import           GHC.Generics              (Generic)
-import           Haskoin                   (Address, Block, BlockHash,
+import           Haskoin                   (Address, BlockHash,
                                             BlockHeader (..), BlockHeight,
-                                            BlockNode, BlockWork, KeyIndex,
-                                            Network (..), OutPoint (..),
-                                            PubKeyI (..), RejectCode (..),
-                                            Tx (..), TxHash (..), TxIn (..),
-                                            TxOut (..), WitnessStack,
-                                            XPubKey (..), addrFromJSON,
-                                            addrToEncoding, addrToJSON,
-                                            blockHashToHex, decodeHex,
-                                            deriveAddr, deriveCompatWitnessAddr,
+                                            BlockWork, KeyIndex, Network (..),
+                                            OutPoint (..), PubKeyI (..),
+                                            RejectCode (..), Tx (..),
+                                            TxHash (..), TxIn (..), TxOut (..),
+                                            WitnessStack, XPubKey (..),
+                                            addrFromJSON, addrToEncoding,
+                                            addrToJSON, blockHashToHex,
+                                            decodeHex, deriveAddr,
+                                            deriveCompatWitnessAddr,
                                             deriveWitnessAddr, encodeHex,
                                             headerHash, pubSubKey,
                                             scriptToAddressBS, txHash,
                                             txHashToHex, wrapPubKey)
 import           Haskoin.Node              (Peer)
 import           Network.Socket            (SockAddr)
-import           NQE                       (Listen, Mailbox)
 import qualified Paths_haskoin_store       as P
 
 data DeriveType
@@ -131,28 +128,6 @@ data DeriveType
     | DeriveP2SH
     | DeriveP2WPKH
     deriving (Show, Eq, Generic, NFData, Serialize)
-
--- | Messages for block store actor.
-data BlockStoreMessage
-    = BlockNewBest !BlockNode
-      -- ^ new block header in chain
-    | BlockPeerConnect !Peer !SockAddr
-      -- ^ new peer connected
-    | BlockPeerDisconnect !Peer !SockAddr
-      -- ^ peer disconnected
-    | BlockReceived !Peer !Block
-      -- ^ new block received from a peer
-    | BlockNotFound !Peer ![BlockHash]
-      -- ^ block not found
-    | BlockTxReceived !Peer !Tx
-      -- ^ transaction received from peer
-    | BlockTxAvailable !Peer ![TxHash]
-      -- ^ peer has transactions available
-    | BlockPing !(Listen ())
-      -- ^ internal housekeeping ping
-
--- | Mailbox for block store.
-type BlockStore = Mailbox BlockStoreMessage
 
 data XPubSpec =
     XPubSpec

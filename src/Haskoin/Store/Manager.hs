@@ -22,14 +22,19 @@ import           Haskoin.Node                  (Chain, ChainEvent (..),
                                                 NodeEvent (..), PeerEvent (..),
                                                 PeerManager, WithConnection,
                                                 node)
-import           Haskoin.Store.BlockStore      (BlockStoreConfig (..),
-                                                blockStore)
+import           Haskoin.Store.BlockStore      (BlockStore,
+                                                BlockStoreConfig (..),
+                                                blockStore, blockStoreBlockSTM,
+                                                blockStoreHeadSTM,
+                                                blockStoreNotFoundSTM,
+                                                blockStorePeerConnectSTM,
+                                                blockStorePeerDisconnectSTM,
+                                                blockStoreTxHashSTM,
+                                                blockStoreTxSTM)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheNewTx,
                                                 cacheWriter, connectRedis)
-import           Haskoin.Store.Common          (BlockStore,
-                                                BlockStoreMessage (..),
-                                                StoreEvent (..))
+import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 connectRocksDB,
                                                 withDatabaseReader)
@@ -40,8 +45,8 @@ import           NQE                           (Inbox, Listen, Process (..),
                                                 inboxToMailbox, newInbox,
                                                 receive, sendSTM, withProcess,
                                                 withPublisher, withSubscription)
-import           UnliftIO                      (MonadIO, MonadUnliftIO, link,
-                                                withAsync)
+import           UnliftIO                      (MonadIO, MonadUnliftIO, STM,
+                                                link, withAsync)
 
 -- | Store mailboxes.
 data Store =
@@ -191,29 +196,29 @@ cacheWriterDispatch (StoreTxDeleted th)  = cacheNewTx th
 cacheWriterDispatch _                    = const (return ())
 
 -- | Dispatcher of node events.
-storeDispatch :: BlockStore -> Listen StoreEvent -> Listen NodeEvent
+storeDispatch :: BlockStore -> Listen StoreEvent -> NodeEvent -> STM ()
 
-storeDispatch b pub (PeerEvent (PeerConnected p a)) = do
-    pub (StorePeerConnected p a)
-    BlockPeerConnect p a `sendSTM` b
+storeDispatch b l (PeerEvent (PeerConnected p a)) = do
+    l (StorePeerConnected p a)
+    blockStorePeerConnectSTM p a b
 
-storeDispatch b pub (PeerEvent (PeerDisconnected p a)) = do
-    pub (StorePeerDisconnected p a)
-    BlockPeerDisconnect p a `sendSTM` b
+storeDispatch b l (PeerEvent (PeerDisconnected p a)) = do
+    l (StorePeerDisconnected p a)
+    blockStorePeerDisconnectSTM p a b
 
 storeDispatch b _ (ChainEvent (ChainBestBlock bn)) =
-    BlockNewBest bn `sendSTM` b
+    blockStoreHeadSTM bn b
 
 storeDispatch _ _ (ChainEvent _) = return ()
 
-storeDispatch _ pub (PeerEvent (PeerMessage p (MPong (Pong n)))) =
-    pub (StorePeerPong p n)
+storeDispatch _ l (PeerEvent (PeerMessage p (MPong (Pong n)))) =
+    l (StorePeerPong p n)
 
 storeDispatch b _ (PeerEvent (PeerMessage p (MBlock block))) =
-    BlockReceived p block `sendSTM` b
+    blockStoreBlockSTM p block b
 
 storeDispatch b _ (PeerEvent (PeerMessage p (MTx tx))) =
-    BlockTxReceived p tx `sendSTM` b
+    blockStoreTxSTM p tx b
 
 storeDispatch b _ (PeerEvent (PeerMessage p (MNotFound (NotFound is)))) = do
     let blocks =
@@ -221,19 +226,19 @@ storeDispatch b _ (PeerEvent (PeerMessage p (MNotFound (NotFound is)))) = do
             | InvVector t h <- is
             , t == InvBlock || t == InvWitnessBlock
             ]
-    unless (null blocks) $ BlockNotFound p blocks `sendSTM` b
+    unless (null blocks) $ blockStoreNotFoundSTM p blocks b
 
-storeDispatch b pub (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
+storeDispatch b l (PeerEvent (PeerMessage p (MInv (Inv is)))) = do
     let txs = [TxHash h | InvVector t h <- is, t == InvTx || t == InvWitnessTx]
-    pub (StoreTxAvailable p txs)
-    unless (null txs) $ BlockTxAvailable p txs `sendSTM` b
+    l (StoreTxAvailable p txs)
+    unless (null txs) $ blockStoreTxHashSTM p txs b
 
-storeDispatch _ pub (PeerEvent (PeerMessage p (MReject r))) =
+storeDispatch _ l (PeerEvent (PeerMessage p (MReject r))) =
     when (rejectMessage r == MCTx) $
     case decode (rejectData r) of
         Left _ -> return ()
         Right th ->
-            pub $
+            l $
             StoreTxReject p th (rejectCode r) (getVarString (rejectReason r))
 
 storeDispatch _ _ (PeerEvent _) = return ()

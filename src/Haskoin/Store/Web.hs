@@ -8,8 +8,9 @@
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE TemplateHaskell       #-}
 module Haskoin.Store.Web
-    ( Except (..)
-    , WebConfig (..)
+    ( -- * Web
+      WebConfig (..)
+    , Except (..)
     , WebLimits (..)
     , WebTimeouts (..)
     , runWeb

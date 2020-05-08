@@ -7,6 +7,6 @@ nix:
     - zlib
     - pkg-config
 extra-deps:
-  - haskoin-node-0.12.0
-  - haskoin-core-0.13.1
+  - haskoin-node-0.13.0
+  - haskoin-core-0.13.3
   - secp256k1-haskell-0.2.2
