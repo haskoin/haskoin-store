@@ -45,13 +45,18 @@ import           Data.Maybe                    (catMaybes, listToMaybe,
                                                 mapMaybe)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
+import           Data.Text                     (Text)
+import           Data.Time.Clock.POSIX         (posixSecondsToUTCTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
+import           Data.Time.Format              (defaultTimeLocale, formatTime,
+                                                iso8601DateFormat)
 import           Haskoin                       (Block (..), BlockHash (..),
-                                                BlockHeight, BlockNode (..),
-                                                GetData (..), InvType (..),
-                                                InvVector (..), Message (..),
-                                                Network (..), OutPoint (..),
-                                                Tx (..), TxHash (..), TxIn (..),
+                                                BlockHeader (..), BlockHeight,
+                                                BlockNode (..), GetData (..),
+                                                InvType (..), InvVector (..),
+                                                Message (..), Network (..),
+                                                OutPoint (..), Tx (..),
+                                                TxHash (..), TxIn (..),
                                                 blockHashToHex, headerHash,
                                                 txHash, txHashToHex)
 import           Haskoin.Node                  (OnlinePeer (..), Peer,
@@ -272,11 +277,14 @@ processBlock peer block = do
         checkpeer
         blocknode <- getblocknode
         p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
+        $(logDebugS) "BlockStore" $
+            "Processing block from peer " <> p' <> ": " <>
+            blockText blocknode (blockTxns block)
         lift (runImport (importBlock block blocknode)) >>= \case
             Right deletedtxids -> do
                 listener <- asks (blockConfListener . myConfig)
                 $(logInfoS) "BlockStore" $
-                    "Best block indexed: " <> hexhash <> " from peer " <> p'
+                    "Best block: " <> blockText blocknode (blockTxns block)
                 atomically $ do
                     mapM_ (listener . StoreTxDeleted) deletedtxids
                     listener (StoreBestBlock blockhash)
@@ -620,10 +628,10 @@ syncMe peer =
             $(logDebugS) "BlockStore" $
                 "Requesting block " <> cs (show i) <> "/" <>
                 cs (show (length vectors)) <>
-                ": " <>
-                blockHashToHex (headerHash (nodeHeader bn)) <>
                 " from peer " <>
-                p'
+                p' <>
+                ": " <>
+                blockText bn []
         MGetData (GetData vectors) `sendMessage` peer
   where
     checksyncingpeer =
@@ -800,3 +808,18 @@ blockStoreTxSTM peer tx store = BlockTxReceived peer tx `sendSTM` store
 blockStoreTxHashSTM :: Peer -> [TxHash] -> BlockStore -> STM ()
 blockStoreTxHashSTM peer txhashes store =
     BlockTxAvailable peer txhashes `sendSTM` store
+
+blockText :: BlockNode -> [Tx] -> Text
+blockText bn txs
+   | null txs = height <> sep <> time <> sep <> hash
+   | otherwise = height <> sep <> time <> sep <> txcount <> sep <> hash
+  where
+    height = cs $ show (nodeHeight bn)
+    systime =
+        posixSecondsToUTCTime (fromIntegral (blockTimestamp (nodeHeader bn)))
+    time =
+        cs $
+        formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M")) systime
+    hash = blockHashToHex (headerHash (nodeHeader bn))
+    txcount = cs (show (length txs)) <> " txs"
+    sep = " | "

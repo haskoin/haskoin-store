@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.26.2
 ### Changed
 - Do not use slow Transaction type in Logic.
+- Improve logging while importing blocks.
 
 ## 0.26.1
 ### Fixed
