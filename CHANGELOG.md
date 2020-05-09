@@ -4,14 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## 0.26.2
-### Changed
-- Do not use slow Transaction type in Logic.
-- Improve logging while importing blocks.
-
 ## 0.26.1
 ### Fixed
 - Do not call zadd or zrem in Redis with incorrect argument count.
+
+### Changed
+- Do not use slow Transaction type in Logic.
+- Improve logging while importing blocks.
 
 ## 0.26.0
 ### Changed

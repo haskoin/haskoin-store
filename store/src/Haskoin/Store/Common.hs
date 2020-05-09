@@ -32,8 +32,9 @@ import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import           Data.ByteString           (ByteString)
 import           Data.Function             (on)
+import qualified Data.HashSet              as H
 import           Data.IntMap.Strict        (IntMap)
-import           Data.List                 (nub, partition, sortBy)
+import           Data.List                 (nub, sortBy)
 import           Data.Maybe                (listToMaybe)
 import           Data.Serialize            (Serialize (..))
 import           Data.Word                 (Word32, Word64)
@@ -322,14 +323,14 @@ applyLimitC Nothing  = mapC id
 applyLimitC (Just l) = takeC (fromIntegral l)
 
 sortTxs :: [Tx] -> [(Word32, Tx)]
-sortTxs txs = go $ zip [0 ..] txs
+sortTxs txs = go [] thset $ zip [0 ..] txs
   where
-    go [] = []
-    go ts =
-        let (is, ds) =
-                partition
-                    (all ((`notElem` map (txHash . snd) ts) .
-                          outPointHash . prevOutput) .
-                     txIn . snd)
-                    ts
-         in is <> go ds
+    thset = H.fromList (map txHash txs)
+    go [] _ [] = []
+    go orphans ths [] = go [] ths orphans
+    go orphans ths ((i, tx):xs) =
+      let ops = map (outPointHash . prevOutput) (txIn tx)
+          orp = any (`H.member` ths) ops
+       in if orp
+            then go ((i, tx) : orphans) ths xs
+            else (i, tx) : go orphans (txHash tx `H.delete` ths) xs
