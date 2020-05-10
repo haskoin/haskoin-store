@@ -66,8 +66,8 @@ import           Haskoin                   (Address, BlockHash,
                                             txHash, txHashToHex, xPubAddr,
                                             xPubCompatWitnessAddr, xPubExport,
                                             xPubWitnessAddr)
-import           Haskoin.Node              (Chain, chainGetAncestor,
-                                            chainGetBlock, chainGetSplitBlock)
+import           Haskoin.Node              (Chain, chainBlockMain,
+                                            chainGetAncestor, chainGetBlock)
 import           Haskoin.Store.Common      (Limit, Offset, StoreRead (..),
                                             sortTxs, xPubBals, xPubBalsTxs,
                                             xPubBalsUnspents, xPubTxs)
@@ -630,50 +630,51 @@ newBlockC =
   where
     go newhead cachehead
         | cachehead == newhead = syncMempoolC
-        | otherwise = do
-            ch <- asks cacheChain
-            chainGetBlock newhead ch >>= \case
-                Nothing -> do
-                    $(logErrorS) "Cache" $
-                        "No header for new head: " <> blockHashToHex newhead
-                    throwIO . LogicError . cs $
-                        "No header for new head: " <> blockHashToHex newhead
-                Just newheadnode ->
-                    chainGetBlock cachehead ch >>= \case
-                        Nothing -> do
-                            $(logErrorS) "Cache" $
-                                "No header for cache head: " <>
+        | otherwise =
+            asks cacheChain >>= \ch ->
+                chainBlockMain newhead ch >>= \case
+                    False ->
+                        $(logErrorS) "Cache" $
+                        "New head not in main chain: " <> blockHashToHex newhead
+                    True ->
+                        chainGetBlock cachehead ch >>= \case
+                            Nothing ->
+                                $(logErrorS) "Cache" $
+                                "Cache head block node not found: " <>
                                 blockHashToHex cachehead
-                        Just cacheheadnode -> go2 newheadnode cacheheadnode
-    go2 newheadnode cacheheadnode
-        | nodeHeight cacheheadnode > nodeHeight newheadnode = do
-            $(logErrorS) "Cache" $
-                "Cache head is above new best block: " <>
-                blockHashToHex (headerHash (nodeHeader newheadnode))
-        | otherwise = do
-            ch <- asks cacheChain
-            split <- chainGetSplitBlock cacheheadnode newheadnode ch
-            if split == cacheheadnode
-                then if prevBlock (nodeHeader newheadnode) ==
-                        headerHash (nodeHeader cacheheadnode)
-                         then do
-                             importBlockC (headerHash (nodeHeader newheadnode))
-                             newBlockC
-                         else go3 newheadnode cacheheadnode
-                else removeHeadC >> newBlockC
-    go3 newheadnode cacheheadnode = do
-        ch <- asks cacheChain
-        chainGetAncestor (nodeHeight cacheheadnode + 1) newheadnode ch >>= \case
-            Nothing -> do
-                $(logErrorS) "Cache" $
-                    "Could not get expected ancestor block at height " <>
-                    cs (show (nodeHeight cacheheadnode + 1)) <>
-                    " for: " <>
-                    blockHashToHex (headerHash (nodeHeader newheadnode))
-                throwIO $ LogicError "Could not get expected ancestor block"
-            Just a -> do
-                importBlockC (headerHash (nodeHeader a))
-                newBlockC
+                            Just cacheheadnode ->
+                                chainBlockMain cachehead ch >>= \case
+                                    False -> do
+                                        $(logWarnS) "Cache" $
+                                            "Reverting cache head not in main chain: " <>
+                                            blockHashToHex cachehead
+                                        removeHeadC >> newBlockC
+                                    True ->
+                                        chainGetBlock newhead ch >>= \case
+                                            Nothing -> do
+                                                $(logErrorS) "Cache" $
+                                                    "Cache head node not found: " <>
+                                                    blockHashToHex newhead
+                                                throwIO $
+                                                    LogicError $
+                                                    "Cache head node not found: " <>
+                                                    cs (blockHashToHex newhead)
+                                            Just newheadnode ->
+                                                next newheadnode cacheheadnode
+    next newheadnode cacheheadnode =
+        asks cacheChain >>= \ch ->
+            chainGetAncestor (nodeHeight cacheheadnode + 1) newheadnode ch >>= \case
+                Nothing -> do
+                    let txt =
+                            "Ancestor not found at height " <>
+                            cs (show (nodeHeight cacheheadnode + 1)) <>
+                            " for block: " <>
+                            blockHashToHex (headerHash (nodeHeader newheadnode))
+                    $(logErrorS) "Cache" txt
+                    throwIO $ LogicError $ cs txt
+                Just newcachenode ->
+                    importBlockC (headerHash (nodeHeader newcachenode)) >>
+                    newBlockC
 
 importBlockC :: (MonadUnliftIO m, StoreRead m, MonadLoggerIO m) => BlockHash -> CacheT m ()
 importBlockC bh =
@@ -1021,7 +1022,7 @@ redisAddXPubTxs xpub btxs =
 
 redisRemXPubTxs ::
        (Applicative f, RedisCtx m f) => XPubSpec -> [TxHash] -> m (f Integer)
-redisRemXPubTxs _ [] = return (pure 0)
+redisRemXPubTxs _ []      = return (pure 0)
 redisRemXPubTxs xpub txhs = zrem (txSetPfx <> encode xpub) (map encode txhs)
 
 redisAddXPubUnspents ::
