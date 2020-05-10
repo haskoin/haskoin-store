@@ -29,7 +29,6 @@ import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
-import           Data.List                     (nub)
 import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 listToMaybe, mapMaybe)
 import           Data.Serialize                as Serialize
@@ -62,7 +61,7 @@ import           Haskoin.Store.Cache           (CacheT, delXPubKeys, withCache)
 import           Haskoin.Store.Common          (Limit, Offset, PubExcept (..),
                                                 StoreEvent (..), StoreRead (..),
                                                 applyOffset, blockAtOrBefore,
-                                                getTransaction)
+                                                getTransaction, nub)
 import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
                                                 Event (..), Except (..),

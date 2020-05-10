@@ -1,6 +1,7 @@
 {-# LANGUAGE ApplicativeDo        #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE OverloadedStrings    #-}
@@ -47,7 +48,7 @@ import           Data.Serialize            (Serialize)
 import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
 import           Data.Time.Clock.System    (getSystemTime, systemSeconds)
-import           Data.Word                 (Word64)
+import           Data.Word                 (Word32, Word64)
 import           Database.Redis            (Connection, Redis, RedisCtx, Reply,
                                             checkedConnect, defaultConnectInfo,
                                             hgetall, parseConnectInfo, zadd,
@@ -78,7 +79,7 @@ import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             XPubBal (..), XPubSpec (..),
                                             XPubUnspent (..), nullBalance)
 import           NQE                       (Inbox, Mailbox, receive, send)
-import           System.Random             (randomRIO)
+import           System.Random             (randomIO, randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             bracket, liftIO, throwIO)
 import           UnliftIO.Concurrent       (threadDelay)
@@ -427,7 +428,7 @@ mempoolSetKey :: ByteString
 mempoolSetKey = "mempool"
 
 lockKey :: ByteString
-lockKey = "lock"
+lockKey = "xpub"
 
 importLockKey :: ByteString
 importLockKey = "import"
@@ -463,22 +464,29 @@ cacheWriter cfg inbox = runReaderT go cfg
             x <- receive inbox
             cacheWriterReact x
 
-lockIt :: MonadLoggerIO m => ByteString -> CacheT m Bool
+lockIt :: MonadLoggerIO m => ByteString -> CacheT m (Maybe Word32)
 lockIt k = do
-    go >>= \case
-        Right Redis.Ok -> return True
+    rnd <- liftIO randomIO
+    go rnd >>= \case
+        Right Redis.Ok -> do
+            $(logDebugS) "Cache" $
+                "Acquired " <> cs k <> " lock with value " <> cs (show rnd)
+            return (Just rnd)
         Right Redis.Pong -> do
-            $(logErrorS) "Cache" $ "Got unexpected Pong from Redis"
-            return False
+            $(logErrorS) "Cache" $
+                "Unexpected pong when acquiring " <> cs k <> " lock"
+            return Nothing
         Right (Redis.Status s) -> do
-            $(logErrorS) "Cache" $ "Got unexpected status from Redis: " <> cs s
-            return False
-        Left (Redis.Bulk Nothing) -> return False
+            $(logErrorS) "Cache" $
+                "Unexpected status acquiring " <> cs k <> " lock: " <> cs s
+            return Nothing
+        Left (Redis.Bulk Nothing) -> return Nothing
         Left e -> do
-            $(logErrorS) "Cache" $ "Error when trying to acquire lock"
+            $(logErrorS) "Cache" $
+                "Error when trying to acquire " <> cs k <> " lock"
             throwIO (RedisError e)
   where
-    go = do
+    go rnd = do
         conn <- asks cacheConn
         liftIO . Redis.runRedis conn $ do
             let opts =
@@ -487,35 +495,58 @@ lockIt k = do
                         , Redis.setMilliseconds = Nothing
                         , Redis.setCondition = Just Redis.Nx
                         }
-            Redis.setOpts k "l" opts
+            Redis.setOpts k (cs (show rnd)) opts
 
 
-unlockIt :: MonadLoggerIO m => ByteString -> CacheT m ()
-unlockIt k = runRedis (Redis.del [k]) >> return ()
+unlockIt :: MonadLoggerIO m => ByteString -> Maybe Word32 -> CacheT m ()
+unlockIt _ Nothing = return ()
+unlockIt k (Just i) =
+    runRedis (Redis.get k) >>= \case
+        Nothing ->
+            $(logErrorS) "Cache" $
+            "Not releasing " <> cs k <> " lock with value " <> cs (show i) <>
+            ": not locked"
+        Just bs ->
+            if read (cs bs) == i
+                then do
+                    runRedis (Redis.del [k]) >> return ()
+                    $(logDebugS) "Cache" $
+                        "Released " <> cs k <> " lock with value " <>
+                        cs (show i)
+                else do
+                    $(logErrorS) "Cache" $
+                        "Could not release " <> cs k <> " lock: value is not " <>
+                        cs (show i)
 
 withLock ::
-       (MonadLoggerIO m, MonadUnliftIO m) => ByteString -> CacheT m a -> CacheT m (Maybe a)
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => ByteString
+    -> CacheT m a
+    -> CacheT m (Maybe a)
 withLock k f =
-    bracket (lockIt k) (const (unlockIt k)) $ \case
-        True -> Just <$> f
-        False -> return Nothing
+    bracket (lockIt k) (unlockIt k) $ \case
+        Just _ -> Just <$> f
+        Nothing -> return Nothing
 
 withLockWait ::
        (MonadLoggerIO m, MonadUnliftIO m)
     => ByteString
     -> CacheT m a
     -> CacheT m a
-withLockWait k f =
-    withLock k f >>= \case
-        Just x -> return x
-        Nothing -> do
-            r <- liftIO $ randomRIO (500, 10000)
-            threadDelay r
-            withLockWait k f
+withLockWait k f = do
+    $(logDebugS) "Cache" $ "Acquiring " <> cs k <> " lock…"
+    go
+  where
+    go =
+        withLock k f >>= \case
+            Just x -> return x
+            Nothing -> do
+                r <- liftIO $ randomRIO (500, 10000)
+                threadDelay r
+                go
 
 pruneDB :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m Integer
-pruneDB =
-    withLockWait lockKey $
+pruneDB = do
     isAnythingCached >>= \case
         True -> do
             x <- asks cacheMax
@@ -528,13 +559,14 @@ pruneDB =
     flush n = do
         case min 1000 (n `div` 64) of
             0 -> return 0
-            x -> do
-                ks <-
-                    fmap (map fst) . runRedis $
-                    getFromSortedSet maxKey Nothing 0 (Just x)
-                $(logDebugS) "Cache" $
-                    "Pruning " <> cs (show (length ks)) <> " old xpubs"
-                delXPubKeys ks
+            x ->
+                withLockWait lockKey $ do
+                    ks <-
+                        fmap (map fst) . runRedis $
+                        getFromSortedSet maxKey Nothing 0 (Just x)
+                    $(logDebugS) "Cache" $
+                        "Pruning " <> cs (show (length ks)) <> " old xpubs"
+                    delXPubKeys ks
 
 touchKeys :: MonadLoggerIO m => [XPubSpec] -> CacheT m ()
 touchKeys xpubs = do
@@ -616,20 +648,23 @@ newXPubC xpub =
             return $ b >> c >> d >> e >> return ()
 
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheT m ()
-newBlockC =
-    withLockWait importLockKey $
-    isAnythingCached >>= \case
-        False -> return ()
-        True ->
-            cachePrime >>= \case
-                Nothing -> return ()
-                Just cachehead ->
-                    lift getBestBlock >>= \case
-                        Nothing -> return ()
-                        Just newhead -> go newhead cachehead
+newBlockC = withLockWait importLockKey f
   where
+    f =
+        isAnythingCached >>= \case
+            False ->
+                $(logDebugS) "Cache" "Not syncing blocks because cache is empty"
+            True ->
+                cachePrime >>= \case
+                    Nothing -> return ()
+                    Just cachehead ->
+                        lift getBestBlock >>= \case
+                            Nothing -> return ()
+                            Just newhead -> go newhead cachehead
     go newhead cachehead
-        | cachehead == newhead = syncMempoolC
+        | cachehead == newhead = do
+            $(logDebugS) "Cache" $ "Blocks in sync: " <> blockHashToHex cachehead
+            syncMempoolC
         | otherwise =
             asks cacheChain >>= \ch ->
                 chainBlockMain newhead ch >>= \case
@@ -648,7 +683,7 @@ newBlockC =
                                         $(logWarnS) "Cache" $
                                             "Reverting cache head not in main chain: " <>
                                             blockHashToHex cachehead
-                                        removeHeadC >> newBlockC
+                                        removeHeadC >> f
                                     True ->
                                         chainGetBlock newhead ch >>= \case
                                             Nothing -> do
@@ -673,8 +708,7 @@ newBlockC =
                     $(logErrorS) "Cache" txt
                     throwIO $ LogicError $ cs txt
                 Just newcachenode ->
-                    importBlockC (headerHash (nodeHeader newcachenode)) >>
-                    newBlockC
+                    importBlockC (headerHash (nodeHeader newcachenode)) >> f
 
 importBlockC :: (MonadUnliftIO m, StoreRead m, MonadLoggerIO m) => BlockHash -> CacheT m ()
 importBlockC bh =
@@ -743,7 +777,6 @@ importMultiTxC txs = do
             "Affected xpub " <> cs (show i) <> "/" <> cs (show (length xpubs)) <>
             ": " <>
             xpubtxt
-    $(logDebugS) "Cache" $ "Acquiring lock…"
     addrs' <-
         withLockWait lockKey $ do
             $(logDebugS) "Cache" $
@@ -873,7 +906,6 @@ cacheAddAddresses addrs = do
     utxomap <- HashMap.fromListWith (<>) <$> mapM (uncurry getutxo) addrs
     $(logDebugS) "Cache" $ "Getting transactions…"
     txmap <- HashMap.fromListWith (<>) <$> mapM (uncurry gettxmap) addrs
-    $(logDebugS) "Cache" $ "Acquiring lock…"
     withLockWait lockKey $ do
         $(logDebugS) "Cache" $ "Running Redis pipeline…"
         runRedis $ do

@@ -15,7 +15,7 @@ import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
 import           Data.Function                (on)
 import           Data.IntMap                  (IntMap)
 import qualified Data.IntMap.Strict           as I
-import           Data.List                    (nub, sortBy)
+import           Data.List                    (sortBy)
 import           Data.Maybe                   (fromMaybe)
 import           Data.Word                    (Word32)
 import           Database.RocksDB             (Compression (..), DB,
@@ -27,7 +27,7 @@ import           Database.RocksDB.Query       (insert, matching, matchingAsList,
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common         (Limit, StoreRead (..),
-                                               applyLimit, applyLimitC)
+                                               applyLimit, applyLimitC, nub)
 import           Haskoin.Store.Data           (Balance, BlockData,
                                                BlockRef (..), BlockTx (..),
                                                Spender, TxData, Unspent (..),

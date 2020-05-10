@@ -17,14 +17,14 @@ import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as M
 import           Data.IntMap.Strict            (IntMap)
 import qualified Data.IntMap.Strict            as I
-import           Data.List                     (nub)
 import           Data.Maybe                    (fromJust, fromMaybe, isJust,
                                                 maybeToList)
 import           Database.RocksDB              (BatchOp)
 import           Database.RocksDB.Query        (deleteOp, insertOp, writeBatch)
 import           Haskoin                       (Address, BlockHash, BlockHeight,
                                                 OutPoint (..), TxHash)
-import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..))
+import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..),
+                                                nub)
 import           Haskoin.Store.Data            (Balance, BlockData,
                                                 BlockRef (..), BlockTx (..),
                                                 Spender, TxData, Unspent,

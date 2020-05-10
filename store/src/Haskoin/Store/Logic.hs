@@ -22,7 +22,7 @@ import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
 import qualified Data.IntMap.Strict      as I
-import           Data.List               (nub, sort)
+import           Data.List               (sort)
 import           Data.Maybe              (fromMaybe, isNothing)
 import           Data.Serialize          (encode)
 import           Data.String             (fromString)
@@ -39,7 +39,7 @@ import           Haskoin                 (Address, Block (..), BlockHash,
                                           isGenesis, nullOutPoint,
                                           scriptToAddressBS, txHash,
                                           txHashToHex)
-import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..),
+import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..), nub,
                                           sortTxs)
 import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),

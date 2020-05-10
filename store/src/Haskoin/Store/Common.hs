@@ -22,6 +22,7 @@ module Haskoin.Store.Common
     , applyLimitC
     , applyOffsetLimitC
     , sortTxs
+    , nub
     ) where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
@@ -32,9 +33,10 @@ import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import           Data.ByteString           (ByteString)
 import           Data.Function             (on)
+import           Data.Hashable             (Hashable)
 import qualified Data.HashSet              as H
 import           Data.IntMap.Strict        (IntMap)
-import           Data.List                 (nub, sortBy)
+import           Data.List                 (sortBy)
 import           Data.Maybe                (listToMaybe)
 import           Data.Serialize            (Serialize (..))
 import           Data.Word                 (Word32, Word64)
@@ -334,3 +336,6 @@ sortTxs txs = go [] thset $ zip [0 ..] txs
        in if orp
             then go ((i, tx) : orphans) ths xs
             else (i, tx) : go orphans (txHash tx `H.delete` ths) xs
+
+nub :: (Eq a, Hashable a) => [a] -> [a]
+nub = H.toList . H.fromList
