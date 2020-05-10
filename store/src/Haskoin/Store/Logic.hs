@@ -226,18 +226,19 @@ importTx ::
     -> Tx
     -> m [TxHash] -- ^ deleted transactions
 importTx br tt tx = do
-    unless (confirmed br) $
+    unless (confirmed br) $ do
         $(logDebugS) "BlockStore" $
-        "Importing transaction " <> txHashToHex (txHash tx)
-    when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
-        $(logErrorS) "BlockStore" $
-            "Transaction spends same output twice: " <> txHashToHex (txHash tx)
-        throwError (DuplicatePrevOutput (txHashToHex (txHash tx)))
-    when (iscb && not (confirmed br)) $ do
-        $(logErrorS) "BlockStore" $
-            "Coinbase cannot be imported into mempool: " <>
-            txHashToHex (txHash tx)
-        throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
+            "Importing transaction " <> txHashToHex (txHash tx)
+        when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
+            $(logErrorS) "BlockStore" $
+                "Transaction spends same output twice: " <>
+                txHashToHex (txHash tx)
+            throwError (DuplicatePrevOutput (txHashToHex (txHash tx)))
+        when iscb $ do
+            $(logErrorS) "BlockStore" $
+                "Coinbase cannot be imported into mempool: " <>
+                txHashToHex (txHash tx)
+            throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
     us' <-
         if iscb
             then return []
@@ -462,16 +463,17 @@ isRBF ::
     => BlockRef
     -> Tx
     -> m Bool
-isRBF br tx =
-    getNetwork >>= \net ->
-        if getReplaceByFee net
-            then go
-            else return False
+isRBF br tx
+    | confirmed br = return False
+    | otherwise =
+        getNetwork >>= \net ->
+            if getReplaceByFee net
+                then go
+                else return False
   where
     go
         | all (== nullOutPoint) (map prevOutput (txIn tx)) = return False
         | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) = return True
-        | confirmed br = return False
         | otherwise =
             let hs = nub $ map (outPointHash . prevOutput) (txIn tx)
                 ck [] = return False
