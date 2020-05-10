@@ -689,11 +689,15 @@ importBlockC bh =
     go bd = do
         let ths = blockDataTxs bd
         tds <- sortTxData . catMaybes <$> mapM (lift . getTxData) ths
-        $(logInfoS) "Cache" $
+        $(logDebugS) "Cache" $
             "Importing " <> cs (show (length tds)) <>
             " transactions from block " <>
             blockHashToHex bh
         importMultiTxC tds
+        $(logInfoS) "Cache" $
+            "Done importing " <> cs (show (length tds)) <>
+            " transactions from block " <>
+            blockHashToHex bh
         cacheSetHead bh
 
 removeHeadC :: (StoreRead m, MonadUnliftIO m, MonadLoggerIO m) => CacheT m ()
@@ -705,8 +709,11 @@ removeHeadC =
             tds <-
                 sortTxData . catMaybes <$>
                 mapM (lift . getTxData) (blockDataTxs bd)
-            $(logWarnS) "Cache" $ "Reverting head: " <> blockHashToHex bh
+            $(logDebugS) "Cache" $ "Reverting head: " <> blockHashToHex bh
             importMultiTxC tds
+            $(logWarnS) "Cache" $
+                "Reverted block head " <> blockHashToHex bh <> " to parent " <>
+                blockHashToHex (prevBlock (blockDataHeader bd))
             cacheSetHead (prevBlock (blockDataHeader bd))
 
 importMultiTxC ::
@@ -714,13 +721,18 @@ importMultiTxC ::
     => [TxData]
     -> CacheT m ()
 importMultiTxC txs = do
-    forM_ (zip [(1 :: Int) ..] txs) $ \(i, tx) ->
-        $(logDebugS) "Cache" $
-        "Import tx " <> cs (show i) <> "/" <> cs (show (length txs)) <> ": " <>
-        txHashToHex (txHash (txData tx))
+    $(logDebugS) "Cache" $ "Processing " <> cs (show (length txs)) <> " txs…"
+    $(logDebugS) "Cache" $
+        "Getting address information for " <> cs (show (length alladdrs)) <>
+        "addresses…"
     addrmap <- getaddrmap
     let addrs = HashMap.keys addrmap
+    $(logDebugS) "Cache" $
+        "Getting balances for " <> cs (show (HashMap.size addrmap)) <>
+        " addresses…"
     balmap <- getbalances addrs
+    $(logDebugS) "Cache" $
+        "Getting unspent data for " <> cs (show (length allops)) <> " outputs…"
     unspentmap <- getunspents
     gap <- getMaxGap
     now <- systemSeconds <$> liftIO getSystemTime
@@ -731,15 +743,20 @@ importMultiTxC txs = do
             "Affected xpub " <> cs (show i) <> "/" <> cs (show (length xpubs)) <>
             ": " <>
             xpubtxt
+    $(logDebugS) "Cache" $ "Acquiring lock…"
     addrs' <-
-        withLockWait lockKey $
-        getxbals xpubs >>= \xmap -> do
+        withLockWait lockKey $ do
+            $(logDebugS) "Cache" $
+                "Getting xpub balances for " <> cs (show (length xpubs)) <> "…"
+            xmap <- getxbals xpubs
             let addrmap' = faddrmap (HashMap.keysSet xmap) addrmap
+            $(logDebugS) "Cache" $ "Starting Redis import pipeline…"
             runRedis $ do
                 x <- redisImportMultiTx addrmap' unspentmap txs
                 y <- redisUpdateBalances addrmap' balmap
                 z <- redisTouchKeys now (HashMap.keys xmap)
                 return $ x >> y >> z >> return ()
+            $(logDebugS) "Cache" $ "Completed Redis pipeline"
             return $ getNewAddrs gap xmap (HashMap.elems addrmap')
     cacheAddAddresses addrs'
   where
@@ -840,19 +857,27 @@ cacheAddAddresses ::
        (StoreRead m, MonadUnliftIO m, MonadLoggerIO m)
     => [(Address, AddressXPub)]
     -> CacheT m ()
-cacheAddAddresses [] = return ()
+cacheAddAddresses [] = $(logDebugS) "Cache" "No further addresses to add"
 cacheAddAddresses addrs = do
     $(logDebugS) "Cache" $
         "Adding " <> cs (show (length addrs)) <> " new generated addresses"
+    $(logDebugS) "Cache" $ "Getting balances…"
     balmap <- HashMap.fromListWith (<>) <$> mapM (uncurry getbal) addrs
+    $(logDebugS) "Cache" $ "Getting unspent outputs…"
     utxomap <- HashMap.fromListWith (<>) <$> mapM (uncurry getutxo) addrs
+    $(logDebugS) "Cache" $ "Getting transactions…"
     txmap <- HashMap.fromListWith (<>) <$> mapM (uncurry gettxmap) addrs
-    runRedis $ do
-        a <- forM (HashMap.toList balmap) (uncurry redisAddXPubBalances)
-        b <- forM (HashMap.toList utxomap) (uncurry redisAddXPubUnspents)
-        c <- forM (HashMap.toList txmap) (uncurry redisAddXPubTxs)
-        return $ sequence a >> sequence b >> sequence c >> return ()
+    $(logDebugS) "Cache" $ "Acquiring lock…"
+    withLockWait lockKey $ do
+        $(logDebugS) "Cache" $ "Running Redis pipeline…"
+        runRedis $ do
+            a <- forM (HashMap.toList balmap) (uncurry redisAddXPubBalances)
+            b <- forM (HashMap.toList utxomap) (uncurry redisAddXPubUnspents)
+            c <- forM (HashMap.toList txmap) (uncurry redisAddXPubTxs)
+            return $ sequence a >> sequence b >> sequence c >> return ()
+        $(logDebugS) "Cache" $ "Completed Redis pipeline"
     let xpubs = nub (map addressXPubSpec (Map.elems amap))
+    $(logDebugS) "Cache" $ "Getting xpub balances…"
     xmap <- getbals xpubs
     gap <- getMaxGap
     let notnulls = getnotnull balmap
