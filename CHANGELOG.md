@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Don't do certain validity checks on confirmed transactions.
 
+### Fixed
+- Do not crash when syncing the blockchain from scratch on a populated cache.
+
 ## 0.26.3
 ### Changed
 - Replace nub function everywhere with faster version written using hash sets.

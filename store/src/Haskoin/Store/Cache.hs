@@ -663,7 +663,8 @@ newBlockC = withLockWait importLockKey f
                             Just newhead -> go newhead cachehead
     go newhead cachehead
         | cachehead == newhead = do
-            $(logDebugS) "Cache" $ "Blocks in sync: " <> blockHashToHex cachehead
+            $(logDebugS) "Cache" $
+                "Blocks in sync: " <> blockHashToHex cachehead
             syncMempoolC
         | otherwise =
             asks cacheChain >>= \ch ->
@@ -700,13 +701,11 @@ newBlockC = withLockWait importLockKey f
         asks cacheChain >>= \ch ->
             chainGetAncestor (nodeHeight cacheheadnode + 1) newheadnode ch >>= \case
                 Nothing -> do
-                    let txt =
-                            "Ancestor not found at height " <>
-                            cs (show (nodeHeight cacheheadnode + 1)) <>
-                            " for block: " <>
-                            blockHashToHex (headerHash (nodeHeader newheadnode))
-                    $(logErrorS) "Cache" txt
-                    throwIO $ LogicError $ cs txt
+                    $(logErrorS) "Cache" $
+                        "Ancestor not found at height " <>
+                        cs (show (nodeHeight cacheheadnode + 1)) <>
+                        " for block: " <>
+                        blockHashToHex (headerHash (nodeHeader newheadnode))
                 Just newcachenode ->
                     importBlockC (headerHash (nodeHeader newcachenode)) >> f
 
