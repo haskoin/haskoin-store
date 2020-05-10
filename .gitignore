@@ -20,8 +20,6 @@ cabal.project.local
 cabal.project.local~
 .HTF/
 .ghc.environment.*
-haskoin-store.cabal
-haskoin-store-data.cabal
 TAGS
 .idea/
 *.iml
