@@ -39,7 +39,7 @@ import           Data.HashMap.Strict       (HashMap)
 import qualified Data.HashMap.Strict       as HashMap
 import qualified Data.HashSet              as HashSet
 import qualified Data.IntMap.Strict        as I
-import           Data.List                 (nub, sort)
+import           Data.List                 (sort)
 import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (catMaybes, mapMaybe)
 import           Data.Serialize            (decode, encode)
@@ -724,7 +724,7 @@ importMultiTxC txs = do
     $(logDebugS) "Cache" $ "Processing " <> cs (show (length txs)) <> " txs…"
     $(logDebugS) "Cache" $
         "Getting address information for " <> cs (show (length alladdrs)) <>
-        "addresses…"
+        " addresses…"
     addrmap <- getaddrmap
     let addrs = HashMap.keys addrmap
     $(logDebugS) "Cache" $
@@ -736,7 +736,7 @@ importMultiTxC txs = do
     unspentmap <- getunspents
     gap <- getMaxGap
     now <- systemSeconds <$> liftIO getSystemTime
-    let xpubs = allxpubs addrmap
+    let xpubs = allxpubsls addrmap
     forM_ (zip [(1 :: Int) ..] xpubs) $ \(i, xpub) -> do
         xpubtxt <- xpubText xpub
         $(logDebugS) "Cache" $
@@ -747,7 +747,8 @@ importMultiTxC txs = do
     addrs' <-
         withLockWait lockKey $ do
             $(logDebugS) "Cache" $
-                "Getting xpub balances for " <> cs (show (length xpubs)) <> "…"
+                "Getting xpub balances for " <> cs (show (length xpubs)) <>
+                " xpubs…"
             xmap <- getxbals xpubs
             let addrmap' = faddrmap (HashMap.keysSet xmap) addrmap
             $(logDebugS) "Cache" $ "Starting Redis import pipeline…"
@@ -760,10 +761,11 @@ importMultiTxC txs = do
             return $ getNewAddrs gap xmap (HashMap.elems addrmap')
     cacheAddAddresses addrs'
   where
+    alladdrsls = HashSet.toList alladdrs
     faddrmap xmap = HashMap.filter (\a -> addressXPubSpec a `elem` xmap)
     getaddrmap =
-        HashMap.fromList . catMaybes . zipWith (\a -> fmap (a, )) alladdrs <$>
-        cacheGetAddrsInfo alladdrs
+        HashMap.fromList . catMaybes . zipWith (\a -> fmap (a, )) alladdrsls <$>
+        cacheGetAddrsInfo alladdrsls
     getunspents =
         HashMap.fromList . catMaybes . zipWith (\p -> fmap (p, )) allops <$>
         lift (mapM getUnspent allops)
@@ -776,8 +778,12 @@ importMultiTxC txs = do
                 return $ (xpub, ) <$> bs
         return $ HashMap.filter (not . null) (HashMap.fromList bals)
     allops = map snd $ concatMap txInputs txs <> concatMap txOutputs txs
-    alladdrs = nub . map fst $ concatMap txInputs txs <> concatMap txOutputs txs
-    allxpubs addrmap = nub . map addressXPubSpec $ HashMap.elems addrmap
+    alladdrs =
+        HashSet.fromList . map fst $
+        concatMap txInputs txs <> concatMap txOutputs txs
+    allxpubsls addrmap = HashSet.toList (allxpubs addrmap)
+    allxpubs addrmap =
+        HashSet.fromList . map addressXPubSpec $ HashMap.elems addrmap
 
 redisImportMultiTx ::
        (Monad f, RedisCtx m f)
@@ -876,7 +882,7 @@ cacheAddAddresses addrs = do
             c <- forM (HashMap.toList txmap) (uncurry redisAddXPubTxs)
             return $ sequence a >> sequence b >> sequence c >> return ()
         $(logDebugS) "Cache" $ "Completed Redis pipeline"
-    let xpubs = nub (map addressXPubSpec (Map.elems amap))
+    let xpubs = HashSet.toList . HashSet.fromList . map addressXPubSpec $ Map.elems amap
     $(logDebugS) "Cache" $ "Getting xpub balances…"
     xmap <- getbals xpubs
     gap <- getMaxGap
