@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.26.5'
+  version: '0.26.6'
   title: Bitcoin Cash (BCH) & Bitcoin Segwit (BTC) Block Chain API
   contact:
     name: Jean-Pierre Rupp
@@ -152,6 +152,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/addressesParam'
         - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/offsetParam'
         - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
@@ -327,6 +328,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/addressesParam'
         - $ref: '#/components/parameters/heightParam'
+        - $ref: '#/components/parameters/offsetParam'
         - $ref: '#/components/parameters/limitParam'
       responses:
         '200':
@@ -1022,6 +1024,7 @@ paths:
         - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/offsetParam'
         - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
@@ -1058,6 +1061,7 @@ paths:
         - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/offsetParam'
         - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':
@@ -1166,6 +1170,7 @@ paths:
         - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/heightParam'
         - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/offsetParam'
         - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':

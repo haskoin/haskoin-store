@@ -529,12 +529,13 @@ scottyAddressesTxs full = do
     setHeaders
     as <- parseAddresses
     s <- getStart
+    o <- getOffset
     l <- getLimit full
     proto <- setupBin
     if full
-        then getAddressesTxsFull l s as >>=
+        then getAddressesTxsFull o l s as >>=
              protoSerialNet proto (list . transactionToEncoding)
-        else getAddressesTxsLimit l s as >>= protoSerial proto
+        else getAddressesTxsLimit o l s as >>= protoSerial proto
 
 scottyAddressUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressUnspent = do
@@ -552,9 +553,10 @@ scottyAddressesUnspent = do
     setHeaders
     as <- parseAddresses
     s <- getStart
+    o <- getOffset
     l <- getLimit False
     proto <- setupBin
-    uns <- getAddressesUnspentsLimit l s as
+    uns <- getAddressesUnspentsLimit o l s as
     protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -593,8 +595,9 @@ scottyXpubTxs full = do
     xpub <- parseXpub
     start <- getStart
     limit <- getLimit full
+    o <- getOffset
     proto <- setupBin
-    txs <- xPubTxs xpub start 0 limit
+    txs <- xPubTxs xpub start o limit
     if full
         then do
             txs' <-
@@ -1087,22 +1090,24 @@ getAddressTxsFull offset limit start addr = do
 
 getAddressesTxsLimit ::
        (Monad m, StoreRead m)
-    => Maybe Limit
+    => Offset
+    -> Maybe Limit
     -> Maybe BlockRef
     -> [Address]
     -> m [BlockTx]
-getAddressesTxsLimit limit start addrs =
-    getAddressesTxs addrs start limit
+getAddressesTxsLimit offset limit start addrs =
+    applyOffset offset <$> getAddressesTxs addrs start ((offset +) <$> limit)
 
 getAddressesTxsFull ::
        (Monad m, StoreRead m)
-    => Maybe Limit
+    => Offset
+    -> Maybe Limit
     -> Maybe BlockRef
     -> [Address]
     -> m [Transaction]
-getAddressesTxsFull limit start addrs =
+getAddressesTxsFull offset limit start addrs =
     fmap catMaybes $
-    getAddressesTxsLimit limit start addrs >>=
+    getAddressesTxsLimit offset limit start addrs >>=
     mapM (getTransaction . blockTxHash)
 
 getAddressUnspentsLimit ::
@@ -1117,12 +1122,14 @@ getAddressUnspentsLimit offset limit start addr =
 
 getAddressesUnspentsLimit ::
        (Monad m, StoreRead m)
-    => Maybe Limit
+    => Offset
+    -> Maybe Limit
     -> Maybe BlockRef
     -> [Address]
     -> m [Unspent]
-getAddressesUnspentsLimit limit start addrs =
-    getAddressesUnspents addrs start limit
+getAddressesUnspentsLimit offset limit start addrs =
+    applyOffset offset <$>
+    getAddressesUnspents addrs start ((offset +) <$> limit)
 
 -- | Publish a new transaction to the network.
 publishTx ::
