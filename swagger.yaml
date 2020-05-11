@@ -1836,14 +1836,13 @@ components:
 
         * If a Unix timestamp is specified:
 
-          * If any transaction in the local mempool was received at or before
-            that timestamp, start returning entries at that position, and then
-            work through the block chain starting at the head, ignoring block
-            timestamps.
+          * If any transaction in the local mempool exists that was received at
+            or before that timestamp, return mempool entities that have been
+            recived at or before that timestamp, and every confirmed entity
+            ignoring its (or its block's) timestamp.
 
-          * Else find the last block mined at or before that timestamp and start
-            returning entities at that point in reverse order (from latest to
-            earliest).
+          * Else find the last block mined at or before that timestamp and
+            return entities at or below that block's height.
 
     offsetParam:
       name: offset
