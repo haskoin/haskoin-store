@@ -1831,16 +1831,13 @@ components:
         * Block transactions come next, sorted by reversed block height followed
           by reversed position within each block.
 
-        This parameter allows to locate a point in this list and start returning
-        entities from that point according to these sorting rules.
+        This parameter locates a point in this list from which to start
+        returning entries.
 
-        These are the possible values that this parameter can take:
+        * If a block height is specified, only confirmed transactions at or
+          below that height will be included.
 
-        * If a block height is specified, only entries at or below that height
-          on the block chain are returned.
-
-        * If a block hash is specified, only entities at or below that block's
-          height are returned.
+        * If a block hash is specified, its height will be used.
 
         * If a transaction hash is specified, only entities at or before that
           transaction's position in the list are returned.
