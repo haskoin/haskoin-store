@@ -1822,27 +1822,35 @@ components:
           - type: integer
           - type: string
       description: |
-        This parameter can accept multiple values:
+        Transactions in Haskoin Store are a list sorted following these rules:
+
+        * Mempool transactions come first. Within the mempool transactions are
+          sorted in reversed timestamp order.
+
+        * Block transactions come next, sorted by reversed block height followed
+          by reversed position within each block.
+
+        This parameter allows to locate a point in this list and start returning
+        entities from that point according to these sorting rules.
+
+        These are the possible values that this parameter can take:
 
         * If a block height is specified, only entries at or below that height
-        on the block chain are returned.
+          on the block chain are returned.
 
         * If a block hash is specified, only entities at or below that block's
-        height are returned.
+          height are returned.
 
-        * If a transaction hash is specified, only entities received at or
-        before that transaction's position in the mempool or block chain are
-        returned.
+        * If a transaction hash is specified, only entities at or before that
+          transaction's position in the list are returned.
 
         * If a Unix timestamp is specified:
 
-          * If any transaction in the local mempool exists that was received at
-            or before that timestamp, return mempool entities that have been
-            recived at or before that timestamp, and every confirmed entity
-            ignoring its (or its block's) timestamp.
+          * If there is anything in the mempool at or below that timestamp,
+            start at that point in the list.
 
-          * Else find the last block mined at or before that timestamp and
-            return entities at or below that block's height.
+          * Else find the last block mined at or before that timestamp and start
+            there.
 
     offsetParam:
       name: offset
