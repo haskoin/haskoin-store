@@ -15,6 +15,8 @@ module Haskoin.Store
     , CacheError (..)
     , withCache
     , connectRedis
+    , isInCache
+    , evictFromCache
 
       -- * Store Reader
     , StoreRead (..)

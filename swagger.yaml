@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.26.6'
+  version: '0.27.0'
   title: Bitcoin Cash (BCH) & Bitcoin Segwit (BTC) Block Chain API
   contact:
     name: Jean-Pierre Rupp

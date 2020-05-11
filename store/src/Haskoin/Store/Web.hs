@@ -18,7 +18,8 @@ import           Control.Monad                 (forever, guard, unless, when,
 import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
                                                 askLoggerIO, logInfoS,
                                                 monadLoggerLog)
-import           Control.Monad.Reader          (ReaderT, asks, runReaderT)
+import           Control.Monad.Reader          (ReaderT, asks, local,
+                                                runReaderT)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
 import           Data.Aeson                    (Encoding, ToJSON (..))
@@ -58,7 +59,8 @@ import           Haskoin                       (Address, Block (..),
 import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
                                                 managerGetPeers, sendMessage)
-import           Haskoin.Store.Cache           (CacheT, delXPubKeys, withCache)
+import           Haskoin.Store.Cache           (CacheT, evictFromCache,
+                                                withCache)
 import           Haskoin.Store.Common          (Limit, Offset, PubExcept (..),
                                                 StoreEvent (..), StoreRead (..),
                                                 applyOffset, blockAtOrBefore,
@@ -182,56 +184,43 @@ instance Parsable StartParam where
 
 runInWebReader ::
        MonadIO m
-    => DatabaseReaderT m a
-    -> CacheT (DatabaseReaderT m) a
+    => CacheT (DatabaseReaderT m) a
     -> ReaderT WebConfig m a
-runInWebReader bf cf = do
+runInWebReader f = do
     bdb <- asks (storeDB . webStore)
     mc <- asks (storeCache . webStore)
-    lift $ withDatabaseReader bdb $
-        case mc of
-            Nothing -> bf
-            Just c  -> withCache c cf
+    lift $ withDatabaseReader bdb (withCache mc f)
 
-runNoCache :: MonadIO m => DatabaseReaderT m a -> WebT m a
-runNoCache f = lift $ do
-    bdb <- asks (storeDB . webStore)
-    lift $ withDatabaseReader bdb f
+runNoCache :: MonadIO m => Bool -> ReaderT WebConfig m a -> ReaderT WebConfig m a
+runNoCache False f = f
+runNoCache True f =
+    local (\s -> s {webStore = (webStore s) {storeCache = Nothing}}) f
 
 instance (MonadUnliftIO m, MonadLoggerIO m) =>
          StoreRead (ReaderT WebConfig m) where
-    getMaxGap = runInWebReader getMaxGap getMaxGap
-    getInitialGap = runInWebReader getInitialGap getInitialGap
-    getNetwork = runInWebReader getNetwork getNetwork
-    getBestBlock = runInWebReader getBestBlock getBestBlock
-    getBlocksAtHeight height =
-        runInWebReader (getBlocksAtHeight height) (getBlocksAtHeight height)
-    getBlock bh = runInWebReader (getBlock bh) (getBlock bh)
-    getTxData th = runInWebReader (getTxData th) (getTxData th)
-    getSpender op = runInWebReader (getSpender op) (getSpender op)
-    getSpenders th = runInWebReader (getSpenders th) (getSpenders th)
-    getUnspent op = runInWebReader (getUnspent op) (getUnspent op)
-    getBalance a = runInWebReader (getBalance a) (getBalance a)
-    getBalances as = runInWebReader (getBalances as) (getBalances as)
-    getMempool = runInWebReader getMempool getMempool
+    getMaxGap = runInWebReader getMaxGap
+    getInitialGap = runInWebReader getInitialGap
+    getNetwork = runInWebReader getNetwork
+    getBestBlock = runInWebReader getBestBlock
+    getBlocksAtHeight height = runInWebReader (getBlocksAtHeight height)
+    getBlock bh = runInWebReader (getBlock bh)
+    getTxData th = runInWebReader (getTxData th)
+    getSpender op = runInWebReader (getSpender op)
+    getSpenders th = runInWebReader (getSpenders th)
+    getUnspent op = runInWebReader (getUnspent op)
+    getBalance a = runInWebReader (getBalance a)
+    getBalances as = runInWebReader (getBalances as)
+    getMempool = runInWebReader getMempool
     getAddressesTxs addrs start limit =
-        runInWebReader
-            (getAddressesTxs addrs start limit)
-            (getAddressesTxs addrs start limit)
+        runInWebReader (getAddressesTxs addrs start limit)
     getAddressesUnspents addrs start limit =
-        runInWebReader
-            (getAddressesUnspents addrs start limit)
-            (getAddressesUnspents addrs start limit)
-    xPubBals xpub = runInWebReader (xPubBals xpub) (xPubBals xpub)
-    xPubSummary xpub = runInWebReader (xPubSummary xpub) (xPubSummary xpub)
+        runInWebReader (getAddressesUnspents addrs start limit)
+    xPubBals xpub = runInWebReader (xPubBals xpub)
+    xPubSummary xpub = runInWebReader (xPubSummary xpub)
     xPubUnspents xpub start offset limit =
-        runInWebReader
-            (xPubUnspents xpub start offset limit)
-            (xPubUnspents xpub start offset limit)
+        runInWebReader (xPubUnspents xpub start offset limit)
     xPubTxs xpub start offset limit =
-        runInWebReader
-            (xPubTxs xpub start offset limit)
-            (xPubTxs xpub start offset limit)
+        runInWebReader (xPubTxs xpub start offset limit)
 
 instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getNetwork = lift getNetwork
@@ -583,9 +572,7 @@ scottyXpubBalances = do
     proto <- setupBin
     res <-
         filter (not . nullBalance . xPubBal) <$>
-        if nocache
-            then runNoCache (xPubBals xpub)
-            else xPubBals xpub
+        lift (runNoCache nocache (xPubBals xpub))
     protoSerialNet proto (list . xPubBalToEncoding) res
 
 scottyXpubTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -597,27 +584,23 @@ scottyXpubTxs full = do
     limit <- getLimit full
     o <- getOffset
     proto <- setupBin
-    txs <- xPubTxs xpub start o limit
+    txs <- lift . runNoCache nocache $ xPubTxs xpub start o limit
     if full
         then do
             txs' <-
-                catMaybes <$>
-                if nocache
-                    then runNoCache (mapM (getTransaction . blockTxHash) txs)
-                    else mapM (getTransaction . blockTxHash) txs
+                fmap catMaybes . lift . runNoCache nocache $
+                mapM (getTransaction . blockTxHash) txs
             protoSerialNet proto (list . transactionToEncoding) txs'
         else protoSerial proto txs
 
 scottyXpubEvict :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyXpubEvict =
-    lift (asks (storeCache . webStore)) >>= \case
-        Nothing -> S.raise ThingNotFound
-        Just cache -> do
-            setHeaders
-            xpub <- parseXpub
-            proto <- setupBin
-            n <- lift $ withCache cache (delXPubKeys [xpub])
-            protoSerial proto (GenericResult (n > 0))
+    lift (asks (storeCache . webStore)) >>= \cache -> do
+        setHeaders
+        xpub <- parseXpub
+        proto <- setupBin
+        lift . withCache cache $ evictFromCache [xpub]
+        protoSerial proto (GenericResult True)
 
 
 scottyXpubUnspents :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -627,11 +610,9 @@ scottyXpubUnspents = do
     xpub <- parseXpub
     proto <- setupBin
     start <- getStart
+    o <- getOffset
     limit <- getLimit False
-    uns <-
-        if nocache
-            then runNoCache (xPubUnspents xpub start 0 limit)
-            else xPubUnspents xpub start 0 limit
+    uns <- lift . runNoCache nocache $ xPubUnspents xpub start o limit
     protoSerialNet proto (list . xPubUnspentToEncoding) uns
 
 scottyXpubSummary :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -640,10 +621,7 @@ scottyXpubSummary = do
     nocache <- parseNoCache
     xpub <- parseXpub
     proto <- setupBin
-    res <-
-        if nocache
-            then runNoCache (xPubSummary xpub)
-            else xPubSummary xpub
+    res <- lift . runNoCache nocache $ xPubSummary xpub
     protoSerial proto res
 
 scottyPostTx ::
