@@ -22,7 +22,7 @@ import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
 import qualified Data.IntMap.Strict      as I
-import           Data.List               (sort)
+import           Data.List               (sort, nub)
 import           Data.Maybe              (fromMaybe, isNothing)
 import           Data.Serialize          (encode)
 import           Data.String             (fromString)
@@ -39,7 +39,7 @@ import           Haskoin                 (Address, Block (..), BlockHash,
                                           isGenesis, nullOutPoint,
                                           scriptToAddressBS, txHash,
                                           txHashToHex)
-import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..), nub,
+import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..), nub',
                                           sortTxs)
 import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           BlockRef (..), BlockTx (..),
@@ -134,7 +134,7 @@ revertBlock bh = do
                             throwError (BlockNotBest (blockHashToHex bh))
     txs <- mapM (fmap txData . getImportTxData) (blockDataTxs bd)
     ths <-
-        nub . concat <$>
+        nub' . concat <$>
         mapM (deleteTx False False . txHash . snd) (reverse (sortTxs txs))
     setBest (prevBlock (blockDataHeader bd))
     insertBlock bd {blockDataMainChain = False}
@@ -177,16 +177,21 @@ importBlock b n = do
             , blockDataHeader = nodeHeader n
             , blockDataSize = fromIntegral (B.length (encode b))
             , blockDataTxs = map txHash (blockTxns b)
-            , blockDataWeight = if getSegWit net then fromIntegral w else 0
+            , blockDataWeight =
+                  if getSegWit net
+                      then fromIntegral w
+                      else 0
             , blockDataSubsidy = subsidy
             , blockDataFees = cb_out_val - subsidy
             , blockDataOutputs = ts_out_val
             }
     bs <- getBlocksAtHeight (nodeHeight n)
-    setBlocksAtHeight (nub (headerHash (nodeHeader n) : bs)) (nodeHeight n)
+    setBlocksAtHeight
+        (nub (headerHash (nodeHeader n) : bs))
+        (nodeHeight n)
     setBest (headerHash (nodeHeader n))
     ths <-
-        nub . concat <$>
+        nub' . concat <$>
         mapM (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
     return ths
   where
@@ -229,7 +234,7 @@ importTx br tt tx = do
     unless (confirmed br) $ do
         $(logDebugS) "BlockStore" $
             "Importing transaction " <> txHashToHex (txHash tx)
-        when (length (nub (map prevOutput (txIn tx))) < length (txIn tx)) $ do
+        when (length (nub' (map prevOutput (txIn tx))) < length (txIn tx)) $ do
             $(logErrorS) "BlockStore" $
                 "Transaction spends same output twice: " <>
                 txHashToHex (txHash tx)
@@ -244,7 +249,7 @@ importTx br tt tx = do
             then return []
             else forM (txIn tx) $ \TxIn {prevOutput = op} -> uns op
     let us = map fst us'
-        ths = nub (concatMap snd us')
+        ths = nub' (concatMap snd us')
     when
         (not (confirmed br) &&
          sum (map unspentAmount us) < sum (map outValue (txOut tx))) $ do
@@ -439,7 +444,7 @@ deleteTx memonly rbfcheck txhash = do
     go t = do
         $(logWarnS) "BlockStore" $
             "Deleting transaction: " <> txHashToHex txhash
-        ss <- nub . map spenderHash . I.elems <$> getSpenders txhash
+        ss <- nub' . map spenderHash . I.elems <$> getSpenders txhash
         ths <-
             fmap concat $
             forM ss $ \s -> do
@@ -455,7 +460,7 @@ deleteTx memonly rbfcheck txhash = do
         unless (confirmed (txDataBlock t)) $ deleteFromMempool txhash
         insertTx t {txDataDeleted = True}
         updateAddressCounts (txDataAddresses t) (subtract 1)
-        return $ nub (txhash : ths)
+        return $ nub' (txhash : ths)
 
 
 isRBF ::
@@ -475,7 +480,7 @@ isRBF br tx
         | all (== nullOutPoint) (map prevOutput (txIn tx)) = return False
         | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) = return True
         | otherwise =
-            let hs = nub $ map (outPointHash . prevOutput) (txIn tx)
+            let hs = nub' $ map (outPointHash . prevOutput) (txIn tx)
                 ck [] = return False
                 ck (h:hs') =
                     getTxData h >>= \case
@@ -770,7 +775,7 @@ updateAddressCounts as f =
 
 txDataAddresses :: TxData -> [Address]
 txDataAddresses t =
-    nub . rights $
+    nub' . rights $
     map (scriptToAddressBS . prevScript) (I.elems (txDataPrevs t)) <>
     map (scriptToAddressBS . scriptOutput) (txOut (txData t))
 

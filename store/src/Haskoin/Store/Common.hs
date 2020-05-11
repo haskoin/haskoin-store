@@ -22,7 +22,7 @@ module Haskoin.Store.Common
     , applyLimitC
     , applyOffsetLimitC
     , sortTxs
-    , nub
+    , nub'
     ) where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
@@ -169,7 +169,7 @@ class Monad m =>
         bs <- xPubBals xpub
         let as = map (balanceAddress . xPubBal) bs
         ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
-        let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
+        let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
         return $ applyOffsetLimit offset limit ts'
     getMaxGap :: m Word32
     getInitialGap :: m Word32
@@ -229,7 +229,7 @@ xPubBalsTxs ::
 xPubBalsTxs bals start offset limit = do
     let as = map balanceAddress . filter (not . nullBalance) $ map xPubBal bals
     ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
-    let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
+    let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
     return $ applyOffsetLimit offset limit ts'
 
 getTransaction ::
@@ -337,5 +337,5 @@ sortTxs txs = go [] thset $ zip [0 ..] txs
             then go ((i, tx) : orphans) ths xs
             else (i, tx) : go orphans (txHash tx `H.delete` ths) xs
 
-nub :: (Eq a, Hashable a) => [a] -> [a]
-nub = H.toList . H.fromList
+nub' :: (Eq a, Hashable a) => [a] -> [a]
+nub' = H.toList . H.fromList

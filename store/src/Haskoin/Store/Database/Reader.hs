@@ -27,7 +27,7 @@ import           Database.RocksDB.Query       (insert, matching, matchingAsList,
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common         (Limit, StoreRead (..),
-                                               applyLimit, applyLimitC, nub)
+                                               applyLimit, applyLimitC, nub')
 import           Haskoin.Store.Data           (Balance, BlockData,
                                                BlockRef (..), BlockTx (..),
                                                Spender, TxData, Unspent (..),
@@ -159,7 +159,7 @@ getAddressesTxsDB ::
     -> m [BlockTx]
 getAddressesTxsDB addrs start limit db = do
     ts <- concat <$> mapM (\a -> getAddressTxsDB a start limit db) addrs
-    let ts' = nub $ sortBy (flip compare `on` blockTxBlock) ts
+    let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
     return $ applyLimit limit ts'
 
 getAddressTxsDB ::
@@ -195,7 +195,7 @@ getAddressesUnspentsDB ::
     -> m [Unspent]
 getAddressesUnspentsDB addrs start limit bdb = do
     us <- concat <$> mapM (\a -> getAddressUnspentsDB a start limit bdb) addrs
-    let us' = nub $ sortBy (flip compare `on` unspentBlock) us
+    let us' = sortBy (flip compare `on` unspentBlock) (nub' us)
     return $ applyLimit limit us'
 
 getAddressUnspentsDB ::

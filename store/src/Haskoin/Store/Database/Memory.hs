@@ -19,7 +19,7 @@ import           Data.HashMap.Strict          (HashMap)
 import qualified Data.HashMap.Strict          as M
 import           Data.IntMap.Strict           (IntMap)
 import qualified Data.IntMap.Strict           as I
-import           Data.List                    (nub, sortBy)
+import           Data.List                    (sortBy)
 import           Data.Maybe                   (catMaybes, fromJust, fromMaybe,
                                                isJust)
 import           Data.Word                    (Word32)
@@ -28,7 +28,8 @@ import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                eitherToMaybe, headerHash,
                                                scriptToAddressBS, txHash)
 import           Haskoin.Store.Common         (Limit, StoreRead (..),
-                                               StoreWrite (..), applyLimit)
+                                               StoreWrite (..), applyLimit,
+                                               nub')
 import           Haskoin.Store.Data           (Balance (..), BlockData (..),
                                                BlockRef, BlockTx (..), Spender,
                                                TxData (..), Unspent (..),
@@ -114,7 +115,7 @@ getAddressesTxsH ::
 getAddressesTxsH addrs start limit db = applyLimit limit xs
   where
     xs =
-        nub . sortBy (flip compare `on` blockTxBlock) . concat $
+        sortBy (flip compare `on` blockTxBlock) . nub' . concat $
         map (\a -> getAddressTxsH a start limit db) addrs
 
 getAddressTxsH ::
@@ -138,7 +139,7 @@ getAddressesUnspentsH ::
 getAddressesUnspentsH addrs start limit db = applyLimit limit xs
   where
     xs =
-        nub . sortBy (flip compare `on` unspentBlock) . concat $
+        sortBy (flip compare `on` unspentBlock) . nub' . concat $
         map (\a -> getAddressUnspentsH a start limit db) addrs
 
 getAddressUnspentsH ::
