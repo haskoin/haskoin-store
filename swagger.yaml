@@ -1822,7 +1822,8 @@ components:
           - type: integer
           - type: string
       description: |
-        Transactions in Haskoin Store are a list sorted following these rules:
+        Transactions in Haskoin Store are on a list sorted according to these
+        rules:
 
         * Mempool transactions come first. Within the mempool transactions are
           sorted in reversed timestamp order.
