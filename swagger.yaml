@@ -7,8 +7,8 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.27.0'
-  title: Bitcoin Cash (BCH) & Bitcoin Segwit (BTC) Block Chain API
+  version: '0.28.0'
+  title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
     url: https://github.com/haskoin/haskoin-store
@@ -1827,34 +1827,20 @@ components:
           - type: integer
           - type: string
       description: |
-        Transactions in Haskoin Store are on a list sorted according to these
-        rules:
+        * If a block height is specified, only entities confirmed at or below
+          that height will be returned.
 
-        * Mempool transactions come first. Within the mempool transactions are
-          sorted in reversed timestamp order.
+        * If a block hash is specified, only entities confirmed at or below that
+          block's height will be returned. No filtering will be done if the
+          block cannot be found.
 
-        * Block transactions come next, sorted by reversed block height followed
-          by reversed position within each block.
+        * If a Unix timestamp is specified, find the last block mined at or
+          before that time and return entries confirmed up to that block's
+          height. No filtering will be done if the block cannot be found.
 
-        This parameter locates a point in this list from which to start
-        returning entries.
-
-        * If a block height is specified, only confirmed transactions at or
-          below that height will be included.
-
-        * If a block hash is specified, its height will be used.
-
-        * If a transaction hash is specified, only entities at or before that
-          transaction's position in the list are returned.
-
-        * If a Unix timestamp is specified:
-
-          * If there is anything in the mempool at or below that timestamp,
-            start at that point in the list.
-
-          * Else find the last block mined at or before that timestamp and start
-            there.
-
+        * If a transaction hash is specified, only entries at or below that
+          transaction's place in the block chain will be returned. No filtering
+          will be done if the transaction cannot be found or is not confirmed.
     offsetParam:
       name: offset
       in: query

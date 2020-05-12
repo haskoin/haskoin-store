@@ -190,12 +190,10 @@ instance MonadIO m => StoreRead (ReaderT BlockRead m) where
     getUnspent = runRocksDB . getUnspent
     getBalance = runRocksDB . getBalance
     getMempool = runRocksDB getMempool
-    getAddressesTxs addrs start limit =
-        runRocksDB (getAddressesTxs addrs start limit)
-    getAddressesUnspents addrs start limit =
-        runRocksDB (getAddressesUnspents addrs start limit)
-    getAddressUnspents a s = runRocksDB . getAddressUnspents a s
-    getAddressTxs a s = runRocksDB . getAddressTxs a s
+    getAddressesTxs as = runRocksDB . getAddressesTxs as
+    getAddressesUnspents as = runRocksDB . getAddressesUnspents as
+    getAddressUnspents a = runRocksDB . getAddressUnspents a
+    getAddressTxs a = runRocksDB . getAddressTxs a
 
 -- | Run block store process.
 blockStore ::

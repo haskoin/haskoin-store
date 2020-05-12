@@ -26,12 +26,13 @@ import           Database.RocksDB.Query       (insert, matching, matchingAsList,
                                                matchingSkip, retrieve)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
-import           Haskoin.Store.Common         (Limit, StoreRead (..),
-                                               applyLimit, applyLimitC, nub')
+import           Haskoin.Store.Common         (Limits (..), Start (..),
+                                               StoreRead (..), applyLimits,
+                                               applyLimitsC, deOffset, nub')
 import           Haskoin.Store.Data           (Balance, BlockData,
                                                BlockRef (..), BlockTx (..),
-                                               Spender, TxData, Unspent (..),
-                                               zeroBalance)
+                                               Spender, TxData (..),
+                                               Unspent (..), zeroBalance)
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),
@@ -153,30 +154,36 @@ getMempoolDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
 getAddressesTxsDB ::
        MonadIO m
     => [Address]
-    -> Maybe BlockRef
-    -> Maybe Limit
+    -> Limits
     -> DatabaseReader
     -> m [BlockTx]
-getAddressesTxsDB addrs start limit db = do
-    ts <- concat <$> mapM (\a -> getAddressTxsDB a start limit db) addrs
+getAddressesTxsDB addrs limits db = do
+    ts <- concat <$> mapM (\a -> getAddressTxsDB a (deOffset limits) db) addrs
     let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
-    return $ applyLimit limit ts'
+    return $ applyLimits limits ts'
 
 getAddressTxsDB ::
        MonadIO m
     => Address
-    -> Maybe BlockRef
-    -> Maybe Limit
+    -> Limits
     -> DatabaseReader
     -> m [BlockTx]
-getAddressTxsDB a start limit DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
+getAddressTxsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
+                                            , databaseHandle = db
+                                            } =
     liftIO . runResourceT . runConduit $
-        x .| applyLimitC limit .| mapC (uncurry f) .| sinkList
+    x .| applyLimitsC limits .| mapC (uncurry f) .| sinkList
   where
     x =
-        case start of
+        case start limits of
             Nothing -> matching db opts (AddrTxKeyA a)
-            Just br -> matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a br)
+            Just (AtTx txh) ->
+                getTxDataDB txh bdb >>= \case
+                    Just TxData {txDataBlock = b@BlockRef {}} ->
+                        matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a b)
+                    _ -> matching db opts (AddrTxKeyA a)
+            Just (AtBlock bh) ->
+                matching db opts (AddrTxKeyB a (BlockRef bh maxBound))
     f AddrTxKey {addrTxKeyT = t} () = t
     f _ _                           = undefined
 
@@ -189,32 +196,42 @@ getUnspentDB p DatabaseReader { databaseReadOptions = opts
 getAddressesUnspentsDB ::
        MonadIO m
     => [Address]
-    -> Maybe BlockRef
-    -> Maybe Limit
+    -> Limits
     -> DatabaseReader
     -> m [Unspent]
-getAddressesUnspentsDB addrs start limit bdb = do
-    us <- concat <$> mapM (\a -> getAddressUnspentsDB a start limit bdb) addrs
+getAddressesUnspentsDB addrs limits bdb = do
+    us <-
+        concat <$>
+        mapM (\a -> getAddressUnspentsDB a (deOffset limits) bdb) addrs
     let us' = sortBy (flip compare `on` unspentBlock) (nub' us)
-    return $ applyLimit limit us'
+    return $ applyLimits limits us'
 
 getAddressUnspentsDB ::
        MonadIO m
     => Address
-    -> Maybe BlockRef
-    -> Maybe Limit
+    -> Limits
     -> DatabaseReader
     -> m [Unspent]
-getAddressUnspentsDB a start limit DatabaseReader { databaseReadOptions = opts
-                                                  , databaseHandle = db
-                                                  } =
+getAddressUnspentsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
+                                                 , databaseHandle = db
+                                                 } =
     liftIO . runResourceT . runConduit $
-    x .| applyLimitC limit .| mapC (uncurry toUnspent) .| sinkList
+    x .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
   where
     x =
-        case start of
+        case start limits of
             Nothing -> matching db opts (AddrOutKeyA a)
-            Just br -> matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a br)
+            Just (AtBlock h) ->
+                matchingSkip
+                    db
+                    opts
+                    (AddrOutKeyA a)
+                    (AddrOutKeyB a (BlockRef h maxBound))
+            Just (AtTx txh) ->
+                getTxDataDB txh bdb >>= \case
+                    Just TxData {txDataBlock = b@BlockRef {}} ->
+                        matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a b)
+                    _ -> matching db opts (AddrOutKeyA a)
 
 instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getNetwork = asks databaseNetwork
@@ -227,12 +244,9 @@ instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getUnspent a = ask >>= getUnspentDB a
     getBalance a = ask >>= getBalanceDB a
     getMempool = ask >>= getMempoolDB
-    getAddressesTxs addrs start limit =
-        ask >>= getAddressesTxsDB addrs start limit
-    getAddressesUnspents addrs start limit =
-        ask >>= getAddressesUnspentsDB addrs start limit
-    getAddressUnspents a b c = ask >>= getAddressUnspentsDB a b c
-    getAddressTxs a b c = ask >>= getAddressTxsDB a b c
+    getAddressesTxs as limits = ask >>= getAddressesTxsDB as limits
+    getAddressesUnspents as limits = ask >>= getAddressesUnspentsDB as limits
+    getAddressUnspents a limits = ask >>= getAddressUnspentsDB a limits
+    getAddressTxs a limits = ask >>= getAddressTxsDB a limits
     getMaxGap = asks databaseMaxGap
     getInitialGap = asks databaseInitialGap
-

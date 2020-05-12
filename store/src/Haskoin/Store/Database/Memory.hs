@@ -14,26 +14,20 @@ import           Control.Monad                (join)
 import           Control.Monad.Reader         (ReaderT)
 import qualified Control.Monad.Reader         as R
 import qualified Data.ByteString.Short        as B.Short
-import           Data.Function                (on)
 import           Data.HashMap.Strict          (HashMap)
 import qualified Data.HashMap.Strict          as M
 import           Data.IntMap.Strict           (IntMap)
 import qualified Data.IntMap.Strict           as I
-import           Data.List                    (sortBy)
-import           Data.Maybe                   (catMaybes, fromJust, fromMaybe,
-                                               isJust)
+import           Data.Maybe                   (fromJust, fromMaybe, isJust)
 import           Data.Word                    (Word32)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash,
-                                               eitherToMaybe, headerHash,
-                                               scriptToAddressBS, txHash)
-import           Haskoin.Store.Common         (Limit, StoreRead (..),
-                                               StoreWrite (..), applyLimit,
-                                               nub')
+                                               headerHash, txHash)
+import           Haskoin.Store.Common         (StoreRead (..), StoreWrite (..))
 import           Haskoin.Store.Data           (Balance (..), BlockData (..),
-                                               BlockRef, BlockTx (..), Spender,
-                                               TxData (..), Unspent (..),
-                                               zeroBalance)
+                                               BlockRef (..), BlockTx (..),
+                                               Spender, TxData (..),
+                                               Unspent (..), zeroBalance)
 import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
                                                balanceToVal, unspentToVal,
                                                valToBalance, valToUnspent)
@@ -109,63 +103,6 @@ getBalanceH a mem =
 
 getMempoolH :: MemoryDatabase -> Maybe [BlockTx]
 getMempoolH = hMempool
-
-getAddressesTxsH ::
-       [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [BlockTx]
-getAddressesTxsH addrs start limit db = applyLimit limit xs
-  where
-    xs =
-        sortBy (flip compare `on` blockTxBlock) . nub' . concat $
-        map (\a -> getAddressTxsH a start limit db) addrs
-
-getAddressTxsH ::
-       Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [BlockTx]
-getAddressTxsH addr start limit db =
-    applyLimit limit .
-    dropWhile h .
-    sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
-    M.lookupDefault M.empty addr (hAddrTx db)
-  where
-    f b hm = map (uncurry (g b)) $ M.toList hm
-    g b h' True = Just BlockTx {blockTxBlock = b, blockTxHash = h'}
-    g _ _ False = Nothing
-    h BlockTx {blockTxBlock = b} =
-        case start of
-            Nothing -> False
-            Just br -> b > br
-
-getAddressesUnspentsH ::
-       [Address] -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
-getAddressesUnspentsH addrs start limit db = applyLimit limit xs
-  where
-    xs =
-        sortBy (flip compare `on` unspentBlock) . nub' . concat $
-        map (\a -> getAddressUnspentsH a start limit db) addrs
-
-getAddressUnspentsH ::
-       Address -> Maybe BlockRef -> Maybe Limit -> MemoryDatabase -> [Unspent]
-getAddressUnspentsH addr start limit db =
-    applyLimit limit .
-    dropWhile h .
-    sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
-    M.lookupDefault M.empty addr (hAddrOut db)
-  where
-    f b hm = map (uncurry (g b)) $ M.toList hm
-    g b p (Just u) =
-        Just
-            Unspent
-                { unspentBlock = b
-                , unspentAmount = outValAmount u
-                , unspentScript = B.Short.toShort (outValScript u)
-                , unspentPoint = p
-                , unspentAddress =
-                      eitherToMaybe (scriptToAddressBS (outValScript u))
-                }
-    g _ _ Nothing = Nothing
-    h Unspent {unspentBlock = b} =
-        case start of
-            Nothing -> False
-            Just br -> b > br
 
 setBestH :: BlockHash -> MemoryDatabase -> MemoryDatabase
 setBestH h db = db {hBest = Just h}
@@ -313,18 +250,10 @@ instance MonadIO m => StoreRead (ReaderT MemoryState m) where
     getMempool = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return . fromMaybe [] $ getMempoolH v
-    getAddressesTxs addr start limit = do
-        v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getAddressesTxsH addr start limit v
-    getAddressesUnspents addr start limit = do
-        v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getAddressesUnspentsH addr start limit v
-    getAddressTxs addr start limit = do
-        v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getAddressTxsH addr start limit v
-    getAddressUnspents addr start limit = do
-        v <- R.asks memoryDatabase >>= readTVarIO
-        return $ getAddressUnspentsH addr start limit v
+    getAddressesTxs = undefined
+    getAddressesUnspents = undefined
+    getAddressTxs = undefined
+    getAddressUnspents = undefined
     getMaxGap = R.asks memoryMaxGap
     getInitialGap = R.asks memoryInitialGap
     getNetwork = R.asks memoryNetwork

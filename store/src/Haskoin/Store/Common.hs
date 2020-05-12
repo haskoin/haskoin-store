@@ -4,9 +4,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 module Haskoin.Store.Common
-    ( Limit
-    , Offset
+    ( Limits(..)
+    , Start(..)
     , StoreRead(..)
     , StoreWrite(..)
     , StoreEvent(..)
@@ -15,12 +16,9 @@ module Haskoin.Store.Common
     , xPubBalsUnspents
     , getTransaction
     , blockAtOrBefore
-    , applyOffset
-    , applyLimit
-    , applyOffsetLimit
-    , applyOffsetC
-    , applyLimitC
-    , applyOffsetLimitC
+    , deOffset
+    , applyLimits
+    , applyLimitsC
     , sortTxs
     , nub'
     ) where
@@ -32,6 +30,7 @@ import           Control.Monad             (mzero)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import           Data.ByteString           (ByteString)
+import           Data.Default              (Default (..))
 import           Data.Function             (on)
 import           Data.Hashable             (Hashable)
 import qualified Data.HashSet              as H
@@ -52,19 +51,39 @@ import           Haskoin                   (Address, BlockHash,
                                             txHash)
 import           Haskoin.Node              (Peer)
 import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            BlockRef, BlockTx (..),
-                                            DeriveType (..), Spender,
-                                            Transaction, TxData, UnixTime,
-                                            Unspent, XPubBal (..),
-                                            XPubSpec (..), XPubSummary (..),
-                                            XPubUnspent (..), nullBalance,
-                                            toTransaction)
+                                            BlockTx (..), DeriveType (..),
+                                            Spender, Transaction, TxData,
+                                            UnixTime, Unspent (..),
+                                            XPubBal (..), XPubSpec (..),
+                                            XPubSummary (..), XPubUnspent (..),
+                                            nullBalance, toTransaction)
 import           Network.Socket            (SockAddr)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
 type Offset = Word32
 type Limit = Word32
+
+data Start
+    = AtTx
+          { atTxHash :: !TxHash
+          }
+    | AtBlock
+          { atBlockHeight :: !BlockHeight
+          } deriving (Eq, Show)
+
+data Limits =
+    Limits
+        { limit  :: !Word32
+        , offset :: !Word32
+        , start  :: !(Maybe Start)
+        } deriving (Eq, Show)
+
+defaultLimits :: Limits
+defaultLimits = Limits { limit = 0, offset = 0, start = Nothing }
+
+instance Default Limits where
+    def = defaultLimits
 
 class Monad m =>
       StoreRead m
@@ -80,15 +99,13 @@ class Monad m =>
     getBalance a = head <$> getBalances [a]
     getBalances :: [Address] -> m [Balance]
     getBalances as = mapM getBalance as
-    getAddressesTxs :: [Address] -> Maybe BlockRef -> Maybe Limit -> m [BlockTx]
-    getAddressTxs :: Address -> Maybe BlockRef -> Maybe Limit -> m [BlockTx]
+    getAddressesTxs :: [Address] -> Limits -> m [BlockTx]
+    getAddressTxs :: Address -> Limits -> m [BlockTx]
     getAddressTxs a = getAddressesTxs [a]
     getUnspent :: OutPoint -> m (Maybe Unspent)
-    getAddressUnspents ::
-           Address -> Maybe BlockRef -> Maybe Limit -> m [Unspent]
+    getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
-    getAddressesUnspents ::
-           [Address] -> Maybe BlockRef -> Maybe Limit -> m [Unspent]
+    getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
     getMempool :: m [BlockTx]
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
@@ -143,34 +160,29 @@ class Monad m =>
                 , xPubChangeIndex = ch
                 , xPubExternalIndex = ex
                 }
-    xPubUnspents ::
-           XPubSpec
-        -> Maybe BlockRef
-        -> Offset
-        -> Maybe Limit
-        -> m [XPubUnspent]
-    xPubUnspents xpub start offset limit = do
+    xPubUnspents :: XPubSpec -> Limits -> m [XPubUnspent]
+    xPubUnspents xpub limits = do
         xs <- filter positive <$> xPubBals xpub
-        applyOffsetLimit offset limit <$> go xs
+        sortBy (compare `on` unsblock) . applyLimits limits <$> go xs
       where
+        unsblock = unspentBlock . xPubUnspent
         positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
         go [] = return []
         go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
-            uns <- getAddressUnspents a start limit
+            uns <- getAddressUnspents a (deOffset limits)
             let xuns =
                     map
                         (\t ->
                              XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
                         uns
             (xuns <>) <$> go xs
-    xPubTxs ::
-           XPubSpec -> Maybe BlockRef -> Offset -> Maybe Limit -> m [BlockTx]
-    xPubTxs xpub start offset limit = do
+    xPubTxs :: XPubSpec -> Limits -> m [BlockTx]
+    xPubTxs xpub limits = do
         bs <- xPubBals xpub
         let as = map (balanceAddress . xPubBal) bs
-        ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
+        ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
         let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
-        return $ applyOffsetLimit offset limit ts'
+        return $ applyLimits limits ts'
     getMaxGap :: m Word32
     getInitialGap :: m Word32
 
@@ -201,18 +213,16 @@ deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
 xPubBalsUnspents ::
        StoreRead m
     => [XPubBal]
-    -> Maybe BlockRef
-    -> Offset
-    -> Maybe Limit
+    -> Limits
     -> m [XPubUnspent]
-xPubBalsUnspents bals start offset limit = do
+xPubBalsUnspents bals limits = do
     let xs = filter positive bals
-    applyOffsetLimit offset limit <$> go xs
+    applyLimits limits <$> go xs
   where
     positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
     go [] = return []
     go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
-        uns <- getAddressUnspents a start limit
+        uns <- getAddressUnspents a (deOffset limits)
         let xuns =
                 map
                     (\t -> XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
@@ -222,15 +232,13 @@ xPubBalsUnspents bals start offset limit = do
 xPubBalsTxs ::
        StoreRead m
     => [XPubBal]
-    -> Maybe BlockRef
-    -> Offset
-    -> Maybe Limit
+    -> Limits
     -> m [BlockTx]
-xPubBalsTxs bals start offset limit = do
+xPubBalsTxs bals limits = do
     let as = map balanceAddress . filter (not . nullBalance) $ map xPubBal bals
-    ts <- concat <$> mapM (\a -> getAddressTxs a start limit) as
+    ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
     let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
-    return $ applyOffsetLimit offset limit ts'
+    return $ applyLimits limits ts'
 
 getTransaction ::
        (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
@@ -304,25 +312,28 @@ instance Show PubExcept where
 
 instance Exception PubExcept
 
-applyOffsetLimit :: Offset -> Maybe Limit -> [a] -> [a]
-applyOffsetLimit offset limit = applyLimit limit . applyOffset offset
+applyLimits :: Limits -> [a] -> [a]
+applyLimits Limits {..} = applyLimit limit . applyOffset offset
 
 applyOffset :: Offset -> [a] -> [a]
 applyOffset = drop . fromIntegral
 
-applyLimit :: Maybe Limit -> [a] -> [a]
-applyLimit Nothing  = id
-applyLimit (Just l) = take (fromIntegral l)
+applyLimit :: Limit -> [a] -> [a]
+applyLimit 0 = id
+applyLimit l = take (fromIntegral l)
 
-applyOffsetLimitC :: Monad m => Offset -> Maybe Limit -> ConduitT i i m ()
-applyOffsetLimitC offset limit = applyOffsetC offset >> applyLimitC limit
+deOffset :: Limits -> Limits
+deOffset l = l { limit = limit l + offset l, offset = 0}
+
+applyLimitsC :: Monad m => Limits -> ConduitT i i m ()
+applyLimitsC Limits {..} = applyOffsetC offset >> applyLimitC limit
 
 applyOffsetC :: Monad m => Offset -> ConduitT i i m ()
 applyOffsetC = dropC . fromIntegral
 
-applyLimitC :: Monad m => Maybe Limit -> ConduitT i i m ()
-applyLimitC Nothing  = mapC id
-applyLimitC (Just l) = takeC (fromIntegral l)
+applyLimitC :: Monad m => Limit -> ConduitT i i m ()
+applyLimitC 0 = mapC id
+applyLimitC l = takeC (fromIntegral l)
 
 sortTxs :: [Tx] -> [(Word32, Tx)]
 sortTxs txs = go [] thset $ zip [0 ..] txs

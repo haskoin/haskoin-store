@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.28.0
+### Changed
+- Change the way that limits, start, and offset values are handled.
+
+### Fixed
+- Fix incorrect limit responses.
+
 ## 0.27.0
 ### Added
 - Complete support for offset.

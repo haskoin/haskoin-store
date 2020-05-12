@@ -13,8 +13,8 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forever, guard, unless, when,
-                                                (<=<))
+import           Control.Monad                 (forever, guard, mzero, unless,
+                                                when, (<=<))
 import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
                                                 askLoggerIO, logInfoS,
                                                 monadLoggerLog)
@@ -61,9 +61,9 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 managerGetPeers, sendMessage)
 import           Haskoin.Store.Cache           (CacheT, evictFromCache,
                                                 withCache)
-import           Haskoin.Store.Common          (Limit, Offset, PubExcept (..),
-                                                StoreEvent (..), StoreRead (..),
-                                                applyOffset, blockAtOrBefore,
+import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
+                                                Start (..), StoreEvent (..),
+                                                StoreRead (..), blockAtOrBefore,
                                                 getTransaction, nub')
 import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
                                                 BlockTx (..), DeriveType (..),
@@ -72,9 +72,9 @@ import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
                                                 HealthCheck (..),
                                                 PeerInformation (..),
                                                 StoreInput (..),
-                                                Transaction (..), TxData (..),
-                                                TxId (..), UnixTime, Unspent,
-                                                XPubBal (..), XPubSpec (..),
+                                                Transaction (..), TxId (..),
+                                                UnixTime, Unspent, XPubBal (..),
+                                                XPubSpec (..),
                                                 balanceToEncoding,
                                                 blockDataToEncoding, isCoinbase,
                                                 nullBalance, transactionData,
@@ -211,16 +211,12 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     getBalance a = runInWebReader (getBalance a)
     getBalances as = runInWebReader (getBalances as)
     getMempool = runInWebReader getMempool
-    getAddressesTxs addrs start limit =
-        runInWebReader (getAddressesTxs addrs start limit)
-    getAddressesUnspents addrs start limit =
-        runInWebReader (getAddressesUnspents addrs start limit)
-    xPubBals xpub = runInWebReader (xPubBals xpub)
-    xPubSummary xpub = runInWebReader (xPubSummary xpub)
-    xPubUnspents xpub start offset limit =
-        runInWebReader (xPubUnspents xpub start offset limit)
-    xPubTxs xpub start offset limit =
-        runInWebReader (xPubTxs xpub start offset limit)
+    getAddressesTxs as = runInWebReader . getAddressesTxs as
+    getAddressesUnspents as = runInWebReader . getAddressesUnspents as
+    xPubBals = runInWebReader . xPubBals
+    xPubSummary = runInWebReader . xPubSummary
+    xPubUnspents xpub = runInWebReader . xPubUnspents xpub
+    xPubTxs xpub = runInWebReader . xPubTxs xpub
 
 instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getNetwork = lift getNetwork
@@ -234,16 +230,14 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getBalance = lift . getBalance
     getBalances = lift . getBalances
     getMempool = lift getMempool
-    getAddressesTxs addrs start limit = lift (getAddressesTxs addrs start limit)
-    getAddressesUnspents addrs start limit =
-        lift (getAddressesUnspents addrs start limit)
+    getAddressesTxs as = lift . getAddressesTxs as
+    getAddressesUnspents as = lift . getAddressesUnspents as
     xPubBals = lift . xPubBals
     xPubSummary = lift . xPubSummary
-    xPubUnspents xpub start offset limit =
-        lift (xPubUnspents xpub start offset limit)
-    xPubTxs xpub start offset limit = lift (xPubTxs xpub start offset limit)
-    getMaxGap = lift $ asks (maxLimitGap . webMaxLimits)
-    getInitialGap = lift $ asks (maxLimitInitialGap . webMaxLimits)
+    xPubUnspents xpub = lift . xPubUnspents xpub
+    xPubTxs xpub = lift . xPubTxs xpub
+    getMaxGap = lift getMaxGap
+    getInitialGap = lift getInitialGap
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
@@ -501,51 +495,43 @@ scottyAddressTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyAddressTxs full = do
     setHeaders
     a <- parseAddress
-    s <- getStart
-    o <- getOffset
-    l <- getLimit full
+    l <- getLimits full
     proto <- setupBin
     if full
         then do
-            getAddressTxsFull o l s a >>=
+            getAddressTxsFull l a >>=
                 protoSerialNet proto (list . transactionToEncoding)
         else do
-            getAddressTxsLimit o l s a >>= protoSerial proto
+            getAddressTxsLimit l a >>= protoSerial proto
 
 scottyAddressesTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
 scottyAddressesTxs full = do
     setHeaders
     as <- parseAddresses
-    s <- getStart
-    o <- getOffset
-    l <- getLimit full
+    l <- getLimits full
     proto <- setupBin
     if full
-        then getAddressesTxsFull o l s as >>=
+        then getAddressesTxsFull l as >>=
              protoSerialNet proto (list . transactionToEncoding)
-        else getAddressesTxsLimit o l s as >>= protoSerial proto
+        else getAddressesTxsLimit l as >>= protoSerial proto
 
 scottyAddressUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressUnspent = do
     setHeaders
     a <- parseAddress
-    s <- getStart
-    o <- getOffset
-    l <- getLimit False
+    l <- getLimits False
     proto <- setupBin
-    uns <- getAddressUnspentsLimit o l s a
+    uns <- getAddressUnspentsLimit l a
     protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressesUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressesUnspent = do
     setHeaders
     as <- parseAddresses
-    s <- getStart
-    o <- getOffset
-    l <- getLimit False
+    l <- getLimits False
     proto <- setupBin
-    uns <- getAddressesUnspentsLimit o l s as
+    uns <- getAddressesUnspentsLimit l as
     protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -580,11 +566,9 @@ scottyXpubTxs full = do
     setHeaders
     nocache <- parseNoCache
     xpub <- parseXpub
-    start <- getStart
-    limit <- getLimit full
-    o <- getOffset
+    l <- getLimits full
     proto <- setupBin
-    txs <- lift . runNoCache nocache $ xPubTxs xpub start o limit
+    txs <- lift . runNoCache nocache $ xPubTxs xpub l
     if full
         then do
             txs' <-
@@ -609,10 +593,8 @@ scottyXpubUnspents = do
     nocache <- parseNoCache
     xpub <- parseXpub
     proto <- setupBin
-    start <- getStart
-    o <- getOffset
-    limit <- getLimit False
-    uns <- lift . runNoCache nocache $ xPubUnspents xpub start o limit
+    l <- getLimits False
+    uns <- lift . runNoCache nocache $ xPubUnspents xpub l
     protoSerialNet proto (list . xPubUnspentToEncoding) uns
 
 scottyXpubSummary :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -763,34 +745,42 @@ runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
         S.get "/health" scottyHealth
         S.notFound $ S.raise ThingNotFound
 
-getStart :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m (Maybe BlockRef)
+getStart :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m (Maybe Start)
 getStart =
     runMaybeT $ do
-        s <- MaybeT $ (Just <$> S.param "height") `S.rescue` const (return Nothing)
+        s <-
+            MaybeT $
+            (Just <$> S.param "height") `S.rescue` const (return Nothing)
         do case s of
                StartParamHash {startParamHash = h} ->
                    start_tx h <|> start_block h
                StartParamHeight {startParamHeight = h} -> start_height h
                StartParamTime {startParamTime = q} -> start_time q
   where
-    start_height h = return $ BlockRef h maxBound
+    start_height h = return $ AtBlock h
     start_block h = do
         b <- MaybeT $ getBlock (BlockHash h)
-        let g = blockDataHeight b
-        return $ BlockRef g maxBound
+        return $ AtBlock (blockDataHeight b)
     start_tx h = do
-        t <- MaybeT $ getTxData (TxHash h)
-        return $ txDataBlock t
+        _ <- MaybeT $ getTxData (TxHash h)
+        return $ AtTx (TxHash h)
     start_time q = do
         d <- MaybeT getBestBlock >>= MaybeT . getBlock
         if q <= fromIntegral (blockTimestamp (blockDataHeader d))
             then do
                 b <- MaybeT $ blockAtOrBefore q
                 let g = blockDataHeight b
-                return $ BlockRef g maxBound
-            else return $ MemRef q
+                return $ AtBlock g
+            else mzero
 
-getOffset :: Monad m => WebT m Offset
+getLimits :: (MonadLoggerIO m, MonadUnliftIO m) => Bool -> WebT m Limits
+getLimits full = do
+    o <- getOffset
+    l <- getLimit full
+    s <- getStart
+    return Limits {limit = l, offset = o, start = s}
+
+getOffset :: Monad m => WebT m Word32
 getOffset = do
     limits <- lift $ asks webMaxLimits
     o <- S.param "offset" `S.rescue` const (return 0)
@@ -802,7 +792,7 @@ getOffset = do
 getLimit ::
        Monad m
     => Bool
-    -> WebT m (Maybe Limit)
+    -> WebT m Word32
 getLimit full = do
     limits <- lift $ asks webMaxLimits
     l <- (Just <$> S.param "limit") `S.rescue` const (return Nothing)
@@ -817,12 +807,12 @@ getLimit full = do
         case l of
             Nothing ->
                 if d > 0 || m > 0
-                    then Just (min m d)
-                    else Nothing
+                    then (min m d)
+                    else 0
             Just n ->
                 if m > 0
-                    then Just (min m n)
-                    else Just n
+                    then (min m n)
+                    else n
 
 parseAddress :: Monad m => WebT m Address
 parseAddress = do
@@ -1047,67 +1037,50 @@ cbAfterHeight d h t
 
 getAddressTxsLimit ::
        (Monad m, StoreRead m)
-    => Offset
-    -> Maybe Limit
-    -> Maybe BlockRef
+    => Limits
     -> Address
     -> m [BlockTx]
-getAddressTxsLimit offset limit start addr =
-    applyOffset offset <$> getAddressTxs addr start ((offset +) <$> limit)
+getAddressTxsLimit limits addr = getAddressTxs addr limits
 
 getAddressTxsFull ::
        (Monad m, StoreRead m)
-    => Offset
-    -> Maybe Limit
-    -> Maybe BlockRef
+    => Limits
     -> Address
     -> m [Transaction]
-getAddressTxsFull offset limit start addr = do
-    txs <- getAddressTxsLimit offset limit start addr
+getAddressTxsFull limits addr = do
+    txs <- getAddressTxsLimit limits addr
     catMaybes <$> mapM (getTransaction . blockTxHash) txs
 
 getAddressesTxsLimit ::
        (Monad m, StoreRead m)
-    => Offset
-    -> Maybe Limit
-    -> Maybe BlockRef
+    => Limits
     -> [Address]
     -> m [BlockTx]
-getAddressesTxsLimit offset limit start addrs =
-    applyOffset offset <$> getAddressesTxs addrs start ((offset +) <$> limit)
+getAddressesTxsLimit limits addrs = getAddressesTxs addrs limits
 
 getAddressesTxsFull ::
        (Monad m, StoreRead m)
-    => Offset
-    -> Maybe Limit
-    -> Maybe BlockRef
+    => Limits
     -> [Address]
     -> m [Transaction]
-getAddressesTxsFull offset limit start addrs =
+getAddressesTxsFull limits addrs =
     fmap catMaybes $
-    getAddressesTxsLimit offset limit start addrs >>=
+    getAddressesTxsLimit limits addrs >>=
     mapM (getTransaction . blockTxHash)
 
 getAddressUnspentsLimit ::
        (Monad m, StoreRead m)
-    => Offset
-    -> Maybe Limit
-    -> Maybe BlockRef
+    => Limits
     -> Address
     -> m [Unspent]
-getAddressUnspentsLimit offset limit start addr =
-    applyOffset offset <$> getAddressUnspents addr start ((offset +) <$> limit)
+getAddressUnspentsLimit limits addr = getAddressUnspents addr limits
 
 getAddressesUnspentsLimit ::
        (Monad m, StoreRead m)
-    => Offset
-    -> Maybe Limit
-    -> Maybe BlockRef
+    => Limits
     -> [Address]
     -> m [Unspent]
-getAddressesUnspentsLimit offset limit start addrs =
-    applyOffset offset <$>
-    getAddressesUnspents addrs start ((offset +) <$> limit)
+getAddressesUnspentsLimit limits addrs = getAddressesUnspents addrs limits
 
 -- | Publish a new transaction to the network.
 publishTx ::
