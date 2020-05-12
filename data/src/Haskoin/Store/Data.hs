@@ -20,7 +20,7 @@ module Haskoin.Store.Data
     , confirmed
 
       -- * Transactions
-    , BlockTx(..)
+    , TxRef(..)
     , TxData(..)
     , Transaction(..)
     , transactionToJSON
@@ -222,27 +222,27 @@ instance FromJSON BlockRef where
             return MemRef {memRefTime = mempool}
 
 -- | Transaction in relation to an address.
-data BlockTx = BlockTx
-    { blockTxBlock :: !BlockRef
+data TxRef = TxRef
+    { txRefBlock :: !BlockRef
       -- ^ block information
-    , blockTxHash  :: !TxHash
+    , txRefHash  :: !TxHash
       -- ^ transaction hash
     } deriving (Show, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
-instance ToJSON BlockTx where
-    toJSON btx = object ["txid" .= blockTxHash btx, "block" .= blockTxBlock btx]
+instance ToJSON TxRef where
+    toJSON btx = object ["txid" .= txRefHash btx, "block" .= txRefBlock btx]
     toEncoding btx =
         pairs
-            (  "txid" .= blockTxHash btx
-            <> "block" .= blockTxBlock btx
+            (  "txid" .= txRefHash btx
+            <> "block" .= txRefBlock btx
             )
 
-instance FromJSON BlockTx where
+instance FromJSON TxRef where
     parseJSON =
         A.withObject "blocktx" $ \o -> do
             txid <- o .: "txid"
             block <- o .: "block"
-            return BlockTx {blockTxBlock = block, blockTxHash = txid}
+            return TxRef {txRefBlock = block, txRefHash = txid}
 
 -- | Address balance information.
 data Balance =

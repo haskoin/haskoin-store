@@ -25,7 +25,7 @@ import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                headerHash, txHash)
 import           Haskoin.Store.Common         (StoreRead (..), StoreWrite (..))
 import           Haskoin.Store.Data           (Balance (..), BlockData (..),
-                                               BlockRef (..), BlockTx (..),
+                                               BlockRef (..), TxRef (..),
                                                Spender, TxData (..),
                                                Unspent (..), zeroBalance)
 import           Haskoin.Store.Database.Types (BalVal, OutVal (..), UnspentVal,
@@ -58,7 +58,7 @@ data MemoryDatabase = MemoryDatabase
     , hBalance :: !(HashMap Address BalVal)
     , hAddrTx :: !(HashMap Address (HashMap BlockRef (HashMap TxHash Bool)))
     , hAddrOut :: !(HashMap Address (HashMap BlockRef (HashMap OutPoint (Maybe OutVal))))
-    , hMempool :: !(Maybe [BlockTx])
+    , hMempool :: !(Maybe [TxRef])
     } deriving (Eq, Show)
 
 emptyMemoryDatabase :: MemoryDatabase
@@ -101,7 +101,7 @@ getBalanceH a mem =
     fromMaybe (zeroBalance a) . fmap (valToBalance a) . M.lookup a $
     hBalance mem
 
-getMempoolH :: MemoryDatabase -> Maybe [BlockTx]
+getMempoolH :: MemoryDatabase -> Maybe [TxRef]
 getMempoolH = hMempool
 
 setBestH :: BlockHash -> MemoryDatabase -> MemoryDatabase
@@ -145,24 +145,24 @@ setBalanceH bal db =
   where
     b = balanceToVal bal
 
-insertAddrTxH :: Address -> BlockTx -> MemoryDatabase -> MemoryDatabase
+insertAddrTxH :: Address -> TxRef -> MemoryDatabase -> MemoryDatabase
 insertAddrTxH a btx db =
     let s =
             M.singleton
                 a
                 (M.singleton
-                     (blockTxBlock btx)
-                     (M.singleton (blockTxHash btx) True))
+                     (txRefBlock btx)
+                     (M.singleton (txRefHash btx) True))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
-deleteAddrTxH :: Address -> BlockTx -> MemoryDatabase -> MemoryDatabase
+deleteAddrTxH :: Address -> TxRef -> MemoryDatabase -> MemoryDatabase
 deleteAddrTxH a btx db =
     let s =
             M.singleton
                 a
                 (M.singleton
-                     (blockTxBlock btx)
-                     (M.singleton (blockTxHash btx) False))
+                     (txRefBlock btx)
+                     (M.singleton (txRefHash btx) False))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
 insertAddrUnspentH :: Address -> Unspent -> MemoryDatabase -> MemoryDatabase
@@ -190,7 +190,7 @@ deleteAddrUnspentH a u db =
                      (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
-setMempoolH :: [BlockTx] -> MemoryDatabase -> MemoryDatabase
+setMempoolH :: [TxRef] -> MemoryDatabase -> MemoryDatabase
 setMempoolH xs db = db {hMempool = Just xs}
 
 getUnspentH :: OutPoint -> MemoryDatabase -> Maybe (Maybe Unspent)

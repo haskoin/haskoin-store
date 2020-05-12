@@ -30,17 +30,16 @@ import           Haskoin.Store.Common         (Limits (..), Start (..),
                                                StoreRead (..), applyLimits,
                                                applyLimitsC, deOffset, nub')
 import           Haskoin.Store.Data           (Balance, BlockData,
-                                               BlockRef (..), BlockTx (..),
-                                               Spender, TxData (..),
+                                               BlockRef (..), Spender,
+                                               TxData (..), TxRef (..),
                                                Unspent (..), zeroBalance)
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),
-                                               MemKey (..), OldMemKey (..),
-                                               SpenderKey (..), TxKey (..),
-                                               UnspentKey (..), VersionKey (..),
-                                               toUnspent, valToBalance,
-                                               valToUnspent)
+                                               MemKey (..), SpenderKey (..),
+                                               TxKey (..), UnspentKey (..),
+                                               VersionKey (..), toUnspent,
+                                               valToBalance, valToUnspent)
 import           UnliftIO                     (MonadIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -84,25 +83,17 @@ withDatabaseReader :: MonadIO m => DatabaseReader -> DatabaseReaderT m a -> m a
 withDatabaseReader = flip runReaderT
 
 initRocksDB :: MonadIO m => DatabaseReader -> m ()
-initRocksDB bdb@DatabaseReader {databaseReadOptions = opts, databaseHandle = db} = do
+initRocksDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} = do
     e <-
         runExceptT $
         retrieve db opts VersionKey >>= \case
             Just v
                 | v == dataVersion -> return ()
-                | v == 15 -> migrate15to16 bdb >> initRocksDB bdb
                 | otherwise -> throwError "Incorrect RocksDB database version"
             Nothing -> setInitRocksDB db
     case e of
         Left s   -> error s
         Right () -> return ()
-
-migrate15to16 :: MonadIO m => DatabaseReader -> m ()
-migrate15to16 DatabaseReader {databaseReadOptions = opts, databaseHandle = db} = do
-    xs <- liftIO $ matchingAsList db opts OldMemKeyS
-    let ys = map (\(OldMemKey t h, ()) -> (t, h)) xs
-    insert db MemKey ys
-    insert db VersionKey (16 :: Word32)
 
 setInitRocksDB :: MonadIO m => DB -> m ()
 setInitRocksDB db = insert db VersionKey dataVersion
@@ -145,21 +136,21 @@ getBalanceDB a DatabaseReader { databaseReadOptions = opts
     fromMaybe (zeroBalance a) . fmap (valToBalance a) <$>
     retrieve db opts (BalKey a)
 
-getMempoolDB :: MonadIO m => DatabaseReader -> m [BlockTx]
+getMempoolDB :: MonadIO m => DatabaseReader -> m [TxRef]
 getMempoolDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
     fmap f . fromMaybe [] <$> retrieve db opts MemKey
   where
-    f (t, h) = BlockTx {blockTxBlock = MemRef t, blockTxHash = h}
+    f (t, h) = TxRef {txRefBlock = MemRef t, txRefHash = h}
 
 getAddressesTxsDB ::
        MonadIO m
     => [Address]
     -> Limits
     -> DatabaseReader
-    -> m [BlockTx]
+    -> m [TxRef]
 getAddressesTxsDB addrs limits db = do
     ts <- concat <$> mapM (\a -> getAddressTxsDB a (deOffset limits) db) addrs
-    let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
+    let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
     return $ applyLimits limits ts'
 
 getAddressTxsDB ::
@@ -167,7 +158,7 @@ getAddressTxsDB ::
     => Address
     -> Limits
     -> DatabaseReader
-    -> m [BlockTx]
+    -> m [TxRef]
 getAddressTxsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
                                             , databaseHandle = db
                                             } =

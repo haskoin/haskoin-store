@@ -75,7 +75,7 @@ import           Haskoin.Store.Common      (Limits (..), Start (..),
                                             xPubBalsTxs, xPubBalsUnspents,
                                             xPubTxs)
 import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            BlockRef (..), BlockTx (..),
+                                            BlockRef (..), TxRef (..),
                                             DeriveType (..), Prev (..),
                                             TxData (..), Unspent (..),
                                             XPubBal (..), XPubSpec (..),
@@ -170,7 +170,7 @@ getXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
     => XPubSpec
     -> Limits
-    -> CacheX m [BlockTx]
+    -> CacheX m [TxRef]
 getXPubTxs xpub limits = do
     xpubtxt <- xpubText xpub
     $(logDebugS) "Cache" $ "Getting xpub txs for " <> xpubtxt
@@ -285,7 +285,7 @@ cacheGetXPubTxs ::
        (StoreRead m, MonadLoggerIO m)
     => XPubSpec
     -> Limits
-    -> CacheX m [BlockTx]
+    -> CacheX m [TxRef]
 cacheGetXPubTxs xpub limits = do
     score <-
         case start limits of
@@ -307,7 +307,7 @@ cacheGetXPubTxs xpub limits = do
     touchKeys [xpub]
     return $ map (uncurry f) xs
   where
-    f t s = BlockTx {blockTxHash = t, blockTxBlock = scoreBlockRef s}
+    f t s = TxRef {txRefHash = t, txRefBlock = scoreBlockRef s}
 
 cacheGetXPubUnspents ::
        (StoreRead m, MonadLoggerIO m)
@@ -849,9 +849,9 @@ redisImportMultiTx addrmap unspentmap txs = do
                 x <-
                     redisAddXPubTxs
                         (addressXPubSpec i)
-                        [ BlockTx
-                              { blockTxHash = txHash (txData tx)
-                              , blockTxBlock = txDataBlock tx
+                        [ TxRef
+                              { txRefHash = txHash (txData tx)
+                              , txRefBlock = txDataBlock tx
                               }
                         ]
                 y <- uns p i
@@ -877,9 +877,9 @@ redisImportMultiTx addrmap unspentmap txs = do
                         b@MemRef {} ->
                             redisAddToMempool $
                             (: [])
-                                BlockTx
-                                    { blockTxHash = txHash (txData tx)
-                                    , blockTxBlock = b
+                                TxRef
+                                    { txRefHash = txHash (txData tx)
+                                    , txRefBlock = b
                                     }
                         _ -> redisRemFromMempool [txHash (txData tx)]
                 return $ a >> b >> return ()
@@ -977,8 +977,8 @@ getNewAddrs gap xpubs = concatMap f
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => CacheX m ()
 syncMempoolC = do
-    nodepool <- (HashSet.fromList . map blockTxHash) <$> lift getMempool
-    cachepool <- (HashSet.fromList . map blockTxHash) <$> cacheGetMempool
+    nodepool <- (HashSet.fromList . map txRefHash) <$> lift getMempool
+    cachepool <- (HashSet.fromList . map txRefHash) <$> cacheGetMempool
     txs <-
         mapM getit . HashSet.toList $
         mappend
@@ -1000,7 +1000,7 @@ syncMempoolC = do
             Nothing -> return (Left th)
             Just tx -> return (Right tx)
 
-cacheGetMempool :: MonadLoggerIO m => CacheX m [BlockTx]
+cacheGetMempool :: MonadLoggerIO m => CacheX m [TxRef]
 cacheGetMempool = runRedis redisGetMempool
 
 cacheGetHead :: MonadLoggerIO m => CacheX m (Maybe BlockHash)
@@ -1038,11 +1038,11 @@ cacheGetAddrsInfo ::
        MonadLoggerIO m => [Address] -> CacheX m [Maybe AddressXPub]
 cacheGetAddrsInfo as = runRedis (redisGetAddrsInfo as)
 
-redisAddToMempool :: (Applicative f, RedisCtx m f) => [BlockTx] -> m (f Integer)
+redisAddToMempool :: (Applicative f, RedisCtx m f) => [TxRef] -> m (f Integer)
 redisAddToMempool [] = return (pure 0)
 redisAddToMempool btxs =
     zadd mempoolSetKey $
-    map (\btx -> (blockRefScore (blockTxBlock btx), encode (blockTxHash btx)))
+    map (\btx -> (blockRefScore (txRefBlock btx), encode (txRefHash btx)))
         btxs
 
 redisRemFromMempool ::
@@ -1099,11 +1099,11 @@ redisDelXPubKeys xpub bals = go (map (balanceAddress . xPubBal) bals)
             return $ addrs' + txset' + utxo' + bal'
 
 redisAddXPubTxs ::
-       (Applicative f, RedisCtx m f) => XPubSpec -> [BlockTx] -> m (f Integer)
+       (Applicative f, RedisCtx m f) => XPubSpec -> [TxRef] -> m (f Integer)
 redisAddXPubTxs _ [] = return (pure 0)
 redisAddXPubTxs xpub btxs =
     zadd (txSetPfx <> encode xpub) $
-    map (\t -> (blockRefScore (blockTxBlock t), encode (blockTxHash t))) btxs
+    map (\t -> (blockRefScore (txRefBlock t), encode (txRefHash t))) btxs
 
 redisRemXPubTxs ::
        (Applicative f, RedisCtx m f) => XPubSpec -> [TxHash] -> m (f Integer)
@@ -1207,14 +1207,14 @@ redisGetHead = do
     x <- Redis.get bestBlockKey
     return $ (eitherToMaybe . decode =<<) <$> x
 
-redisGetMempool :: (Applicative f, RedisCtx m f) => m (f [BlockTx])
+redisGetMempool :: (Applicative f, RedisCtx m f) => m (f [TxRef])
 redisGetMempool = do
     xs <- getFromSortedSet mempoolSetKey Nothing 0 0
     return $ do
         ys <- xs
         return $ map (uncurry f) ys
   where
-    f t s = BlockTx {blockTxBlock = scoreBlockRef s, blockTxHash = t}
+    f t s = TxRef {txRefBlock = scoreBlockRef s, txRefHash = t}
 
 xpubText :: (MonadUnliftIO m, MonadLoggerIO m, StoreRead m) => XPubSpec -> CacheX m Text
 xpubText xpub = do

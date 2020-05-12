@@ -24,7 +24,7 @@ import           Haskoin                 (Address (..), BlockHash (..),
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest, ripemd160, sha256)
 import           Haskoin.Store.Data      (Balance (..), BlockData (..),
-                                          BlockRef (..), BlockTx (..),
+                                          BlockRef (..), TxRef (..),
                                           DeriveType (..), Event (..),
                                           HealthCheck (..),
                                           PeerInformation (..), Prev (..),
@@ -55,7 +55,7 @@ spec = do
         prop "identity for derivation type" $ \x -> testSerial (x :: DeriveType)
         prop "identity for xpub spec" $ \x -> testSerial (x :: XPubSpec)
         prop "identity for block ref" $ \x -> testSerial (x :: BlockRef)
-        prop "identity for block tx" $ \x -> testSerial (x :: BlockTx)
+        prop "identity for block tx" $ \x -> testSerial (x :: TxRef)
         prop "identity for balance" $ \x -> testSerial (x :: Balance)
         prop "identity for unspent" $ \x -> testSerial (x :: Unspent)
         prop "identity for block data" $ \x -> testSerial (x :: BlockData)
@@ -79,7 +79,7 @@ spec = do
                 (balanceToJSON net)
                 (balanceToEncoding net)
                 x
-        prop "identity for block tx" $ \x -> testJSON (x :: BlockTx)
+        prop "identity for block tx" $ \x -> testJSON (x :: TxRef)
         prop "identity for block ref" $ \x -> testJSON (x :: BlockRef)
         prop "identity for unspent" . forAll arbitraryNetData $ \(net, x) ->
             testNetJSON
@@ -312,8 +312,8 @@ instance Arbitrary DeriveType where
 instance Arbitrary TxId where
     arbitrary = TxId <$> arbitrary
 
-instance Arbitrary BlockTx where
-    arbitrary = BlockTx <$> arbitrary <*> arbitrary
+instance Arbitrary TxRef where
+    arbitrary = TxRef <$> arbitrary <*> arbitrary
 
 instance Arbitrary Hash160 where
     arbitrary = ripemd160 . pack <$> listOf1 arbitrary

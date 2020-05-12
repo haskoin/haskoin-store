@@ -1,5 +1,5 @@
 name: haskoin-store
-version: &version 0.28.0
+version: &version 0.29.0
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: >
   Store and index Bitcoin or Bitcoin Cash blocks, transactions,

@@ -66,7 +66,7 @@ import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
                                                 StoreRead (..), blockAtOrBefore,
                                                 getTransaction, nub')
 import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
-                                                BlockTx (..), DeriveType (..),
+                                                TxRef (..), DeriveType (..),
                                                 Event (..), Except (..),
                                                 GenericResult (..),
                                                 HealthCheck (..),
@@ -410,7 +410,7 @@ scottyMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMempool = do
     setHeaders
     proto <- setupBin
-    txs <- map blockTxHash <$> getMempool
+    txs <- map txRefHash <$> getMempool
     protoSerial proto txs
 
 scottyTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -573,7 +573,7 @@ scottyXpubTxs full = do
         then do
             txs' <-
                 fmap catMaybes . lift . runNoCache nocache $
-                mapM (getTransaction . blockTxHash) txs
+                mapM (getTransaction . txRefHash) txs
             protoSerialNet proto (list . transactionToEncoding) txs'
         else protoSerial proto txs
 
@@ -958,7 +958,7 @@ healthCheck net mgr ch tos = do
         return $ compute_delta bt tm
     tx_time_delta tm bd ml = do
         bd' <- bd
-        tt <- memRefTime . blockTxBlock <$> ml <|> bd
+        tt <- memRefTime . txRefBlock <$> ml <|> bd
         return $ min (compute_delta tt tm) bd'
     timeout_ok to td = fromMaybe False $ do
         td' <- td
@@ -1039,7 +1039,7 @@ getAddressTxsLimit ::
        (Monad m, StoreRead m)
     => Limits
     -> Address
-    -> m [BlockTx]
+    -> m [TxRef]
 getAddressTxsLimit limits addr = getAddressTxs addr limits
 
 getAddressTxsFull ::
@@ -1049,13 +1049,13 @@ getAddressTxsFull ::
     -> m [Transaction]
 getAddressTxsFull limits addr = do
     txs <- getAddressTxsLimit limits addr
-    catMaybes <$> mapM (getTransaction . blockTxHash) txs
+    catMaybes <$> mapM (getTransaction . txRefHash) txs
 
 getAddressesTxsLimit ::
        (Monad m, StoreRead m)
     => Limits
     -> [Address]
-    -> m [BlockTx]
+    -> m [TxRef]
 getAddressesTxsLimit limits addrs = getAddressesTxs addrs limits
 
 getAddressesTxsFull ::
@@ -1066,7 +1066,7 @@ getAddressesTxsFull ::
 getAddressesTxsFull limits addrs =
     fmap catMaybes $
     getAddressesTxsLimit limits addrs >>=
-    mapM (getTransaction . blockTxHash)
+    mapM (getTransaction . txRefHash)
 
 getAddressUnspentsLimit ::
        (Monad m, StoreRead m)

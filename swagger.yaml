@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.28.0'
+  version: '0.29.0'
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
@@ -83,7 +83,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/BlockTx'
+                  $ref: '#/components/schemas/TxRef'
                 example:
                   - txid: '128d3979e1837631688d54a5e55716d44617ef70da1237042abcea51128d4ae2'
                     block:
@@ -162,7 +162,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/BlockTx'
+                  $ref: '#/components/schemas/TxRef'
                 example:
                   - txid: '128d3979e1837631688d54a5e55716d44617ef70da1237042abcea51128d4ae2'
                     block:
@@ -1071,7 +1071,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/BlockTx'
+                  $ref: '#/components/schemas/TxRef'
                 example:
                   - block:
                       height: 765798
@@ -1325,7 +1325,7 @@ components:
             change:
               type: integer
 
-    BlockTx:
+    TxRef:
       type: object
       description: Transaction hash and blockchain position or mempool timestamp.
       required:

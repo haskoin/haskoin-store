@@ -51,7 +51,7 @@ import           Haskoin                   (Address, BlockHash,
                                             txHash)
 import           Haskoin.Node              (Peer)
 import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            BlockTx (..), DeriveType (..),
+                                            TxRef (..), DeriveType (..),
                                             Spender, Transaction, TxData,
                                             UnixTime, Unspent (..),
                                             XPubBal (..), XPubSpec (..),
@@ -99,14 +99,14 @@ class Monad m =>
     getBalance a = head <$> getBalances [a]
     getBalances :: [Address] -> m [Balance]
     getBalances as = mapM getBalance as
-    getAddressesTxs :: [Address] -> Limits -> m [BlockTx]
-    getAddressTxs :: Address -> Limits -> m [BlockTx]
+    getAddressesTxs :: [Address] -> Limits -> m [TxRef]
+    getAddressTxs :: Address -> Limits -> m [TxRef]
     getAddressTxs a = getAddressesTxs [a]
     getUnspent :: OutPoint -> m (Maybe Unspent)
     getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
-    getMempool :: m [BlockTx]
+    getMempool :: m [TxRef]
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
@@ -176,12 +176,12 @@ class Monad m =>
                              XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
                         uns
             (xuns <>) <$> go xs
-    xPubTxs :: XPubSpec -> Limits -> m [BlockTx]
+    xPubTxs :: XPubSpec -> Limits -> m [TxRef]
     xPubTxs xpub limits = do
         bs <- xPubBals xpub
         let as = map (balanceAddress . xPubBal) bs
         ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
-        let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
+        let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
         return $ applyLimits limits ts'
     getMaxGap :: m Word32
     getInitialGap :: m Word32
@@ -193,11 +193,11 @@ class StoreWrite m where
     insertTx :: TxData -> m ()
     insertSpender :: OutPoint -> Spender -> m ()
     deleteSpender :: OutPoint -> m ()
-    insertAddrTx :: Address -> BlockTx -> m ()
-    deleteAddrTx :: Address -> BlockTx -> m ()
+    insertAddrTx :: Address -> TxRef -> m ()
+    deleteAddrTx :: Address -> TxRef -> m ()
     insertAddrUnspent :: Address -> Unspent -> m ()
     deleteAddrUnspent :: Address -> Unspent -> m ()
-    setMempool :: [BlockTx] -> m ()
+    setMempool :: [TxRef] -> m ()
     setBalance :: Balance -> m ()
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
@@ -233,11 +233,11 @@ xPubBalsTxs ::
        StoreRead m
     => [XPubBal]
     -> Limits
-    -> m [BlockTx]
+    -> m [TxRef]
 xPubBalsTxs bals limits = do
     let as = map balanceAddress . filter (not . nullBalance) $ map xPubBal bals
     ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
-    let ts' = sortBy (flip compare `on` blockTxBlock) (nub' ts)
+    let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
     return $ applyLimits limits ts'
 
 getTransaction ::

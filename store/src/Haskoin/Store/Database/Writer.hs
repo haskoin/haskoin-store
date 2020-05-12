@@ -9,7 +9,6 @@ module Haskoin.Store.Database.Writer
 
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (join)
-import           Control.Monad.Except          (MonadError)
 import           Control.Monad.Reader          (ReaderT)
 import qualified Control.Monad.Reader          as R
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
@@ -26,7 +25,7 @@ import           Haskoin                       (Address, BlockHash, BlockHeight,
                                                 OutPoint (..), TxHash)
 import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..))
 import           Haskoin.Store.Data            (Balance, BlockData,
-                                                BlockRef (..), BlockTx (..),
+                                                BlockRef (..), TxRef (..),
                                                 Spender, TxData, Unspent,
                                                 nullBalance, zeroBalance)
 import           Haskoin.Store.Database.Memory (MemoryDatabase (..),
@@ -52,7 +51,7 @@ data DatabaseWriter = DatabaseWriter
     }
 
 runDatabaseWriter ::
-       (MonadIO m, MonadError e m)
+       MonadIO m
     => DatabaseReader
     -> ReaderT DatabaseWriter m a
     -> m a
@@ -133,9 +132,9 @@ addrTxOps = concat . concatMap (uncurry f) . M.toList
             (AddrTxKey
                  { addrTxKeyA = a
                  , addrTxKeyT =
-                       BlockTx
-                           { blockTxBlock = b
-                           , blockTxHash = t
+                       TxRef
+                           { txRefBlock = b
+                           , txRefHash = t
                            }
                  })
             ()
@@ -144,9 +143,9 @@ addrTxOps = concat . concatMap (uncurry f) . M.toList
             AddrTxKey
                 { addrTxKeyA = a
                 , addrTxKeyT =
-                      BlockTx
-                          { blockTxBlock = b
-                          , blockTxHash = t
+                      TxRef
+                          { txRefBlock = b
+                          , txRefHash = t
                           }
                 }
 
@@ -164,10 +163,10 @@ addrOutOps = concat . concatMap (uncurry f) . M.toList
     h a b p Nothing =
         deleteOp AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p}
 
-mempoolOp :: [BlockTx] -> BatchOp
+mempoolOp :: [TxRef] -> BatchOp
 mempoolOp =
     insertOp MemKey .
-    map (\BlockTx {blockTxBlock = MemRef t, blockTxHash = h} -> (t, h))
+    map (\TxRef {txRefBlock = MemRef t, txRefHash = h} -> (t, h))
 
 unspentOps :: HashMap TxHash (IntMap (Maybe UnspentVal)) -> [BatchOp]
 unspentOps = concatMap (uncurry f) . M.toList
@@ -200,11 +199,11 @@ deleteSpenderI :: MonadIO m => OutPoint -> DatabaseWriter -> m ()
 deleteSpenderI p DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ deleteSpender p
 
-insertAddrTxI :: MonadIO m => Address -> BlockTx -> DatabaseWriter -> m ()
+insertAddrTxI :: MonadIO m => Address -> TxRef -> DatabaseWriter -> m ()
 insertAddrTxI a t DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ insertAddrTx a t
 
-deleteAddrTxI :: MonadIO m => Address -> BlockTx -> DatabaseWriter -> m ()
+deleteAddrTxI :: MonadIO m => Address -> TxRef -> DatabaseWriter -> m ()
 deleteAddrTxI a t DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ deleteAddrTx a t
 
@@ -216,7 +215,7 @@ deleteAddrUnspentI :: MonadIO m => Address -> Unspent -> DatabaseWriter -> m ()
 deleteAddrUnspentI a u DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ deleteAddrUnspent a u
 
-setMempoolI :: MonadIO m => [BlockTx] -> DatabaseWriter -> m ()
+setMempoolI :: MonadIO m => [TxRef] -> DatabaseWriter -> m ()
 setMempoolI xs DatabaseWriter {databaseWriterState = hm} = withMemoryDatabase hm $ setMempool xs
 
 getBestBlockI :: MonadIO m => DatabaseWriter -> m (Maybe BlockHash)
@@ -304,7 +303,7 @@ deleteUnspentI p DatabaseWriter {databaseWriterState = hm} =
 getMempoolI ::
        MonadIO m
     => DatabaseWriter
-    -> m [BlockTx]
+    -> m [TxRef]
 getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
     getMempoolH <$> readTVarIO (memoryDatabase hm) >>= \case
         Just xs -> return xs

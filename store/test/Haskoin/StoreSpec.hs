@@ -7,7 +7,6 @@ module Haskoin.StoreSpec (spec) where
 import           Conduit
 import           Control.Monad
 import           Control.Monad.Logger
-import           Control.Monad.Trans
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B
 import           Data.ByteString.Base64
@@ -19,7 +18,6 @@ import           Data.Word
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
-import           Haskoin.Store.Common
 import           Network.Socket
 import           NQE
 import           System.Random
@@ -117,7 +115,7 @@ allBlocks =
     fromRight (error "Could not decode blocks") $
     runGet f (decodeBase64Lenient allBlocksBase64)
   where
-    f = mapM (const get) [1..15]
+    f = mapM (const get) [(1 :: Int) .. 15]
 
 allBlocksBase64 :: ByteString
 allBlocksBase64 =
@@ -193,7 +191,7 @@ dummyPeerConnect net ad sa f = do
             forever (receive r >>= yield) .| inc .| concatMapC mockPeerReact .|
             outc .|
             awaitForever (`send` s)
-    outc = mapMC $ \msg -> return $ runPut (putMessage net msg)
+    outc = mapMC $ \msg' -> return $ runPut (putMessage net msg')
     inc =
         forever $ do
             x <- takeCE 24 .| foldC
@@ -205,7 +203,7 @@ dummyPeerConnect net ad sa f = do
                         Left e ->
                             error $
                             "Dummy peer could not decode payload: " <> show e
-                        Right msg -> yield msg
+                        Right msg' -> yield msg'
 
 mockPeerReact :: Message -> [Message]
 mockPeerReact (MPing (Ping n)) = [MPong (Pong n)]

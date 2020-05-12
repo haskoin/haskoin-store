@@ -30,8 +30,6 @@ module Haskoin.Store.BlockStore
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forM, forM_, forever, mzero,
                                                 unless, void, when)
-import           Control.Monad.Except          (ExceptT, MonadError (..),
-                                                runExceptT)
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
                                                 logErrorS, logInfoS, logWarnS)
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
@@ -70,13 +68,13 @@ import           Haskoin.Node                  (Chain, PeerManager,
                                                 managerPeerText)
 import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
                                                 sortTxs)
-import           Haskoin.Store.Data            (BlockTx (..), TxData (..),
+import           Haskoin.Store.Data            (TxData (..), TxRef (..),
                                                 UnixTime, Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)
 import           Haskoin.Store.Logic           (ImportException (TxOrphan),
-                                                deleteTx, getOldMempool,
+                                                delTx, getOldMempool,
                                                 importBlock, initBest,
                                                 newMempoolTx, revertBlock)
 import           Network.Socket                (SockAddr)
@@ -86,9 +84,10 @@ import           NQE                           (Inbox, Listen, Mailbox,
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar,
-                                                atomically, liftIO, modifyTVar,
-                                                newTVarIO, readTVar, readTVarIO,
-                                                throwIO, withAsync, writeTVar)
+                                                atomically, catch, liftIO,
+                                                modifyTVar, newTVarIO, readTVar,
+                                                readTVarIO, throwIO, try,
+                                                withAsync, writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 
 -- | Messages for block store actor.
@@ -103,9 +102,9 @@ data BlockStoreMessage
       -- ^ new block received from a peer
     | BlockNotFound !Peer ![BlockHash]
       -- ^ block not found
-    | BlockTxReceived !Peer !Tx
+    | TxRefReceived !Peer !Tx
       -- ^ transaction received from peer
-    | BlockTxAvailable !Peer ![TxHash]
+    | TxRefAvailable !Peer ![TxHash]
       -- ^ peer has transactions available
     | BlockPing !(Listen ())
       -- ^ internal housekeeping ping
@@ -166,11 +165,11 @@ data BlockStoreConfig =
 type BlockT m = ReaderT BlockRead m
 
 runImport ::
-       MonadLoggerIO m
-    => ReaderT DatabaseWriter (ExceptT ImportException m) a
+       (MonadLoggerIO m, MonadUnliftIO m)
+    => ReaderT DatabaseWriter m a
     -> ReaderT BlockRead m (Either ImportException a)
 runImport f =
-    ReaderT $ \r -> runExceptT (runDatabaseWriter (blockConfDB (myConfig r)) f)
+    ReaderT $ \r -> try (runDatabaseWriter (blockConfDB (myConfig r)) f)
 
 runRocksDB :: ReaderT DatabaseReader m a -> ReaderT BlockRead m a
 runRocksDB f =
@@ -218,8 +217,8 @@ blockStore cfg inbox = do
             $(logDebugS) "BlockStore" $
                 "Wiping mempool tx " <> cs (show i) <> "/" <> cs (show n) <>
                 ": " <>
-                txHashToHex (blockTxHash tx)
-            deleteTx True False (blockTxHash tx)
+                txHashToHex (txRefHash tx)
+            delTx (txRefHash tx)
     wipeit x n txs = do
         let (txs1, txs2) = splitAt 1000 txs
         case txs1 of
@@ -463,7 +462,7 @@ processMempool = do
                             case x of
                                 Just ls -> Right (th, ls)
                                 Nothing -> Left Nothing
-                catchError f (h p)
+                catch f (h p)
         case output of
             Left e -> do
                 $(logErrorS) "BlockStore" $
@@ -588,10 +587,11 @@ pruneMempool =
     deletetxs old = do
         forM_ (zip [(1 :: Int) ..] old) $ \(i, txid) -> do
             $(logInfoS) "BlockStore" $
-                "Removing " <> cs (show i) <> "/" <> cs (show (length old)) <>
-                " old mempool tx " <>
+                "Removing old mempool tx " <> cs (show i) <> "/" <>
+                cs (show (length old)) <>
+                ": " <>
                 txHashToHex txid
-            runImport (deleteTx True False txid) >>= \case
+            runImport (delTx txid) >>= \case
                 Left _ -> return ()
                 Right txids -> do
                     listener <- asks (blockConfListener . myConfig)
@@ -746,8 +746,8 @@ processBlockStoreMessage (BlockPeerConnect p _) = syncMe p
 processBlockStoreMessage (BlockPeerDisconnect p _sa) = processDisconnect p
 processBlockStoreMessage (BlockReceived p b) = processBlock p b
 processBlockStoreMessage (BlockNotFound p bs) = processNoBlocks p bs
-processBlockStoreMessage (BlockTxReceived p tx) = processTx p tx
-processBlockStoreMessage (BlockTxAvailable p ts) = processTxs p ts
+processBlockStoreMessage (TxRefReceived p tx) = processTx p tx
+processBlockStoreMessage (TxRefAvailable p ts) = processTxs p ts
 processBlockStoreMessage (BlockPing r) = do
     processMempool
     pruneOrphans
@@ -778,11 +778,11 @@ blockStoreNotFound :: MonadIO m => Peer -> [BlockHash] -> BlockStore -> m ()
 blockStoreNotFound peer blocks store = BlockNotFound peer blocks `send` store
 
 blockStoreTx :: MonadIO m => Peer -> Tx -> BlockStore -> m ()
-blockStoreTx peer tx store = BlockTxReceived peer tx `send` store
+blockStoreTx peer tx store = TxRefReceived peer tx `send` store
 
 blockStoreTxHash :: MonadIO m => Peer -> [TxHash] -> BlockStore -> m ()
 blockStoreTxHash peer txhashes store =
-    BlockTxAvailable peer txhashes `send` store
+    TxRefAvailable peer txhashes `send` store
 
 blockStorePeerConnectSTM :: Peer -> SockAddr -> BlockStore -> STM ()
 blockStorePeerConnectSTM peer addr store = BlockPeerConnect peer addr `sendSTM` store
@@ -801,11 +801,11 @@ blockStoreNotFoundSTM :: Peer -> [BlockHash] -> BlockStore -> STM ()
 blockStoreNotFoundSTM peer blocks store = BlockNotFound peer blocks `sendSTM` store
 
 blockStoreTxSTM :: Peer -> Tx -> BlockStore -> STM ()
-blockStoreTxSTM peer tx store = BlockTxReceived peer tx `sendSTM` store
+blockStoreTxSTM peer tx store = TxRefReceived peer tx `sendSTM` store
 
 blockStoreTxHashSTM :: Peer -> [TxHash] -> BlockStore -> STM ()
 blockStoreTxHashSTM peer txhashes store =
-    BlockTxAvailable peer txhashes `sendSTM` store
+    TxRefAvailable peer txhashes `sendSTM` store
 
 blockText :: BlockNode -> [Tx] -> Text
 blockText bn txs
