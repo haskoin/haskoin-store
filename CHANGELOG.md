@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 - Retrieve balances and unspent outputs concurrently when importing.
+- Coin instance for Unspent in data package.
 
 ## 0.28.0
 ### Changed

@@ -102,8 +102,8 @@ import qualified Data.Text.Lazy          as TL
 import           Data.Word               (Word32, Word64)
 import           GHC.Generics            (Generic)
 import           Haskoin                 (Address, BlockHash, BlockHeader (..),
-                                          BlockHeight, BlockWork, KeyIndex,
-                                          Network (..), OutPoint (..),
+                                          BlockHeight, BlockWork, Coin (..),
+                                          KeyIndex, Network (..), OutPoint (..),
                                           PubKeyI (..), Tx (..), TxHash (..),
                                           TxIn (..), TxOut (..), WitnessStack,
                                           XPubKey (..), addrFromJSON,
@@ -331,6 +331,9 @@ data Unspent = Unspent
     , unspentScript  :: !ShortByteString
     , unspentAddress :: !(Maybe Address)
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
+
+instance Coin Unspent where
+    coinValue = unspentAmount
 
 unspentToJSON :: Network -> Unspent -> Value
 unspentToJSON net u =
