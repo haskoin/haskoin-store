@@ -27,7 +27,7 @@ import           Options.Applicative     (Parser, auto, eitherReader,
                                           option, progDesc, short, showDefault,
                                           strOption, switch, value)
 import           Paths_haskoin_store     as P
-import           System.Exit             (die, exitSuccess)
+import           System.Exit             (exitSuccess)
 import           System.FilePath         ((</>))
 import           System.IO.Unsafe        (unsafePerformIO)
 import           Text.Read               (readMaybe)
@@ -59,7 +59,7 @@ defPort :: Int
 defPort = 3000
 
 defNetwork :: Network
-defNetwork = btc
+defNetwork = bch
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -220,13 +220,14 @@ main = do
     when (configVersion conf) . liftIO $ do
         putStrLn $ showVersion P.version
         exitSuccess
-    when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
-        die "ERROR: Specify peers to connect or enable peer discovery."
-    run conf
+    if (null (configPeers conf) && not (configDiscover conf))
+        then liftIO (run conf {configDiscover = True})
+        else liftIO (run conf)
   where
     opts =
         info (helper <*> config) $
-        fullDesc <> progDesc "Blockchain store and API" <>
+        fullDesc <>
+        progDesc "Bitcoin (BCH & BTC) block chain index with HTTP API" <>
         Options.Applicative.header
             ("haskoin-store version " <> showVersion P.version)
 

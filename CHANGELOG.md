@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.29.3
+### Changed
+- Revert concurrent retrieval changes from 0.29.1 and 0.29.0 to solve stability
+  issues.
+- Bitcoin Cash (BCH) replaces BTC as default network in CLI.
+- Peer discovery enabled automatically if no peers specified in CLI.
+- Use separate Stack configuration file for data package.
+
 ## 0.29.2
 ### Changed
 - Increase timeouts for manager and chain health checks.

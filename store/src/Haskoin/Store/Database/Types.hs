@@ -10,6 +10,7 @@ module Haskoin.Store.Database.Types
     , BalKey(..)
     , HeightKey(..)
     , MemKey(..)
+    , OldMemKey(..)
     , SpenderKey(..)
     , TxKey(..)
     , UnspentKey(..)
@@ -41,8 +42,9 @@ import           Haskoin                (Address, BlockHash, BlockHeight,
                                          OutPoint (..), TxHash, eitherToMaybe,
                                          scriptToAddressBS)
 import           Haskoin.Store.Data     (Balance (..), BlockData, BlockRef,
-                                         Spender, TxData, TxRef (..), UnixTime,
-                                         Unspent (..))
+                                         TxRef (..), Spender, TxData,
+                                         UnixTime, Unspent (..), getUnixTime,
+                                         putUnixTime)
 
 -- | Database key for an address transaction.
 data AddrTxKey
@@ -316,6 +318,38 @@ instance Serialize VersionKey where
 
 instance Key VersionKey
 instance KeyValue VersionKey Word32
+
+
+-- | Old mempool transaction database key.
+data OldMemKey
+    = OldMemKey
+          { memTime :: !UnixTime
+          , memKey  :: !TxHash
+          }
+    | OldMemKeyT
+          { memTime :: !UnixTime
+          }
+    | OldMemKeyS
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
+
+instance Serialize OldMemKey where
+    -- 0x07 · UnixTime · TxHash
+    put (OldMemKey t h) = do
+        putWord8 0x07
+        putUnixTime t
+        put h
+    -- 0x07 · UnixTime
+    put (OldMemKeyT t) = do
+        putWord8 0x07
+        putUnixTime t
+    -- 0x07
+    put OldMemKeyS = putWord8 0x07
+    get = do
+        guard . (== 0x07) =<< getWord8
+        OldMemKey <$> getUnixTime <*> get
+
+instance Key OldMemKey
+instance KeyValue OldMemKey ()
 
 data BalVal = BalVal
     { balValAmount        :: !Word64

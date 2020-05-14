@@ -30,6 +30,8 @@ module Haskoin.Store.BlockStore
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forM, forM_, forever, mzero,
                                                 unless, void, when)
+import           Control.Monad.Except          (ExceptT, MonadError (..),
+                                                runExceptT)
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
                                                 logErrorS, logInfoS, logWarnS)
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
@@ -68,13 +70,13 @@ import           Haskoin.Node                  (Chain, PeerManager,
                                                 managerPeerText)
 import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
                                                 sortTxs)
-import           Haskoin.Store.Data            (TxData (..), TxRef (..),
+import           Haskoin.Store.Data            (TxRef (..), TxData (..),
                                                 UnixTime, Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)
 import           Haskoin.Store.Logic           (ImportException (TxOrphan),
-                                                delTx, getOldMempool,
+                                                deleteTx, getOldMempool,
                                                 importBlock, initBest,
                                                 newMempoolTx, revertBlock)
 import           Network.Socket                (SockAddr)
@@ -84,10 +86,9 @@ import           NQE                           (Inbox, Listen, Mailbox,
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar,
-                                                atomically, catch, liftIO,
-                                                modifyTVar, newTVarIO, readTVar,
-                                                readTVarIO, throwIO, try,
-                                                withAsync, writeTVar)
+                                                atomically, liftIO, modifyTVar,
+                                                newTVarIO, readTVar, readTVarIO,
+                                                throwIO, withAsync, writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 
 -- | Messages for block store actor.
@@ -165,18 +166,18 @@ data BlockStoreConfig =
 type BlockT m = ReaderT BlockRead m
 
 runImport ::
-       (MonadLoggerIO m, MonadUnliftIO m)
-    => ReaderT DatabaseWriter m a
+       MonadLoggerIO m
+    => ReaderT DatabaseWriter (ExceptT ImportException m) a
     -> ReaderT BlockRead m (Either ImportException a)
 runImport f =
-    ReaderT $ \r -> try (runDatabaseWriter (blockConfDB (myConfig r)) f)
+    ReaderT $ \r -> runExceptT (runDatabaseWriter (blockConfDB (myConfig r)) f)
 
 runRocksDB :: ReaderT DatabaseReader m a -> ReaderT BlockRead m a
 runRocksDB f =
     ReaderT $ \BlockRead {myConfig = BlockStoreConfig {blockConfDB = db}} ->
         runReaderT f db
 
-instance MonadUnliftIO m => StoreRead (ReaderT BlockRead m) where
+instance MonadIO m => StoreRead (ReaderT BlockRead m) where
     getMaxGap = runRocksDB getMaxGap
     getInitialGap = runRocksDB getInitialGap
     getNetwork = runRocksDB getNetwork
@@ -218,7 +219,7 @@ blockStore cfg inbox = do
                 "Wiping mempool tx " <> cs (show i) <> "/" <> cs (show n) <>
                 ": " <>
                 txHashToHex (txRefHash tx)
-            delTx (txRefHash tx)
+            deleteTx True False (txRefHash tx)
     wipeit x n txs = do
         let (txs1, txs2) = splitAt 1000 txs
         case txs1 of
@@ -462,7 +463,7 @@ processMempool = do
                             case x of
                                 Just ls -> Right (th, ls)
                                 Nothing -> Left Nothing
-                catch f (h p)
+                catchError f (h p)
         case output of
             Left e -> do
                 $(logErrorS) "BlockStore" $
@@ -587,11 +588,10 @@ pruneMempool =
     deletetxs old = do
         forM_ (zip [(1 :: Int) ..] old) $ \(i, txid) -> do
             $(logInfoS) "BlockStore" $
-                "Removing old mempool tx " <> cs (show i) <> "/" <>
-                cs (show (length old)) <>
-                ": " <>
+                "Removing " <> cs (show i) <> "/" <> cs (show (length old)) <>
+                " old mempool tx " <>
                 txHashToHex txid
-            runImport (delTx txid) >>= \case
+            runImport (deleteTx True False txid) >>= \case
                 Left _ -> return ()
                 Right txids -> do
                     listener <- asks (blockConfListener . myConfig)

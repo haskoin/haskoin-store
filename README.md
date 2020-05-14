@@ -14,14 +14,27 @@ Full block store and index featuring:
 - High-performance concurrent architecture.
 - Support for both JSON and binary formats.
 
-## Quick Install with Nix
+## Quick Install with Nix Anywhere
 
 * Get [Nix](https://nixos.org/nix/).
 
 ```sh
 nix-env --install stack
 git clone https://github.com/haskoin/haskoin-store.git
+cd haskoin-store
 stack --nix build --copy-bins
+~/.local/bin/haskoin-store --help
+```
+
+## Install on Ubuntu 20.04
+
+* Get [Stack](https://haskellstack.org/)
+
+```sh
+apt install git libsecp256k1-dev librocksdb-dev
+git clone https://github.com/haskoin/haskoin-store.git
+cd haskoin-store
+stack build --copy-bins
 ~/.local/bin/haskoin-store --help
 ```
 

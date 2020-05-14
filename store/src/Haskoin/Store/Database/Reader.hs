@@ -30,17 +30,18 @@ import           Haskoin.Store.Common         (Limits (..), Start (..),
                                                StoreRead (..), applyLimits,
                                                applyLimitsC, deOffset, nub')
 import           Haskoin.Store.Data           (Balance, BlockData,
-                                               BlockRef (..), Spender,
-                                               TxData (..), TxRef (..),
+                                               BlockRef (..), TxRef (..),
+                                               Spender, TxData (..),
                                                Unspent (..), zeroBalance)
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),
-                                               MemKey (..), SpenderKey (..),
-                                               TxKey (..), UnspentKey (..),
-                                               VersionKey (..), toUnspent,
-                                               valToBalance, valToUnspent)
-import           UnliftIO                     (MonadUnliftIO, MonadIO, liftIO)
+                                               MemKey (..), OldMemKey (..),
+                                               SpenderKey (..), TxKey (..),
+                                               UnspentKey (..), VersionKey (..),
+                                               toUnspent, valToBalance,
+                                               valToUnspent)
+import           UnliftIO                     (MonadIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
 
@@ -83,17 +84,25 @@ withDatabaseReader :: MonadIO m => DatabaseReader -> DatabaseReaderT m a -> m a
 withDatabaseReader = flip runReaderT
 
 initRocksDB :: MonadIO m => DatabaseReader -> m ()
-initRocksDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} = do
+initRocksDB bdb@DatabaseReader {databaseReadOptions = opts, databaseHandle = db} = do
     e <-
         runExceptT $
         retrieve db opts VersionKey >>= \case
             Just v
                 | v == dataVersion -> return ()
+                | v == 15 -> migrate15to16 bdb >> initRocksDB bdb
                 | otherwise -> throwError "Incorrect RocksDB database version"
             Nothing -> setInitRocksDB db
     case e of
         Left s   -> error s
         Right () -> return ()
+
+migrate15to16 :: MonadIO m => DatabaseReader -> m ()
+migrate15to16 DatabaseReader {databaseReadOptions = opts, databaseHandle = db} = do
+    xs <- liftIO $ matchingAsList db opts OldMemKeyS
+    let ys = map (\(OldMemKey t h, ()) -> (t, h)) xs
+    insert db MemKey ys
+    insert db VersionKey (16 :: Word32)
 
 setInitRocksDB :: MonadIO m => DB -> m ()
 setInitRocksDB db = insert db VersionKey dataVersion
@@ -224,7 +233,7 @@ getAddressUnspentsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
                         matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a b)
                     _ -> matching db opts (AddrOutKeyA a)
 
-instance MonadUnliftIO m => StoreRead (DatabaseReaderT m) where
+instance MonadIO m => StoreRead (DatabaseReaderT m) where
     getNetwork = asks databaseNetwork
     getBestBlock = ask >>= getBestDatabaseReader
     getBlocksAtHeight h = ask >>= getBlocksAtHeightDB h
