@@ -40,7 +40,7 @@ import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                TxKey (..), UnspentKey (..),
                                                VersionKey (..), toUnspent,
                                                valToBalance, valToUnspent)
-import           UnliftIO                     (MonadIO, liftIO)
+import           UnliftIO                     (MonadUnliftIO, MonadIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
 
@@ -224,7 +224,7 @@ getAddressUnspentsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
                         matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a b)
                     _ -> matching db opts (AddrOutKeyA a)
 
-instance MonadIO m => StoreRead (DatabaseReaderT m) where
+instance MonadUnliftIO m => StoreRead (DatabaseReaderT m) where
     getNetwork = asks databaseNetwork
     getBestBlock = ask >>= getBestDatabaseReader
     getBlocksAtHeight h = ask >>= getBlocksAtHeightDB h

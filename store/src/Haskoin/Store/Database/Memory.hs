@@ -222,7 +222,7 @@ deleteUnspentH op db =
                   (hUnspent db)
         }
 
-instance MonadIO m => StoreRead (ReaderT MemoryState m) where
+instance MonadUnliftIO m => StoreRead (ReaderT MemoryState m) where
     getBestBlock = do
         v <- R.asks memoryDatabase >>= readTVarIO
         return $ getBestBlockH v

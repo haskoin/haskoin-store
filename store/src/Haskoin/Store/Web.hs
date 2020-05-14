@@ -183,7 +183,7 @@ instance Parsable StartParam where
             return StartParamTime {startParamTime = x}
 
 runInWebReader ::
-       MonadIO m
+       MonadUnliftIO m
     => CacheT (DatabaseReaderT m) a
     -> ReaderT WebConfig m a
 runInWebReader f = do
@@ -217,27 +217,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     xPubSummary = runInWebReader . xPubSummary
     xPubUnspents xpub = runInWebReader . xPubUnspents xpub
     xPubTxs xpub = runInWebReader . xPubTxs xpub
-
-instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
-    getNetwork = lift getNetwork
-    getBestBlock = lift getBestBlock
-    getBlocksAtHeight = lift . getBlocksAtHeight
-    getBlock = lift . getBlock
-    getTxData = lift . getTxData
-    getSpender = lift . getSpender
-    getSpenders = lift . getSpenders
-    getUnspent = lift . getUnspent
-    getBalance = lift . getBalance
-    getBalances = lift . getBalances
-    getMempool = lift getMempool
-    getAddressesTxs as = lift . getAddressesTxs as
-    getAddressesUnspents as = lift . getAddressesUnspents as
-    xPubBals = lift . xPubBals
-    xPubSummary = lift . xPubSummary
-    xPubUnspents xpub = lift . xPubUnspents xpub
-    xPubTxs xpub = lift . xPubTxs xpub
-    getMaxGap = lift getMaxGap
-    getInitialGap = lift getInitialGap
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
@@ -298,8 +277,8 @@ scottyBestBlock raw = do
     proto <- setupBin
     bm <-
         runMaybeT $ do
-            h <- MaybeT getBestBlock
-            MaybeT $ getBlock h
+            h <- MaybeT (lift getBestBlock)
+            MaybeT (lift (getBlock h))
     b <-
         case bm of
             Nothing -> S.raise ThingNotFound
@@ -307,7 +286,7 @@ scottyBestBlock raw = do
     if raw
         then do
             refuseLargeBlock limits b
-            rawBlock b >>= protoSerial proto
+            lift (rawBlock b) >>= protoSerial proto
         else protoSerialNet proto blockDataToEncoding (pruneTx n b)
 
 scottyBlock :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -318,13 +297,13 @@ scottyBlock raw = do
     n <- parseNoTx
     proto <- setupBin
     b <-
-        getBlock block >>= \case
+        lift (getBlock block) >>= \case
             Nothing -> S.raise ThingNotFound
             Just b -> return b
     if raw
         then do
             refuseLargeBlock limits b
-            rawBlock b >>= protoSerial proto
+            lift (rawBlock b) >>= protoSerial proto
         else protoSerialNet proto blockDataToEncoding (pruneTx n b)
 
 scottyBlockHeight :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -334,15 +313,15 @@ scottyBlockHeight raw = do
     height <- S.param "height"
     n <- parseNoTx
     proto <- setupBin
-    hs <- getBlocksAtHeight height
+    hs <- lift (getBlocksAtHeight height)
     if raw
         then do
-            blocks <- catMaybes <$> mapM getBlock hs
+            blocks <- catMaybes <$> mapM (lift . getBlock) hs
             mapM_ (refuseLargeBlock limits) blocks
-            rawblocks <- mapM rawBlock blocks
+            rawblocks <- mapM (lift . rawBlock) blocks
             protoSerial proto rawblocks
         else do
-            blocks <- catMaybes <$> mapM getBlock hs
+            blocks <- catMaybes <$> mapM (lift . getBlock) hs
             let blocks' = map (pruneTx n) blocks
             protoSerialNet proto (list . blockDataToEncoding) blocks'
 
@@ -353,14 +332,14 @@ scottyBlockTime raw = do
     q <- S.param "time"
     n <- parseNoTx
     proto <- setupBin
-    m <- fmap (pruneTx n) <$> blockAtOrBefore q
+    m <- fmap (pruneTx n) <$> lift (blockAtOrBefore q)
     if raw
         then maybeSerial proto =<<
              case m of
                  Nothing -> return Nothing
                  Just d -> do
                      refuseLargeBlock limits d
-                     Just <$> rawBlock d
+                     Just <$> lift (rawBlock d)
         else maybeSerialNet proto blockDataToEncoding m
 
 scottyBlockHeights :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -369,8 +348,8 @@ scottyBlockHeights = do
     heights <- S.param "heights"
     n <- parseNoTx
     proto <- setupBin
-    bhs <- concat <$> mapM getBlocksAtHeight (heights :: [BlockHeight])
-    blocks <- map (pruneTx n) . catMaybes <$> mapM getBlock bhs
+    bhs <- concat <$> mapM (lift . getBlocksAtHeight) (heights :: [BlockHeight])
+    blocks <- map (pruneTx n) . catMaybes <$> mapM (lift . getBlock) bhs
     protoSerialNet proto (list . blockDataToEncoding) blocks
 
 scottyBlockLatest :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -378,7 +357,7 @@ scottyBlockLatest = do
     setHeaders
     n <- parseNoTx
     proto <- setupBin
-    getBestBlock >>= \case
+    lift getBestBlock >>= \case
         Just h -> do
             blocks <- reverse <$> go 100 n h
             protoSerialNet proto (list . blockDataToEncoding) blocks
@@ -386,7 +365,7 @@ scottyBlockLatest = do
   where
     go 0 _ _ = return []
     go i n h =
-        getBlock h >>= \case
+        lift (getBlock h) >>= \case
             Nothing -> return []
             Just b ->
                 let b' = pruneTx n b
@@ -403,14 +382,14 @@ scottyBlocks = do
     bhs <- map (\(MyBlockHash h) -> h) <$> S.param "blocks"
     n <- parseNoTx
     proto <- setupBin
-    bks <- map (pruneTx n) . catMaybes <$> mapM getBlock (nub bhs)
+    bks <- map (pruneTx n) . catMaybes <$> mapM (lift . getBlock) (nub bhs)
     protoSerialNet proto (list . blockDataToEncoding) bks
 
 scottyMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMempool = do
     setHeaders
     proto <- setupBin
-    txs <- map txRefHash <$> getMempool
+    txs <- map txRefHash <$> lift getMempool
     protoSerial proto txs
 
 scottyTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -418,7 +397,7 @@ scottyTransaction = do
     setHeaders
     MyTxHash txid <- S.param "txid"
     proto <- setupBin
-    res <- getTransaction txid
+    res <- lift (getTransaction txid)
     maybeSerialNet proto transactionToEncoding res
 
 scottyRawTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -426,7 +405,7 @@ scottyRawTransaction = do
     setHeaders
     MyTxHash txid <- S.param "txid"
     proto <- setupBin
-    res <- fmap transactionData <$> getTransaction txid
+    res <- fmap transactionData <$> lift (getTransaction txid)
     maybeSerial proto res
 
 scottyTxAfterHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -435,7 +414,7 @@ scottyTxAfterHeight = do
     MyTxHash txid <- S.param "txid"
     height <- S.param "height"
     proto <- setupBin
-    res <- cbAfterHeight 10000 height txid
+    res <- lift (cbAfterHeight 10000 height txid)
     protoSerial proto res
 
 scottyTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -443,7 +422,7 @@ scottyTransactions = do
     setHeaders
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
-    txs <- catMaybes <$> mapM getTransaction (nub txids)
+    txs <- catMaybes <$> mapM (lift . getTransaction) (nub txids)
     protoSerialNet proto (list . transactionToEncoding) txs
 
 scottyBlockTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -452,11 +431,11 @@ scottyBlockTransactions = do
     setHeaders
     MyBlockHash h <- S.param "block"
     proto <- setupBin
-    getBlock h >>= \case
+    lift (getBlock h) >>= \case
         Just b -> do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
-            txs <- catMaybes <$> mapM getTransaction ths
+            txs <- catMaybes <$> mapM (lift . getTransaction) ths
             protoSerialNet proto (list . transactionToEncoding) txs
         Nothing -> S.raise ThingNotFound
 
@@ -466,7 +445,9 @@ scottyRawTransactions = do
     setHeaders
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
-    txs <- map transactionData . catMaybes <$> mapM getTransaction (nub txids)
+    txs <-
+        map transactionData . catMaybes <$>
+        mapM (lift . getTransaction) (nub txids)
     protoSerial proto txs
 
 rawBlock :: (Monad m, StoreRead m) => BlockData -> m Block
@@ -483,11 +464,13 @@ scottyRawBlockTransactions = do
     setHeaders
     MyBlockHash h <- S.param "block"
     proto <- setupBin
-    getBlock h >>= \case
+    lift (getBlock h) >>= \case
         Just b -> do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
-            txs <- map transactionData . catMaybes <$> mapM getTransaction ths
+            txs <-
+                map transactionData . catMaybes <$>
+                mapM (lift . getTransaction) ths
             protoSerial proto txs
         Nothing -> S.raise ThingNotFound
 
@@ -499,10 +482,10 @@ scottyAddressTxs full = do
     proto <- setupBin
     if full
         then do
-            getAddressTxsFull l a >>=
+            lift (getAddressTxsFull l a) >>=
                 protoSerialNet proto (list . transactionToEncoding)
         else do
-            getAddressTxsLimit l a >>= protoSerial proto
+            lift (getAddressTxsLimit l a) >>= protoSerial proto
 
 scottyAddressesTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -512,9 +495,9 @@ scottyAddressesTxs full = do
     l <- getLimits full
     proto <- setupBin
     if full
-        then getAddressesTxsFull l as >>=
+        then lift (getAddressesTxsFull l as) >>=
              protoSerialNet proto (list . transactionToEncoding)
-        else getAddressesTxsLimit l as >>= protoSerial proto
+        else lift (getAddressesTxsLimit l as) >>= protoSerial proto
 
 scottyAddressUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyAddressUnspent = do
@@ -522,7 +505,7 @@ scottyAddressUnspent = do
     a <- parseAddress
     l <- getLimits False
     proto <- setupBin
-    uns <- getAddressUnspentsLimit l a
+    uns <- lift (getAddressUnspentsLimit l a)
     protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressesUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -531,7 +514,7 @@ scottyAddressesUnspent = do
     as <- parseAddresses
     l <- getLimits False
     proto <- setupBin
-    uns <- getAddressesUnspentsLimit l as
+    uns <- lift (getAddressesUnspentsLimit l as)
     protoSerialNet proto (list . unspentToEncoding) uns
 
 scottyAddressBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -539,7 +522,7 @@ scottyAddressBalance = do
     setHeaders
     a <- parseAddress
     proto <- setupBin
-    res <- getBalance a
+    res <- lift (getBalance a)
     protoSerialNet proto balanceToEncoding res
 
 scottyAddressesBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -547,7 +530,7 @@ scottyAddressesBalances = do
     setHeaders
     as <- parseAddresses
     proto <- setupBin
-    res <- getBalances as
+    res <- lift (getBalances as)
     protoSerialNet proto (list . balanceToEncoding) res
 
 scottyXpubBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -759,16 +742,16 @@ getStart =
   where
     start_height h = return $ AtBlock h
     start_block h = do
-        b <- MaybeT $ getBlock (BlockHash h)
+        b <- MaybeT $ lift (getBlock (BlockHash h))
         return $ AtBlock (blockDataHeight b)
     start_tx h = do
-        _ <- MaybeT $ getTxData (TxHash h)
+        _ <- MaybeT $ lift (getTxData (TxHash h))
         return $ AtTx (TxHash h)
     start_time q = do
-        d <- MaybeT getBestBlock >>= MaybeT . getBlock
+        d <- MaybeT (lift getBestBlock) >>= MaybeT . lift . getBlock
         if q <= fromIntegral (blockTimestamp (blockDataHeader d))
             then do
-                b <- MaybeT $ blockAtOrBefore q
+                b <- MaybeT (lift (blockAtOrBefore q))
                 let g = blockDataHeight b
                 return $ AtBlock g
             else mzero

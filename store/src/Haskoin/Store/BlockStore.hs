@@ -176,7 +176,7 @@ runRocksDB f =
     ReaderT $ \BlockRead {myConfig = BlockStoreConfig {blockConfDB = db}} ->
         runReaderT f db
 
-instance MonadIO m => StoreRead (ReaderT BlockRead m) where
+instance MonadUnliftIO m => StoreRead (ReaderT BlockRead m) where
     getMaxGap = runRocksDB getMaxGap
     getInitialGap = runRocksDB getInitialGap
     getNetwork = runRocksDB getNetwork

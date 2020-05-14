@@ -51,13 +51,14 @@ import           Haskoin                   (Address, BlockHash,
                                             txHash)
 import           Haskoin.Node              (Peer)
 import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            TxRef (..), DeriveType (..),
-                                            Spender, Transaction, TxData,
+                                            DeriveType (..), Spender,
+                                            Transaction, TxData, TxRef (..),
                                             UnixTime, Unspent (..),
                                             XPubBal (..), XPubSpec (..),
                                             XPubSummary (..), XPubUnspent (..),
                                             nullBalance, toTransaction)
 import           Network.Socket            (SockAddr)
+import           UnliftIO                  (MonadUnliftIO, async, wait)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
@@ -85,7 +86,7 @@ defaultLimits = Limits { limit = 0, offset = 0, start = Nothing }
 instance Default Limits where
     def = defaultLimits
 
-class Monad m =>
+class MonadUnliftIO m =>
       StoreRead m
     where
     getNetwork :: m Network
@@ -110,13 +111,13 @@ class Monad m =>
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
-        gap <- getMaxGap
-        ext1 <- derive_until_gap gap 0 (take (fromIntegral igap) (aderiv 0 0))
+        gap <- fromIntegral <$> getMaxGap
+        ext1 <- go gap 0 0 0 [] (take (fromIntegral igap) (aderiv 0 0))
         if all (nullBalance . xPubBal) ext1
             then return []
             else do
-                ext2 <- derive_until_gap gap 0 (aderiv 0 igap)
-                chg <- derive_until_gap gap 1 (aderiv 1 0)
+                ext2 <- go gap 0 igap 0 [] (aderiv 0 igap)
+                chg <- go gap 1 0 0 [] (aderiv 1 0)
                 return (ext1 <> ext2 <> chg)
       where
         aderiv m n =
@@ -124,15 +125,22 @@ class Monad m =>
                 (deriveFunction (xPubDeriveType xpub))
                 (pubSubKey (xPubSpecKey xpub) m)
                 n
-        xbalance m b n = XPubBal {xPubBalPath = [m, n], xPubBal = b}
-        derive_until_gap _ _ [] = return []
-        derive_until_gap gap m as = do
-            let (as1, as2) = splitAt (fromIntegral gap) as
-            bs <- getBalances (map snd as1)
-            let xbs = zipWith (xbalance m) bs (map fst as1)
-            if all nullBalance bs
-                then return xbs
-                else (xbs <>) <$> derive_until_gap gap m as2
+        xbal m n b = XPubBal {xPubBalPath = [m, n], xPubBal = b}
+        go _gap _m _n _z [] [] = return []
+        go gap m n z ls as
+            | z >= gap = return []
+            | not (null as) && length ls < gap = do
+                let (as1, as2) = splitAt (gap - length ls) as
+                ls2 <- mapM (async . getBalance) (map snd as1)
+                go gap m n z (ls <> ls2) as2
+            | otherwise = do
+                let (l:ls2) = ls
+                b <- wait l
+                let z' =
+                        if nullBalance b
+                            then z + 1
+                            else 0
+                (xbal m n b :) <$> go gap m (n + 1) z' ls2 as
     xPubSummary :: XPubSpec -> m XPubSummary
     xPubSummary xpub = do
         bs <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
@@ -163,24 +171,37 @@ class Monad m =>
     xPubUnspents :: XPubSpec -> Limits -> m [XPubUnspent]
     xPubUnspents xpub limits = do
         xs <- filter positive <$> xPubBals xpub
-        sortBy (compare `on` unsblock) . applyLimits limits <$> go xs
+        as <-
+            mapM
+                (async .
+                 (`getAddressUnspents` deOffset limits) .
+                 balanceAddress . xPubBal)
+                xs
+        sortBy (compare `on` unsblock) . applyLimits limits <$> go (zip xs as)
       where
         unsblock = unspentBlock . xPubUnspent
         positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
         go [] = return []
-        go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
-            uns <- getAddressUnspents a (deOffset limits)
+        go ((xbal, a'):xs) = do
+            uns <- wait a'
             let xuns =
                     map
                         (\t ->
-                             XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
+                             XPubUnspent
+                                 { xPubUnspentPath = xPubBalPath xbal
+                                 , xPubUnspent = t
+                                 })
                         uns
             (xuns <>) <$> go xs
     xPubTxs :: XPubSpec -> Limits -> m [TxRef]
     xPubTxs xpub limits = do
         bs <- xPubBals xpub
-        let as = map (balanceAddress . xPubBal) bs
-        ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
+        as <-
+            mapM
+                (async .
+                 (`getAddressTxs` deOffset limits) . balanceAddress . xPubBal)
+                bs
+        ts <- concat <$> mapM wait as
         let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
         return $ applyLimits limits ts'
     getMaxGap :: m Word32

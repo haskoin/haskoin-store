@@ -93,7 +93,7 @@ accelTxs txs = do
     let f tx = map g (txOut tx)
         g to =
             case scriptToAddressBS (scriptOutput to) of
-                Left _  -> Nothing
+                Left _ -> Nothing
                 Right a -> Just a
         oaddrs = catMaybes (concatMap f txs)
     balas' <-
@@ -109,7 +109,9 @@ accelTxs txs = do
     inops =
         filter
             (not . (`HashSet.member` newops) . outPointHash)
-            (concatMap (map prevOutput . txIn) txs)
+            (concatMap
+                 (filter (not . (== nullOutPoint)) . map prevOutput . txIn)
+                 txs)
 
 getAccelBalance ::
        (MonadUnliftIO m, StoreRead m) => BlockAccel -> Address -> m Balance

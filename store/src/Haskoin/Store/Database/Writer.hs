@@ -25,8 +25,8 @@ import           Haskoin                       (Address, BlockHash, BlockHeight,
                                                 OutPoint (..), TxHash)
 import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..))
 import           Haskoin.Store.Data            (Balance, BlockData,
-                                                BlockRef (..), TxRef (..),
-                                                Spender, TxData, Unspent,
+                                                BlockRef (..), Spender, TxData,
+                                                TxRef (..), Unspent,
                                                 nullBalance, zeroBalance)
 import           Haskoin.Store.Database.Memory (MemoryDatabase (..),
                                                 MemoryState (..),
@@ -43,7 +43,8 @@ import           Haskoin.Store.Database.Types  (AddrOutKey (..), AddrTxKey (..),
                                                 OutVal, SpenderKey (..),
                                                 TxKey (..), UnspentKey (..),
                                                 UnspentVal (..))
-import           UnliftIO                      (MonadIO, newTVarIO, readTVarIO)
+import           UnliftIO                      (MonadIO, MonadUnliftIO,
+                                                newTVarIO, readTVarIO)
 
 data DatabaseWriter = DatabaseWriter
     { databaseWriterReader :: !DatabaseReader
@@ -218,48 +219,58 @@ deleteAddrUnspentI a u DatabaseWriter {databaseWriterState = hm} =
 setMempoolI :: MonadIO m => [TxRef] -> DatabaseWriter -> m ()
 setMempoolI xs DatabaseWriter {databaseWriterState = hm} = withMemoryDatabase hm $ setMempool xs
 
-getBestBlockI :: MonadIO m => DatabaseWriter -> m (Maybe BlockHash)
+getBestBlockI :: MonadUnliftIO m => DatabaseWriter -> m (Maybe BlockHash)
 getBestBlockI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
     runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = withMemoryDatabase hm getBestBlock
     g = withDatabaseReader db getBestBlock
 
-getBlocksAtHeightI :: MonadIO m => BlockHeight -> DatabaseWriter -> m [BlockHash]
-getBlocksAtHeightI bh DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} = do
+getBlocksAtHeightI ::
+       MonadUnliftIO m => BlockHeight -> DatabaseWriter -> m [BlockHash]
+getBlocksAtHeightI bh DatabaseWriter { databaseWriterState = hm
+                                     , databaseWriterReader = db
+                                     } = do
     xs <- withMemoryDatabase hm $ getBlocksAtHeight bh
     ys <- withDatabaseReader db $ getBlocksAtHeight bh
     return . nub $ xs <> ys
 
-getBlockI :: MonadIO m => BlockHash -> DatabaseWriter -> m (Maybe BlockData)
-getBlockI bh DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
-    runMaybeT $ MaybeT f <|> MaybeT g
+getBlockI ::
+       MonadUnliftIO m => BlockHash -> DatabaseWriter -> m (Maybe BlockData)
+getBlockI bh DatabaseWriter { databaseWriterReader = db
+                            , databaseWriterState = hm
+                            } = runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = withMemoryDatabase hm $ getBlock bh
     g = withDatabaseReader db $ getBlock bh
 
-getTxDataI ::
-       MonadIO m => TxHash -> DatabaseWriter -> m (Maybe TxData)
-getTxDataI th DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
-    runMaybeT $ MaybeT f <|> MaybeT g
+getTxDataI :: MonadUnliftIO m => TxHash -> DatabaseWriter -> m (Maybe TxData)
+getTxDataI th DatabaseWriter { databaseWriterReader = db
+                             , databaseWriterState = hm
+                             } = runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = withMemoryDatabase hm $ getTxData th
     g = withDatabaseReader db $ getTxData th
 
-getSpenderI :: MonadIO m => OutPoint -> DatabaseWriter -> m (Maybe Spender)
-getSpenderI op DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} =
-    fmap join . runMaybeT $ MaybeT f <|> MaybeT g
+getSpenderI ::
+       MonadUnliftIO m => OutPoint -> DatabaseWriter -> m (Maybe Spender)
+getSpenderI op DatabaseWriter { databaseWriterReader = db
+                              , databaseWriterState = hm
+                              } = fmap join . runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = getSpenderH op <$> readTVarIO (memoryDatabase hm)
     g = Just <$> withDatabaseReader db (getSpender op)
 
-getSpendersI :: MonadIO m => TxHash -> DatabaseWriter -> m (IntMap Spender)
-getSpendersI t DatabaseWriter {databaseWriterReader = db, databaseWriterState = hm} = do
+getSpendersI ::
+       MonadUnliftIO m => TxHash -> DatabaseWriter -> m (IntMap Spender)
+getSpendersI t DatabaseWriter { databaseWriterReader = db
+                              , databaseWriterState = hm
+                              } = do
     hsm <- getSpendersH t <$> readTVarIO (memoryDatabase hm)
     dsm <- I.map Just <$> withDatabaseReader db (getSpenders t)
     return . I.map fromJust . I.filter isJust $ hsm <> dsm
 
-getBalanceI :: MonadIO m => Address -> DatabaseWriter -> m Balance
+getBalanceI :: MonadUnliftIO m => Address -> DatabaseWriter -> m Balance
 getBalanceI a DatabaseWriter { databaseWriterReader = db
                              , databaseWriterState = hm
                              } =
@@ -284,7 +295,8 @@ setBalanceI :: MonadIO m => Balance -> DatabaseWriter -> m ()
 setBalanceI b DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ setBalance b
 
-getUnspentI :: MonadIO m => OutPoint -> DatabaseWriter -> m (Maybe Unspent)
+getUnspentI ::
+       MonadUnliftIO m => OutPoint -> DatabaseWriter -> m (Maybe Unspent)
 getUnspentI op DatabaseWriter { databaseWriterReader = db
                               , databaseWriterState = hm
                               } = fmap join . runMaybeT $ MaybeT f <|> MaybeT g
@@ -301,7 +313,7 @@ deleteUnspentI p DatabaseWriter {databaseWriterState = hm} =
     withMemoryDatabase hm $ deleteUnspent p
 
 getMempoolI ::
-       MonadIO m
+       MonadUnliftIO m
     => DatabaseWriter
     -> m [TxRef]
 getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
@@ -309,7 +321,7 @@ getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db}
         Just xs -> return xs
         Nothing -> withDatabaseReader db getMempool
 
-instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
+instance MonadUnliftIO m => StoreRead (ReaderT DatabaseWriter m) where
     getInitialGap = R.asks (databaseInitialGap . databaseWriterReader)
     getNetwork = R.asks (databaseNetwork . databaseWriterReader)
     getBestBlock = R.ask >>= getBestBlockI
