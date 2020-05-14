@@ -1,35 +1,30 @@
 # Haskoin Store
 
-Full blockchain index & store featuring:
+Full block store and index featuring:
 
-- Bitcoin Cash (BCH) & Bitcoin SegWit (BTC) support.
-- Address balance, transaction, and UTXO index.
-- Mempool support (SPV).
-- XPub balance, transaction, and UTXO support.
-- Persistent storage using RocksDB.
-- RESTful endpoints for blockchain data.
-- Concurrent non-blocking transactional design.
-- JSON and Protocol Buffers serialization support.
+- Persistent storage using the [RocksDB](https://rocksdb.org/) engine.
+- [Bitcoin Cash](https://www.bitcoincash.org/) (BCH) support.
+- [Bitcoin Segwit](httsp://bitcoin.org/) (BTC) support.
+- Indices for address balances, transactions, and unspent outputs (UTXO).
+- Persistent mempool.
+- Allow replacing BTC RBF transactions on mempool.
+- Query transactions, balances and UTXO on extended keys (xpub).
+- Optional accelerated xpub cache using Redis.
+- REST API (mostly).
+- High-performance concurrent architecture.
+- Support for both JSON and binary formats.
 
 
 ## Install
 
 * Get [Stack](https://haskell-lang.org/get-started).
 * Get [Nix](https://nixos.org/nix/).
-* Clone this repository `git clone https://github.com/haskoin/haskoin-store`.
-* From the root of this repository run `stack --nix build --copy-bins`.
-* File will usually be installed in `~/.local/bin/haskoin-store`.
 
-## Cache
-
-A memory-based RocksDB database can be used as a cache to store:
-
-* Address balances.
-* Unspent outputs.
-
-Give `haskoin-store` the path to a directory mapped to RAM, and it will populate a RockDB database for caching. Needs around 25 GB at the moment (May 2019).
-
-
+```sh
+git clone https://github.com/haskoin/haskoin-store.git
+stack --nix build --copy-bins
+~/.local/bin/haskoin-store --help
+```
 ## API Documentation
 
 * [Swagger API Documentation](https://api.haskoin.com/).
