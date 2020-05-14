@@ -14,17 +14,22 @@ Full block store and index featuring:
 - High-performance concurrent architecture.
 - Support for both JSON and binary formats.
 
+## Quick Install with Nix
 
-## Install
-
-* Get [Stack](https://haskell-lang.org/get-started).
 * Get [Nix](https://nixos.org/nix/).
 
 ```sh
+nix-env --install stack
 git clone https://github.com/haskoin/haskoin-store.git
 stack --nix build --copy-bins
 ~/.local/bin/haskoin-store --help
 ```
+
+## Non-Haskell Dependencies
+
+* [libsecp256k1](https://github.com/Bitcoin-ABC/secp256k1)
+* [RocksDB](https://github.com/facebook/rocksdb/)
+
 ## API Documentation
 
 * [Swagger API Documentation](https://api.haskoin.com/).
