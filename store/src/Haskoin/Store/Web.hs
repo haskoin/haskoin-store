@@ -949,11 +949,11 @@ healthCheck net mgr ch tos = do
           getAllowMinDifficultyBlocks net ||
           to == 0 ||
           td' <= to
-    peer_count = fmap length <$> timeout 500000 (managerGetPeers mgr)
+    peer_count = fmap length <$> timeout 10000000 (managerGetPeers mgr)
     block_best = runMaybeT $ do
         h <- MaybeT getBestBlock
         MaybeT $ getBlock h
-    chain_best = timeout 500000 $ chainGetBest ch
+    chain_best = timeout 10000000 $ chainGetBest ch
     compute_delta a b = if b > a then b - a else 0
 
 -- | Obtain information about connected peers from peer manager process.
