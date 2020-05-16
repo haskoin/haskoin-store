@@ -23,9 +23,11 @@ import           Control.Monad.Reader          (ReaderT, asks, local,
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
 import           Data.Aeson                    (Encoding, ToJSON (..))
-import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
+import           Data.Aeson.Encoding           (encodingToLazyByteString, list,
+                                                pair, pairs, unsafeToEncoding)
 import qualified Data.ByteString               as B
-import           Data.ByteString.Builder       (lazyByteString)
+import           Data.ByteString.Builder       (char7, lazyByteString,
+                                                lazyByteStringHex)
 import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
@@ -66,15 +68,14 @@ import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
                                                 StoreRead (..), blockAtOrBefore,
                                                 getTransaction, nub')
 import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
-                                                TxRef (..), DeriveType (..),
-                                                Event (..), Except (..),
-                                                GenericResult (..),
+                                                DeriveType (..), Event (..),
+                                                Except (..), GenericResult (..),
                                                 HealthCheck (..),
                                                 PeerInformation (..),
                                                 StoreInput (..),
                                                 Transaction (..), TxId (..),
-                                                UnixTime, Unspent, XPubBal (..),
-                                                XPubSpec (..),
+                                                TxRef (..), UnixTime, Unspent,
+                                                XPubBal (..), XPubSpec (..),
                                                 balanceToEncoding,
                                                 blockDataToEncoding, isCoinbase,
                                                 nullBalance, transactionData,
@@ -257,8 +258,11 @@ maybeSerial ::
     -> Maybe a
     -> WebT m ()
 maybeSerial _ Nothing      = S.raise ThingNotFound
-maybeSerial proto (Just x) = do
-    S.raw (serialAny proto x)
+maybeSerial proto (Just x) = S.raw (serialAny proto x)
+
+maybeSerialRaw :: (Monad m, Serialize a) => Bool -> Maybe a -> WebT m ()
+maybeSerialRaw _ Nothing      = S.raise ThingNotFound
+maybeSerialRaw proto (Just x) = S.raw (serialAnyRaw proto x)
 
 maybeSerialNet ::
        (Monad m, Serialize a)
@@ -278,6 +282,22 @@ protoSerial ::
     -> WebT m ()
 protoSerial proto x = do
     S.raw (serialAny proto x)
+
+protoSerialRaw ::
+       (Monad m, Serialize a)
+    => Bool
+    -> a
+    -> WebT m ()
+protoSerialRaw proto x = do
+    S.raw (serialAnyRaw proto x)
+
+protoSerialRawList ::
+       (Monad m, Serialize a)
+    => Bool
+    -> [a]
+    -> WebT m ()
+protoSerialRawList proto x = do
+    S.raw (serialAnyRawList proto x)
 
 protoSerialNet ::
        (Monad m, Serialize a)
@@ -307,7 +327,7 @@ scottyBestBlock raw = do
     if raw
         then do
             refuseLargeBlock limits b
-            rawBlock b >>= protoSerial proto
+            rawBlock b >>= protoSerialRaw proto
         else protoSerialNet proto blockDataToEncoding (pruneTx n b)
 
 scottyBlock :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -324,7 +344,7 @@ scottyBlock raw = do
     if raw
         then do
             refuseLargeBlock limits b
-            rawBlock b >>= protoSerial proto
+            rawBlock b >>= protoSerialRaw proto
         else protoSerialNet proto blockDataToEncoding (pruneTx n b)
 
 scottyBlockHeight :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -340,7 +360,7 @@ scottyBlockHeight raw = do
             blocks <- catMaybes <$> mapM getBlock hs
             mapM_ (refuseLargeBlock limits) blocks
             rawblocks <- mapM rawBlock blocks
-            protoSerial proto rawblocks
+            protoSerialRawList proto rawblocks
         else do
             blocks <- catMaybes <$> mapM getBlock hs
             let blocks' = map (pruneTx n) blocks
@@ -427,7 +447,7 @@ scottyRawTransaction = do
     MyTxHash txid <- S.param "txid"
     proto <- setupBin
     res <- fmap transactionData <$> getTransaction txid
-    maybeSerial proto res
+    maybeSerialRaw proto res
 
 scottyTxAfterHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyTxAfterHeight = do
@@ -467,7 +487,7 @@ scottyRawTransactions = do
     txids <- map (\(MyTxHash h) -> h) <$> S.param "txids"
     proto <- setupBin
     txs <- map transactionData . catMaybes <$> mapM getTransaction (nub txids)
-    protoSerial proto txs
+    protoSerialRawList proto txs
 
 rawBlock :: (Monad m, StoreRead m) => BlockData -> m Block
 rawBlock b = do
@@ -488,7 +508,7 @@ scottyRawBlockTransactions = do
             refuseLargeBlock limits b
             let ths = blockDataTxs b
             txs <- map transactionData . catMaybes <$> mapM getTransaction ths
-            protoSerial proto txs
+            protoSerialRawList proto txs
         Nothing -> S.raise ThingNotFound
 
 scottyAddressTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
@@ -874,6 +894,20 @@ serialAny ::
     -> L.ByteString
 serialAny True  = runPutLazy . put
 serialAny False = encodingToLazyByteString . toEncoding
+
+serialAnyRaw :: Serialize a => Bool -> a -> L.ByteString
+serialAnyRaw True x = runPutLazy (put x)
+serialAnyRaw False x = encodingToLazyByteString (pairs ps)
+  where
+    ps = "result" `pair` unsafeToEncoding str
+    str = char7 '"' <> lazyByteStringHex (runPutLazy (put x)) <> char7 '"'
+
+serialAnyRawList :: Serialize a => Bool -> [a] -> L.ByteString
+serialAnyRawList True x = runPutLazy (put x)
+serialAnyRawList False xs = encodingToLazyByteString (list f xs)
+  where
+    f x = unsafeToEncoding (str x)
+    str x = char7 '"' <> lazyByteStringHex (runPutLazy (put x)) <> char7 '"'
 
 serialAnyNet ::
        Serialize a => Bool -> (a -> Encoding) -> a -> L.ByteString
