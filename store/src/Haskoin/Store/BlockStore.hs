@@ -427,6 +427,10 @@ updateOrphans = do
             Just TxData {txDataDeleted = True} -> return False
             Just TxData {txDataDeleted = False} -> return True
 
+data MemImport
+    = MemOrphan !PendingTx
+    | MemImported !TxHash ![TxHash]
+
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processMempool = do
     allPendingTxs >>= \txs ->
@@ -444,35 +448,37 @@ processMempool = do
                     Nothing -> return (Just h)
                     Just _ -> return Nothing
         addPendingTx $ p {pendingDeps = ex}
-    go ps = do
+    go txs = do
         output <-
-            runImport . forM (zip [(1 :: Int) ..] ps) $ \(i, p) -> do
+            runImport . fmap catMaybes . forM txs $ \p -> do
                 let tx = pendingTx p
                     t = pendingTxTime p
                     th = txHash tx
-                    h x TxOrphan {} = return (Left (Just x))
-                    h _ _           = return (Left Nothing)
-                let f = do
-                        x <- newMempoolTx tx t
-                        $(logInfoS) "BlockStore" $
-                            "New mempool tx " <> cs (show i) <> "/" <>
-                            cs (show (length ps)) <>
-                            ": " <>
-                            txHashToHex th
-                        return $
-                            case x of
-                                Just ls -> Right (th, ls)
-                                Nothing -> Left Nothing
-                catchError f (h p)
+                    h TxOrphan {} = do
+                        $(logWarnS) "BlockStore" $
+                            "Orphan tx: " <> txHashToHex th
+                        return (Just (MemOrphan p))
+                    h e = do
+                        $(logErrorS) "BlockStore" $
+                            "Could not import tx " <> txHashToHex th <> ": " <>
+                            cs (show e)
+                        return Nothing
+                    f =
+                        newMempoolTx tx t >>= \case
+                            Just ls -> do
+                                $(logInfoS) "BlockStore" $
+                                    "New mempool tx: " <> txHashToHex th
+                                return (Just (MemImported th ls))
+                            Nothing -> return Nothing
+                catchError f h
         case output of
             Left e -> do
                 $(logErrorS) "BlockStore" $
-                    "Importing mempool failed: " <> cs (show e)
+                    "Mempool import failed: " <> cs (show e)
             Right xs -> do
                 forM_ xs $ \case
-                    Left (Just p) -> pend p
-                    Left Nothing -> return ()
-                    Right (th, deleted) -> do
+                    MemOrphan p -> pend p
+                    MemImported th deleted -> do
                         fulfillOrphans th
                         l <- asks (blockConfListener . myConfig)
                         atomically $ do

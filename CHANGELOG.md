@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.30.0
 ### Changed
 - Raw JSON values are now wrapped in an object with a result property.
+- Better logging when importing transactions into mempool.
 
 ## 0.29.3
 ### Changed
