@@ -454,15 +454,8 @@ processMempool = do
                 let tx = pendingTx p
                     t = pendingTxTime p
                     th = txHash tx
-                    h TxOrphan {} = do
-                        $(logWarnS) "BlockStore" $
-                            "Orphan tx: " <> txHashToHex th
-                        return (Just (MemOrphan p))
-                    h e = do
-                        $(logErrorS) "BlockStore" $
-                            "Could not import tx " <> txHashToHex th <> ": " <>
-                            cs (show e)
-                        return Nothing
+                    h TxOrphan {} = return (Just (MemOrphan p))
+                    h _ = return Nothing
                     f =
                         newMempoolTx tx t >>= \case
                             Just ls -> do
