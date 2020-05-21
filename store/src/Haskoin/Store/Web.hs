@@ -431,8 +431,10 @@ scottyBlocks = do
 scottyMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMempool = do
     setHeaders
+    l <- fromIntegral <$> getLimit False
+    o <- fromIntegral <$> getOffset
     proto <- setupBin
-    txs <- map txRefHash <$> getMempool
+    txs <- take l . drop o . map txRefHash <$> getMempool
     protoSerial proto txs
 
 scottyTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()

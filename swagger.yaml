@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.30.0'
+  version: '0.30.1'
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
@@ -931,6 +931,9 @@ paths:
         - Transaction
       operationId: getMempool
       summary: Mempool Transaction Hashes
+      parameters:
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/offsetParam'
       responses:
         '200':
           description: List of transaction hashes from mempool.
