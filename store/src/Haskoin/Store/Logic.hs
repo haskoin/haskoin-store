@@ -390,8 +390,8 @@ confirmTx t br tx = do
                                   eitherToMaybe
                                       (scriptToAddressBS (scriptOutput o))
                             }
-                    reduceBalance False False a (outValue o)
-                    increaseBalance True False a (outValue o)
+                    decreaseMempoolBalance a (outValue o)
+                    increaseConfirmedBalance a (outValue o)
     insertTx t {txDataBlock = br}
     deleteFromMempool (txHash tx)
 
@@ -509,10 +509,11 @@ newOutput br op to = do
         Left _ -> return ()
         Right a -> do
             insertAddrUnspent a u
-            insertAddrTx
-                a
-                TxRef {txRefHash = outPointHash op, txRefBlock = br}
-            increaseBalance (confirmed br) True a (outValue to)
+            insertAddrTx a TxRef {txRefHash = outPointHash op, txRefBlock = br}
+            if confirmed br
+                then increaseConfirmedBalance a (outValue to)
+                else increaseMempoolBalance a (outValue to)
+            modifyTotalReceived a (+ outValue to)
   where
     u =
         Unspent
@@ -559,11 +560,11 @@ delOutput op = do
                     }
             deleteAddrTx
                 a
-                TxRef
-                    { txRefHash = outPointHash op
-                    , txRefBlock = txDataBlock t
-                    }
-            reduceBalance (confirmed (txDataBlock t)) True a (outValue u)
+                TxRef {txRefHash = outPointHash op, txRefBlock = txDataBlock t}
+            if confirmed (txDataBlock t)
+                then decreaseConfirmedBalance a (outValue u)
+                else decreaseMempoolBalance a (outValue u)
+            modifyTotalReceived a (subtract (outValue u))
 
 getImportTxData ::
        (StoreRead m, MonadLogger m, MonadError ImportException m)
@@ -604,11 +605,9 @@ spendOutput br th ix u = do
     case scriptToAddressBS (B.Short.fromShort (unspentScript u)) of
         Left _ -> return ()
         Right a -> do
-            reduceBalance
-                (confirmed (unspentBlock u))
-                False
-                a
-                (unspentAmount u)
+            if confirmed (unspentBlock u)
+                then decreaseConfirmedBalance a (unspentAmount u)
+                else decreaseMempoolBalance a (unspentAmount u)
             deleteAddrUnspent a u
             insertAddrTx a TxRef {txRefHash = th, txRefBlock = br}
     deleteUnspent (unspentPoint u)
@@ -657,105 +656,68 @@ unspendOutput op = do
             insertAddrUnspent a u
             deleteAddrTx
                 a
-                TxRef
-                    {txRefHash = spenderHash s, txRefBlock = txDataBlock x}
-            increaseBalance
-                (confirmed (unspentBlock u))
-                False
-                a
-                (outValue o)
+                TxRef {txRefHash = spenderHash s, txRefBlock = txDataBlock x}
+            if confirmed (unspentBlock u)
+                then increaseConfirmedBalance a (outValue o)
+                else increaseMempoolBalance a (outValue o)
 
-reduceBalance ::
-       ( StoreRead m
-       , StoreWrite m
-       , MonadLogger m
-       , MonadError ImportException m
-       )
-    => Bool -- ^ spend or delete confirmed output
-    -> Bool -- ^ reduce total received
-    -> Address
+modifyTotalReceived ::
+    (StoreRead m, StoreWrite m, MonadLogger m)
+    => Address -> (Word64 -> Word64) -> m ()
+modifyTotalReceived addr f = do
+    b <- getBalance addr
+    setBalance b {balanceTotalReceived = f (balanceTotalReceived b)}
+
+decreaseConfirmedBalance ::
+       (StoreRead m, StoreWrite m, MonadLogger m)
+    => Address
     -> Word64
     -> m ()
-reduceBalance c t a v = do
-    net <- getNetwork
-    b <- getBalance a
-    if nullBalance b
-        then do
-            $(logErrorS) "BlockStore" $
-                "Address balance not found: " <> addrText net a
-            throwError (BalanceNotFound (addrText net a))
-        else do
-            when (v > amnt b) $ do
-                $(logErrorS) "BlockStore" $
-                    "Insufficient " <> conf <> " balance: " <> addrText net a <>
-                    " (needs: " <>
-                    cs (show v) <>
-                    ", has: " <>
-                    cs (show (amnt b)) <>
-                    ")"
-                throwError $
-                    if c
-                        then InsufficientBalance (addrText net a)
-                        else InsufficientZeroBalance (addrText net a)
-            setBalance
-                b
-                    { balanceAmount =
-                          balanceAmount b -
-                          if c
-                              then v
-                              else 0
-                    , balanceZero =
-                          balanceZero b -
-                          if c
-                              then 0
-                              else v
-                    , balanceUnspentCount = balanceUnspentCount b - 1
-                    , balanceTotalReceived =
-                          balanceTotalReceived b -
-                          if t
-                              then v
-                              else 0
-                    }
-  where
-    amnt =
-        if c
-            then balanceAmount
-            else balanceZero
-    conf =
-        if c
-            then "confirmed"
-            else "unconfirmed"
-
-increaseBalance ::
-       ( StoreRead m
-       , StoreWrite m
-       , MonadLogger m
-       )
-    => Bool -- ^ add confirmed output
-    -> Bool -- ^ increase total received
-    -> Address
-    -> Word64
-    -> m ()
-increaseBalance c t a v = do
-    b <- getBalance a
+decreaseConfirmedBalance addr val = do
+    b <- getBalance addr
     setBalance
         b
-            { balanceAmount =
-                  balanceAmount b +
-                  if c
-                      then v
-                      else 0
-            , balanceZero =
-                  balanceZero b +
-                  if c
-                      then 0
-                      else v
+            { balanceAmount = balanceAmount b - val
+            , balanceUnspentCount = balanceUnspentCount b - 1
+            }
+
+increaseConfirmedBalance ::
+       (StoreRead m, StoreWrite m, MonadLogger m)
+    => Address
+    -> Word64
+    -> m ()
+increaseConfirmedBalance addr val = do
+    b <- getBalance addr
+    setBalance
+        b
+            { balanceAmount = balanceAmount b + val
             , balanceUnspentCount = balanceUnspentCount b + 1
-            , balanceTotalReceived =
-                  balanceTotalReceived b +
-                  if t
-                      then v
-                      else 0
+            }
+
+decreaseMempoolBalance ::
+       (StoreRead m, StoreWrite m, MonadLogger m)
+    => Address
+    -> Word64
+    -> m ()
+decreaseMempoolBalance addr val = do
+    b <- getBalance addr
+    setBalance
+        b
+            { balanceZero = balanceZero b - val
+            , balanceUnspentCount = balanceUnspentCount b - 1
+            }
+
+increaseMempoolBalance ::
+       (StoreRead m, StoreWrite m, MonadLogger m)
+    => Address
+    -> Word64
+    -> m ()
+increaseMempoolBalance addr val = do
+    b <- getBalance addr
+    setBalance
+        b
+            { balanceZero = balanceZero b + val
+            , balanceUnspentCount = balanceUnspentCount b + 1
             }
 
 updateAddressCounts ::
