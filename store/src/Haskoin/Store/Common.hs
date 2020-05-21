@@ -180,9 +180,7 @@ class Monad m =>
     xPubTxs xpub limits = do
         bs <- xPubBals xpub
         let as = map (balanceAddress . xPubBal) bs
-        ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
-        let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
-        return $ applyLimits limits ts'
+        getAddressesTxs as limits
     getMaxGap :: m Word32
     getInitialGap :: m Word32
 

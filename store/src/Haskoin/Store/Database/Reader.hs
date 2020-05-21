@@ -183,9 +183,13 @@ getAddressTxsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
                         matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a b)
                     _ -> matching db opts (AddrTxKeyA a)
             Just (AtBlock bh) ->
-                matching db opts (AddrTxKeyB a (BlockRef bh maxBound))
+                matchingSkip
+                    db
+                    opts
+                    (AddrTxKeyA a)
+                    (AddrTxKeyB a (BlockRef bh maxBound))
     f AddrTxKey {addrTxKeyT = t} () = t
-    f _ _                           = undefined
+    f _ _ = undefined
 
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
 getUnspentDB p DatabaseReader { databaseReadOptions = opts

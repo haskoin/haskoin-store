@@ -13,8 +13,8 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forever, guard, mzero, unless,
-                                                when, (<=<))
+import           Control.Monad                 (forever, guard, unless, when,
+                                                (<=<))
 import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
                                                 askLoggerIO, logInfoS,
                                                 monadLoggerLog)
@@ -39,6 +39,7 @@ import           Data.Serialize                as Serialize
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
 import qualified Data.Text.Encoding            as T
+import qualified Data.Text.Lazy                as TL
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
@@ -172,14 +173,15 @@ instance Parsable StartParam where
     parseParam s = maybe (Left "could not decode start") Right (h <|> g <|> t)
       where
         h = do
-            x <- fmap B.reverse (decodeHex (cs s)) >>= eitherToMaybe . decode
+            guard (TL.length s == 32 * 2)
+            x <- fmap B.reverse (decodeHex (TL.toStrict s)) >>= eitherToMaybe . decode
             return StartParamHash {startParamHash = x}
         g = do
-            x <- readMaybe (cs s) :: Maybe Integer
-            guard $ 0 <= x && x <= 1230768000
-            return StartParamHeight {startParamHeight = fromIntegral x}
+            x <- readMaybe (TL.unpack s)
+            guard $ x <= 1230768000
+            return StartParamHeight {startParamHeight = x}
         t = do
-            x <- readMaybe (cs s)
+            x <- readMaybe (TL.unpack s)
             guard $ x > 1230768000
             return StartParamTime {startParamTime = x}
 
@@ -777,7 +779,8 @@ getStart =
                StartParamHeight {startParamHeight = h} -> start_height h
                StartParamTime {startParamTime = q} -> start_time q
   where
-    start_height h = return $ AtBlock h
+    start_height h = do
+        return $ AtBlock h
     start_block h = do
         b <- MaybeT $ getBlock (BlockHash h)
         return $ AtBlock (blockDataHeight b)
@@ -785,13 +788,9 @@ getStart =
         _ <- MaybeT $ getTxData (TxHash h)
         return $ AtTx (TxHash h)
     start_time q = do
-        d <- MaybeT getBestBlock >>= MaybeT . getBlock
-        if q <= fromIntegral (blockTimestamp (blockDataHeader d))
-            then do
-                b <- MaybeT $ blockAtOrBefore q
-                let g = blockDataHeight b
-                return $ AtBlock g
-            else mzero
+        b <- MaybeT $ blockAtOrBefore q
+        let g = blockDataHeight b
+        return $ AtBlock g
 
 getLimits :: (MonadLoggerIO m, MonadUnliftIO m) => Bool -> WebT m Limits
 getLimits full = do

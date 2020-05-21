@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Raw JSON values are now wrapped in an object with a result property.
 - Better logging when importing transactions into mempool.
 
+### Fixed
+- Transaction limit by block height works now.
+
 ## 0.29.3
 ### Changed
 - Revert concurrent retrieval changes from 0.29.1 and 0.29.0 to solve stability
