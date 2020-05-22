@@ -450,19 +450,35 @@ processMempool = do
         addPendingTx $ p {pendingDeps = ex}
     go txs = do
         output <-
-            runImport . fmap catMaybes . forM txs $ \p -> do
+            runImport . fmap catMaybes . forM (zip [(1 :: Int) ..] txs) $ \(i, p) -> do
                 let tx = pendingTx p
                     t = pendingTxTime p
                     th = txHash tx
-                    h TxOrphan {} = return (Just (MemOrphan p))
+                    h TxOrphan {} = do
+                        $(logWarnS) "BlockStore" $
+                            "Orphan tx " <> cs (show i) <> "/" <>
+                            cs (show (length txs)) <>
+                            ": " <>
+                            txHashToHex th
+                        return (Just (MemOrphan p))
                     h _ = return Nothing
                     f =
                         newMempoolTx tx t >>= \case
                             Just ls -> do
                                 $(logInfoS) "BlockStore" $
-                                    "New mempool tx: " <> txHashToHex th
+                                    "New mempool tx " <> cs (show i) <> "/" <>
+                                    cs (show (length txs)) <>
+                                    ": " <>
+                                    txHashToHex th
                                 return (Just (MemImported th ls))
-                            Nothing -> return Nothing
+                            Nothing -> do
+                                $(logInfoS) "BlockStore" $
+                                    "Already have mempool tx " <> cs (show i) <>
+                                    "/" <>
+                                    cs (show (length txs)) <>
+                                    ": " <>
+                                    txHashToHex th
+                                return Nothing
                 catchError f h
         case output of
             Left e -> do
