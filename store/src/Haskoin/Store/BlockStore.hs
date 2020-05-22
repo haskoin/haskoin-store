@@ -41,6 +41,7 @@ import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as HashMap
 import           Data.HashSet                  (HashSet)
 import qualified Data.HashSet                  as HashSet
+import           Data.List                     (partition)
 import           Data.Maybe                    (catMaybes, listToMaybe,
                                                 mapMaybe)
 import           Data.String                   (fromString)
@@ -70,7 +71,7 @@ import           Haskoin.Node                  (Chain, PeerManager,
                                                 managerPeerText)
 import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
                                                 sortTxs)
-import           Haskoin.Store.Data            (TxRef (..), TxData (..),
+import           Haskoin.Store.Data            (TxData (..), TxRef (..),
                                                 UnixTime, Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
@@ -372,18 +373,19 @@ isPending th = do
     ts <- asks myTxs
     atomically $ HashMap.member th <$> readTVar ts
 
-allPendingTxs :: MonadIO m => BlockT m [PendingTx]
-allPendingTxs = do
+pendingTxs :: MonadIO m => Int -> BlockT m [PendingTx]
+pendingTxs i = do
     ts <- asks myTxs
     atomically $ do
         pend <- readTVar ts
-        writeTVar ts $ HashMap.filter (not . null . pendingDeps) pend
-        return $ sortit $ HashMap.filter (null . pendingDeps) pend
+        let (txs, orp) =
+                partition (null . pendingDeps . snd) (HashMap.toList pend)
+        writeTVar ts (HashMap.fromList (drop i txs <> orp))
+        return $ sortit pend $ take i txs
   where
     sortit pend =
         mapMaybe (flip HashMap.lookup pend . txHash . snd) .
-        sortTxs . map (pendingTx) $
-        HashMap.elems pend
+        sortTxs . map pendingTx . map snd
 
 fulfillOrphans :: MonadIO m => TxHash -> BlockT m ()
 fulfillOrphans th = do
@@ -433,7 +435,7 @@ data MemImport
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processMempool = do
-    allPendingTxs >>= \txs ->
+    pendingTxs 2000 >>= \txs ->
         if null txs
             then return ()
             else go txs

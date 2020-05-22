@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Refactor code to manipulate address balances.
 - Get a bit more logging output when importing mempool transactions.
+- Rate-limit mempool importing.
 
 ## 0.30.1
 ### Changed
