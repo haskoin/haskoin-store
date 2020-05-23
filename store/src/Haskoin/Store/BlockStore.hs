@@ -380,9 +380,14 @@ pendingTxs i = do
         pend <- readTVar ts
         let (txs, orp) =
                 partition (null . pendingDeps . snd) (HashMap.toList pend)
-        writeTVar ts (HashMap.fromList (drop i txs <> orp))
-        return $ sortit pend $ take i txs
+        let ret = take i (sortit pend txs)
+        writeTVar ts (HashMap.fromList (fltr ret txs <> orp))
+        return ret
   where
+    fltr ret =
+        let ths = HashSet.fromList (map (txHash . pendingTx) ret)
+            f = not . (`HashSet.member` ths) . txHash . pendingTx . snd
+         in filter f
     sortit pend =
         mapMaybe (flip HashMap.lookup pend . txHash . snd) .
         sortTxs . map pendingTx . map snd
