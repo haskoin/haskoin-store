@@ -16,61 +16,69 @@ module Haskoin.Store.Logic
 import           Control.Monad           (forM, forM_, guard, unless, void,
                                           when, zipWithM_)
 import           Control.Monad.Except    (MonadError (..))
-import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS,
-                                          logWarnS)
+import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS)
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
 import qualified Data.IntMap.Strict      as I
-import           Data.List               (sort, nub)
-import           Data.Maybe              (fromMaybe, isNothing)
+import           Data.List               (nub, sort)
+import           Data.Maybe              (isNothing)
 import           Data.Serialize          (encode)
 import           Data.String             (fromString)
 import           Data.String.Conversions (cs)
-import           Data.Text               (Text)
 import           Data.Word               (Word32, Word64)
 import           Haskoin                 (Address, Block (..), BlockHash,
                                           BlockHeader (..), BlockNode (..),
                                           Network (..), OutPoint (..), Tx (..),
                                           TxHash, TxIn (..), TxOut (..),
-                                          addrToString, blockHashToHex,
-                                          computeSubsidy, eitherToMaybe,
-                                          genesisBlock, genesisNode, headerHash,
-                                          isGenesis, nullOutPoint,
-                                          scriptToAddressBS, txHash,
-                                          txHashToHex)
+                                          blockHashToHex, computeSubsidy,
+                                          eitherToMaybe, genesisBlock,
+                                          genesisNode, headerHash, isGenesis,
+                                          nullOutPoint, scriptToAddressBS,
+                                          txHash, txHashToHex)
 import           Haskoin.Store.Common    (StoreRead (..), StoreWrite (..), nub',
                                           sortTxs)
 import           Haskoin.Store.Data      (Balance (..), BlockData (..),
-                                          BlockRef (..), TxRef (..),
-                                          Prev (..), Spender (..), TxData (..),
+                                          BlockRef (..), Prev (..),
+                                          Spender (..), TxData (..), TxRef (..),
                                           UnixTime, Unspent (..), confirmed,
                                           nullBalance)
 import           UnliftIO                (Exception)
 
 data ImportException
-    = PrevBlockNotBest !Text
-    | TxOrphan !Text
-    | UnconfirmedCoinbase !Text
+    = PrevBlockNotBest
+    | Orphan
+    | UnexpectedCoinbase
     | BestBlockUnknown
-    | BestBlockNotFound !Text
-    | BlockNotBest !Text
-    | TxNotFound !Text
-    | OutputSpent !Text
-    | CannotDeleteNonRBF !Text
-    | TxInvalidOp !Text
-    | TxDeleted !Text
-    | TxDoubleSpend !Text
-    | AlreadyUnspent !Text
-    | TxConfirmed !Text
-    | OutputOutOfRange !Text
-    | BalanceNotFound !Text
-    | InsufficientBalance !Text
-    | InsufficientZeroBalance !Text
-    | InsufficientOutputs !Text
-    | InsufficientFunds !Text
-    | DuplicatePrevOutput !Text
-    deriving (Show, Read, Eq, Ord, Exception)
+    | BestBlockNotFound
+    | BlockNotBest
+    | TxNotFound
+    | DoubleSpend
+    | TxDeleted
+    | AlreadyUnspent
+    | TxConfirmed
+    | OutputOutOfRange
+    | BalanceNotFound
+    | InsufficientFunds
+    | DuplicatePrevOutput
+    deriving (Eq, Ord, Exception)
+
+instance Show ImportException where
+    show PrevBlockNotBest    = "previous block not best"
+    show Orphan              = "orphan"
+    show UnexpectedCoinbase  = "unexpected coinbase"
+    show BestBlockUnknown    = "best block unknown"
+    show BestBlockNotFound   = "best block not found"
+    show BlockNotBest        = "block not best"
+    show TxNotFound          = "transaction not found"
+    show DoubleSpend         = "double spend"
+    show TxDeleted           = "transaction deleted"
+    show AlreadyUnspent      = "already unspent"
+    show TxConfirmed         = "transaction confirmed"
+    show OutputOutOfRange    = "output out of range"
+    show BalanceNotFound     = "balance not found"
+    show InsufficientFunds   = "insufficient funds"
+    show DuplicatePrevOutput = "duplicate previous output"
 
 initBest ::
        ( StoreRead m
@@ -124,14 +132,14 @@ revertBlock bh = do
                 getBlock h >>= \case
                     Nothing -> do
                         $(logErrorS) "BlockStore" "Best block not found"
-                        throwError (BestBlockNotFound (blockHashToHex h))
+                        throwError BestBlockNotFound
                     Just b
                         | h == bh -> return b
                         | otherwise -> do
                             $(logErrorS) "BlockStore" $
                                 "Cannot delete block that is not head: " <>
                                 blockHashToHex h
-                            throwError (BlockNotBest (blockHashToHex bh))
+                            throwError BlockNotBest
     txs <- mapM (fmap txData . getImportTxData) (blockDataTxs bd)
     ths <-
         nub' . concat <$>
@@ -165,8 +173,7 @@ importBlock b n = do
                 $(logErrorS) "BlockStore" $
                     "Block does not build on head: " <>
                     blockHashToHex (headerHash (blockHeader b))
-                throwError $
-                    PrevBlockNotBest (blockHashToHex (prevBlock (nodeHeader n)))
+                throwError PrevBlockNotBest
     net <- getNetwork
     let subsidy = computeSubsidy net (nodeHeight n)
     insertBlock
@@ -186,9 +193,7 @@ importBlock b n = do
             , blockDataOutputs = ts_out_val
             }
     bs <- getBlocksAtHeight (nodeHeight n)
-    setBlocksAtHeight
-        (nub (headerHash (nodeHeader n) : bs))
-        (nodeHeight n)
+    setBlocksAtHeight (nub (headerHash (nodeHeader n) : bs)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
     ths <-
         nub' . concat <$>
@@ -204,7 +209,7 @@ importBlock b n = do
                          $(logErrorS) "BlockStore" $
                              "Cannot get data for mempool tx: " <>
                              txHashToHex (txHash tx)
-                         throwError $ TxNotFound (txHashToHex (txHash tx))
+                         throwError TxNotFound
             else importTx
                      (br x)
                      (fromIntegral (blockTimestamp (nodeHeader n)))
@@ -232,18 +237,17 @@ importTx ::
     -> m [TxHash] -- ^ deleted transactions
 importTx br tt tx = do
     unless (confirmed br) $ do
-        $(logDebugS) "BlockStore" $
-            "Importing transaction " <> txHashToHex (txHash tx)
+        $(logDebugS) "BlockStore" $ "Importing transaction " <> txHashToHex th
         when (length (nub' (map prevOutput (txIn tx))) < length (txIn tx)) $ do
-            $(logErrorS) "BlockStore" $
+            $(logDebugS) "BlockStore" $
                 "Transaction spends same output twice: " <>
                 txHashToHex (txHash tx)
-            throwError (DuplicatePrevOutput (txHashToHex (txHash tx)))
+            throwError DuplicatePrevOutput
         when iscb $ do
-            $(logErrorS) "BlockStore" $
+            $(logDebugS) "BlockStore" $
                 "Coinbase cannot be imported into mempool: " <>
                 txHashToHex (txHash tx)
-            throwError (UnconfirmedCoinbase (txHashToHex (txHash tx)))
+            throwError UnexpectedCoinbase
     us' <-
         if iscb
             then return []
@@ -253,9 +257,9 @@ importTx br tt tx = do
     when
         (not (confirmed br) &&
          sum (map unspentAmount us) < sum (map outValue (txOut tx))) $ do
-        $(logErrorS) "BlockStore" $
+        $(logDebugS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
-        throwError (InsufficientFunds (txHashToHex th))
+        throwError InsufficientFunds
     rbf <- isRBF br tx
     commit rbf us
     return ths
@@ -287,35 +291,35 @@ importTx br tt tx = do
         getUnspent op >>= \case
             Just u -> return (u, [])
             Nothing -> do
-                $(logWarnS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Unspent output not found: " <>
                     txHashToHex (outPointHash op) <>
                     " " <>
                     fromString (show (outPointIndex op))
                 getSpender op >>= \case
                     Nothing -> do
-                        $(logErrorS) "BlockStore" $
+                        $(logDebugS) "BlockStore" $
                             "Output not found: " <>
                             txHashToHex (outPointHash op) <>
                             " " <>
                             fromString (show (outPointIndex op))
-                        $(logErrorS) "BlockStore" $
+                        $(logDebugS) "BlockStore" $
                             "Orphan tx: " <> txHashToHex (txHash tx)
-                        throwError (TxOrphan (txHashToHex (txHash tx)))
+                        throwError Orphan
                     Just Spender {spenderHash = s} -> do
-                        $(logWarnS) "BlockStore" $
+                        $(logDebugS) "BlockStore" $
                             "Deleting transaction " <> txHashToHex s <>
                             " because it conflicts with " <>
                             txHashToHex (txHash tx)
                         ths <- deleteTx True (not (confirmed br)) s
                         getUnspent op >>= \case
                             Nothing -> do
-                                $(logErrorS) "BlockStore" $
-                                    "Cannot unspend output: " <>
+                                $(logDebugS) "BlockStore" $
+                                    "Could not unspend output: " <>
                                     txHashToHex (outPointHash op) <>
-                                    " " <>
+                                    "/" <>
                                     fromString (show (outPointIndex op))
-                                throwError (OutputSpent (cs (show op)))
+                                throwError DoubleSpend
                             Just u -> return (u, ths)
     th = txHash tx
     iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
@@ -419,38 +423,37 @@ deleteTx ::
 deleteTx memonly rbfcheck txhash = do
     getTxData txhash >>= \case
         Nothing -> do
-            $(logErrorS) "BlockStore" $
+            $(logDebugS) "BlockStore" $
                 "Cannot find tx to delete: " <> txHashToHex txhash
-            throwError (TxNotFound (txHashToHex txhash))
+            throwError TxNotFound
         Just t
             | txDataDeleted t -> do
-                $(logWarnS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Already deleted tx: " <> txHashToHex txhash
                 return []
             | memonly && confirmed (txDataBlock t) -> do
-                $(logErrorS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Will not delete confirmed tx: " <> txHashToHex txhash
-                throwError (TxConfirmed (txHashToHex txhash))
+                throwError TxConfirmed
             | rbfcheck ->
                 isRBF (txDataBlock t) (txData t) >>= \case
                     True -> go t
                     False -> do
-                        $(logErrorS) "BlockStore" $
+                        $(logDebugS) "BlockStore" $
                             "Delete non-RBF transaction attempted: " <>
                             txHashToHex txhash
-                        throwError $ CannotDeleteNonRBF (txHashToHex txhash)
+                        throwError DoubleSpend
             | otherwise -> go t
   where
     go t = do
-        $(logWarnS) "BlockStore" $
-            "Deleting transaction: " <> txHashToHex txhash
+        $(logDebugS) "BlockStore" $ "Deleting tx: " <> txHashToHex txhash
         ss <- nub' . map spenderHash . I.elems <$> getSpenders txhash
         ths <-
             fmap concat $
             forM ss $ \s -> do
-                $(logWarnS) "BlockStore" $
-                    "Deleting descendant " <> txHashToHex s <>
-                    " to delete parent " <>
+                $(logDebugS) "BlockStore" $
+                    "Deleting descendant tx " <> txHashToHex s <>
+                    " to delete parent tx " <>
                     txHashToHex txhash
                 deleteTx True rbfcheck s
         forM_ (take (length (txOut (txData t))) [0 ..]) $ \n ->
@@ -485,9 +488,9 @@ isRBF br tx
                 ck (h:hs') =
                     getTxData h >>= \case
                         Nothing -> do
-                            $(logErrorS) "BlockStore" $
+                            $(logDebugS) "BlockStore" $
                                 "Transaction not found: " <> txHashToHex h
-                            throwError (TxNotFound (txHashToHex h))
+                            throwError TxNotFound
                         Just t
                             | confirmed (txDataBlock t) -> ck hs'
                             | txDataRBF t -> return True
@@ -539,11 +542,11 @@ delOutput op = do
         case getTxOut (outPointIndex op) (txData t) of
             Just u -> return u
             Nothing -> do
-                $(logErrorS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Output out of range: " <> txHashToHex (txHash (txData t)) <>
-                    " " <>
+                    "/" <>
                     fromString (show (outPointIndex op))
-                throwError . OutputOutOfRange . cs $ show op
+                throwError OutputOutOfRange
     deleteUnspent op
     case scriptToAddressBS (scriptOutput u) of
         Left _ -> return ()
@@ -573,12 +576,12 @@ getImportTxData ::
 getImportTxData th =
     getTxData th >>= \case
         Nothing -> do
-            $(logErrorS) "BlockStore" $ "Tx not found: " <> txHashToHex th
-            throwError $ TxNotFound (txHashToHex th)
+            $(logDebugS) "BlockStore" $ "Tx not found: " <> txHashToHex th
+            throwError TxNotFound
         Just d
             | txDataDeleted d -> do
-                $(logErrorS) "BlockStore" $ "Tx deleted: " <> txHashToHex th
-                throwError $ TxDeleted (txHashToHex th)
+                $(logDebugS) "BlockStore" $ "Tx deleted: " <> txHashToHex th
+                throwError TxDeleted
             | otherwise -> return d
 
 getTxOut
@@ -625,18 +628,20 @@ unspendOutput op = do
     o <-
         case getTxOut (outPointIndex op) (txData t) of
             Nothing -> do
-                $(logErrorS) "BlockStore" $
-                    "Output out of range: " <> cs (show op)
-                throwError (OutputOutOfRange (cs (show op)))
+                $(logDebugS) "BlockStore" $
+                    "Output out of range: " <> txHashToHex (outPointHash op) <>
+                    "/" <>
+                    cs (show (outPointIndex op))
+                throwError OutputOutOfRange
             Just o -> return o
     s <-
         getSpender op >>= \case
             Nothing -> do
-                $(logErrorS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Output already unspent: " <> txHashToHex (outPointHash op) <>
-                    " " <>
-                    fromString (show (outPointIndex op))
-                throwError (AlreadyUnspent (cs (show op)))
+                    "/" <>
+                    cs (show (outPointIndex op))
+                throwError AlreadyUnspent
             Just s -> return s
     x <- getImportTxData (spenderHash s)
     deleteSpender op
@@ -728,10 +733,9 @@ updateAddressCounts ::
 updateAddressCounts as f =
     forM_ as $ \a -> do
         b <-
-            do net <- getNetwork
-               b <- getBalance a
+            do b <- getBalance a
                if nullBalance b
-                   then throwError (BalanceNotFound (addrText net a))
+                   then throwError BalanceNotFound
                    else return b
         setBalance b {balanceTxCount = f (balanceTxCount b)}
 
@@ -740,6 +744,3 @@ txDataAddresses t =
     nub' . rights $
     map (scriptToAddressBS . prevScript) (I.elems (txDataPrevs t)) <>
     map (scriptToAddressBS . scriptOutput) (txOut (txData t))
-
-addrText :: Network -> Address -> Text
-addrText net a = fromMaybe "???" $ addrToString net a

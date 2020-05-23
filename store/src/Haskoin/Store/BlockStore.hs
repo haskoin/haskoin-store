@@ -76,7 +76,7 @@ import           Haskoin.Store.Data            (TxData (..), TxRef (..),
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer (DatabaseWriter,
                                                 runDatabaseWriter)
-import           Haskoin.Store.Logic           (ImportException (TxOrphan),
+import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 deleteTx, getOldMempool,
                                                 importBlock, initBest,
                                                 newMempoolTx, revertBlock)
@@ -277,8 +277,10 @@ processBlock peer block = do
         blocknode <- getblocknode
         p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
         $(logDebugS) "BlockStore" $
-            "Processing block from peer " <> p' <> ": " <>
-            blockText blocknode (blockTxns block)
+            "Processing block : " <> blockText blocknode (blockTxns block) <>
+            " (peer" <>
+            p' <>
+            ")"
         lift (runImport (importBlock block blocknode)) >>= \case
             Right deletedtxids -> do
                 listener <- asks (blockConfListener . myConfig)
@@ -292,8 +294,9 @@ processBlock peer block = do
                 $(logErrorS) "BlockStore" $
                     "Error importing block: " <> hexhash <> ": " <>
                     fromString (show e) <>
-                    " from peer " <>
-                    p'
+                    " (peer " <>
+                    p' <>
+                    ")"
                 killPeer (PeerMisbehaving (show e)) peer
   where
     header = blockHeader block
@@ -325,8 +328,8 @@ processBlock peer block = do
                 p' <-
                     managerPeerText peer =<< asks (blockConfManager . myConfig)
                 $(logErrorS) "BlockStore" $
-                    "Header not found for block " <> hexhash <> " sent by peer " <>
-                    p'
+                    "Header not found for block: " <> hexhash <> " (peer " <> p' <>
+                    ")"
                 killPeer (PeerMisbehaving "Sent unknown block") peer
                 mzero
             Just n -> return n
@@ -342,8 +345,9 @@ processNoBlocks p hs = do
         $(logErrorS) "BlockStore" $
         "Block " <> cs (show i) <> "/" <> cs (show (length hs)) <> " " <>
         blockHashToHex h <>
-        " not found by peer " <>
-        p'
+        " not found (peer " <>
+        p' <>
+        ")"
     killPeer (PeerMisbehaving "Did not find requested block(s)") p
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
@@ -351,7 +355,7 @@ processTx p tx = do
     t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockManager" $
-        "Received tx " <> txHashToHex (txHash tx) <> " from peer " <> p'
+        "Received tx " <> txHashToHex (txHash tx) <> " (peer " <> p' <> ")"
     addPendingTx $ PendingTx t tx HashSet.empty
 
 pruneOrphans :: MonadIO m => BlockT m ()
@@ -461,30 +465,40 @@ processMempool = do
                 let tx = pendingTx p
                     t = pendingTxTime p
                     th = txHash tx
-                    h TxOrphan {} = do
+                    h Orphan {} = do
                         $(logWarnS) "BlockStore" $
-                            "Orphan tx " <> cs (show i) <> "/" <>
+                            "Mempool " <> cs (show i) <> "/" <>
                             cs (show (length txs)) <>
                             ": " <>
-                            txHashToHex th
+                            txHashToHex th <>
+                            ": orphan"
                         return (Just (MemOrphan p))
-                    h _ = return Nothing
+                    h e = do
+                        $(logWarnS) "BlockStore" $
+                            "Mempool " <> cs (show i) <> "/" <>
+                            cs (show (length txs)) <>
+                            ": " <>
+                            txHashToHex th <>
+                            ": " <>
+                            cs (show e)
+                        return Nothing
                     f =
                         newMempoolTx tx t >>= \case
                             Just ls -> do
                                 $(logInfoS) "BlockStore" $
-                                    "New mempool tx " <> cs (show i) <> "/" <>
+                                    "Mempool " <> cs (show i) <> "/" <>
                                     cs (show (length txs)) <>
                                     ": " <>
-                                    txHashToHex th
+                                    txHashToHex th <>
+                                    ": ok"
                                 return (Just (MemImported th ls))
                             Nothing -> do
                                 $(logInfoS) "BlockStore" $
-                                    "Already have mempool tx " <> cs (show i) <>
-                                    "/" <>
+                                    "Mempool " <> cs (show i) <> "/" <>
                                     cs (show (length txs)) <>
                                     ": " <>
-                                    txHashToHex th
+                                    txHashToHex th <>
+                                    ": already imported"
                                 return Nothing
                 catchError f h
         case output of
@@ -519,21 +533,25 @@ processTxs p hs = do
                 haveit h >>= \case
                     True -> do
                         $(logDebugS) "BlockStore" $
-                            "Already have tx " <> cs (show i) <> "/" <>
+                            "Tx inv " <> cs (show i) <> "/" <>
                             cs (show (length hs)) <>
-                            " " <>
+                            ": " <>
                             txHashToHex h <>
-                            " offered by peer " <>
-                            p'
+                            ": Already have it " <>
+                            "(peer " <>
+                            p' <>
+                            ")"
                         return Nothing
                     False -> do
                         $(logDebugS) "BlockStore" $
-                            "Requesting transaction " <> cs (show i) <> "/" <>
+                            "Tx inv " <> cs (show i) <> "/" <>
                             cs (show (length hs)) <>
-                            " " <>
+                            ": " <>
                             txHashToHex h <>
-                            " from peer " <>
-                            p'
+                            ": Requesting… " <>
+                            "(peer " <>
+                            p' <>
+                            ")"
                         return (Just h)
         unless (null xs) $ go xs
   where
@@ -610,11 +628,16 @@ pruneMempool =
     deletetxs old = do
         forM_ (zip [(1 :: Int) ..] old) $ \(i, txid) -> do
             $(logInfoS) "BlockStore" $
-                "Removing " <> cs (show i) <> "/" <> cs (show (length old)) <>
-                " old mempool tx " <>
-                txHashToHex txid
+                "Deleting " <> cs (show i) <> "/" <> cs (show (length old)) <>
+                ": " <>
+                txHashToHex txid <>
+                " (old mempool tx)…"
             runImport (deleteTx True False txid) >>= \case
-                Left _ -> return ()
+                Left e -> do
+                    $(logErrorS) "BlockStore" $
+                        "Could not delete old mempool tx: " <> txHashToHex txid <>
+                        ": " <>
+                        cs (show e)
                 Right txids -> do
                     listener <- asks (blockConfListener . myConfig)
                     atomically $ mapM_ (listener . StoreTxDeleted) txids
@@ -642,16 +665,18 @@ syncMe peer =
         p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
         $(logInfoS) "BlockStore" $
             "Requesting " <> fromString (show (length vectors)) <>
-            " blocks from peer " <>
-            p'
+            " blocks (peer " <>
+            p' <>
+            ")"
         forM_ (zip [(1 :: Int) ..] blocknodes) $ \(i, bn) -> do
             $(logDebugS) "BlockStore" $
                 "Requesting block " <> cs (show i) <> "/" <>
                 cs (show (length vectors)) <>
-                " from peer " <>
-                p' <>
                 ": " <>
-                blockText bn []
+                blockText bn [] <>
+                " (peer " <>
+                p' <>
+                ")"
         MGetData (GetData vectors) `sendMessage` peer
   where
     checksyncingpeer =

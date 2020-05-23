@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.30.2
 ### Changed
 - Refactor code to manipulate address balances.
-- Get a bit more logging output when importing mempool transactions.
+- Improving logging further.
 - Rate-limit mempool importing.
 - Do not add xpubs to cache if node not in sync.
 - Do not import transactions to cache if no xpubs in cache.
