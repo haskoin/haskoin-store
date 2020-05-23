@@ -216,10 +216,10 @@ blockStore cfg inbox = do
   where
     del x n txs =
         forM (zip [x ..] txs) $ \(i, tx) -> do
-            $(logDebugS) "BlockStore" $
-                "Wiping mempool tx " <> cs (show i) <> "/" <> cs (show n) <>
-                ": " <>
-                txHashToHex (txRefHash tx)
+            $(logInfoS) "BlockStore" $
+                "Deleting " <> cs (show i) <> "/" <> cs (show n) <> ": " <>
+                txHashToHex (txRefHash tx) <>
+                "…"
             deleteTx True False (txRefHash tx)
     wipeit x n txs = do
         let (txs1, txs2) = splitAt 1000 txs
