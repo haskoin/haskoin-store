@@ -1,10 +1,10 @@
-cabal-version: 2.0
+cabal-version: 1.12
 
 -- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 6b9a1c50259a84c79c867f7cfe595810a863c23c220d540b9aa4663961ed198a
+-- hash: bba9800ee0f7bf0dd84e86579362fe05519c6a0fd3c2f513bd78d9e39254f7f4
 
 name:           haskoin-store
 version:        0.30.2
@@ -29,7 +29,6 @@ source-repository head
 library
   exposed-modules:
       Haskoin.Store
-      Paths_haskoin_store
   other-modules:
       Haskoin.Store.BlockStore
       Haskoin.Store.Cache
@@ -41,7 +40,7 @@ library
       Haskoin.Store.Logic
       Haskoin.Store.Manager
       Haskoin.Store.Web
-  autogen-modules:
+      Paths_haskoin_store
       Paths_haskoin_store
   hs-source-dirs:
       src
@@ -130,6 +129,7 @@ test-suite haskoin-store-test
       Haskoin.Store.Logic
       Haskoin.Store.Manager
       Haskoin.Store.Web
+      Paths_haskoin_store
       Paths_haskoin_store
   hs-source-dirs:
       test

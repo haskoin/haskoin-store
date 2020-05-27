@@ -45,8 +45,6 @@ dependencies:
   unordered-containers: ">= 0.2.10.0"
 library:
   source-dirs: src
-  generated-exposed-modules:
-    - Paths_haskoin_store
   exposed-modules:
     - Haskoin.Store
   dependencies: &lib-deps
