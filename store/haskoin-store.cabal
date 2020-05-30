@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: bba9800ee0f7bf0dd84e86579362fe05519c6a0fd3c2f513bd78d9e39254f7f4
+-- hash: f5846961c54a7c6cc90b6709ed2802be4632849c2b235f29cb6364cb85955acb
 
 name:           haskoin-store
 version:        0.30.3

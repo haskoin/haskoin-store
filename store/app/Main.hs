@@ -31,7 +31,6 @@ import           System.Exit             (exitSuccess)
 import           System.FilePath         ((</>))
 import           System.IO.Unsafe        (unsafePerformIO)
 import           Text.Read               (readMaybe)
-import           UnliftIO                (MonadUnliftIO, liftIO)
 import           UnliftIO.Directory      (createDirectoryIfMissing,
                                           getAppUserDataDirectory)
 
@@ -216,13 +215,13 @@ myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
 
 main :: IO ()
 main = do
-    conf <- liftIO (execParser opts)
-    when (configVersion conf) . liftIO $ do
+    conf <- execParser opts
+    when (configVersion conf) $ do
         putStrLn $ showVersion P.version
         exitSuccess
-    if (null (configPeers conf) && not (configDiscover conf))
-        then liftIO (run conf {configDiscover = True})
-        else liftIO (run conf)
+    if null (configPeers conf) && not (configDiscover conf)
+        then run conf {configDiscover = True}
+        else run conf
   where
     opts =
         info (helper <*> config) $
@@ -231,7 +230,7 @@ main = do
         Options.Applicative.header
             ("haskoin-store version " <> showVersion P.version)
 
-run :: MonadUnliftIO m => Config -> m ()
+run :: Config -> IO ()
 run Config { configPort = port
            , configNetwork = net
            , configDiscover = disc
@@ -274,16 +273,15 @@ run Config { configPort = port
                     , storeConfPeerTooOld = peerold
                     , storeConfConnect = withConnection
                     }
-         in withStore scfg $ \st ->
-                let wcfg =
-                        WebConfig
-                            { webPort = port
-                            , webStore = st
-                            , webMaxLimits = limits
-                            , webReqLog = reqlog
-                            , webWebTimeouts = tos
-                            }
-                 in runWeb wcfg
+        withStore scfg $ \st ->
+            runWeb
+                WebConfig
+                    { webPort = port
+                    , webStore = st
+                    , webMaxLimits = limits
+                    , webReqLog = reqlog
+                    , webWebTimeouts = tos
+                    }
   where
     l _ lvl
         | deb = True

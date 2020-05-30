@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE Strict            #-}
 module Haskoin.Store.Data
     ( -- * Address Balances
       Balance(..)
@@ -68,26 +69,34 @@ module Haskoin.Store.Data
       -- * Other Data
     , TxId(..)
     , GenericResult(..)
+    , RawResult(..)
     , PeerInformation(..)
     , HealthCheck(..)
     , Event(..)
     , Except(..)
-    ) where
+    )
+
+where
 
 import           Control.Applicative     ((<|>))
 import           Control.DeepSeq         (NFData)
 import           Control.Exception       (Exception)
-import           Control.Monad           (guard, join)
+import           Control.Monad           (guard, join, mzero)
 import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
                                           Value (..), object, pairs, (.!=),
                                           (.:), (.:?), (.=))
 import qualified Data.Aeson              as A
+import           Data.Aeson.Encoding     (encodingToLazyByteString, list, pair,
+                                          pairs, unsafeToEncoding)
 import           Data.Aeson.Encoding     (list, null_, pair, text)
 import           Data.Aeson.Types        (Parser)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
+import           Data.ByteString.Builder (char7, lazyByteString,
+                                          lazyByteStringHex)
 import           Data.ByteString.Short   (ShortByteString)
 import qualified Data.ByteString.Short   as BSS
+import           Data.Default            (Default (..))
 import           Data.Hashable           (Hashable (..))
 import qualified Data.IntMap             as I
 import           Data.IntMap.Strict      (IntMap)
@@ -114,17 +123,18 @@ import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           txHashToHex, wrapPubKey)
 import           Web.Scotty.Trans        (ScottyError (..))
 
-data DeriveType
-    = DeriveNormal
+data DeriveType = DeriveNormal
     | DeriveP2SH
     | DeriveP2WPKH
     deriving (Show, Eq, Generic, NFData, Serialize)
 
-data XPubSpec =
-    XPubSpec
-        { xPubSpecKey    :: !XPubKey
-        , xPubDeriveType :: !DeriveType
-        } deriving (Show, Eq, Generic, NFData)
+instance Default DeriveType where
+    def = DeriveNormal
+
+data XPubSpec = XPubSpec
+    { xPubSpecKey    :: XPubKey
+    , xPubDeriveType :: DeriveType
+    } deriving (Show, Eq, Generic, NFData)
 
 instance Hashable XPubSpec where
     hashWithSalt i XPubSpec {xPubSpecKey = XPubKey {xPubKey = pubkey}} =
@@ -166,16 +176,15 @@ getUnixTime :: Get Word64
 getUnixTime = (maxBound -) <$> getWord64be
 
 -- | Reference to a block where a transaction is stored.
-data BlockRef
-    = BlockRef
-          { blockRefHeight :: !BlockHeight
-      -- ^ block height in the chain
-          , blockRefPos    :: !Word32
-      -- ^ position of transaction within the block
-          }
+data BlockRef = BlockRef
+    { blockRefHeight :: BlockHeight
+    -- ^ block height in the chain
+    , blockRefPos    :: Word32
+    -- ^ position of transaction within the block
+    }
     | MemRef
-          { memRefTime :: !UnixTime
-          }
+    { memRefTime :: UnixTime
+    }
     deriving (Show, Read, Eq, Ord, Generic, Hashable, NFData)
 
 -- | Serialized entities will sort in reverse order.
@@ -223,11 +232,12 @@ instance FromJSON BlockRef where
 
 -- | Transaction in relation to an address.
 data TxRef = TxRef
-    { txRefBlock :: !BlockRef
-      -- ^ block information
-    , txRefHash  :: !TxHash
-      -- ^ transaction hash
-    } deriving (Show, Eq, Ord, Generic, Serialize, Hashable, NFData)
+    { txRefBlock :: BlockRef
+    -- ^ block information
+    , txRefHash  :: TxHash
+    -- ^ transaction hash
+    }
+    deriving (Show, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 instance ToJSON TxRef where
     toJSON btx = object ["txid" .= txRefHash btx, "block" .= txRefBlock btx]
@@ -245,22 +255,22 @@ instance FromJSON TxRef where
             return TxRef {txRefBlock = block, txRefHash = txid}
 
 -- | Address balance information.
-data Balance =
-    Balance
-        { balanceAddress       :: !Address
-      -- ^ address balance
-        , balanceAmount        :: !Word64
-      -- ^ confirmed balance
-        , balanceZero          :: !Word64
-      -- ^ unconfirmed balance
-        , balanceUnspentCount  :: !Word64
-      -- ^ number of unspent outputs
-        , balanceTxCount       :: !Word64
-      -- ^ number of transactions
-        , balanceTotalReceived :: !Word64
-      -- ^ total amount from all outputs in this address
-        }
-    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
+data Balance = Balance
+    { balanceAddress       :: Address
+    -- ^ address balance
+    , balanceAmount        :: Word64
+    -- ^ confirmed balance
+    , balanceZero          :: Word64
+    -- ^ unconfirmed balance
+    , balanceUnspentCount  :: Word64
+    -- ^ number of unspent outputs
+    , balanceTxCount       :: Word64
+    -- ^ number of transactions
+    , balanceTotalReceived :: Word64
+    -- ^ total amount from all outputs in this address
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable,
+          NFData)
 
 zeroBalance :: Address -> Balance
 zeroBalance a =
@@ -325,12 +335,13 @@ balanceParseJSON net =
 
 -- | Unspent output.
 data Unspent = Unspent
-    { unspentBlock   :: !BlockRef
-    , unspentPoint   :: !OutPoint
-    , unspentAmount  :: !Word64
-    , unspentScript  :: !ShortByteString
-    , unspentAddress :: !(Maybe Address)
-    } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
+    { unspentBlock   :: BlockRef
+    , unspentPoint   :: OutPoint
+    , unspentAmount  :: Word64
+    , unspentScript  :: ShortByteString
+    , unspentAddress :: Maybe Address
+    }
+    deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 instance Coin Unspent where
     coinValue = unspentAmount
@@ -385,27 +396,28 @@ unspentParseJSON net =
 
 -- | Database value for a block entry.
 data BlockData = BlockData
-    { blockDataHeight    :: !BlockHeight
-      -- ^ height of the block in the chain
-    , blockDataMainChain :: !Bool
-      -- ^ is this block in the main chain?
-    , blockDataWork      :: !BlockWork
-      -- ^ accumulated work in that block
-    , blockDataHeader    :: !BlockHeader
-      -- ^ block header
-    , blockDataSize      :: !Word32
-      -- ^ size of the block including witnesses
-    , blockDataWeight    :: !Word32
-      -- ^ weight of this block (for segwit networks)
-    , blockDataTxs       :: ![TxHash]
-      -- ^ block transactions
-    , blockDataOutputs   :: !Word64
-      -- ^ sum of all transaction outputs
-    , blockDataFees      :: !Word64
-      -- ^ sum of all transaction fees
-    , blockDataSubsidy   :: !Word64
-      -- ^ block subsidy
-    } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
+    { blockDataHeight    :: BlockHeight
+    -- ^ height of the block in the chain
+    , blockDataMainChain :: Bool
+    -- ^ is this block in the main chain?
+    , blockDataWork      :: BlockWork
+    -- ^ accumulated work in that block
+    , blockDataHeader    :: BlockHeader
+    -- ^ block header
+    , blockDataSize      :: Word32
+    -- ^ size of the block including witnesses
+    , blockDataWeight    :: Word32
+    -- ^ weight of this block (for segwit networks)
+    , blockDataTxs       :: [TxHash]
+    -- ^ block transactions
+    , blockDataOutputs   :: Word64
+    -- ^ sum of all transaction outputs
+    , blockDataFees      :: Word64
+    -- ^ sum of all transaction fees
+    , blockDataSubsidy   :: Word64
+    -- ^ block subsidy
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 blockDataToJSON :: Network -> BlockData -> Value
 blockDataToJSON net bv =
@@ -491,19 +503,19 @@ instance FromJSON BlockData where
 
 data StoreInput
     = StoreCoinbase
-          { inputPoint     :: !OutPoint
-          , inputSequence  :: !Word32
-          , inputSigScript :: !ByteString
-          , inputWitness   :: !(Maybe WitnessStack)
+          { inputPoint     :: OutPoint
+          , inputSequence  :: Word32
+          , inputSigScript :: ByteString
+          , inputWitness   :: Maybe WitnessStack
           }
     | StoreInput
-          { inputPoint     :: !OutPoint
-          , inputSequence  :: !Word32
-          , inputSigScript :: !ByteString
-          , inputPkScript  :: !ByteString
-          , inputAmount    :: !Word64
-          , inputWitness   :: !(Maybe WitnessStack)
-          , inputAddress   :: !(Maybe Address)
+          { inputPoint     :: OutPoint
+          , inputSequence  :: Word32
+          , inputSigScript :: ByteString
+          , inputPkScript  :: ByteString
+          , inputAmount    :: Word64
+          , inputWitness   :: Maybe WitnessStack
+          , inputAddress   :: Maybe Address
           }
     deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
@@ -635,9 +647,9 @@ jsonHex s =
 
 -- | Information about input spending output.
 data Spender = Spender
-    { spenderHash  :: !TxHash
+    { spenderHash  :: TxHash
       -- ^ input transaction hash
-    , spenderIndex :: !Word32
+    , spenderIndex :: Word32
       -- ^ input position in transaction
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
@@ -651,10 +663,10 @@ instance FromJSON Spender where
 
 -- | Output information.
 data StoreOutput = StoreOutput
-    { outputAmount  :: !Word64
-    , outputScript  :: !ByteString
-    , outputSpender :: !(Maybe Spender)
-    , outputAddress :: !(Maybe Address)
+    { outputAmount  :: Word64
+    , outputScript  :: ByteString
+    , outputSpender :: Maybe Spender
+    , outputAddress :: Maybe Address
     } deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 storeOutputToJSON :: Network -> StoreOutput -> Value
@@ -695,8 +707,8 @@ storeOutputParseJSON net =
                 }
 
 data Prev = Prev
-    { prevScript :: !ByteString
-    , prevAmount :: !Word64
+    { prevScript :: ByteString
+    , prevAmount :: Word64
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 toInput :: TxIn -> Maybe Prev -> Maybe WitnessStack -> StoreInput
@@ -728,12 +740,12 @@ toOutput o s =
         }
 
 data TxData = TxData
-    { txDataBlock   :: !BlockRef
-    , txData        :: !Tx
-    , txDataPrevs   :: !(IntMap Prev)
-    , txDataDeleted :: !Bool
-    , txDataRBF     :: !Bool
-    , txDataTime    :: !Word64
+    { txDataBlock   :: BlockRef
+    , txData        :: Tx
+    , txDataPrevs   :: IntMap Prev
+    , txDataDeleted :: Bool
+    , txDataRBF     :: Bool
+    , txDataTime    :: Word64
     } deriving (Show, Eq, Ord, Generic, Serialize, NFData)
 
 toTransaction :: TxData -> IntMap Spender -> Transaction
@@ -795,29 +807,29 @@ fromTransaction t = (d, sm)
 
 -- | Detailed transaction information.
 data Transaction = Transaction
-    { transactionBlock    :: !BlockRef
+    { transactionBlock    :: BlockRef
       -- ^ block information for this transaction
-    , transactionVersion  :: !Word32
+    , transactionVersion  :: Word32
       -- ^ transaction version
-    , transactionLockTime :: !Word32
+    , transactionLockTime :: Word32
       -- ^ lock time
-    , transactionInputs   :: ![StoreInput]
+    , transactionInputs   :: [StoreInput]
       -- ^ transaction inputs
-    , transactionOutputs  :: ![StoreOutput]
+    , transactionOutputs  :: [StoreOutput]
       -- ^ transaction outputs
-    , transactionDeleted  :: !Bool
+    , transactionDeleted  :: Bool
       -- ^ this transaction has been deleted and is no longer valid
-    , transactionRBF      :: !Bool
+    , transactionRBF      :: Bool
       -- ^ this transaction can be replaced in the mempool
-    , transactionTime     :: !Word64
+    , transactionTime     :: Word64
       -- ^ time the transaction was first seen or time of block
-    , transactionId       :: !TxHash
+    , transactionId       :: TxHash
       -- ^ transaction id
-    , transactionSize     :: !Word32
+    , transactionSize     :: Word32
       -- ^ serialized transaction size (includes witness data)
-    , transactionWeight   :: !Word32
+    , transactionWeight   :: Word32
       -- ^ transaction weight
-    , transactionFees     :: !Word64
+    , transactionFees     :: Word64
       -- ^ fees that this transaction pays (0 for coinbase)
     } deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
@@ -909,15 +921,15 @@ transactionParseJSON net =
 
 -- | Information about a connected peer.
 data PeerInformation
-    = PeerInformation { peerUserAgent :: !ByteString
+    = PeerInformation { peerUserAgent :: ByteString
                         -- ^ user agent string
-                      , peerAddress   :: !String
+                      , peerAddress   :: String
                         -- ^ network address
-                      , peerVersion   :: !Word32
+                      , peerVersion   :: Word32
                         -- ^ version number
-                      , peerServices  :: !Word64
+                      , peerServices  :: Word64
                         -- ^ services field
-                      , peerRelay     :: !Bool
+                      , peerRelay     :: Bool
                         -- ^ will relay transactions
                       }
     deriving (Show, Eq, Ord, Generic, NFData, Serialize)
@@ -961,8 +973,8 @@ instance FromJSON PeerInformation where
 
 -- | Address balances for an extended public key.
 data XPubBal = XPubBal
-    { xPubBalPath :: ![KeyIndex]
-    , xPubBal     :: !Balance
+    { xPubBalPath :: [KeyIndex]
+    , xPubBal     :: Balance
     } deriving (Show, Ord, Eq, Generic, Serialize, NFData)
 
 xPubBalToJSON :: Network -> XPubBal -> Value
@@ -982,8 +994,8 @@ xPubBalParseJSON net =
 
 -- | Unspent transaction for extended public key.
 data XPubUnspent = XPubUnspent
-    { xPubUnspentPath :: ![KeyIndex]
-    , xPubUnspent     :: !Unspent
+    { xPubUnspentPath :: [KeyIndex]
+    , xPubUnspent     :: Unspent
     } deriving (Show, Eq, Generic, Serialize, NFData)
 
 xPubUnspentToJSON :: Network -> XPubUnspent -> Value
@@ -1003,12 +1015,12 @@ xPubUnspentParseJSON net =
 
 data XPubSummary =
     XPubSummary
-        { xPubSummaryConfirmed :: !Word64
-        , xPubSummaryZero      :: !Word64
-        , xPubSummaryReceived  :: !Word64
-        , xPubUnspentCount     :: !Word64
-        , xPubExternalIndex    :: !Word32
-        , xPubChangeIndex      :: !Word32
+        { xPubSummaryConfirmed :: Word64
+        , xPubSummaryZero      :: Word64
+        , xPubSummaryReceived  :: Word64
+        , xPubUnspentCount     :: Word64
+        , xPubExternalIndex    :: Word32
+        , xPubChangeIndex      :: Word32
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
@@ -1073,17 +1085,17 @@ instance FromJSON XPubSummary where
 
 data HealthCheck =
     HealthCheck
-        { healthHeaderBest   :: !(Maybe BlockHash)
-        , healthHeaderHeight :: !(Maybe BlockHeight)
-        , healthBlockBest    :: !(Maybe BlockHash)
-        , healthBlockHeight  :: !(Maybe BlockHeight)
-        , healthPeers        :: !(Maybe Int)
-        , healthNetwork      :: !String
-        , healthOK           :: !Bool
-        , healthSynced       :: !Bool
-        , healthLastBlock    :: !(Maybe Word64)
-        , healthLastTx       :: !(Maybe Word64)
-        , healthVersion      :: !String
+        { healthHeaderBest   :: Maybe BlockHash
+        , healthHeaderHeight :: Maybe BlockHeight
+        , healthBlockBest    :: Maybe BlockHash
+        , healthBlockHeight  :: Maybe BlockHeight
+        , healthPeers        :: Maybe Int
+        , healthNetwork      :: String
+        , healthOK           :: Bool
+        , healthSynced       :: Bool
+        , healthLastBlock    :: Maybe Word64
+        , healthLastTx       :: Maybe Word64
+        , healthVersion      :: String
         }
     deriving (Show, Eq, Generic, Serialize, NFData)
 
@@ -1195,7 +1207,26 @@ instance ToJSON a => ToJSON (GenericResult a) where
 
 instance FromJSON a => FromJSON (GenericResult a) where
     parseJSON =
-        A.withObject "result" $ \o -> GenericResult <$> o .: "result"
+        A.withObject "GenericResult" $ \o -> GenericResult <$> o .: "result"
+
+newtype RawResult a = RawResult
+    { getRawResult :: a
+    } deriving (Show, Eq, Generic, Serialize, NFData)
+
+instance S.Serialize a => ToJSON (RawResult a) where
+    toJSON (RawResult b) =
+        object [ "result" .= A.String (encodeHex $ S.encode b)]
+    toEncoding (RawResult b) = 
+        pairs $ "result" `pair` unsafeToEncoding str
+      where
+        str = char7 '"' <> lazyByteStringHex (S.runPutLazy $ put b) <> char7 '"'
+
+instance S.Serialize a => FromJSON (RawResult a) where
+    parseJSON =
+        A.withObject "RawResult" $ \o -> do
+            res <- o .: "result"
+            let valM = eitherToMaybe . S.decode =<< decodeHex res
+            maybe mzero (return . RawResult) valM
 
 newtype TxId =
     TxId TxHash

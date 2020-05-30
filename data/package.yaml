@@ -33,6 +33,7 @@ library:
   exposed-modules:
     - Haskoin.Store.Data
     - Haskoin.Store.WebClient
+    - Haskoin.Store.WebCommon
 tests:
   haskoin-store-test:
     main: Spec.hs
