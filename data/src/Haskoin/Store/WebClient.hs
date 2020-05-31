@@ -110,7 +110,7 @@ class (ApiResource a b, Monoid b) => Batchable a b where
 toOptions ::
        ApiResource a b => Network -> a -> Either String (Endo HTTP.Options)
 toOptions net res =
-    mconcat <$> mapM f (resourceParams res)
+    mconcat <$> mapM f (snd $ queryParams res)
   where
     f (ParamBox p) = toOption net p
 

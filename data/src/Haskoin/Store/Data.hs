@@ -70,6 +70,7 @@ module Haskoin.Store.Data
     , TxId(..)
     , GenericResult(..)
     , RawResult(..)
+    , RawResultList(..)
     , PeerInformation(..)
     , HealthCheck(..)
     , Event(..)
@@ -81,7 +82,7 @@ where
 import           Control.Applicative     ((<|>))
 import           Control.DeepSeq         (NFData)
 import           Control.Exception       (Exception)
-import           Control.Monad           (guard, join, mzero)
+import           Control.Monad           (guard, join, mzero, (<=<))
 import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
                                           Value (..), object, pairs, (.!=),
                                           (.:), (.:?), (.=))
@@ -97,6 +98,7 @@ import           Data.ByteString.Builder (char7, lazyByteString,
 import           Data.ByteString.Short   (ShortByteString)
 import qualified Data.ByteString.Short   as BSS
 import           Data.Default            (Default (..))
+import           Data.Foldable           (toList)
 import           Data.Hashable           (Hashable (..))
 import qualified Data.IntMap             as I
 import           Data.IntMap.Strict      (IntMap)
@@ -1197,9 +1199,11 @@ instance FromJSON Event where
                     return $ EventBlock i
                 _ -> fail $ "Could not recognize event type: " <> t
 
-newtype GenericResult a = GenericResult
-    { getResult :: a
-    } deriving (Show, Eq, Generic, Serialize, NFData)
+newtype GenericResult a =
+    GenericResult
+        { getResult :: a
+        }
+    deriving (Show, Eq, Generic, Serialize, NFData)
 
 instance ToJSON a => ToJSON (GenericResult a) where
     toJSON (GenericResult b) = object ["result" .= b]
@@ -1209,14 +1213,16 @@ instance FromJSON a => FromJSON (GenericResult a) where
     parseJSON =
         A.withObject "GenericResult" $ \o -> GenericResult <$> o .: "result"
 
-newtype RawResult a = RawResult
-    { getRawResult :: a
-    } deriving (Show, Eq, Generic, Serialize, NFData)
+newtype RawResult a =
+    RawResult
+        { getRawResult :: a
+        }
+    deriving (Show, Eq, Generic, Serialize, NFData)
 
 instance S.Serialize a => ToJSON (RawResult a) where
     toJSON (RawResult b) =
         object [ "result" .= A.String (encodeHex $ S.encode b)]
-    toEncoding (RawResult b) = 
+    toEncoding (RawResult b) =
         pairs $ "result" `pair` unsafeToEncoding str
       where
         str = char7 '"' <> lazyByteStringHex (S.runPutLazy $ put b) <> char7 '"'
@@ -1227,6 +1233,31 @@ instance S.Serialize a => FromJSON (RawResult a) where
             res <- o .: "result"
             let valM = eitherToMaybe . S.decode =<< decodeHex res
             maybe mzero (return . RawResult) valM
+
+newtype RawResultList a =
+    RawResultList
+        { getRawResultList :: [a]
+        }
+    deriving (Show, Eq, Generic, Serialize, NFData)
+
+instance S.Serialize a => ToJSON (RawResultList a) where
+    toJSON (RawResultList xs) =
+        toJSON $ (encodeHex . S.encode) <$> xs
+    toEncoding (RawResultList xs) =
+        list (unsafeToEncoding . str) xs
+      where
+        str x =
+            char7 '"' <> lazyByteStringHex (S.runPutLazy (put x)) <> char7 '"'
+
+instance S.Serialize a => FromJSON (RawResultList a) where
+    parseJSON =
+        A.withArray "RawResultList" $ \vec -> do
+            xs <- mapM f $ toList vec
+            maybe mzero (return . RawResultList) $ mconcat xs
+      where
+        f =
+            A.withText "RawResultListElem" $
+            return . (eitherToMaybe . S.decode <=< decodeHex)
 
 newtype TxId =
     TxId TxHash

@@ -30,7 +30,12 @@ import           Data.Text                 (Text)
 import qualified Data.Text                 as Text
 import qualified Data.Text.Lazy            as TL
 import           Data.Word                 (Word32, Word64)
-import           Haskoin
+import           Haskoin.Address
+import           Haskoin.Block             (Block, BlockHash, blockHashToHex,
+                                            hexToBlockHash)
+import           Haskoin.Constants
+import           Haskoin.Crypto            (Hash256)
+import           Haskoin.Keys
 import qualified Haskoin.Store.Data        as Store
 import           Haskoin.Transaction
 import           Haskoin.Util
@@ -52,13 +57,8 @@ import qualified Web.Scotty.Trans          as Scotty
 -- @AddressTxs@ takes a list of addresses @[Address]@ as argument and
 -- returns a list of transaction references @[TxRef]@.
 -- data ApiResource a where
---     BlockBest :: ApiResource Store.BlockData
---     BlockBestRaw :: ApiResource (Store.GenericResult Block)
---     BlockLatest :: ApiResource [Store.BlockData]
---     Blocks :: [BlockHash] -> ApiResource [Store.BlockData]
 --     BlockRaw :: BlockHash -> ApiResource (Store.GenericResult Block)
---     BlockHeight :: Word32 -> ApiResource [Store.BlockData]
---     BlockHeightRaw :: Word32 -> ApiResource [Block]
+--     BlockLatest :: ApiResource [Store.BlockData]
 --     BlockHeights :: [Word32] -> ApiResource [Store.BlockData]
 --     BlockTime :: Store.UnixTime -> ApiResource Store.BlockData
 --     BlockTimeRaw :: Store.UnixTime -> ApiResource (Store.GenericResult Block)
@@ -86,75 +86,12 @@ import qualified Web.Scotty.Trans          as Scotty
 --     Events :: ApiResource [Store.Event]
 --     Health :: ApiResource Store.HealthCheck
 --     Peers :: ApiResource [Store.PeerInformation]
-
-data PostBox = forall s . S.Serialize s => PostBox s
-
-data ParamBox = forall p . (Eq p, Param p) => ParamBox p
-
-class S.Serialize b => ApiResource a b | a -> b where
-    resourceMethod :: Proxy a -> StdMethod
-    resourcePaths :: Network -> Proxy a -> (Text, Scotty.RoutePattern)
-    resourceParams :: a -> [ParamBox]
-    resourceBody :: a -> Maybe PostBox
-    resourceBody = const Nothing
-
-queryPath :: ApiResource a b => Network -> a -> Text
-queryPath net = fst . resourcePaths net . asProxy
-
-capturePath :: ApiResource a b => Proxy a -> Scotty.RoutePattern
-capturePath = snd . resourcePaths bch
-
-{- BlockBest -}
-
-newtype BlockBest = BlockBest NoTx
-
-instance ApiResource BlockBest Store.BlockData where
-    resourceMethod _ = GET
-    resourcePaths _ _ = noCapture "/block/best"
-    resourceParams (BlockBest p) = [ParamBox p | p /= def]
-
-{- BlockBestRaw -}
-
-data BlockBestRaw = BlockBestRaw
-
-instance ApiResource BlockBestRaw (Store.RawResult Block) where
-    resourceMethod _ = GET
-    resourcePaths _ _ = noCapture "/block/best/raw"
-    resourceParams _ = []
-
-noCapture :: Text -> (Text, Scotty.RoutePattern)
-noCapture t = (t, fromString $ cs t)
-
-toPaths ::
-       Param a => Network -> a -> (Text -> Text) -> (Text, Scotty.RoutePattern)
-toPaths net a f =
-    case encodeParam net a of
-        Just [res] -> (f res, fromString $ cs $ f $ ":" <> paramLabel a)
-        _          -> error "Invalid resource path parameter"
-
-toPaths2 ::
-       (Param a, Param b)
-    => Network
-    -> a
-    -> b
-    -> (Text -> Text -> Text)
-    -> (Text, Scotty.RoutePattern)
-toPaths2 net a b f =
-    case (encodeParam net a, encodeParam net b) of
-        (Just [resA], Just [resB]) ->
-            ( f resA resB
-            , fromString $ cs $ f (":" <> paramLabel a) (":" <> paramLabel b))
-        _ -> error "Invalid resource path parameter"
-
-{- Resource Paths -}
-
+--
 -- resourcePath :: Network -> ApiResource a -> (Text, Scotty.RoutePattern)
 -- resourcePath net =
 --     \case
---         BlockBest -> double "/block/best"
---         BlockBestRaw -> double "/block/best/raw"
---         BlockLatest -> double "/block/latest"
 --         Blocks {} -> double "/blocks"
+--         BlockLatest -> double "/block/latest"
 --         BlockRaw b -> paramPath net b $ \q -> "/block/" <> q <> "/raw"
 --         BlockHeight i -> paramPath net (HeightParam i) ("/block/height/" <>)
 --         BlockHeightRaw i ->
@@ -195,6 +132,115 @@ toPaths2 net a b f =
 --         Health -> double "/health"
 --         Peers -> double "/peers"
 
+
+data PostBox = forall s . S.Serialize s => PostBox s
+data ParamBox = forall p . (Eq p, Param p) => ParamBox p
+data ProxyBox = forall p . Param p => ProxyBox (Proxy p)
+
+{- Resource Paths -}
+
+class S.Serialize b => ApiResource a b | a -> b where
+    resourceMethod :: Proxy a -> StdMethod
+    resourcePath :: Proxy a -> ([Text] -> Text)
+    queryParams :: a -> ([ParamBox], [ParamBox]) -- (resource, querystring)
+    queryParams _ = ([],[])
+    captureParams :: Proxy a -> [ProxyBox]
+    captureParams _ = []
+    resourceBody :: a -> Maybe PostBox
+    resourceBody = const Nothing
+
+{- GET BlockBest -}
+
+newtype GetBlockBest = GetBlockBest NoTx
+
+instance ApiResource GetBlockBest Store.BlockData where
+    resourceMethod _ = GET
+    resourcePath _ _ = "/block/best"
+    queryParams (GetBlockBest t) = ([], [ParamBox t | t /= def])
+
+{- GET BlockBestRaw -}
+
+data GetBlockBestRaw = GetBlockBestRaw
+
+instance ApiResource GetBlockBestRaw (Store.RawResult Block) where
+    resourceMethod _ = GET
+    resourcePath _ _ = "/block/best/raw"
+
+{- GET Block -}
+
+data GetBlock = GetBlock BlockHash NoTx
+
+instance ApiResource GetBlock Store.BlockData where
+    resourceMethod _ = GET
+    resourcePath _ [h] = "/block/" <> h
+    resourcePath _ _ = error "Invalid resource path"
+    queryParams (GetBlock h t) = ([ParamBox h], [ParamBox t | t /= def])
+    captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
+
+{- GET Blocks -}
+
+data GetBlocks = GetBlocks [BlockHash] NoTx
+
+instance ApiResource GetBlocks [Store.BlockData] where
+    resourceMethod _ = GET
+    resourcePath _ _ = "/blocks"
+    queryParams (GetBlocks hs t) =
+        ([], [ParamBox hs] <> [ParamBox t | t /= def])
+
+{- GET BlockRaw -}
+
+newtype GetBlockRaw = GetBlockRaw BlockHash
+
+instance ApiResource GetBlockRaw (Store.RawResult Block) where
+    resourceMethod _ = GET
+    resourcePath _ [h] = "/block/" <> h <> "/raw"
+    resourcePath _ _ = error "Invalid resource path"
+    queryParams (GetBlockRaw h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
+
+{- GET BlockHeight -}
+
+data GetBlockHeight = GetBlockHeight HeightParam NoTx
+
+instance ApiResource GetBlockHeight [Store.BlockData] where
+    resourceMethod _ = GET
+    resourcePath _ [h] = "/block/height/" <> h
+    resourcePath _ _ = error "Invalid resource path"
+    queryParams (GetBlockHeight h t) = ([ParamBox h], [ParamBox t | t /= def])
+    captureParams _ = [ProxyBox (Proxy :: Proxy HeightParam)]
+
+{- GET BlockHeightRaw -}
+
+newtype GetBlockHeightRaw = GetBlockHeightRaw HeightParam
+
+instance ApiResource GetBlockHeightRaw (Store.RawResultList Block) where
+    resourceMethod _ = GET
+    resourcePath _ [h] = "/block/height/" <> h <> "/raw"
+    resourcePath _ _ = error "Invalid resource path"
+    queryParams (GetBlockHeightRaw h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy HeightParam)]
+
+{- Helpers -}
+
+asProxy :: a -> Proxy a
+asProxy = const Proxy
+
+queryPath :: ApiResource a b => Network -> a -> Text
+queryPath net a = f $ encParam <$> fst (queryParams a)
+  where
+    f = resourcePath $ asProxy a
+    encParam (ParamBox p) =
+        case encodeParam net p of
+            Just [res] -> res
+            _ -> error "Invalid query param"
+
+capturePath :: ApiResource a b => Proxy a -> Scotty.RoutePattern
+capturePath proxy = 
+    fromString $ cs $ f $ toLabel <$> captureParams proxy
+  where
+    f = resourcePath proxy
+    toLabel (ProxyBox p) = ":" <> proxyLabel p
+
 {- Options -}
 
 class Param a where
@@ -203,9 +249,6 @@ class Param a where
     paramLabel = proxyLabel . asProxy
     encodeParam :: Network -> a -> Maybe [Text]
     parseParam :: Network -> [Text] -> Maybe a
-
-asProxy :: a -> Proxy a
-asProxy = const Proxy
 
 instance Param Address where
     proxyLabel = const "address"
