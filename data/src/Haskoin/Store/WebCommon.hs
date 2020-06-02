@@ -1,18 +1,18 @@
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE FlexibleInstances         #-}
-{-# LANGUAGE FunctionalDependencies    #-}
-{-# LANGUAGE GADTs                     #-}
-{-# LANGUAGE LambdaCase                #-}
-{-# LANGUAGE MultiParamTypeClasses     #-}
-{-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE Strict                    #-}
+{-# LANGUAGE ExistentialQuantification  #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE Strict                     #-}
 module Haskoin.Store.WebCommon
 
 where
 
 import           Control.Applicative       ((<|>))
-import           Control.Arrow             (second, (&&&))
+import           Control.Arrow             (second, (&&&), (<<<), (>>>))
 import           Control.Lens              ((.~), (?~), (^.))
 import           Control.Monad             (forever, guard, unless, when, (<=<))
 import           Control.Monad.Except      (MonadError)
@@ -20,6 +20,7 @@ import           Control.Monad.Trans       (MonadIO, liftIO)
 import qualified Data.Aeson                as Json
 import qualified Data.ByteString           as B
 import           Data.Default              (Default, def)
+import           Data.Function             ((&))
 import           Data.Maybe                (maybeToList)
 import           Data.Monoid               (Endo (..), appEndo)
 import           Data.Proxy
@@ -49,98 +50,9 @@ import qualified Web.Scotty.Trans          as Scotty
 
 {- API Resources -}
 
--- | List of available API calls together with arguments and return types.
--- For example:
---
--- > AddressTxs :: [Address] -> ApiResource [TxRef]
---
--- @AddressTxs@ takes a list of addresses @[Address]@ as argument and
--- returns a list of transaction references @[TxRef]@.
--- data ApiResource a where
---     BlockRaw :: BlockHash -> ApiResource (Store.GenericResult Block)
---     BlockLatest :: ApiResource [Store.BlockData]
---     BlockHeights :: [Word32] -> ApiResource [Store.BlockData]
---     BlockTime :: Store.UnixTime -> ApiResource Store.BlockData
---     BlockTimeRaw :: Store.UnixTime -> ApiResource (Store.GenericResult Block)
---     -- Transactions
---     Mempool :: ApiResource [TxHash]
---     TxsDetails :: [TxHash] -> ApiResource [Store.Transaction]
---     PostTx :: Tx -> ApiResource Store.TxId
---     TxsRaw :: [TxHash] -> ApiResource [Tx]
---     TxAfter :: TxHash -> Word32 -> ApiResource (Store.GenericResult Bool)
---     TxsBlock :: BlockHash -> ApiResource [Store.Transaction]
---     TxsBlockRaw :: BlockHash -> ApiResource [Tx]
---     -- Address
---     AddressTxs :: [Address] -> ApiResource [Store.TxRef]
---     AddressTxsFull :: [Address] -> ApiResource [Store.Transaction]
---     AddressBalances :: [Address] -> ApiResource [Store.Balance]
---     AddressUnspent :: [Address] -> ApiResource [Store.Unspent]
---     -- XPubs
---     XPubEvict :: XPubKey -> ApiResource (Store.GenericResult Bool)
---     XPubSummary :: XPubKey -> ApiResource Store.XPubSummary
---     XPubTxs :: XPubKey -> ApiResource [Store.TxRef]
---     XPubTxsFull :: XPubKey -> ApiResource [Store.Transaction]
---     XPubBalances :: XPubKey -> ApiResource [Store.XPubBal]
---     XPubUnspent :: XPubKey -> ApiResource [Store.XPubUnspent]
---     -- Network
---     Events :: ApiResource [Store.Event]
---     Health :: ApiResource Store.HealthCheck
---     Peers :: ApiResource [Store.PeerInformation]
---
--- resourcePath :: Network -> ApiResource a -> (Text, Scotty.RoutePattern)
--- resourcePath net =
---     \case
---         Blocks {} -> double "/blocks"
---         BlockLatest -> double "/block/latest"
---         BlockRaw b -> paramPath net b $ \q -> "/block/" <> q <> "/raw"
---         BlockHeight i -> paramPath net (HeightParam i) ("/block/height/" <>)
---         BlockHeightRaw i ->
---             paramPath net (HeightParam i) $ \q ->
---                 "/block/height/" <> q <> "/raw"
---         BlockHeights {} -> double "/block/heights"
---         BlockTime t -> paramPath net (TimeParam t) ("/block/time/" <>)
---         BlockTimeRaw t ->
---             paramPath net (TimeParam t) $ \q -> "/block/time/" <> q <> "/raw"
---         -- Transactions
---         Mempool -> double "/mempool"
---         TxsDetails {} -> double "/transactions"
---         PostTx {} -> double "/transactions"
---         TxsRaw {} -> double "/transactions/raw"
---         TxAfter h i ->
---             paramPath2 net h (HeightParam i) $ \a b ->
---                 "/transactions/" <> a <> "/after/" <> b
---         TxsBlock b -> paramPath net b ("/transactions/block/" <>)
---         TxsBlockRaw b ->
---             paramPath net b $ \q -> "/transactions/block/" <> q <> "/raw"
---         -- Address
---         AddressTxs {} -> double "/address/transactions"
---         AddressTxsFull {} -> double "/address/transactions/full"
---         AddressBalances {} -> double "/address/balances"
---         AddressUnspent {} -> double "/address/unspent"
---         -- XPubs
---         XPubEvict pub -> paramPath net pub $ \q -> "/xpub/" <> q <> "/evict"
---         XPubSummary pub -> paramPath net pub ("/xpub/" <>)
---         XPubTxs pub ->
---             paramPath net pub $ \q -> "/xpub/" <> q <> "/transactions"
---         XPubTxsFull pub ->
---             paramPath net pub $ \q -> "/xpub/" <> q <> "/transactions/full"
---         XPubBalances pub ->
---             paramPath net pub $ \q -> "/xpub/" <> q <> "/balances"
---         XPubUnspent pub -> paramPath net pub $ \q -> "/xpub/" <> q <> "/unspent"
---         -- Network
---         Events -> double "/events"
---         Health -> double "/health"
---         Peers -> double "/peers"
-
-
-data PostBox = forall s . S.Serialize s => PostBox s
-data ParamBox = forall p . (Eq p, Param p) => ParamBox p
-data ProxyBox = forall p . Param p => ProxyBox (Proxy p)
-
-{- Resource Paths -}
-
 class S.Serialize b => ApiResource a b | a -> b where
     resourceMethod :: Proxy a -> StdMethod
+    resourceMethod _ = GET
     resourcePath :: Proxy a -> ([Text] -> Text)
     queryParams :: a -> ([ParamBox], [ParamBox]) -- (resource, querystring)
     queryParams _ = ([],[])
@@ -149,78 +61,275 @@ class S.Serialize b => ApiResource a b | a -> b where
     resourceBody :: a -> Maybe PostBox
     resourceBody = const Nothing
 
-{- GET BlockBest -}
+data PostBox = forall s . S.Serialize s => PostBox s
+data ParamBox = forall p . (Eq p, Param p) => ParamBox p
+data ProxyBox = forall p . Param p => ProxyBox (Proxy p)
 
-newtype GetBlockBest = GetBlockBest NoTx
+{- Resource Paths -}
 
-instance ApiResource GetBlockBest Store.BlockData where
-    resourceMethod _ = GET
-    resourcePath _ _ = "/block/best"
-    queryParams (GetBlockBest t) = ([], [ParamBox t | t /= def])
-
-{- GET BlockBestRaw -}
-
-data GetBlockBestRaw = GetBlockBestRaw
-
-instance ApiResource GetBlockBestRaw (Store.RawResult Block) where
-    resourceMethod _ = GET
-    resourcePath _ _ = "/block/best/raw"
-
-{- GET Block -}
-
+-- Blocks
 data GetBlock = GetBlock BlockHash NoTx
+data GetBlocks = GetBlocks [BlockHash] NoTx
+newtype GetBlockRaw = GetBlockRaw BlockHash
+newtype GetBlockBest = GetBlockBest NoTx
+data GetBlockBestRaw = GetBlockBestRaw
+newtype GetBlockLatest = GetBlockLatest NoTx
+data GetBlockHeight = GetBlockHeight HeightParam NoTx
+data GetBlockHeights = GetBlockHeights HeightsParam NoTx
+newtype GetBlockHeightRaw = GetBlockHeightRaw HeightParam
+data GetBlockTime = GetBlockTime TimeParam NoTx
+newtype GetBlockTimeRaw = GetBlockTimeRaw TimeParam
+-- Transactions
+newtype GetTx = GetTx TxHash
+newtype GetTxs = GetTxs [TxHash]
+newtype GetTxRaw = GetTxRaw TxHash
+newtype GetTxsRaw = GetTxsRaw [TxHash]
+newtype GetTxsBlock = GetTxsBlock BlockHash
+newtype GetTxsBlockRaw = GetTxsBlockRaw BlockHash
+data GetTxAfter = GetTxAfter TxHash HeightParam
+newtype PostTx = PostTx Tx
+data GetMempool = GetMempool LimitParam OffsetParam
+data GetEvents = GetEvents
+-- Address
+data GetAddrTxs = GetAddrTxs Address LimitsParam
+data GetAddrsTxs = GetAddrsTxs [Address] LimitsParam
+data GetAddrTxsFull = GetAddrTxsFull Address LimitsParam
+data GetAddrsTxsFull = GetAddrsTxsFull [Address] LimitsParam
+newtype GetAddrBalance = GetAddrBalance Address
+newtype GetAddrsBalance = GetAddrsBalance [Address]
+data GetAddrUnspent = GetAddrUnspent Address LimitsParam
+data GetAddrsUnspent = GetAddrsUnspent [Address] LimitsParam
+-- XPubs
+data GetXPub = GetXPub XPubKey Store.DeriveType NoCache
+data GetXPubTxs = GetXPubTxs XPubKey Store.DeriveType LimitsParam NoCache
+data GetXPubTxsFull = GetXPubTxsFull XPubKey Store.DeriveType LimitsParam NoCache
+data GetXPubBalances = GetXPubBalances XPubKey Store.DeriveType NoCache
+data GetXPubUnspent = GetXPubUnspent XPubKey Store.DeriveType LimitsParam NoCache
+data GetXPubEvict = GetXPubEvict XPubKey Store.DeriveType
+-- Network
+data GetDBStats = GetDBStats
+data GetPeers = GetPeers
+data GetHealth = GetHealth
+
+{- Blocks -}
 
 instance ApiResource GetBlock Store.BlockData where
-    resourceMethod _ = GET
-    resourcePath _ [h] = "/block/" <> h
-    resourcePath _ _ = error "Invalid resource path"
-    queryParams (GetBlock h t) = ([ParamBox h], [ParamBox t | t /= def])
+    resourcePath _ = ("/block/" <:>)
+    queryParams (GetBlock h t) = ([ParamBox h], noDefBox t)
     captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
 
-{- GET Blocks -}
-
-data GetBlocks = GetBlocks [BlockHash] NoTx
-
 instance ApiResource GetBlocks [Store.BlockData] where
-    resourceMethod _ = GET
     resourcePath _ _ = "/blocks"
-    queryParams (GetBlocks hs t) =
-        ([], [ParamBox hs] <> [ParamBox t | t /= def])
-
-{- GET BlockRaw -}
-
-newtype GetBlockRaw = GetBlockRaw BlockHash
+    queryParams (GetBlocks hs t) = ([], [ParamBox hs] <> noDefBox t)
 
 instance ApiResource GetBlockRaw (Store.RawResult Block) where
-    resourceMethod _ = GET
-    resourcePath _ [h] = "/block/" <> h <> "/raw"
-    resourcePath _ _ = error "Invalid resource path"
+    resourcePath _ = "/block/" <+> "/raw"
     queryParams (GetBlockRaw h) = ([ParamBox h], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
 
-{- GET BlockHeight -}
+instance ApiResource GetBlockBest Store.BlockData where
+    resourcePath _ _ = "/block/best"
+    queryParams (GetBlockBest t) = ([], noDefBox t)
 
-data GetBlockHeight = GetBlockHeight HeightParam NoTx
+instance ApiResource GetBlockBestRaw (Store.RawResult Block) where
+    resourcePath _ _ = "/block/best/raw"
+
+instance ApiResource GetBlockLatest [Store.BlockData] where
+    resourcePath _ _ = "/block/latest"
+    queryParams (GetBlockLatest t) = ([], noDefBox t)
 
 instance ApiResource GetBlockHeight [Store.BlockData] where
-    resourceMethod _ = GET
-    resourcePath _ [h] = "/block/height/" <> h
-    resourcePath _ _ = error "Invalid resource path"
-    queryParams (GetBlockHeight h t) = ([ParamBox h], [ParamBox t | t /= def])
+    resourcePath _ = ("/block/height/" <:>)
+    queryParams (GetBlockHeight h t) = ([ParamBox h], noDefBox t)
     captureParams _ = [ProxyBox (Proxy :: Proxy HeightParam)]
 
-{- GET BlockHeightRaw -}
-
-newtype GetBlockHeightRaw = GetBlockHeightRaw HeightParam
+instance ApiResource GetBlockHeights [Store.BlockData] where
+    resourcePath _ _ = "/block/height"
+    queryParams (GetBlockHeights hs t) = ([], [ParamBox hs] <> noDefBox t)
 
 instance ApiResource GetBlockHeightRaw (Store.RawResultList Block) where
-    resourceMethod _ = GET
-    resourcePath _ [h] = "/block/height/" <> h <> "/raw"
-    resourcePath _ _ = error "Invalid resource path"
+    resourcePath _ = "/block/height/" <+> "/raw"
     queryParams (GetBlockHeightRaw h) = ([ParamBox h], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy HeightParam)]
 
+instance ApiResource GetBlockTime Store.BlockData where
+    resourcePath _ = ("/block/time/" <:>)
+    queryParams (GetBlockTime u t) = ([ParamBox u], noDefBox t)
+    captureParams _ = [ProxyBox (Proxy :: Proxy TimeParam)]
+
+instance ApiResource GetBlockTimeRaw (Store.RawResult Block) where
+    resourcePath _ = "/block/time/" <+> "/raw"
+    queryParams (GetBlockTimeRaw u) = ([ParamBox u], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy TimeParam)]
+
+{- Transactions -}
+
+instance ApiResource GetTx Store.Transaction where
+    resourcePath _ = ("/transaction/" <:>)
+    queryParams (GetTx h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy TxHash)]
+
+instance ApiResource GetTxs [Store.Transaction] where
+    resourcePath _ _ = "/transactions"
+    queryParams (GetTxs hs) = ([], [ParamBox hs])
+
+instance ApiResource GetTxRaw (Store.RawResult Tx) where
+    resourcePath _ = "/transaction/" <+> "/raw"
+    queryParams (GetTxRaw h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy TxHash)]
+
+instance ApiResource GetTxsRaw (Store.RawResultList Tx) where
+    resourcePath _ _ = "/transactions/raw"
+    queryParams (GetTxsRaw hs) = ([], [ParamBox hs])
+
+instance ApiResource GetTxsBlock [Store.Transaction] where
+    resourcePath _ = ("/transactions/block/" <:>)
+    queryParams (GetTxsBlock h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
+
+instance ApiResource GetTxsBlockRaw (Store.RawResultList Tx) where
+    resourcePath _ = "/transactions/block/" <+> "/raw"
+    queryParams (GetTxsBlockRaw h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
+
+instance ApiResource GetTxAfter (Store.GenericResult (Maybe Bool)) where
+    resourcePath _ = "/transaction/" <++> "/after/"
+    queryParams (GetTxAfter h i) = ([ParamBox h, ParamBox i], [])
+    captureParams _ =
+        [ ProxyBox (Proxy :: Proxy TxHash)
+        , ProxyBox (Proxy :: Proxy HeightParam)
+        ]
+
+instance ApiResource PostTx Store.TxId where
+    resourceMethod _ = POST
+    resourcePath _ _ = "/transactions"
+    resourceBody (PostTx tx) = Just $ PostBox tx
+
+instance ApiResource GetMempool [TxHash] where
+    resourcePath _ _ = "/mempool"
+    queryParams (GetMempool l o) = ([], noDefBox l <> noDefBox o)
+
+instance ApiResource GetEvents [Store.Event] where
+    resourcePath _ _ = "/events"
+
+{- Address -}
+
+instance ApiResource GetAddrTxs [Store.TxRef] where
+    resourcePath _ = "/address/" <+> "/transactions"
+    queryParams (GetAddrTxs a (LimitsParam l o sM)) =
+        ([ParamBox a], noDefBox l <> noDefBox o <> noMaybeBox sM)
+    captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
+
+instance ApiResource GetAddrsTxs [Store.TxRef] where
+    resourcePath _ _ = "/address/transactions"
+    queryParams (GetAddrsTxs as (LimitsParam l o sM)) =
+        ([] , [ParamBox as] <> noDefBox l <> noDefBox o <> noMaybeBox sM)
+
+instance ApiResource GetAddrTxsFull [Store.Transaction] where
+    resourcePath _ = "/address/" <+> "/transactions/full"
+    queryParams (GetAddrTxsFull a (LimitsParam l o sM)) =
+        ([ParamBox a], noDefBox l <> noDefBox o <> noMaybeBox sM)
+    captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
+
+instance ApiResource GetAddrsTxsFull [Store.Transaction] where
+    resourcePath _ _ = "/address/transactions/full"
+    queryParams (GetAddrsTxsFull as (LimitsParam l o sM)) =
+        ([] , [ParamBox as] <> noDefBox l <> noDefBox o <> noMaybeBox sM)
+
+instance ApiResource GetAddrBalance Store.Balance where
+    resourcePath _ = "/address/" <+> "/balance"
+    queryParams (GetAddrBalance a) = ([ParamBox a], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
+
+instance ApiResource GetAddrsBalance [Store.Balance] where
+    resourcePath _ _ = "/address/balances"
+    queryParams (GetAddrsBalance as) = ([] , [ParamBox as])
+
+instance ApiResource GetAddrUnspent [Store.Unspent] where
+    resourcePath _ = "/address/" <+> "/unspent"
+    queryParams (GetAddrUnspent a (LimitsParam l o sM)) =
+        ([ParamBox a], noDefBox l <> noDefBox o <> noMaybeBox sM)
+    captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
+
+instance ApiResource GetAddrsUnspent [Store.Unspent] where
+    resourcePath _ _ = "/address/unspent"
+    queryParams (GetAddrsUnspent as (LimitsParam l o sM)) =
+        ([] , [ParamBox as] <> noDefBox l <> noDefBox o <> noMaybeBox sM)
+    
+{- XPubs -}
+
+instance ApiResource GetXPub Store.XPubSummary where
+    resourcePath _ = ("/xpub/" <:>)
+    queryParams (GetXPub p d n) = ([ParamBox p], noDefBox d <> noDefBox n)
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+
+instance ApiResource GetXPubTxs [Store.TxRef] where
+    resourcePath _ = "/xpub/" <+> "/transactions"
+    queryParams (GetXPubTxs p d (LimitsParam l o sM) n) =
+        ( [ParamBox p]
+        , noDefBox d <> noDefBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
+        )
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+
+instance ApiResource GetXPubTxsFull [Store.Transaction] where
+    resourcePath _ = "/xpub/" <+> "/transactions/full"
+    queryParams (GetXPubTxsFull p d (LimitsParam l o sM) n) =
+        ( [ParamBox p]
+        , noDefBox d <> noDefBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
+        )
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+
+instance ApiResource GetXPubBalances [Store.XPubBal] where
+    resourcePath _ = "/xpub/" <+> "/balances"
+    queryParams (GetXPubBalances p d n) = ([ParamBox p], noDefBox d <> noDefBox n)
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+
+instance ApiResource GetXPubUnspent [Store.XPubUnspent] where
+    resourcePath _ = "/xpub/" <+> "/unspent"
+    queryParams (GetXPubUnspent p d (LimitsParam l o sM) n) =
+        ( [ParamBox p]
+        , noDefBox d <> noDefBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
+        )
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+
+instance ApiResource GetXPubEvict (Store.GenericResult Bool) where
+    resourcePath _ = "/xpub/" <+> "/evict"
+    queryParams (GetXPubEvict p d) = ([ParamBox p], noDefBox d)
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+    
+{- Network -}
+
+instance ApiResource GetPeers [Store.PeerInformation] where
+    resourcePath _ _ = "/peers"
+
+instance ApiResource GetHealth Store.HealthCheck where
+    resourcePath _ _ = "/health"
+
+instance ApiResource GetDBStats (Store.GenericResult String) where
+    resourcePath _ _ = "/dbstats"
+    
 {- Helpers -}
+
+(<:>) :: Text -> [Text] -> Text
+(<:>) = (<+> "")
+
+(<+>) :: Text -> Text -> [Text] -> Text
+a <+> b = fill 1 [a, b]
+
+(<++>) :: Text -> Text -> [Text] -> Text
+a <++> b = fill 2 [a, b]
+
+fill :: Int -> [Text] -> [Text] -> Text
+fill i a b
+    | length b /= i = error "Invalid query parameters"
+    | otherwise = mconcat $ uncurry (<>) <$> zip a (b <> repeat "")
+
+noDefBox :: (Default p, Param p, Eq p) => p -> [ParamBox]
+noDefBox p = [ParamBox p | p /= def]
+
+noMaybeBox :: (Param p, Eq p) => Maybe p -> [ParamBox]
+noMaybeBox (Just p) = [ParamBox p]
+noMaybeBox _ = []
 
 asProxy :: a -> Proxy a
 asProxy = const Proxy
@@ -232,21 +341,22 @@ queryPath net a = f $ encParam <$> fst (queryParams a)
     encParam (ParamBox p) =
         case encodeParam net p of
             Just [res] -> res
-            _ -> error "Invalid query param"
+            _          -> error "Invalid query param"
 
 capturePath :: ApiResource a b => Proxy a -> Scotty.RoutePattern
-capturePath proxy = 
+capturePath proxy =
     fromString $ cs $ f $ toLabel <$> captureParams proxy
   where
     f = resourcePath proxy
     toLabel (ProxyBox p) = ":" <> proxyLabel p
 
+paramLabel :: Param p => p -> Text
+paramLabel = proxyLabel . asProxy
+
 {- Options -}
 
 class Param a where
     proxyLabel :: Proxy a -> Text
-    paramLabel :: a -> Text
-    paramLabel = proxyLabel . asProxy
     encodeParam :: Network -> a -> Maybe [Text]
     parseParam :: Network -> [Text] -> Maybe a
 
@@ -296,9 +406,46 @@ instance Param StartParam where
             return $ StartParamTime x
     parseParam _ _ = Nothing
 
+newtype OffsetParam = OffsetParam
+    { getOffsetParam :: Word32
+    } deriving (Eq, Show, Read, Num)
+
+instance Default OffsetParam where
+    def = OffsetParam 0
+
+instance Param OffsetParam where
+    proxyLabel = const "offset"
+    encodeParam _ (OffsetParam o) = Just [cs $ show o]
+    parseParam _ [s] = OffsetParam <$> readMaybe (cs s)
+    parseParam _ _   = Nothing
+
+newtype LimitParam = LimitParam
+    { getLimitParam :: Word32
+    } deriving (Eq, Show, Read, Num)
+
+instance Default LimitParam where
+    def = LimitParam 0
+
+instance Param LimitParam where
+    proxyLabel = const "limit"
+    encodeParam _ (LimitParam l) = Just [cs $ show l]
+    parseParam _ [s] = LimitParam <$> readMaybe (cs s)
+    parseParam _ _   = Nothing
+
+data LimitsParam =
+    LimitsParam
+        { paramLimit  :: LimitParam
+        , paramOffset :: OffsetParam
+        , paramStart  :: Maybe StartParam
+        }
+    deriving (Eq, Show)
+
+instance Default LimitsParam where
+    def = LimitsParam def def Nothing
+
 newtype HeightParam = HeightParam
     { getHeightParam :: Word32
-    } deriving (Eq, Show, Read)
+    } deriving (Eq, Show, Read, Num)
 
 instance Param HeightParam where
     proxyLabel = const "height"
@@ -331,42 +478,22 @@ instance Param XPubKey where
     parseParam net [s] = xPubImport net s
     parseParam _ _     = Nothing
 
-newtype OffsetParam = OffsetParam
-    { getOffsetParam :: Word32
-    } deriving (Eq, Show, Read)
-
-instance Default OffsetParam where
-    def = OffsetParam 0
-
-instance Param OffsetParam where
-    proxyLabel = const "offset"
-    encodeParam _ (OffsetParam o) = Just [cs $ show o]
-    parseParam _ [s] = OffsetParam <$> readMaybe (cs s)
-    parseParam _ _   = Nothing
-
-newtype LimitParam = LimitParam
-    { getLimitParam :: Word32
-    } deriving (Eq, Show, Read)
-
-instance Param LimitParam where
-    proxyLabel = const "limit"
-    encodeParam _ (LimitParam l) = Just [cs $ show l]
-    parseParam _ [s] = LimitParam <$> readMaybe (cs s)
-    parseParam _ _   = Nothing
-
 instance Param Store.DeriveType where
     proxyLabel = const "derive"
-    encodeParam _ =
-        \case
+    encodeParam net p = do
+        guard (getSegWit net || p == Store.DeriveNormal)
+        case p of
             Store.DeriveNormal -> Just ["standard"]
-            Store.DeriveP2SH -> Just ["compat"]
+            Store.DeriveP2SH   -> Just ["compat"]
             Store.DeriveP2WPKH -> Just ["segwit"]
-    parseParam _ =
-        \case
+    parseParam net d = do
+        res <- case d of
             ["standard"] -> Just Store.DeriveNormal
-            ["compat"] -> Just Store.DeriveP2SH
-            ["segwit"] -> Just Store.DeriveP2WPKH
-            _ -> Nothing
+            ["compat"]   -> Just Store.DeriveP2SH
+            ["segwit"]   -> Just Store.DeriveP2WPKH
+            _            -> Nothing
+        guard (getSegWit net || res == Store.DeriveNormal)
+        return res
 
 newtype NoCache = NoCache
     { getNoCache :: Bool

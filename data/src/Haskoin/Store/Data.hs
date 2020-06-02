@@ -1242,7 +1242,7 @@ newtype RawResultList a =
 
 instance S.Serialize a => ToJSON (RawResultList a) where
     toJSON (RawResultList xs) =
-        toJSON $ (encodeHex . S.encode) <$> xs
+        toJSON $ encodeHex . S.encode <$> xs
     toEncoding (RawResultList xs) =
         list (unsafeToEncoding . str) xs
       where
@@ -1251,13 +1251,11 @@ instance S.Serialize a => ToJSON (RawResultList a) where
 
 instance S.Serialize a => FromJSON (RawResultList a) where
     parseJSON =
-        A.withArray "RawResultList" $ \vec -> do
-            xs <- mapM f $ toList vec
-            maybe mzero (return . RawResultList) $ mconcat xs
+        A.withArray "RawResultList" $ \vec ->
+            RawResultList <$> mapM parseElem (toList vec)
       where
-        f =
-            A.withText "RawResultListElem" $
-            return . (eitherToMaybe . S.decode <=< decodeHex)
+        parseElem = A.withText "RawResultListElem" $ maybe mzero return . f
+        f = eitherToMaybe . S.decode <=< decodeHex
 
 newtype TxId =
     TxId TxHash

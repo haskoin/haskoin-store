@@ -15,8 +15,8 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forever, guard, unless, when,
-                                                (<=<))
+import           Control.Monad                 (forM, forever, guard, unless,
+                                                when, (<=<))
 import           Control.Monad.Logger          (LogLevel (..), MonadLogger,
                                                 MonadLoggerIO, askLoggerIO,
                                                 liftLoc, logInfoS,
@@ -35,6 +35,7 @@ import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
+import           Data.Function                 ((&))
 import           Data.List                     (nub)
 import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 listToMaybe, mapMaybe)
@@ -72,9 +73,10 @@ import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
                                                 Start (..), StoreEvent (..),
                                                 StoreRead (..), blockAtOrBefore,
                                                 getTransaction, nub')
-import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
-                                                DeriveType (..), Event (..),
-                                                Except (..), GenericResult (..),
+import           Haskoin.Store.Data            (Balance (..), BlockData (..),
+                                                BlockRef (..), DeriveType (..),
+                                                Event (..), Except (..),
+                                                GenericResult (..),
                                                 HealthCheck (..),
                                                 PeerInformation (..),
                                                 RawResult (..),
@@ -83,6 +85,8 @@ import           Haskoin.Store.Data            (BlockData (..), BlockRef (..),
                                                 Transaction (..), TxId (..),
                                                 TxRef (..), UnixTime, Unspent,
                                                 XPubBal (..), XPubSpec (..),
+                                                XPubSummary (..),
+                                                XPubUnspent (..),
                                                 balanceToEncoding,
                                                 blockDataToEncoding, isCoinbase,
                                                 nullBalance, transactionData,
@@ -99,8 +103,9 @@ import           Network.HTTP.Types            (Status (..), status400,
                                                 status403, status404, status500,
                                                 status503)
 import           Network.Wai                   (Middleware, Request (..),
-                                                responseStatus)
-import           NQE                           (Publisher, receive,
+                                                StreamingBody, responseStatus)
+import           NQE                           (Inbox, Process, Publisher,
+                                                PublisherMessage, receive,
                                                 withSubscription)
 import qualified Paths_haskoin_store           as P (version)
 import           Text.Printf                   (printf)
@@ -112,14 +117,6 @@ import           Web.Scotty.Trans              (Parsable, ScottyError)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
-
-data WebConfig = WebConfig
-    { webPort        :: !Int
-    , webStore       :: !Store
-    , webMaxLimits   :: !WebLimits
-    , webReqLog      :: !Bool
-    , webWebTimeouts :: !WebTimeouts
-    }
 
 data WebLimits = WebLimits
     { maxLimitCount      :: !Word32
@@ -141,6 +138,14 @@ instance Default WebLimits where
             , maxLimitGap = 32
             , maxLimitInitialGap = 20
             }
+
+data WebConfig = WebConfig
+    { webPort        :: !Int
+    , webStore       :: !Store
+    , webMaxLimits   :: !WebLimits
+    , webReqLog      :: !Bool
+    , webWebTimeouts :: !WebTimeouts
+    }
 
 data WebTimeouts = WebTimeouts
     { txTimeout    :: !Word64
@@ -194,106 +199,6 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
 
-{---------------------}
-{- Serializing Stuff -}
-{---------------------}
-
-setupContentType :: Monad m => ActionT Except m Bool
-setupContentType = maybe goJson setType =<< S.header "accept"
-  where
-    setType "application/octet-stream" = goBinary
-    setType _                          = goJson
-    goBinary = do
-        S.setHeader "Content-Type" "application/octet-stream"
-        return True
-    goJson = do
-        S.setHeader "Content-Type" "application/json"
-        return False
-
-maybeSerial ::
-       (Monad m, ToJSON a, Serialize a)
-    => Bool -- ^ binary
-    -> Maybe a
-    -> WebT m ()
-maybeSerial _ Nothing      = S.raise ThingNotFound
-maybeSerial proto (Just x) = S.raw (serialAny proto x)
-
-maybeSerialRaw :: (Monad m, Serialize a) => Bool -> Maybe a -> WebT m ()
-maybeSerialRaw _ Nothing      = S.raise ThingNotFound
-maybeSerialRaw proto (Just x) = S.raw (serialAnyRaw proto x)
-
-maybeSerialNet ::
-       (Monad m, Serialize a)
-    => Bool
-    -> (Network -> a -> Encoding)
-    -> Maybe a
-    -> WebT m ()
-maybeSerialNet _ _ Nothing = S.raise ThingNotFound
-maybeSerialNet proto f (Just x) = do
-    net <- lift $ asks (storeNetwork . webStore)
-    S.raw (serialAnyNet proto (f net) x)
-
-protoSerial ::
-       (Monad m, ToJSON a, Serialize a)
-    => Bool
-    -> a
-    -> WebT m ()
-protoSerial proto x =
-    S.raw (serialAny proto x)
-
-protoSerialRaw ::
-       (Monad m, Serialize a)
-    => Bool
-    -> a
-    -> WebT m ()
-protoSerialRaw proto x =
-    S.raw (serialAnyRaw proto x)
-
-protoSerialRawList ::
-       (Monad m, Serialize a)
-    => Bool
-    -> [a]
-    -> WebT m ()
-protoSerialRawList proto x =
-    S.raw (serialAnyRawList proto x)
-
-protoSerialNet ::
-       (Monad m, Serialize a)
-    => Bool
-    -> (Network -> a -> Encoding)
-    -> a
-    -> WebT m ()
-protoSerialNet proto f x = do
-    net <- lift $ asks (storeNetwork . webStore)
-    S.raw (serialAnyNet proto (f net) x)
-
-serialAny ::
-       (ToJSON a, Serialize a)
-    => Bool -- ^ binary
-    -> a
-    -> L.ByteString
-serialAny True  = runPutLazy . put
-serialAny False = encodingToLazyByteString . toEncoding
-
-serialAnyNet ::
-       Serialize a => Bool -> (a -> Encoding) -> a -> L.ByteString
-serialAnyNet True _  = runPutLazy . put
-serialAnyNet False f = encodingToLazyByteString . f
-
-serialAnyRaw :: Serialize a => Bool -> a -> L.ByteString
-serialAnyRaw True x = runPutLazy (put x)
-serialAnyRaw False x = encodingToLazyByteString (pairs ps)
-  where
-    ps = "result" `pair` unsafeToEncoding str
-    str = char7 '"' <> lazyByteStringHex (runPutLazy (put x)) <> char7 '"'
-
-serialAnyRawList :: Serialize a => Bool -> [a] -> L.ByteString
-serialAnyRawList True x = runPutLazy (put x)
-serialAnyRawList False xs = encodingToLazyByteString (list f xs)
-  where
-    f x = unsafeToEncoding (str x)
-    str x = char7 '"' <> lazyByteStringHex (runPutLazy (put x)) <> char7 '"'
-
 {-----------------}
 {- Path Handlers -}
 {-----------------}
@@ -308,54 +213,81 @@ runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
         handlePaths
         S.notFound $ S.raise ThingNotFound
 
+defHandler :: Monad m => Except -> WebT m ()
+defHandler e = do
+    proto <- setupContentType
+    case e of
+        ThingNotFound -> S.status status404
+        BadRequest    -> S.status status400
+        UserError _   -> S.status status400
+        StringError _ -> S.status status400
+        ServerError   -> S.status status500
+        BlockTooLarge -> S.status status403
+    S.raw $ protoSerial proto toEncoding e
+
 handlePaths ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => S.ScottyT Except (ReaderT WebConfig m) ()
 handlePaths = do
     -- Block Paths
     path (GetBlock <$> paramLazy <*> paramDef) scottyBlock blockDataToEncoding
-    path (GetBlocks <$> param <*> paramDef)
-         scottyBlocks
-         (list . blockDataToEncoding)
+    path (GetBlocks <$> param <*> paramDef) scottyBlocks (list . blockDataToEncoding)
     path (GetBlockRaw <$> paramLazy) scottyBlockRaw (const toEncoding)
     path (GetBlockBest <$> paramDef) scottyBlockBest blockDataToEncoding
-    path (return GetBlockBestRaw) scottyBlockBestRaw (const toEncoding)
+    path (GetBlockBestRaw & return) scottyBlockBestRaw (const toEncoding)
+    path (GetBlockLatest <$> paramDef) scottyBlockLatest (list . blockDataToEncoding)
     path (GetBlockHeight <$> paramLazy <*> paramDef)
-         scottyBlockHeight
-         (list . blockDataToEncoding)
+         scottyBlockHeight (list . blockDataToEncoding)
+    path (GetBlockHeights <$> param <*> paramDef)
+         scottyBlockHeights (list . blockDataToEncoding)
     path (GetBlockHeightRaw <$> paramLazy) scottyBlockHeightRaw (const toEncoding)
-
-    S.get "/block/time/:time" $ scottyBlockTime False
-    S.get "/block/time/:time/raw" $ scottyBlockTime True
-    S.get "/block/heights" scottyBlockHeights
-    S.get "/block/latest" scottyBlockLatest
-    S.get "/mempool" scottyMempool
-    S.get "/transaction/:txid" scottyTransaction
-    S.get "/transaction/:txid/raw" scottyRawTransaction
-    S.get "/transaction/:txid/after/:height" scottyTxAfterHeight
-    S.get "/transactions" scottyTransactions
-    S.get "/transactions/raw" scottyRawTransactions
-    S.get "/transactions/block/:block" scottyBlockTransactions
-    S.get "/transactions/block/:block/raw" scottyRawBlockTransactions
-    S.get "/address/:address/transactions" $ scottyAddressTxs False
-    S.get "/address/:address/transactions/full" $ scottyAddressTxs True
-    S.get "/address/transactions" $ scottyAddressesTxs False
-    S.get "/address/transactions/full" $ scottyAddressesTxs True
-    S.get "/address/:address/unspent" scottyAddressUnspent
-    S.get "/address/unspent" scottyAddressesUnspent
-    S.get "/address/:address/balance" scottyAddressBalance
-    S.get "/address/balances" scottyAddressesBalances
-    S.get "/xpub/:xpub/balances" scottyXpubBalances
-    S.get "/xpub/:xpub/transactions" $ scottyXpubTxs False
-    S.get "/xpub/:xpub/transactions/full" $ scottyXpubTxs True
-    S.get "/xpub/:xpub/unspent" scottyXpubUnspents
-    S.get "/xpub/:xpub/evict" scottyXpubEvict
-    S.get "/xpub/:xpub" scottyXpubSummary
-    S.post "/transactions" scottyPostTx
-    S.get "/dbstats" scottyDbStats
+    path (GetBlockTime <$> paramLazy <*> paramDef) scottyBlockTime blockDataToEncoding
+    path (GetBlockTimeRaw <$> paramLazy) scottyBlockTimeRaw (const toEncoding)
+    -- Transaction Paths
+    path (GetTx <$> paramLazy) scottyTx transactionToEncoding
+    path (GetTxs <$> param) scottyTxs (list . transactionToEncoding)
+    path (GetTxRaw <$> paramLazy) scottyTxRaw (const toEncoding)
+    path (GetTxsRaw <$> param) scottyTxsRaw (const toEncoding)
+    path (GetTxsBlock <$> paramLazy) scottyTxsBlock (list . transactionToEncoding)
+    path (GetTxsBlockRaw <$> paramLazy) scottyTxsBlockRaw (const toEncoding)
+    path (GetTxAfter <$> paramLazy <*> paramLazy) scottyTxAfter (const toEncoding)
+    path (PostTx <$> parseBody) scottyPostTx (const toEncoding)
+    path (GetMempool <$> parseLimit False <*> parseOffset)
+         scottyMempool (const toEncoding)
+    -- Address Paths
+    path (GetAddrTxs <$> paramLazy <*> parseLimitsParam False)
+         scottyAddrTxs (const toEncoding)
+    path (GetAddrsTxs <$> param <*> parseLimitsParam False)
+         scottyAddrsTxs (const toEncoding)
+    path (GetAddrTxsFull <$> paramLazy <*> parseLimitsParam True)
+         scottyAddrTxsFull (list . transactionToEncoding)
+    path (GetAddrsTxsFull <$> param <*> parseLimitsParam True)
+         scottyAddrsTxsFull (list . transactionToEncoding)
+    path (GetAddrBalance <$> paramLazy) scottyAddrBalance balanceToEncoding
+    path (GetAddrsBalance <$> param) scottyAddrsBalance (list . balanceToEncoding)
+    path (GetAddrUnspent <$> paramLazy <*> parseLimitsParam False)
+         scottyAddrUnspent (list . unspentToEncoding)
+    path (GetAddrsUnspent <$> param <*> parseLimitsParam False)
+         scottyAddrsUnspent (list . unspentToEncoding)
+    -- XPubs
+    path (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
+         scottyXPub (const toEncoding)
+    path (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimitsParam False <*> paramDef)
+         scottyXPubTxs (const toEncoding)
+    path (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimitsParam True <*> paramDef)
+         scottyXPubTxsFull (list . transactionToEncoding)
+    path (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
+         scottyXPubBalances (list . xPubBalToEncoding)
+    path (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimitsParam False <*> paramDef)
+         scottyXPubUnspent (list . xPubUnspentToEncoding)
+    path (GetXPubEvict <$> paramLazy <*> paramDef)
+         scottyXPubEvict (const toEncoding)
+    -- Network
+    path (GetPeers & return) scottyPeers (const toEncoding)
+    path (GetHealth & return) scottyHealth (const toEncoding)
+    path (GetDBStats & return) scottyDbStats (const toEncoding)
+    -- Events
     S.get "/events" scottyEvents
-    S.get "/peers" scottyPeers
-    S.get "/health" scottyHealth
 
 path ::
        (ApiResource a b, MonadIO m)
@@ -370,14 +302,30 @@ path parser action encJson =
         net <- lift $ asks (storeNetwork . webStore)
         apiRes <- parser
         res <- action apiRes
-        S.raw $
-            if proto
-                then runPutLazy $ put res
-                else encodingToLazyByteString $ encJson net res
+        S.raw $ protoSerial proto (encJson net) res
   where
     toProxy :: WebT m a -> Proxy a
     toProxy = const Proxy
     proxy = toProxy parser
+
+protoSerial :: Serialize a => Bool -> (a -> Encoding) -> a -> L.ByteString
+protoSerial True _  = runPutLazy . put
+protoSerial False f = encodingToLazyByteString . f
+
+setHeaders :: (Monad m, ScottyError e) => ActionT e m ()
+setHeaders = S.setHeader "Access-Control-Allow-Origin" "*"
+
+setupContentType :: Monad m => ActionT Except m Bool
+setupContentType = maybe goJson setType =<< S.header "accept"
+  where
+    setType "application/octet-stream" = goBinary
+    setType _                          = goJson
+    goBinary = do
+        S.setHeader "Content-Type" "application/octet-stream"
+        return True
+    goJson = do
+        S.setHeader "Content-Type" "application/json"
+        return False
 
 {- GET Block / GET Blocks -}
 
@@ -389,7 +337,7 @@ scottyBlock (GetBlock h (NoTx noTx)) =
 scottyBlocks ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlocks -> WebT m [BlockData]
 scottyBlocks (GetBlocks hs (NoTx noTx)) =
-    map (pruneTx noTx) . catMaybes <$> mapM getBlock (nub hs)
+    (pruneTx noTx <$>) . catMaybes <$> mapM getBlock (nub hs)
 
 pruneTx :: Bool -> BlockData -> BlockData
 pruneTx False b = b
@@ -435,12 +383,37 @@ scottyBlockBestRaw ::
 scottyBlockBestRaw _ =
     RawResult <$> (maybe (S.raise ThingNotFound) getRawBlock =<< getBestBlock)
 
-{- GET BlockHeight / BlockHeightRaw -}
+{- GET BlockLatest -}
+
+scottyBlockLatest ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetBlockLatest
+    -> WebT m [BlockData]
+scottyBlockLatest (GetBlockLatest (NoTx noTx)) =
+    maybe (S.raise ThingNotFound) (go [] <=< getBlock) =<< getBestBlock
+  where
+    go acc Nothing = return acc
+    go acc (Just b)
+        | blockDataHeight b <= 0 = return acc
+        | length acc == 99 = return (b:acc)
+        | otherwise = do
+            let prev = prevBlock (blockDataHeader b)
+            go (pruneTx noTx b : acc) =<< getBlock prev
+
+{- GET BlockHeight / BlockHeights / BlockHeightRaw -}
 
 scottyBlockHeight ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockHeight -> WebT m [BlockData]
 scottyBlockHeight (GetBlockHeight (HeightParam height) noTx) =
     scottyBlocks . (`GetBlocks` noTx) =<< getBlocksAtHeight height
+
+scottyBlockHeights ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetBlockHeights
+    -> WebT m [BlockData]
+scottyBlockHeights (GetBlockHeights (HeightsParam heights) noTx) = do
+    bhs <- concat <$> mapM getBlocksAtHeight heights
+    scottyBlocks (GetBlocks bhs noTx)
 
 scottyBlockHeightRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -449,337 +422,318 @@ scottyBlockHeightRaw ::
 scottyBlockHeightRaw (GetBlockHeightRaw (HeightParam height)) =
     RawResultList <$> (mapM getRawBlock =<< getBlocksAtHeight height)
 
-{- Remove this comment -}
+{- GET BlockTime / BlockTimeRaw -}
 
-scottyBlockTime :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
-scottyBlockTime raw = do
-    setHeaders
-    TimeParam q <- paramLazy
-    n <- getNoTx <$> param
-    proto <- setupContentType
-    m <- fmap (pruneTx n) <$> blockAtOrBefore q
-    if raw
-        then maybeSerial proto =<<
-             case m of
-                 Nothing -> return Nothing
-                 Just d -> do
-                     refuseLargeBlock d
-                     Just <$> toRawBlock d
-        else maybeSerialNet proto blockDataToEncoding m
+scottyBlockTime ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetBlockTime -> WebT m BlockData
+scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) =
+    maybe (S.raise ThingNotFound) (return . pruneTx noTx) =<< blockAtOrBefore t
 
-scottyBlockHeights :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyBlockHeights = do
-    setHeaders
-    HeightsParam heights <- param
-    n <- getNoTx <$> param
-    proto <- setupContentType
-    bhs <- concat <$> mapM getBlocksAtHeight heights
-    blocks <- map (pruneTx n) . catMaybes <$> mapM getBlock bhs
-    protoSerialNet proto (list . blockDataToEncoding) blocks
-
-scottyBlockLatest :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyBlockLatest = do
-    setHeaders
-    n <- getNoTx <$> param
-    proto <- setupContentType
-    getBestBlock >>= \case
-        Just h -> do
-            blocks <- reverse <$> go 100 n h
-            protoSerialNet proto (list . blockDataToEncoding) blocks
-        Nothing -> S.raise ThingNotFound
-  where
-    go 0 _ _ = return []
-    go i n h =
-        getBlock h >>= \case
-            Nothing -> return []
-            Just b ->
-                let b' = pruneTx n b
-                    i' = i - 1 :: Int
-                    prev = prevBlock (blockDataHeader b)
-                 in if blockDataHeight b <= 0
-                        then return []
-                        else (b' :) <$> go i' n prev
-
-
-scottyMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyMempool = do
-    setHeaders
-    l <- fromIntegral <$> parseLimit False
-    o <- fromIntegral <$> parseOffset
-    proto <- setupContentType
-    txs <- take l . drop o . map txRefHash <$> getMempool
-    protoSerial proto txs
-
-scottyTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyTransaction = do
-    setHeaders
-    txid <- paramLazy
-    proto <- setupContentType
-    res <- getTransaction txid
-    maybeSerialNet proto transactionToEncoding res
-
-scottyRawTransaction :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyRawTransaction = do
-    setHeaders
-    txid <- paramLazy
-    proto <- setupContentType
-    res <- fmap transactionData <$> getTransaction txid
-    maybeSerialRaw proto res
-
-scottyTxAfterHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyTxAfterHeight = do
-    setHeaders
-    txid <- paramLazy
-    HeightParam height <- paramLazy
-    proto <- setupContentType
-    res <- cbAfterHeight 10000 height txid
-    protoSerial proto res
-
-scottyTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyTransactions = do
-    setHeaders
-    txids <- param
-    proto <- setupContentType
-    txs <- catMaybes <$> mapM getTransaction (nub txids)
-    protoSerialNet proto (list . transactionToEncoding) txs
-
-scottyBlockTransactions :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyBlockTransactions = do
-    setHeaders
-    h <- paramLazy
-    proto <- setupContentType
-    getBlock h >>= \case
-        Just b -> do
-            refuseLargeBlock b
-            let ths = blockDataTxs b
-            txs <- catMaybes <$> mapM getTransaction ths
-            protoSerialNet proto (list . transactionToEncoding) txs
-        Nothing -> S.raise ThingNotFound
-
-scottyRawTransactions ::
-       (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyRawTransactions = do
-    setHeaders
-    txids <- param
-    proto <- setupContentType
-    txs <- map transactionData . catMaybes <$> mapM getTransaction (nub txids)
-    protoSerialRawList proto txs
-
-scottyRawBlockTransactions ::
-       (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyRawBlockTransactions = do
-    setHeaders
-    h <- paramLazy
-    proto <- setupContentType
-    getBlock h >>= \case
-        Just b -> do
-            refuseLargeBlock b
-            let ths = blockDataTxs b
-            txs <- map transactionData . catMaybes <$> mapM getTransaction ths
-            protoSerialRawList proto txs
-        Nothing -> S.raise ThingNotFound
-
-scottyAddressTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
-scottyAddressTxs full = do
-    setHeaders
-    a <- paramLazy
-    l <- parseLimits full
-    proto <- setupContentType
-    if full
-        then do
-            getAddressTxsFull l a >>=
-                protoSerialNet proto (list . transactionToEncoding)
-        else do
-            getAddressTxsLimit l a >>= protoSerial proto
-
-scottyAddressesTxs ::
-       (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
-scottyAddressesTxs full = do
-    setHeaders
-    as <- param
-    l <- parseLimits full
-    proto <- setupContentType
-    if full
-        then getAddressesTxsFull l as >>=
-             protoSerialNet proto (list . transactionToEncoding)
-        else getAddressesTxsLimit l as >>= protoSerial proto
-
-scottyAddressUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyAddressUnspent = do
-    setHeaders
-    a <- paramLazy
-    l <- parseLimits False
-    proto <- setupContentType
-    uns <- getAddressUnspentsLimit l a
-    protoSerialNet proto (list . unspentToEncoding) uns
-
-scottyAddressesUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyAddressesUnspent = do
-    setHeaders
-    as <- param
-    l <- parseLimits False
-    proto <- setupContentType
-    uns <- getAddressesUnspentsLimit l as
-    protoSerialNet proto (list . unspentToEncoding) uns
-
-scottyAddressBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyAddressBalance = do
-    setHeaders
-    a <- paramLazy
-    proto <- setupContentType
-    res <- getBalance a
-    protoSerialNet proto balanceToEncoding res
-
-scottyAddressesBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyAddressesBalances = do
-    setHeaders
-    as <- param
-    proto <- setupContentType
-    res <- getBalances as
-    protoSerialNet proto (list . balanceToEncoding) res
-
-scottyXpubBalances :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyXpubBalances = do
-    setHeaders
-    nocache <- getNoCache <$> param
-    xpub <- parseXPubSpec
-    proto <- setupContentType
-    res <-
-        filter (not . nullBalance . xPubBal) <$>
-        lift (runNoCache nocache (xPubBals xpub))
-    protoSerialNet proto (list . xPubBalToEncoding) res
-
-scottyXpubTxs :: (MonadUnliftIO m, MonadLoggerIO m) => Bool -> WebT m ()
-scottyXpubTxs full = do
-    setHeaders
-    nocache <- getNoCache <$> param
-    xpub <- parseXPubSpec
-    l <- parseLimits full
-    proto <- setupContentType
-    txs <- lift . runNoCache nocache $ xPubTxs xpub l
-    if full
-        then do
-            txs' <-
-                fmap catMaybes . lift . runNoCache nocache $
-                mapM (getTransaction . txRefHash) txs
-            protoSerialNet proto (list . transactionToEncoding) txs'
-        else protoSerial proto txs
-
-scottyXpubEvict :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyXpubEvict =
-    lift (asks (storeCache . webStore)) >>= \cache -> do
-        setHeaders
-        xpub <- parseXPubSpec
-        proto <- setupContentType
-        lift . withCache cache $ evictFromCache [xpub]
-        protoSerial proto (GenericResult True)
-
-
-scottyXpubUnspents :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyXpubUnspents = do
-    setHeaders
-    nocache <- getNoCache <$> param
-    xpub <- parseXPubSpec
-    proto <- setupContentType
-    l <- parseLimits False
-    uns <- lift . runNoCache nocache $ xPubUnspents xpub l
-    protoSerialNet proto (list . xPubUnspentToEncoding) uns
-
-scottyXpubSummary :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyXpubSummary = do
-    setHeaders
-    nocache <- getNoCache <$> param
-    xpub <- parseXPubSpec
-    proto <- setupContentType
-    res <- lift . runNoCache nocache $ xPubSummary xpub
-    protoSerial proto res
-
-scottyPostTx ::
+scottyBlockTimeRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => WebT m ()
-scottyPostTx = do
+    => GetBlockTimeRaw
+    -> WebT m (RawResult Block)
+scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) = do
+    b <- maybe (S.raise ThingNotFound) return =<< blockAtOrBefore t
+    refuseLargeBlock b
+    RawResult <$> toRawBlock b
+
+{- GET Transactions -}
+
+scottyTx :: (MonadUnliftIO m, MonadLoggerIO m) => GetTx -> WebT m Transaction
+scottyTx (GetTx txid) =
+    maybe (S.raise ThingNotFound) return =<< getTransaction txid
+
+scottyTxs ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetTxs -> WebT m [Transaction]
+scottyTxs (GetTxs txids) = catMaybes <$> mapM getTransaction (nub txids)
+
+scottyTxRaw ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetTxRaw -> WebT m (RawResult Tx)
+scottyTxRaw (GetTxRaw txid) = do
+    tx <- maybe (S.raise ThingNotFound) return =<< getTransaction txid
+    return $ RawResult $ transactionData tx
+
+scottyTxsRaw ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetTxsRaw
+    -> WebT m (RawResultList Tx)
+scottyTxsRaw (GetTxsRaw txids) = do
+    txs <- catMaybes <$> mapM getTransaction (nub txids)
+    return $ RawResultList $ transactionData <$> txs
+
+scottyTxsBlock ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetTxsBlock -> WebT m [Transaction]
+scottyTxsBlock (GetTxsBlock h) = do
+    b <- maybe (S.raise ThingNotFound) return =<< getBlock h
+    refuseLargeBlock b
+    catMaybes <$> mapM getTransaction (blockDataTxs b)
+
+scottyTxsBlockRaw ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetTxsBlockRaw
+    -> WebT m (RawResultList Tx)
+scottyTxsBlockRaw (GetTxsBlockRaw h) =
+    RawResultList . fmap transactionData <$> scottyTxsBlock (GetTxsBlock h)
+
+{- GET TransactionAfterHeight -}
+
+scottyTxAfter ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetTxAfter
+    -> WebT m (GenericResult (Maybe Bool))
+scottyTxAfter (GetTxAfter txid (HeightParam height)) =
+    GenericResult <$> cbAfterHeight height txid
+
+-- | Check if any of the ancestors of this transaction is a coinbase after the
+-- specified height. Returns 'Nothing' if answer cannot be computed before
+-- hitting limits.
+cbAfterHeight ::
+       (MonadIO m, StoreRead m)
+    => BlockHeight
+    -> TxHash
+    -> m (Maybe Bool)
+cbAfterHeight height begin =
+    go 10000 [begin] -- Depth first search
+  where
+    go 0 _ = return Nothing -- We searched too far. Return Nothing.
+    go _ [] = return $ Just False -- Nothing left to search.
+    go i (txid:xs) =
+        getTransaction txid >>= \case
+            Nothing -> return Nothing -- Error. Bail out.
+            Just tx
+                | cbCheck tx -> return $ Just True -- Stop everything. Return.
+                | heightCheck tx -> go i xs -- Continue search sideways
+                | otherwise -> do
+                    let is = outPointHash . inputPoint <$> transactionInputs tx
+                    -- We have to search down and search sideways
+                    go (i - 1) is `returnOr` go i xs
+    cbCheck tx =
+        any isCoinbase (transactionInputs tx) &&
+        blockRefHeight (transactionBlock tx) > height
+    heightCheck tx =
+        case transactionBlock tx of
+            BlockRef thisHeight _ -> thisHeight <= height
+            _                     -> False
+    returnOr a b =
+        a >>= \case
+            Just True -> return $ Just True -- Bubble up this result
+            _ -> b
+
+{- POST Transaction -}
+
+scottyPostTx :: (MonadUnliftIO m, MonadLoggerIO m) => PostTx -> WebT m TxId
+scottyPostTx (PostTx tx) = do
     net <- lift $ asks (storeNetwork . webStore)
     pub <- lift $ asks (storePublisher . webStore)
     mgr <- lift $ asks (storeManager . webStore)
-    setHeaders
-    proto <- setupContentType
-    b <- S.body
-    let bin = eitherToMaybe . Serialize.decode
-        hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
-    tx <-
-        case hex b <|> bin (L.toStrict b) of
-            Nothing -> S.raise $ UserError "decode tx fail"
-            Just x  -> return x
     lift (publishTx net pub mgr tx) >>= \case
-        Right () -> do
-            protoSerial proto (TxId (txHash tx))
-        Left e -> do
-            case e of
-                PubNoPeers          -> S.status status500
-                PubTimeout          -> S.status status500
-                PubPeerDisconnected -> S.status status500
-                PubReject _         -> S.status status400
-            protoSerial proto (UserError (show e))
-            S.finish
+        Right () -> return $ TxId (txHash tx)
+        Left e@(PubReject _) -> S.raise $ UserError $ show e
+        _ -> S.raise ServerError
 
-scottyDbStats :: MonadLoggerIO m => WebT m ()
-scottyDbStats = do
-    setHeaders
-    db <- lift $ asks (databaseHandle . storeDB . webStore)
-    stats <- lift (getProperty db Stats)
-    case stats of
-        Nothing -> do
-            S.text "Could not get stats"
-        Just txt -> do
-            S.text $ cs txt
+-- | Publish a new transaction to the network.
+publishTx ::
+       (MonadUnliftIO m, StoreRead m)
+    => Network
+    -> Publisher StoreEvent
+    -> PeerManager
+    -> Tx
+    -> m (Either PubExcept ())
+publishTx net pub mgr tx =
+    withSubscription pub $ \s ->
+        getTransaction (txHash tx) >>= \case
+            Just _ -> return $ Right ()
+            Nothing -> go s
+  where
+    go s =
+        managerGetPeers mgr >>= \case
+            [] -> return $ Left PubNoPeers
+            OnlinePeer {onlinePeerMailbox = p}:_ -> do
+                MTx tx `sendMessage` p
+                let v =
+                        if getSegWit net
+                            then InvWitnessTx
+                            else InvTx
+                sendMessage
+                    (MGetData (GetData [InvVector v (getTxHash (txHash tx))]))
+                    p
+                f p s
+    t = 5 * 1000 * 1000
+    f p s =
+        liftIO (timeout t (g p s)) >>= \case
+            Nothing -> return $ Left PubTimeout
+            Just (Left e) -> return $ Left e
+            Just (Right ()) -> return $ Right ()
+    g p s =
+        receive s >>= \case
+            StoreTxReject p' h' c _
+                | p == p' && h' == txHash tx -> return . Left $ PubReject c
+            StorePeerDisconnected p' _
+                | p == p' -> return $ Left PubPeerDisconnected
+            StoreMempoolNew h'
+                | h' == txHash tx -> return $ Right ()
+            _ -> g p s
+
+{- GET Mempool / Events -}
+
+scottyMempool ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetMempool -> WebT m [TxHash]
+scottyMempool (GetMempool (LimitParam l) (OffsetParam o)) = do
+    take (fromIntegral l) . drop (fromIntegral o) . map txRefHash <$> getMempool
 
 scottyEvents :: MonadLoggerIO m => WebT m ()
 scottyEvents = do
-    pub <- lift $ asks (storePublisher . webStore)
     setHeaders
     proto <- setupContentType
-    S.stream $ \io flush' ->
+    pub <- lift $ asks (storePublisher . webStore)
+    S.stream $ \io flush ->
         withSubscription pub $ \sub ->
             forever $
-            flush' >> receive sub >>= \se -> do
-                let me =
-                        case se of
-                            StoreBestBlock b     -> Just (EventBlock b)
-                            StoreMempoolNew t    -> Just (EventTx t)
-                            StoreTxDeleted t     -> Just (EventTx t)
-                            StoreBlockReverted b -> Just (EventBlock b)
-                            _                    -> Nothing
-                case me of
-                    Nothing -> return ()
-                    Just e ->
-                        let bs =
-                                serialAny proto e <>
-                                if proto
-                                    then mempty
-                                    else "\n"
-                         in io (lazyByteString bs)
+            flush >> receiveEvent sub >>= maybe (return ()) (io . serial proto)
+  where
+    serial proto e =
+        lazyByteString $ protoSerial proto toEncoding e <> newLine proto
+    newLine True  = mempty
+    newLine False = "\n"
 
-scottyPeers :: MonadLoggerIO m => WebT m ()
-scottyPeers = do
-    mgr <- lift $ asks (storeManager . webStore)
-    setHeaders
-    proto <- setupContentType
-    ps <- getPeersInformation mgr
-    protoSerial proto ps
+receiveEvent :: Inbox StoreEvent -> IO (Maybe Event)
+receiveEvent sub = do
+    se <- receive sub
+    return $
+        case se of
+            StoreBestBlock b     -> Just (EventBlock b)
+            StoreMempoolNew t    -> Just (EventTx t)
+            StoreTxDeleted t     -> Just (EventTx t)
+            StoreBlockReverted b -> Just (EventBlock b)
+            _                    -> Nothing
+
+{- GET Address Transactions -}
+
+scottyAddrTxs ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrTxs -> WebT m [TxRef]
+scottyAddrTxs (GetAddrTxs addr pLimits) =
+    getAddressTxs addr =<< paramToLimits pLimits
+
+scottyAddrsTxs ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxs -> WebT m [TxRef]
+scottyAddrsTxs (GetAddrsTxs addrs pLimits) = do
+    getAddressesTxs addrs =<< paramToLimits pLimits
+
+scottyAddrTxsFull ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetAddrTxsFull
+    -> WebT m [Transaction]
+scottyAddrTxsFull (GetAddrTxsFull addr pLimits) = do
+    txs <- getAddressTxs addr =<< paramToLimits pLimits
+    catMaybes <$> mapM (getTransaction . txRefHash) txs
+
+scottyAddrsTxsFull ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxsFull -> WebT m [Transaction]
+scottyAddrsTxsFull (GetAddrsTxsFull addrs pLimits) = do
+    txs <- getAddressesTxs addrs =<< paramToLimits pLimits
+    catMaybes <$> mapM (getTransaction . txRefHash) txs
+
+scottyAddrBalance ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrBalance -> WebT m Balance
+scottyAddrBalance (GetAddrBalance addr) = getBalance addr
+
+scottyAddrsBalance ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsBalance -> WebT m [Balance]
+scottyAddrsBalance (GetAddrsBalance addrs) = getBalances addrs
+
+scottyAddrUnspent ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrUnspent -> WebT m [Unspent]
+scottyAddrUnspent (GetAddrUnspent addr pLimits) =
+    getAddressUnspents addr =<< paramToLimits pLimits
+
+scottyAddrsUnspent ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsUnspent -> WebT m [Unspent]
+scottyAddrsUnspent (GetAddrsUnspent addrs pLimits) =
+    getAddressesUnspents addrs =<< paramToLimits pLimits
+
+{- GET XPubs -}
+
+scottyXPub ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetXPub -> WebT m XPubSummary
+scottyXPub (GetXPub xpub deriv (NoCache noCache)) =
+    lift . runNoCache noCache $ xPubSummary $ XPubSpec xpub deriv
+
+scottyXPubTxs ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetXPubTxs -> WebT m [TxRef]
+scottyXPubTxs (GetXPubTxs xpub deriv pLimits (NoCache noCache)) = do
+    limits <- paramToLimits pLimits
+    lift . runNoCache noCache $ xPubTxs (XPubSpec xpub deriv) limits
+
+scottyXPubTxsFull ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetXPubTxsFull
+    -> WebT m [Transaction]
+scottyXPubTxsFull (GetXPubTxsFull xpub deriv pLimits n@(NoCache noCache)) = do
+    refs <- scottyXPubTxs (GetXPubTxs xpub deriv pLimits n)
+    txs <- lift . runNoCache noCache $ mapM (getTransaction . txRefHash) refs
+    return $ catMaybes txs
+
+scottyXPubBalances ::
+       (MonadUnliftIO m, MonadLoggerIO m) => GetXPubBalances -> WebT m [XPubBal]
+scottyXPubBalances (GetXPubBalances xpub deriv (NoCache noCache)) =
+    filter f <$> lift (runNoCache noCache (xPubBals spec))
+  where
+    spec = XPubSpec xpub deriv
+    f = not . nullBalance . xPubBal
+
+scottyXPubUnspent ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetXPubUnspent
+    -> WebT m [XPubUnspent]
+scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) = do
+    limits <- paramToLimits pLimits
+    lift . runNoCache noCache $ xPubUnspents (XPubSpec xpub deriv) limits
+
+scottyXPubEvict ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => GetXPubEvict
+    -> WebT m (GenericResult Bool)
+scottyXPubEvict (GetXPubEvict xpub deriv) = do
+    cache <- lift $ asks (storeCache . webStore)
+    lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
+    return $ GenericResult True
+
+{- GET Network Information -}
+
+scottyPeers :: MonadLoggerIO m => GetPeers -> WebT m [PeerInformation]
+scottyPeers _ = getPeersInformation =<< lift (asks (storeManager . webStore))
+
+-- | Obtain information about connected peers from peer manager process.
+getPeersInformation :: MonadIO m => PeerManager -> m [PeerInformation]
+getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
+  where
+    toInfo op = do
+        ver <- onlinePeerVersion op
+        let as = onlinePeerAddress op
+            ua = getVarString $ userAgent ver
+            vs = version ver
+            sv = services ver
+            rl = relay ver
+        return
+            PeerInformation
+                { peerUserAgent = ua
+                , peerAddress = show as
+                , peerVersion = vs
+                , peerServices = sv
+                , peerRelay = rl
+                }
 
 scottyHealth ::
-       (MonadUnliftIO m, MonadLoggerIO m)
-    => WebT m ()
-scottyHealth = do
+       (MonadUnliftIO m, MonadLoggerIO m) => GetHealth -> WebT m HealthCheck
+scottyHealth _ = do
     net <- lift $ asks (storeNetwork . webStore)
     mgr <- lift $ asks (storeManager . webStore)
     chn <- lift $ asks (storeChain . webStore)
     tos <- lift $ asks webWebTimeouts
-    setHeaders
-    proto <- setupContentType
     h <- lift $ healthCheck net mgr chn tos
     when (not (healthOK h) || not (healthSynced h)) $ S.status status503
-    protoSerial proto h
+    return h
 
 healthCheck ::
        (MonadUnliftIO m, StoreRead m)
@@ -851,157 +805,13 @@ healthCheck net mgr ch tos = do
     chain_best = timeout 10000000 $ chainGetBest ch
     compute_delta a b = if b > a then b - a else 0
 
--- | Obtain information about connected peers from peer manager process.
-getPeersInformation :: MonadIO m => PeerManager -> m [PeerInformation]
-getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
-  where
-    toInfo op = do
-        ver <- onlinePeerVersion op
-        let as = onlinePeerAddress op
-            ua = getVarString $ userAgent ver
-            vs = version ver
-            sv = services ver
-            rl = relay ver
-        return
-            PeerInformation
-                { peerUserAgent = ua
-                , peerAddress = show as
-                , peerVersion = vs
-                , peerServices = sv
-                , peerRelay = rl
-                }
-
--- | Check if any of the ancestors of this transaction is a coinbase after the
--- specified height. Returns 'Nothing' if answer cannot be computed before
--- hitting limits.
-cbAfterHeight ::
-       (MonadIO m, StoreRead m)
-    => Int -- ^ how many ancestors to test before giving up
-    -> BlockHeight
-    -> TxHash
-    -> m (GenericResult (Maybe Bool))
-cbAfterHeight d h t
-    | d <= 0 = return $ GenericResult Nothing
-    | otherwise = do
-        x <- fmap snd <$> tst d t
-        return $ GenericResult x
-  where
-    tst e x
-        | e <= 0 = return Nothing
-        | otherwise = do
-            let e' = e - 1
-            getTransaction x >>= \case
-                Nothing -> return Nothing
-                Just tx ->
-                    if any isCoinbase (transactionInputs tx)
-                        then return $
-                             Just (e', blockRefHeight (transactionBlock tx) > h)
-                        else case transactionBlock tx of
-                                 BlockRef {blockRefHeight = b}
-                                     | b <= h -> return $ Just (e', False)
-                                 _ ->
-                                     r e' . nub' $
-                                     map
-                                         (outPointHash . inputPoint)
-                                         (transactionInputs tx)
-    r e [] = return $ Just (e, False)
-    r e (n:ns) =
-        tst e n >>= \case
-            Nothing -> return Nothing
-            Just (e', s) ->
-                if s
-                    then return $ Just (e', True)
-                    else r e' ns
-
-getAddressTxsLimit ::
-       (Monad m, StoreRead m)
-    => Limits
-    -> Address
-    -> m [TxRef]
-getAddressTxsLimit limits addr = getAddressTxs addr limits
-
-getAddressTxsFull ::
-       (Monad m, StoreRead m)
-    => Limits
-    -> Address
-    -> m [Transaction]
-getAddressTxsFull limits addr = do
-    txs <- getAddressTxsLimit limits addr
-    catMaybes <$> mapM (getTransaction . txRefHash) txs
-
-getAddressesTxsLimit ::
-       (Monad m, StoreRead m)
-    => Limits
-    -> [Address]
-    -> m [TxRef]
-getAddressesTxsLimit limits addrs = getAddressesTxs addrs limits
-
-getAddressesTxsFull ::
-       (Monad m, StoreRead m)
-    => Limits
-    -> [Address]
-    -> m [Transaction]
-getAddressesTxsFull limits addrs =
-    fmap catMaybes $
-    getAddressesTxsLimit limits addrs >>=
-    mapM (getTransaction . txRefHash)
-
-getAddressUnspentsLimit ::
-       (Monad m, StoreRead m)
-    => Limits
-    -> Address
-    -> m [Unspent]
-getAddressUnspentsLimit limits addr = getAddressUnspents addr limits
-
-getAddressesUnspentsLimit ::
-       (Monad m, StoreRead m)
-    => Limits
-    -> [Address]
-    -> m [Unspent]
-getAddressesUnspentsLimit limits addrs = getAddressesUnspents addrs limits
-
--- | Publish a new transaction to the network.
-publishTx ::
-       (MonadUnliftIO m, StoreRead m)
-    => Network
-    -> Publisher StoreEvent
-    -> PeerManager
-    -> Tx
-    -> m (Either PubExcept ())
-publishTx net pub mgr tx =
-    withSubscription pub $ \s ->
-        getTransaction (txHash tx) >>= \case
-            Just _ -> return $ Right ()
-            Nothing -> go s
-  where
-    go s =
-        managerGetPeers mgr >>= \case
-            [] -> return $ Left PubNoPeers
-            OnlinePeer {onlinePeerMailbox = p}:_ -> do
-                MTx tx `sendMessage` p
-                let v =
-                        if getSegWit net
-                            then InvWitnessTx
-                            else InvTx
-                sendMessage
-                    (MGetData (GetData [InvVector v (getTxHash (txHash tx))]))
-                    p
-                f p s
-    t = 5 * 1000 * 1000
-    f p s =
-        liftIO (timeout t (g p s)) >>= \case
-            Nothing -> return $ Left PubTimeout
-            Just (Left e) -> return $ Left e
-            Just (Right ()) -> return $ Right ()
-    g p s =
-        receive s >>= \case
-            StoreTxReject p' h' c _
-                | p == p' && h' == txHash tx -> return . Left $ PubReject c
-            StorePeerDisconnected p' _
-                | p == p' -> return $ Left PubPeerDisconnected
-            StoreMempoolNew h'
-                | h' == txHash tx -> return $ Right ()
-            _ -> g p s
+scottyDbStats :: MonadLoggerIO m => GetDBStats -> WebT m (GenericResult String)
+scottyDbStats _ = do
+    db <- lift $ asks (databaseHandle . storeDB . webStore)
+    stats <- lift (getProperty db Stats)
+    return $ GenericResult $ case stats of
+        Nothing -> "Could not get stats"
+        Just txt -> cs txt
 
 {---------------------}
 {- Parameter Parsing -}
@@ -1049,14 +859,51 @@ paramLazy = do
     resM <- paramOptional `S.rescue` (const $ return Nothing)
     maybe (S.next) return resM
 
-parseStart :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m (Maybe Start)
-parseStart =
-    runMaybeT $ do
-        s <- MaybeT paramOptional
-        case s of
-            StartParamHash {startParamHash = h} -> start_tx h <|> start_block h
-            StartParamHeight {startParamHeight = h} -> start_height h
-            StartParamTime {startParamTime = q} -> start_time q
+parseBody :: (MonadIO m, Serialize a) => WebT m a
+parseBody = do
+    b <- S.body
+    case hex b <|> bin (L.toStrict b) of
+        Nothing -> S.raise $ UserError "Failed to parse request body"
+        Just x  -> return x
+  where
+    bin = eitherToMaybe . Serialize.decode
+    hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
+
+parseLimit :: Monad m => Bool -> WebT m LimitParam
+parseLimit full = do
+    limits <- lift $ asks webMaxLimits
+    let m
+            | full && maxLimitFull limits > 0 = maxLimitFull limits
+            | otherwise = maxLimitCount limits
+        d = maxLimitDefault limits
+    LimitParam . f m . toDef d . getLimitParam <$> paramDef
+  where
+    toDef d 0 = d -- Don't allow the user to set limit=0
+    toDef _ v = v
+    f m 0 = m -- Will only happen if d=0 and v=0
+    f 0 v = v -- No max. Let the user have it all
+    f m v = min m v -- Don't exceed the max
+
+parseOffset :: Monad m => WebT m OffsetParam
+parseOffset = do
+    res@(OffsetParam o) <- paramDef
+    limits <- lift $ asks webMaxLimits
+    when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) $
+        S.raise . UserError $
+        "offset exceeded: " <> show o <> " > " <> show (maxLimitOffset limits)
+    return res
+
+parseStart ::
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Maybe StartParam
+    -> WebT m (Maybe Start)
+parseStart Nothing = return Nothing
+parseStart (Just s) =
+    runMaybeT $
+    case s of
+        StartParamHash {startParamHash = h}     -> start_tx h <|> start_block h
+        StartParamHeight {startParamHeight = h} -> start_height h
+        StartParamTime {startParamTime = q}     -> start_time q
   where
     start_height h = return $ AtBlock h
     start_block h = do
@@ -1070,61 +917,18 @@ parseStart =
         let g = blockDataHeight b
         return $ AtBlock g
 
-parseLimits :: (MonadLoggerIO m, MonadUnliftIO m) => Bool -> WebT m Limits
-parseLimits full = Limits <$> parseOffset <*> parseLimit full <*> parseStart
+parseLimitsParam :: Monad m => Bool -> WebT m LimitsParam
+parseLimitsParam full =
+    LimitsParam <$> parseLimit full <*> parseOffset <*> paramOptional
 
-parseOffset :: Monad m => WebT m Word32
-parseOffset = do
-    OffsetParam o <- paramDef
-    limits <- lift $ asks webMaxLimits
-    when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) $
-        S.raise . UserError $
-        "offset exceeded: " <> show o <> " > " <> show (maxLimitOffset limits)
-    return o
-
-parseLimit :: Monad m => Bool -> WebT m Word32
-parseLimit full = do
-    limits <- lift $ asks webMaxLimits
-    let m
-            | full && maxLimitFull limits > 0 = maxLimitFull limits
-            | otherwise = maxLimitCount limits
-        d = maxLimitDefault limits
-    f m . maybe d getLimitParam <$> paramOptional
-  where
-    f a 0 = a
-    f 0 b = b
-    f a b = min a b
-
-parseXPubSpec :: Monad m => WebT m XPubSpec
-parseXPubSpec = (<$> parseDeriveType) . XPubSpec =<< paramLazy
-
-parseDeriveType :: Monad m => WebT m DeriveType
-parseDeriveType = do
-    dType <- paramDef -- Default is DeriveNormal
-    net <- lift $ asks (storeNetwork . webStore)
-    when (not (getSegWit net) && dType /= DeriveNormal) $
-        S.raise . UserError $
-        "Invalid derivation on network " <> getNetworkName net
-    return dType
+paramToLimits ::
+       (MonadUnliftIO m, MonadLoggerIO m) => LimitsParam -> WebT m Limits
+paramToLimits (LimitsParam (LimitParam l) (OffsetParam o) startM) =
+    Limits l o <$> parseStart startM
 
 {-------------}
 {- Utilities -}
 {-------------}
-
-setHeaders :: (Monad m, ScottyError e) => ActionT e m ()
-setHeaders = S.setHeader "Access-Control-Allow-Origin" "*"
-
-defHandler :: Monad m => Except -> WebT m ()
-defHandler e = do
-    proto <- setupContentType
-    case e of
-        ThingNotFound -> S.status status404
-        BadRequest    -> S.status status400
-        UserError _   -> S.status status400
-        StringError _ -> S.status status400
-        ServerError   -> S.status status500
-        BlockTooLarge -> S.status status403
-    protoSerial proto e
 
 runInWebReader ::
        MonadIO m

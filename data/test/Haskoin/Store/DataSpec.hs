@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Haskoin.Store.DataSpec
@@ -13,6 +14,7 @@ import           Data.Aeson.Parser       (decodeWith, json)
 import           Data.Aeson.Types        (Parser, parse)
 import           Data.ByteString         (pack)
 import qualified Data.ByteString.Short   as BSS
+import           Data.Map.Strict         (singleton)
 import           Data.Serialize          (Serialize (..), decode, encode)
 import           Data.String.Conversions (cs)
 import           Haskoin                 (Address (..), BlockHash (..),
@@ -24,25 +26,28 @@ import           Haskoin                 (Address (..), BlockHash (..),
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest, ripemd160, sha256)
 import           Haskoin.Store.Data      (Balance (..), BlockData (..),
-                                          BlockRef (..), TxRef (..),
-                                          DeriveType (..), Event (..),
+                                          BlockRef (..), DeriveType (..),
+                                          Event (..), GenericResult (..),
                                           HealthCheck (..),
                                           PeerInformation (..), Prev (..),
+                                          RawResult (..), RawResultList (..),
                                           Spender (..), StoreInput (..),
                                           StoreOutput (..), Transaction (..),
-                                          TxData (..), TxId (..), Unspent (..),
-                                          XPubBal (..), XPubSpec (..),
-                                          XPubSummary (..), XPubUnspent (..),
-                                          balanceParseJSON, balanceToEncoding,
-                                          balanceToJSON, blockDataToEncoding,
-                                          blockDataToJSON, transactionParseJSON,
+                                          TxData (..), TxId (..), TxRef (..),
+                                          Unspent (..), XPubBal (..),
+                                          XPubSpec (..), XPubSummary (..),
+                                          XPubUnspent (..), balanceParseJSON,
+                                          balanceToEncoding, balanceToJSON,
+                                          blockDataToEncoding, blockDataToJSON,
+                                          transactionParseJSON,
                                           transactionToEncoding,
                                           transactionToJSON, unspentParseJSON,
                                           unspentToEncoding, unspentToJSON,
                                           xPubUnspentParseJSON,
                                           xPubUnspentToEncoding,
                                           xPubUnspentToJSON)
-import           Test.Hspec              (Expectation, Spec, describe, shouldBe)
+import           Test.Hspec              (Expectation, Spec, describe, shouldBe,
+                                          shouldSatisfy)
 import           Test.Hspec.QuickCheck   (prop)
 import           Test.QuickCheck         (Arbitrary (..), Gen,
                                           arbitraryPrintableChar,
@@ -72,6 +77,12 @@ spec = do
         prop "identity for event" $ \x -> testSerial (x :: Event)
         prop "identity for txid" $ \x -> testSerial (x :: TxId)
         prop "identity for peer info" $ \x -> testSerial (x :: PeerInformation)
+        prop "identity for generic result" $ \x ->
+            testSerial (x :: GenericResult BlockData)
+        prop "identity for raw result" $ \x ->
+            testSerial (x :: RawResult BlockData)
+        prop "identity for raw result list" $ \x ->
+            testSerial (x :: RawResultList BlockData)
     describe "JSON serialization" $ do
         prop "identity for balance" . forAll arbitraryNetData $ \(net, x) ->
             testNetJSON
@@ -129,9 +140,28 @@ spec = do
         prop "identity for txid" $ \x -> testJSON (x :: TxId)
         prop "identity for peer information" $ \x ->
             testJSON (x :: PeerInformation)
+        prop "identity for generic result" $ \x ->
+            testJSON (x :: GenericResult XPubSummary)
+        prop "identity for raw result" $ \x ->
+            testJSON (x :: RawResult BlockData)
+        prop "identity for raw result list" $ \x ->
+            testJSON (x :: RawResultList BlockData)
 
-testJSON :: (Eq a, Show a, ToJSON a, FromJSON a) => a -> Expectation
-testJSON input = (A.decode . A.encode) input `shouldBe` Just input
+testJSON :: (FromJSON a, ToJSON a, Eq a, Show a) => a -> Expectation
+testJSON x = do
+    x `shouldSatisfy `jsonID_
+    x `shouldSatisfy` encodingID_
+
+jsonID_ :: (FromJSON a, ToJSON a, Eq a) => a -> Bool
+jsonID_ x =
+    (A.fromJSON . A.toJSON) (singleton ("object" :: String) x) ==
+    A.Success (singleton ("object" :: String) x)
+
+encodingID_ :: (FromJSON a, ToJSON a, Eq a) => a -> Bool
+encodingID_ x =
+    (A.decode . encodingToLazyByteString . A.toEncoding)
+        (singleton ("object" :: String) x) ==
+    Just (singleton ("object" :: String) x)
 
 testNetJSON ::
        (Eq a, Show a)
@@ -359,6 +389,15 @@ instance Arbitrary BlockData where
         <*> arbitrary
         <*> arbitrary
         <*> arbitrary
+
+instance Arbitrary a => Arbitrary (GenericResult a) where
+    arbitrary = GenericResult <$> arbitrary
+
+instance Arbitrary a => Arbitrary (RawResult a) where
+    arbitrary = RawResult <$> arbitrary
+
+instance Arbitrary a => Arbitrary (RawResultList a) where
+    arbitrary = RawResultList <$> arbitrary
 
 instance Arbitrary XPubBal where
     arbitrary = XPubBal <$> arbitrary <*> arbitrary
