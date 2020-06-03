@@ -12,25 +12,14 @@ module Haskoin.Store.WebCommon
 where
 
 import           Control.Applicative       ((<|>))
-import           Control.Arrow             (second, (&&&), (<<<), (>>>))
-import           Control.Lens              ((.~), (?~), (^.))
-import           Control.Monad             (forever, guard, unless, when, (<=<))
-import           Control.Monad.Except      (MonadError)
-import           Control.Monad.Trans       (MonadIO, liftIO)
-import qualified Data.Aeson                as Json
-import qualified Data.ByteString           as B
+import           Control.Monad             (guard)
 import           Data.Default              (Default, def)
-import           Data.Function             ((&))
-import           Data.Maybe                (maybeToList)
-import           Data.Monoid               (Endo (..), appEndo)
-import           Data.Proxy
+import           Data.Proxy                (Proxy(..))
 import qualified Data.Serialize            as S
 import           Data.String               (IsString (..))
 import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
 import qualified Data.Text                 as Text
-import qualified Data.Text.Lazy            as TL
-import           Data.Word                 (Word32, Word64)
 import           Haskoin.Address
 import           Haskoin.Block             (Block, BlockHash, blockHashToHex,
                                             hexToBlockHash)
@@ -39,11 +28,7 @@ import           Haskoin.Crypto            (Hash256)
 import           Haskoin.Keys
 import qualified Haskoin.Store.Data        as Store
 import           Haskoin.Transaction
-import           Haskoin.Util
 import           Network.HTTP.Types        (StdMethod (..))
-import           Network.HTTP.Types.Status
-import qualified Network.Wreq              as HTTP
-import           Network.Wreq.Types        (ResponseChecker)
 import           Numeric.Natural           (Natural)
 import           Text.Read                 (readMaybe)
 import qualified Web.Scotty.Trans          as Scotty
@@ -88,7 +73,7 @@ newtype GetTxsBlock = GetTxsBlock BlockHash
 newtype GetTxsBlockRaw = GetTxsBlockRaw BlockHash
 data GetTxAfter = GetTxAfter TxHash HeightParam
 newtype PostTx = PostTx Tx
-data GetMempool = GetMempool LimitParam OffsetParam
+data GetMempool = GetMempool (Maybe LimitParam) OffsetParam
 data GetEvents = GetEvents
 -- Address
 data GetAddrTxs = GetAddrTxs Address LimitsParam
@@ -207,7 +192,7 @@ instance ApiResource PostTx Store.TxId where
 
 instance ApiResource GetMempool [TxHash] where
     resourcePath _ _ = "/mempool"
-    queryParams (GetMempool l o) = ([], noDefBox l <> noDefBox o)
+    queryParams (GetMempool l o) = ([], noMaybeBox l <> noDefBox o)
 
 instance ApiResource GetEvents [Store.Event] where
     resourcePath _ _ = "/events"
@@ -217,24 +202,24 @@ instance ApiResource GetEvents [Store.Event] where
 instance ApiResource GetAddrTxs [Store.TxRef] where
     resourcePath _ = "/address/" <+> "/transactions"
     queryParams (GetAddrTxs a (LimitsParam l o sM)) =
-        ([ParamBox a], noDefBox l <> noDefBox o <> noMaybeBox sM)
+        ([ParamBox a], noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
 instance ApiResource GetAddrsTxs [Store.TxRef] where
     resourcePath _ _ = "/address/transactions"
     queryParams (GetAddrsTxs as (LimitsParam l o sM)) =
-        ([] , [ParamBox as] <> noDefBox l <> noDefBox o <> noMaybeBox sM)
+        ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
 
 instance ApiResource GetAddrTxsFull [Store.Transaction] where
     resourcePath _ = "/address/" <+> "/transactions/full"
     queryParams (GetAddrTxsFull a (LimitsParam l o sM)) =
-        ([ParamBox a], noDefBox l <> noDefBox o <> noMaybeBox sM)
+        ([ParamBox a], noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
 instance ApiResource GetAddrsTxsFull [Store.Transaction] where
     resourcePath _ _ = "/address/transactions/full"
     queryParams (GetAddrsTxsFull as (LimitsParam l o sM)) =
-        ([] , [ParamBox as] <> noDefBox l <> noDefBox o <> noMaybeBox sM)
+        ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
 
 instance ApiResource GetAddrBalance Store.Balance where
     resourcePath _ = "/address/" <+> "/balance"
@@ -248,13 +233,13 @@ instance ApiResource GetAddrsBalance [Store.Balance] where
 instance ApiResource GetAddrUnspent [Store.Unspent] where
     resourcePath _ = "/address/" <+> "/unspent"
     queryParams (GetAddrUnspent a (LimitsParam l o sM)) =
-        ([ParamBox a], noDefBox l <> noDefBox o <> noMaybeBox sM)
+        ([ParamBox a], noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
 instance ApiResource GetAddrsUnspent [Store.Unspent] where
     resourcePath _ _ = "/address/unspent"
     queryParams (GetAddrsUnspent as (LimitsParam l o sM)) =
-        ([] , [ParamBox as] <> noDefBox l <> noDefBox o <> noMaybeBox sM)
+        ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     
 {- XPubs -}
 
@@ -267,7 +252,7 @@ instance ApiResource GetXPubTxs [Store.TxRef] where
     resourcePath _ = "/xpub/" <+> "/transactions"
     queryParams (GetXPubTxs p d (LimitsParam l o sM) n) =
         ( [ParamBox p]
-        , noDefBox d <> noDefBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
+        , noDefBox d <> noMaybeBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
         )
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
@@ -275,7 +260,7 @@ instance ApiResource GetXPubTxsFull [Store.Transaction] where
     resourcePath _ = "/xpub/" <+> "/transactions/full"
     queryParams (GetXPubTxsFull p d (LimitsParam l o sM) n) =
         ( [ParamBox p]
-        , noDefBox d <> noDefBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
+        , noDefBox d <> noMaybeBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
         )
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
@@ -288,7 +273,7 @@ instance ApiResource GetXPubUnspent [Store.XPubUnspent] where
     resourcePath _ = "/xpub/" <+> "/unspent"
     queryParams (GetXPubUnspent p d (LimitsParam l o sM) n) =
         ( [ParamBox p]
-        , noDefBox d <> noDefBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
+        , noDefBox d <> noMaybeBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
         )
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
@@ -375,7 +360,7 @@ data StartParam = StartParamHash
     { startParamHash :: Hash256
     }
     | StartParamHeight
-    { startParamHeight :: Word32
+    { startParamHeight :: Natural
     }
     | StartParamTime
     { startParamTime :: Store.UnixTime
@@ -407,8 +392,8 @@ instance Param StartParam where
     parseParam _ _ = Nothing
 
 newtype OffsetParam = OffsetParam
-    { getOffsetParam :: Word32
-    } deriving (Eq, Show, Read, Num)
+    { getOffsetParam :: Natural
+    } deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
 instance Default OffsetParam where
     def = OffsetParam 0
@@ -420,11 +405,8 @@ instance Param OffsetParam where
     parseParam _ _   = Nothing
 
 newtype LimitParam = LimitParam
-    { getLimitParam :: Word32
-    } deriving (Eq, Show, Read, Num)
-
-instance Default LimitParam where
-    def = LimitParam 0
+    { getLimitParam :: Natural
+    } deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
 instance Param LimitParam where
     proxyLabel = const "limit"
@@ -434,18 +416,18 @@ instance Param LimitParam where
 
 data LimitsParam =
     LimitsParam
-        { paramLimit  :: LimitParam
+        { paramLimit  :: Maybe LimitParam -- 0 means maximum
         , paramOffset :: OffsetParam
         , paramStart  :: Maybe StartParam
         }
     deriving (Eq, Show)
 
 instance Default LimitsParam where
-    def = LimitsParam def def Nothing
+    def = LimitsParam Nothing def Nothing
 
 newtype HeightParam = HeightParam
-    { getHeightParam :: Word32
-    } deriving (Eq, Show, Read, Num)
+    { getHeightParam :: Natural
+    } deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
 instance Param HeightParam where
     proxyLabel = const "height"
@@ -454,7 +436,7 @@ instance Param HeightParam where
     parseParam _ _   = Nothing
 
 newtype HeightsParam = HeightsParam
-    { getHeightsParam :: [Word32]
+    { getHeightsParam :: [Natural]
     } deriving (Eq, Show, Read)
 
 instance Param HeightsParam where

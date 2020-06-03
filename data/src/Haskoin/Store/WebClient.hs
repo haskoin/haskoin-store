@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE Strict                #-}
@@ -22,10 +22,7 @@ import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
 import qualified Data.Text                 as Text
-import           Haskoin.Address
-import           Haskoin.Block
 import           Haskoin.Constants
-import           Haskoin.Keys
 import qualified Haskoin.Store.Data        as Store
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
@@ -60,19 +57,13 @@ instance Default ApiConfig where
 
 -- | Make a call to the haskoin-store API.
 --
--- Usage:
+-- Usage (default options):
 --
--- > apiCall def (AddressTxs addrs) noOpts
+-- > apiCall def $ GetAddrsTxs addrs def
 --
--- Add an option:
+-- With options:
 --
--- > apiCall def (AddressUnspent addrs) (optLimit 10)
---
--- Multiple options can be passed with <>:
---
--- > apiCall def (AddressUnspent addrs) (optOffset 5 <> optLimit 10)
---
--- Options are of type @Endo Network.Wreq.Options@ so you can customize them.
+-- > apiCall def $ GetAddrsUnspent addrs def{ paramLimit = Just 10 }
 --
 apiCall ::
        (ApiResource a b, MonadIO m, MonadError String m)
@@ -92,7 +83,7 @@ apiCall (ApiConfig net host) res = do
 
 -- | Batch commands that have a large list of arguments:
 --
--- > apiBatch 20 def (AddressTxs addrs) noOpts
+-- > apiBatch 20 def (GetAddrsTxs addrs def)
 --
 apiBatch ::
        (Batchable a b, MonadIO m, MonadError String m)
@@ -104,6 +95,33 @@ apiBatch i conf res = mconcat <$> mapM (apiCall conf) (resourceBatch i res)
 
 class (ApiResource a b, Monoid b) => Batchable a b where
     resourceBatch :: Natural -> a -> [a]
+
+instance Batchable GetBlocks [Store.BlockData] where
+    resourceBatch i (GetBlocks hs t) = (`GetBlocks` t) <$> chunksOf i hs
+
+instance Batchable GetBlockHeights [Store.BlockData] where
+    resourceBatch i (GetBlockHeights (HeightsParam hs) n) =
+        (`GetBlockHeights` n) <$> (HeightsParam <$> chunksOf i hs)
+
+instance Batchable GetTxs [Store.Transaction] where
+    resourceBatch i (GetTxs ts) = GetTxs <$> chunksOf i ts
+
+instance Batchable GetTxsRaw (Store.RawResultList Tx) where
+    resourceBatch i (GetTxsRaw ts) = GetTxsRaw <$> chunksOf i ts
+
+instance Batchable GetAddrsTxs [Store.TxRef] where
+    resourceBatch i (GetAddrsTxs as l) = (`GetAddrsTxs` l) <$> chunksOf i as
+
+instance Batchable GetAddrsTxsFull [Store.Transaction] where
+    resourceBatch i (GetAddrsTxsFull as l) =
+        (`GetAddrsTxsFull` l) <$> chunksOf i as
+
+instance Batchable GetAddrsBalance [Store.Balance] where
+    resourceBatch i (GetAddrsBalance as) = GetAddrsBalance <$> chunksOf i as
+
+instance Batchable GetAddrsUnspent [Store.Unspent] where
+    resourceBatch i (GetAddrsUnspent as l) =
+        (`GetAddrsUnspent` l) <$> chunksOf i as
 
 {- API Internal -}
 
@@ -118,19 +136,6 @@ toOption :: Param a => Network -> a -> Either String (Endo HTTP.Options)
 toOption net a = do
     res <- maybeToEither "Invalid Param" $ encodeParam net a
     return $ applyOpt (paramLabel a) res
-
--- resourceBatch :: Natural -> ApiResource a -> [ApiResource a]
--- resourceBatch i =
---     \case
---         AddressTxs xs -> AddressTxs <$> chunksOf i xs
---         AddressTxsFull xs -> AddressTxsFull <$> chunksOf i xs
---         AddressBalances xs -> AddressBalances <$> chunksOf i xs
---         AddressUnspent xs -> AddressUnspent <$> chunksOf i xs
---         TxsDetails xs -> TxsDetails <$> chunksOf i xs
---         TxsRaw xs -> TxsRaw <$> chunksOf i xs
---         Blocks xs -> Blocks <$> chunksOf i xs
---         BlockHeights xs -> BlockHeights <$> chunksOf i xs
---         res -> [res]
 
 applyOpt :: Text -> [Text] -> Endo HTTP.Options
 applyOpt p t = Endo $ HTTP.param p .~ [Text.intercalate "," t]

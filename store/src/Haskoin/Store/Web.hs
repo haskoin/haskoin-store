@@ -15,22 +15,15 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forM, forever, guard, unless,
-                                                when, (<=<))
-import           Control.Monad.Logger          (LogLevel (..), MonadLogger,
-                                                MonadLoggerIO, askLoggerIO,
-                                                liftLoc, logInfoS,
-                                                monadLoggerLog, toLogStr)
+import           Control.Monad                 (forever, when, (<=<))
+import           Control.Monad.Logger
 import           Control.Monad.Reader          (ReaderT, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
 import           Data.Aeson                    (Encoding, ToJSON (..))
-import           Data.Aeson.Encoding           (encodingToLazyByteString, list,
-                                                pair, pairs, unsafeToEncoding)
-import qualified Data.ByteString               as B
-import           Data.ByteString.Builder       (char7, lazyByteString,
-                                                lazyByteStringHex)
+import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
+import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
@@ -44,26 +37,15 @@ import           Data.Serialize                as Serialize
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
 import qualified Data.Text.Encoding            as T
-import qualified Data.Text.Lazy                as TL
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
 import           Data.Version                  (showVersion)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
-import           Haskoin                       (Address, Block (..),
-                                                BlockHash (..),
-                                                BlockHeader (..), BlockHeight,
-                                                BlockNode (..), GetData (..),
-                                                Hash256, InvType (..),
-                                                InvVector (..), Message (..),
-                                                Network (..), OutPoint (..), Tx,
-                                                TxHash (..), VarString (..),
-                                                Version (..), decodeHex,
-                                                eitherToMaybe, headerHash,
-                                                hexToBlockHash, hexToTxHash,
-                                                stringToAddr, txHash,
-                                                xPubImport)
+import qualified Haskoin.Block                 as H
+import           Haskoin.Constants
+import           Haskoin.Network
 import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
                                                 managerGetPeers, sendMessage)
@@ -72,48 +54,27 @@ import           Haskoin.Store.Cache           (CacheT, evictFromCache,
 import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
                                                 Start (..), StoreEvent (..),
                                                 StoreRead (..), blockAtOrBefore,
-                                                getTransaction, nub')
-import           Haskoin.Store.Data            (Balance (..), BlockData (..),
-                                                BlockRef (..), DeriveType (..),
-                                                Event (..), Except (..),
-                                                GenericResult (..),
-                                                HealthCheck (..),
-                                                PeerInformation (..),
-                                                RawResult (..),
-                                                RawResultList (..),
-                                                StoreInput (..),
-                                                Transaction (..), TxId (..),
-                                                TxRef (..), UnixTime, Unspent,
-                                                XPubBal (..), XPubSpec (..),
-                                                XPubSummary (..),
-                                                XPubUnspent (..),
-                                                balanceToEncoding,
-                                                blockDataToEncoding, isCoinbase,
-                                                nullBalance, transactionData,
-                                                transactionToEncoding,
-                                                unspentToEncoding,
-                                                xPubBalToEncoding,
-                                                xPubUnspentToEncoding)
+                                                getTransaction)
+import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
                                                 withDatabaseReader)
 import           Haskoin.Store.Manager         (Store (..))
 import           Haskoin.Store.WebCommon
+import           Haskoin.Transaction
+import           Haskoin.Util
 import           Network.HTTP.Types            (Status (..), status400,
                                                 status403, status404, status500,
                                                 status503)
 import           Network.Wai                   (Middleware, Request (..),
-                                                StreamingBody, responseStatus)
-import           NQE                           (Inbox, Process, Publisher,
-                                                PublisherMessage, receive,
+                                                responseStatus)
+import           NQE                           (Inbox, Publisher, receive,
                                                 withSubscription)
 import qualified Paths_haskoin_store           as P (version)
 import           Text.Printf                   (printf)
-import           Text.Read                     (readMaybe)
 import           UnliftIO                      (MonadIO, MonadUnliftIO,
                                                 askRunInIO, liftIO, timeout)
 import           Web.Scotty.Internal.Types     (ActionT)
-import           Web.Scotty.Trans              (Parsable, ScottyError)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
@@ -134,7 +95,7 @@ instance Default WebLimits where
             { maxLimitCount = 20000
             , maxLimitFull = 5000
             , maxLimitOffset = 50000
-            , maxLimitDefault = 2000
+            , maxLimitDefault = 100
             , maxLimitGap = 32
             , maxLimitInitialGap = 20
             }
@@ -252,33 +213,30 @@ handlePaths = do
     path (GetTxsBlockRaw <$> paramLazy) scottyTxsBlockRaw (const toEncoding)
     path (GetTxAfter <$> paramLazy <*> paramLazy) scottyTxAfter (const toEncoding)
     path (PostTx <$> parseBody) scottyPostTx (const toEncoding)
-    path (GetMempool <$> parseLimit False <*> parseOffset)
-         scottyMempool (const toEncoding)
+    path (GetMempool <$> paramOptional <*> parseOffset) scottyMempool (const toEncoding)
     -- Address Paths
-    path (GetAddrTxs <$> paramLazy <*> parseLimitsParam False)
-         scottyAddrTxs (const toEncoding)
-    path (GetAddrsTxs <$> param <*> parseLimitsParam False)
-         scottyAddrsTxs (const toEncoding)
-    path (GetAddrTxsFull <$> paramLazy <*> parseLimitsParam True)
+    path (GetAddrTxs <$> paramLazy <*> parseLimits) scottyAddrTxs (const toEncoding)
+    path (GetAddrsTxs <$> param <*> parseLimits) scottyAddrsTxs (const toEncoding)
+    path (GetAddrTxsFull <$> paramLazy <*> parseLimits)
          scottyAddrTxsFull (list . transactionToEncoding)
-    path (GetAddrsTxsFull <$> param <*> parseLimitsParam True)
+    path (GetAddrsTxsFull <$> param <*> parseLimits)
          scottyAddrsTxsFull (list . transactionToEncoding)
     path (GetAddrBalance <$> paramLazy) scottyAddrBalance balanceToEncoding
     path (GetAddrsBalance <$> param) scottyAddrsBalance (list . balanceToEncoding)
-    path (GetAddrUnspent <$> paramLazy <*> parseLimitsParam False)
+    path (GetAddrUnspent <$> paramLazy <*> parseLimits)
          scottyAddrUnspent (list . unspentToEncoding)
-    path (GetAddrsUnspent <$> param <*> parseLimitsParam False)
+    path (GetAddrsUnspent <$> param <*> parseLimits)
          scottyAddrsUnspent (list . unspentToEncoding)
     -- XPubs
     path (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
          scottyXPub (const toEncoding)
-    path (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimitsParam False <*> paramDef)
+    path (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
          scottyXPubTxs (const toEncoding)
-    path (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimitsParam True <*> paramDef)
+    path (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
          scottyXPubTxsFull (list . transactionToEncoding)
     path (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
          scottyXPubBalances (list . xPubBalToEncoding)
-    path (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimitsParam False <*> paramDef)
+    path (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
          scottyXPubUnspent (list . xPubUnspentToEncoding)
     path (GetXPubEvict <$> paramLazy <*> paramDef)
          scottyXPubEvict (const toEncoding)
@@ -312,7 +270,7 @@ protoSerial :: Serialize a => Bool -> (a -> Encoding) -> a -> L.ByteString
 protoSerial True _  = runPutLazy . put
 protoSerial False f = encodingToLazyByteString . f
 
-setHeaders :: (Monad m, ScottyError e) => ActionT e m ()
+setHeaders :: (Monad m, S.ScottyError e) => ActionT e m ()
 setHeaders = S.setHeader "Access-Control-Allow-Origin" "*"
 
 setupContentType :: Monad m => ActionT Except m Bool
@@ -348,20 +306,21 @@ pruneTx True b  = b {blockDataTxs = take 1 (blockDataTxs b)}
 scottyBlockRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockRaw
-    -> WebT m (RawResult Block)
+    -> WebT m (RawResult H.Block)
 scottyBlockRaw (GetBlockRaw h) = RawResult <$> getRawBlock h
 
-getRawBlock :: (MonadUnliftIO m, MonadLoggerIO m) => BlockHash -> WebT m Block
+getRawBlock ::
+       (MonadUnliftIO m, MonadLoggerIO m) => H.BlockHash -> WebT m H.Block
 getRawBlock h = do
     b <- maybe (S.raise ThingNotFound) return =<< getBlock h
     refuseLargeBlock b
     toRawBlock b
 
-toRawBlock :: (Monad m, StoreRead m) => BlockData -> m Block
+toRawBlock :: (Monad m, StoreRead m) => BlockData -> m H.Block
 toRawBlock b = do
     let ths = blockDataTxs b
     txs <- map transactionData . catMaybes <$> mapM getTransaction ths
-    return Block {blockHeader = blockDataHeader b, blockTxns = txs}
+    return H.Block {H.blockHeader = blockDataHeader b, H.blockTxns = txs}
 
 refuseLargeBlock :: Monad m => BlockData -> WebT m ()
 refuseLargeBlock BlockData {blockDataTxs = txs} = do
@@ -379,7 +338,7 @@ scottyBlockBest (GetBlockBest noTx) = do
 scottyBlockBestRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockBestRaw
-    -> WebT m (RawResult Block)
+    -> WebT m (RawResult H.Block)
 scottyBlockBestRaw _ =
     RawResult <$> (maybe (S.raise ThingNotFound) getRawBlock =<< getBestBlock)
 
@@ -397,30 +356,30 @@ scottyBlockLatest (GetBlockLatest (NoTx noTx)) =
         | blockDataHeight b <= 0 = return acc
         | length acc == 99 = return (b:acc)
         | otherwise = do
-            let prev = prevBlock (blockDataHeader b)
+            let prev = H.prevBlock (blockDataHeader b)
             go (pruneTx noTx b : acc) =<< getBlock prev
 
 {- GET BlockHeight / BlockHeights / BlockHeightRaw -}
 
 scottyBlockHeight ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockHeight -> WebT m [BlockData]
-scottyBlockHeight (GetBlockHeight (HeightParam height) noTx) =
-    scottyBlocks . (`GetBlocks` noTx) =<< getBlocksAtHeight height
+scottyBlockHeight (GetBlockHeight h noTx) =
+    scottyBlocks . (`GetBlocks` noTx) =<< getBlocksAtHeight (fromIntegral h)
 
 scottyBlockHeights ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockHeights
     -> WebT m [BlockData]
 scottyBlockHeights (GetBlockHeights (HeightsParam heights) noTx) = do
-    bhs <- concat <$> mapM getBlocksAtHeight heights
+    bhs <- concat <$> mapM getBlocksAtHeight (fromIntegral <$> heights)
     scottyBlocks (GetBlocks bhs noTx)
 
 scottyBlockHeightRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockHeightRaw
-    -> WebT m (RawResultList Block)
-scottyBlockHeightRaw (GetBlockHeightRaw (HeightParam height)) =
-    RawResultList <$> (mapM getRawBlock =<< getBlocksAtHeight height)
+    -> WebT m (RawResultList H.Block)
+scottyBlockHeightRaw (GetBlockHeightRaw h) =
+    RawResultList <$> (mapM getRawBlock =<< getBlocksAtHeight (fromIntegral h))
 
 {- GET BlockTime / BlockTimeRaw -}
 
@@ -432,7 +391,7 @@ scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) =
 scottyBlockTimeRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockTimeRaw
-    -> WebT m (RawResult Block)
+    -> WebT m (RawResult H.Block)
 scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) = do
     b <- maybe (S.raise ThingNotFound) return =<< blockAtOrBefore t
     refuseLargeBlock b
@@ -482,19 +441,19 @@ scottyTxAfter ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetTxAfter
     -> WebT m (GenericResult (Maybe Bool))
-scottyTxAfter (GetTxAfter txid (HeightParam height)) =
-    GenericResult <$> cbAfterHeight height txid
+scottyTxAfter (GetTxAfter txid height) =
+    GenericResult <$> cbAfterHeight (fromIntegral height) txid
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
 -- specified height. Returns 'Nothing' if answer cannot be computed before
 -- hitting limits.
 cbAfterHeight ::
        (MonadIO m, StoreRead m)
-    => BlockHeight
+    => H.BlockHeight
     -> TxHash
     -> m (Maybe Bool)
 cbAfterHeight height begin =
-    go 10000 [begin] -- Depth first search
+    go (10000 :: Int) [begin] -- Depth first search
   where
     go 0 _ = return Nothing -- We searched too far. Return Nothing.
     go _ [] = return $ Just False -- Nothing left to search.
@@ -579,7 +538,9 @@ publishTx net pub mgr tx =
 
 scottyMempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetMempool -> WebT m [TxHash]
-scottyMempool (GetMempool (LimitParam l) (OffsetParam o)) = do
+scottyMempool (GetMempool limitM (OffsetParam o)) = do
+    wl <- lift $ asks webMaxLimits
+    let l = validateLimit wl False limitM
     take (fromIntegral l) . drop (fromIntegral o) . map txRefHash <$> getMempool
 
 scottyEvents :: MonadLoggerIO m => WebT m ()
@@ -587,10 +548,10 @@ scottyEvents = do
     setHeaders
     proto <- setupContentType
     pub <- lift $ asks (storePublisher . webStore)
-    S.stream $ \io flush ->
+    S.stream $ \io flush' ->
         withSubscription pub $ \sub ->
             forever $
-            flush >> receiveEvent sub >>= maybe (return ()) (io . serial proto)
+            flush' >> receiveEvent sub >>= maybe (return ()) (io . serial proto)
   where
     serial proto e =
         lazyByteString $ protoSerial proto toEncoding e <> newLine proto
@@ -613,25 +574,25 @@ receiveEvent sub = do
 scottyAddrTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrTxs -> WebT m [TxRef]
 scottyAddrTxs (GetAddrTxs addr pLimits) =
-    getAddressTxs addr =<< paramToLimits pLimits
+    getAddressTxs addr =<< paramToLimits False pLimits
 
 scottyAddrsTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxs -> WebT m [TxRef]
-scottyAddrsTxs (GetAddrsTxs addrs pLimits) = do
-    getAddressesTxs addrs =<< paramToLimits pLimits
+scottyAddrsTxs (GetAddrsTxs addrs pLimits) = 
+    getAddressesTxs addrs =<< paramToLimits False pLimits
 
 scottyAddrTxsFull ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetAddrTxsFull
     -> WebT m [Transaction]
 scottyAddrTxsFull (GetAddrTxsFull addr pLimits) = do
-    txs <- getAddressTxs addr =<< paramToLimits pLimits
+    txs <- getAddressTxs addr =<< paramToLimits True pLimits
     catMaybes <$> mapM (getTransaction . txRefHash) txs
 
 scottyAddrsTxsFull ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxsFull -> WebT m [Transaction]
 scottyAddrsTxsFull (GetAddrsTxsFull addrs pLimits) = do
-    txs <- getAddressesTxs addrs =<< paramToLimits pLimits
+    txs <- getAddressesTxs addrs =<< paramToLimits True pLimits
     catMaybes <$> mapM (getTransaction . txRefHash) txs
 
 scottyAddrBalance ::
@@ -645,12 +606,12 @@ scottyAddrsBalance (GetAddrsBalance addrs) = getBalances addrs
 scottyAddrUnspent ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrUnspent -> WebT m [Unspent]
 scottyAddrUnspent (GetAddrUnspent addr pLimits) =
-    getAddressUnspents addr =<< paramToLimits pLimits
+    getAddressUnspents addr =<< paramToLimits False pLimits
 
 scottyAddrsUnspent ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsUnspent -> WebT m [Unspent]
 scottyAddrsUnspent (GetAddrsUnspent addrs pLimits) =
-    getAddressesUnspents addrs =<< paramToLimits pLimits
+    getAddressesUnspents addrs =<< paramToLimits False pLimits
 
 {- GET XPubs -}
 
@@ -662,7 +623,7 @@ scottyXPub (GetXPub xpub deriv (NoCache noCache)) =
 scottyXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetXPubTxs -> WebT m [TxRef]
 scottyXPubTxs (GetXPubTxs xpub deriv pLimits (NoCache noCache)) = do
-    limits <- paramToLimits pLimits
+    limits <- paramToLimits False pLimits
     lift . runNoCache noCache $ xPubTxs (XPubSpec xpub deriv) limits
 
 scottyXPubTxsFull ::
@@ -687,7 +648,7 @@ scottyXPubUnspent ::
     => GetXPubUnspent
     -> WebT m [XPubUnspent]
 scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) = do
-    limits <- paramToLimits pLimits
+    limits <- paramToLimits False pLimits
     lift . runNoCache noCache $ xPubUnspents (XPubSpec xpub deriv) limits
 
 scottyXPubEvict ::
@@ -772,18 +733,18 @@ healthCheck net mgr ch tos = do
             , healthVersion = showVersion P.version
             }
   where
-    block_hash = headerHash . blockDataHeader
+    block_hash = H.headerHash . blockDataHeader
     block_height = blockDataHeight
-    node_hash = headerHash . nodeHeader
-    node_height = nodeHeight
+    node_hash = H.headerHash . H.nodeHeader
+    node_height = H.nodeHeight
     get_mempool_last = listToMaybe <$> getMempool
     get_current_time = fromIntegral . systemSeconds <$> liftIO getSystemTime
     peer_count_ok pc = fromMaybe 0 pc > 0
     block_ok = isJust
-    node_timestamp = fromIntegral . blockTimestamp . nodeHeader
+    node_timestamp = fromIntegral . H.blockTimestamp . H.nodeHeader
     in_sync bb cb = fromMaybe False $ do
         bh <- blockDataHeight <$> bb
-        nh <- nodeHeight <$> cb
+        nh <- H.nodeHeight <$> cb
         return $ compute_delta bh nh <= 1
     block_time_delta tm cb = do
         bt <- node_timestamp <$> cb
@@ -808,10 +769,8 @@ healthCheck net mgr ch tos = do
 scottyDbStats :: MonadLoggerIO m => GetDBStats -> WebT m (GenericResult String)
 scottyDbStats _ = do
     db <- lift $ asks (databaseHandle . storeDB . webStore)
-    stats <- lift (getProperty db Stats)
-    return $ GenericResult $ case stats of
-        Nothing -> "Could not get stats"
-        Just txt -> cs txt
+    statsM <- lift (getProperty db Stats)
+    return $ GenericResult $ maybe "Could not get stats" cs statsM
 
 {---------------------}
 {- Parameter Parsing -}
@@ -856,8 +815,8 @@ paramDef = fromMaybe def <$> paramOptional
 -- not supplied or if parsing fails.
 paramLazy :: (Param a, Monad m) => WebT m a
 paramLazy = do
-    resM <- paramOptional `S.rescue` (const $ return Nothing)
-    maybe (S.next) return resM
+    resM <- paramOptional `S.rescue` const (return Nothing)
+    maybe S.next return resM
 
 parseBody :: (MonadIO m, Serialize a) => WebT m a
 parseBody = do
@@ -869,26 +828,11 @@ parseBody = do
     bin = eitherToMaybe . Serialize.decode
     hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
 
-parseLimit :: Monad m => Bool -> WebT m LimitParam
-parseLimit full = do
-    limits <- lift $ asks webMaxLimits
-    let m
-            | full && maxLimitFull limits > 0 = maxLimitFull limits
-            | otherwise = maxLimitCount limits
-        d = maxLimitDefault limits
-    LimitParam . f m . toDef d . getLimitParam <$> paramDef
-  where
-    toDef d 0 = d -- Don't allow the user to set limit=0
-    toDef _ v = v
-    f m 0 = m -- Will only happen if d=0 and v=0
-    f 0 v = v -- No max. Let the user have it all
-    f m v = min m v -- Don't exceed the max
-
 parseOffset :: Monad m => WebT m OffsetParam
 parseOffset = do
     res@(OffsetParam o) <- paramDef
     limits <- lift $ asks webMaxLimits
-    when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) $
+    when (maxLimitOffset limits > 0 && fromIntegral o > maxLimitOffset limits) $
         S.raise . UserError $
         "offset exceeded: " <> show o <> " > " <> show (maxLimitOffset limits)
     return res
@@ -905,9 +849,9 @@ parseStart (Just s) =
         StartParamHeight {startParamHeight = h} -> start_height h
         StartParamTime {startParamTime = q}     -> start_time q
   where
-    start_height h = return $ AtBlock h
+    start_height h = return $ AtBlock $ fromIntegral h
     start_block h = do
-        b <- MaybeT $ getBlock (BlockHash h)
+        b <- MaybeT $ getBlock (H.BlockHash h)
         return $ AtBlock (blockDataHeight b)
     start_tx h = do
         _ <- MaybeT $ getTxData (TxHash h)
@@ -917,14 +861,28 @@ parseStart (Just s) =
         let g = blockDataHeight b
         return $ AtBlock g
 
-parseLimitsParam :: Monad m => Bool -> WebT m LimitsParam
-parseLimitsParam full =
-    LimitsParam <$> parseLimit full <*> parseOffset <*> paramOptional
+parseLimits :: Monad m => WebT m LimitsParam
+parseLimits = LimitsParam <$> paramOptional <*> parseOffset <*> paramOptional
 
 paramToLimits ::
-       (MonadUnliftIO m, MonadLoggerIO m) => LimitsParam -> WebT m Limits
-paramToLimits (LimitsParam (LimitParam l) (OffsetParam o) startM) =
-    Limits l o <$> parseStart startM
+       (MonadUnliftIO m, MonadLoggerIO m)
+    => Bool
+    -> LimitsParam
+    -> WebT m Limits
+paramToLimits full (LimitsParam limitM o startM) = do
+    wl <- lift $ asks webMaxLimits
+    Limits (validateLimit wl full limitM) (fromIntegral o) <$> parseStart startM
+
+validateLimit :: WebLimits -> Bool -> Maybe LimitParam -> Word32
+validateLimit wl full limitM =
+    f m $ maybe d (fromIntegral . getLimitParam) limitM
+  where
+    m | full && maxLimitFull wl > 0 = maxLimitFull wl
+      | otherwise = maxLimitCount wl
+    d = maxLimitDefault wl
+    f a 0 = a
+    f 0 b = b
+    f a b = min a b
 
 {-------------}
 {- Utilities -}

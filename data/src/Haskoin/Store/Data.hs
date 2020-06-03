@@ -1240,6 +1240,12 @@ newtype RawResultList a =
         }
     deriving (Show, Eq, Generic, Serialize, NFData)
 
+instance Semigroup (RawResultList a) where
+    (RawResultList a) <> (RawResultList b) = RawResultList $ a <> b
+
+instance Monoid (RawResultList a) where
+    mempty = RawResultList mempty
+
 instance S.Serialize a => ToJSON (RawResultList a) where
     toJSON (RawResultList xs) =
         toJSON $ encodeHex . S.encode <$> xs
