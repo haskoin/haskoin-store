@@ -243,9 +243,8 @@ handlePaths = do
     -- Network
     path (GetPeers & return) scottyPeers (const toEncoding)
     path (GetHealth & return) scottyHealth (const toEncoding)
-    path (GetDBStats & return) scottyDbStats (const toEncoding)
-    -- Events
     S.get "/events" scottyEvents
+    S.get "/dbstats" scottyDbStats
 
 path ::
        (ApiResource a b, MonadIO m)
@@ -766,11 +765,12 @@ healthCheck net mgr ch tos = do
     chain_best = timeout 10000000 $ chainGetBest ch
     compute_delta a b = if b > a then b - a else 0
 
-scottyDbStats :: MonadLoggerIO m => GetDBStats -> WebT m (GenericResult String)
-scottyDbStats _ = do
+scottyDbStats :: MonadLoggerIO m => WebT m ()
+scottyDbStats = do
+    setHeaders
     db <- lift $ asks (databaseHandle . storeDB . webStore)
     statsM <- lift (getProperty db Stats)
-    return $ GenericResult $ maybe "Could not get stats" cs statsM
+    S.text $ maybe "Could not get stats" cs statsM
 
 {---------------------}
 {- Parameter Parsing -}

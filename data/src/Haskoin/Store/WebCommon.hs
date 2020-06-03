@@ -92,7 +92,6 @@ data GetXPubBalances = GetXPubBalances XPubKey Store.DeriveType NoCache
 data GetXPubUnspent = GetXPubUnspent XPubKey Store.DeriveType LimitsParam NoCache
 data GetXPubEvict = GetXPubEvict XPubKey Store.DeriveType
 -- Network
-data GetDBStats = GetDBStats
 data GetPeers = GetPeers
 data GetHealth = GetHealth
 
@@ -290,9 +289,6 @@ instance ApiResource GetPeers [Store.PeerInformation] where
 instance ApiResource GetHealth Store.HealthCheck where
     resourcePath _ _ = "/health"
 
-instance ApiResource GetDBStats (Store.GenericResult String) where
-    resourcePath _ _ = "/dbstats"
-    
 {- Helpers -}
 
 (<:>) :: Text -> [Text] -> Text
