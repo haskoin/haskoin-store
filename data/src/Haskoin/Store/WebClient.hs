@@ -38,7 +38,7 @@ import           Numeric.Natural           (Natural)
 --
 -- @
 -- ApiConfig
--- { configNetwork = btc
+-- { configNetwork = bch
 -- , configHost = "https://api.haskoin.com/"
 -- }
 -- @
@@ -51,7 +51,7 @@ data ApiConfig = ApiConfig
 
 instance Default ApiConfig where
     def = ApiConfig
-          { configNetwork = btc
+          { configNetwork = bch
           , configHost = "https://api.haskoin.com/"
           }
 

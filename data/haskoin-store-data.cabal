@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 13b1f21fe21a6efb5e7a0d18c80e4c93db3917a2520b8ce6e96b22a979ee858d
+-- hash: 0069fd56df3cfb925cd43362fd1009492226137044de2f7014a53fc17b4d88dd
 
 name:           haskoin-store-data
 version:        0.30.3
@@ -57,6 +57,7 @@ test-suite haskoin-store-test
   main-is: Spec.hs
   other-modules:
       Haskoin.Store.DataSpec
+      Haskoin.Store.WebCommonSpec
       Haskoin.Store.Data
       Haskoin.Store.WebClient
       Haskoin.Store.WebCommon

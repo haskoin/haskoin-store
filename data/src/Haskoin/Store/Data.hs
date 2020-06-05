@@ -87,14 +87,12 @@ import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
                                           Value (..), object, pairs, (.!=),
                                           (.:), (.:?), (.=))
 import qualified Data.Aeson              as A
-import           Data.Aeson.Encoding     (encodingToLazyByteString, list, pair,
-                                          pairs, unsafeToEncoding)
-import           Data.Aeson.Encoding     (list, null_, pair, text)
+import           Data.Aeson.Encoding     (list, null_, pair, text,
+                                          unsafeToEncoding)
 import           Data.Aeson.Types        (Parser)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
-import           Data.ByteString.Builder (char7, lazyByteString,
-                                          lazyByteStringHex)
+import           Data.ByteString.Builder (char7, lazyByteStringHex)
 import           Data.ByteString.Short   (ShortByteString)
 import qualified Data.ByteString.Short   as BSS
 import           Data.Default            (Default (..))
@@ -296,7 +294,7 @@ nullBalance _ = False
 
 balanceToJSON :: Network -> Balance -> Value
 balanceToJSON net b =
-        object $
+        object
         [ "address" .= addrToJSON net (balanceAddress b)
         , "confirmed" .= balanceAmount b
         , "unconfirmed" .= balanceZero b
@@ -579,7 +577,7 @@ storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
         <> "sequence" .= sq
         <> "pkscript" `pair` text (encodeHex ps)
         <> "value" .= val
-        <> "address" `pair` (maybe null_ (addrToEncoding net) a)
+        <> "address" `pair` maybe null_ (addrToEncoding net) a
         <> (if getSegWit net
            then "witness" .= fmap (map encodeHex) wit
            else mempty)

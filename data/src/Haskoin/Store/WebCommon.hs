@@ -366,11 +366,14 @@ data StartParam = StartParamHash
 instance Param StartParam where
     proxyLabel = const "height"
     encodeParam _ p =
-        return $
         case p of
-            StartParamHash h   -> [txHashToHex (TxHash h)]
-            StartParamHeight h -> [cs $ show h]
-            StartParamTime t   -> [cs $ show t]
+            StartParamHash h -> return [txHashToHex (TxHash h)]
+            StartParamHeight h -> do
+                guard $ h <= 1230768000
+                return [cs $ show h]
+            StartParamTime t -> do
+                guard $ t > 1230768000
+                return [cs $ show t]
     parseParam _ [s] = parseHash <|> parseHeight <|> parseUnix
       where
         parseHash = do
@@ -442,7 +445,7 @@ instance Param HeightsParam where
 
 newtype TimeParam = TimeParam
     { getTimeParam :: Store.UnixTime
-    } deriving (Eq, Show, Read)
+    } deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
 instance Param TimeParam where
     proxyLabel = const "time"
