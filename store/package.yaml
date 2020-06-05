@@ -33,7 +33,7 @@ dependencies:
   haskoin-store-data: *version
   monad-logger: ">= 0.3.32"
   mtl: ">= 2.2.2"
-  haskoin-core: ">= 0.13.3"
+  haskoin-core: ">= 0.13.6"
   haskoin-node: ">= 0.13.0"
   nqe: ">= 0.6.1"
   random: ">= 1.1"
