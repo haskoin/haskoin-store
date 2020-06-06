@@ -21,8 +21,9 @@ import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
 import qualified Data.IntMap.Strict      as I
-import           Data.List               (nub, sort)
+import           Data.List               (nub, sortOn)
 import           Data.Maybe              (isNothing)
+import           Data.Ord                (Down (Down))
 import           Data.Serialize          (encode)
 import           Data.String             (fromString)
 import           Data.String.Conversions (cs)
@@ -45,8 +46,7 @@ import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           nullBalance)
 import           UnliftIO                (Exception)
 
-data ImportException
-    = PrevBlockNotBest
+data ImportException = PrevBlockNotBest
     | Orphan
     | UnexpectedCoinbase
     | BestBlockUnknown
@@ -195,10 +195,8 @@ importBlock b n = do
     bs <- getBlocksAtHeight (nodeHeight n)
     setBlocksAtHeight (nub (headerHash (nodeHeader n) : bs)) (nodeHeight n)
     setBest (headerHash (nodeHeader n))
-    ths <-
-        nub' . concat <$>
+    nub' . concat <$>
         mapM (uncurry (import_or_confirm mp)) (sortTxs (blockTxns b))
-    return ths
   where
     bths = map txHash (blockTxns b)
     import_or_confirm mp x tx =
@@ -322,7 +320,7 @@ importTx br tt tx = do
                                 throwError DoubleSpend
                             Just u -> return (u, ths)
     th = txHash tx
-    iscb = all (== nullOutPoint) (map prevOutput (txIn tx))
+    iscb = all ((== nullOutPoint) . prevOutput) (txIn tx)
     mkprv u = Prev (B.Short.fromShort (unspentScript u)) (unspentAmount u)
 
 confirmTx ::
@@ -407,7 +405,7 @@ deleteFromMempool th = do
 insertIntoMempool :: (Monad m, StoreRead m, StoreWrite m) => TxHash -> UnixTime -> m ()
 insertIntoMempool th unixtime = do
     mp <- getMempool
-    setMempool . reverse . sort $
+    setMempool . sortOn Down $
         TxRef {txRefBlock = MemRef unixtime, txRefHash = th} : mp
 
 deleteTx ::
@@ -420,7 +418,7 @@ deleteTx ::
     -> Bool -- ^ do RBF check before deleting transaction
     -> TxHash
     -> m [TxHash] -- ^ deleted transactions
-deleteTx memonly rbfcheck txhash = do
+deleteTx memonly rbfcheck txhash =
     getTxData txhash >>= \case
         Nothing -> do
             $(logDebugS) "BlockStore" $
@@ -480,7 +478,7 @@ isRBF br tx
                 else return False
   where
     go
-        | all (== nullOutPoint) (map prevOutput (txIn tx)) = return False
+        | all ((== nullOutPoint) . prevOutput) (txIn tx) = return False
         | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) = return True
         | otherwise =
             let hs = nub' $ map (outPointHash . prevOutput) (txIn tx)

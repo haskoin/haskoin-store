@@ -33,7 +33,9 @@ import           Numeric.Natural           (Natural)
 import           Text.Read                 (readMaybe)
 import qualified Web.Scotty.Trans          as Scotty
 
-{- API Resources -}
+-------------------
+-- API Resources --
+-------------------
 
 class S.Serialize b => ApiResource a b | a -> b where
     resourceMethod :: Proxy a -> StdMethod
@@ -50,7 +52,9 @@ data PostBox = forall s . S.Serialize s => PostBox s
 data ParamBox = forall p . (Eq p, Param p) => ParamBox p
 data ProxyBox = forall p . Param p => ProxyBox (Proxy p)
 
-{- Resource Paths -}
+--------------------
+-- Resource Paths --
+--------------------
 
 -- Blocks
 data GetBlock = GetBlock BlockHash NoTx
@@ -95,7 +99,9 @@ data GetXPubEvict = GetXPubEvict XPubKey Store.DeriveType
 data GetPeers = GetPeers
 data GetHealth = GetHealth
 
-{- Blocks -}
+------------
+-- Blocks --
+------------
 
 instance ApiResource GetBlock Store.BlockData where
     resourcePath _ = ("/block/" <:>)
@@ -146,7 +152,9 @@ instance ApiResource GetBlockTimeRaw (Store.RawResult Block) where
     queryParams (GetBlockTimeRaw u) = ([ParamBox u], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy TimeParam)]
 
-{- Transactions -}
+------------------
+-- Transactions --
+------------------
 
 instance ApiResource GetTx Store.Transaction where
     resourcePath _ = ("/transaction/" <:>)
@@ -196,7 +204,9 @@ instance ApiResource GetMempool [TxHash] where
 instance ApiResource GetEvents [Store.Event] where
     resourcePath _ _ = "/events"
 
-{- Address -}
+-------------
+-- Address --
+-------------
 
 instance ApiResource GetAddrTxs [Store.TxRef] where
     resourcePath _ = "/address/" <+> "/transactions"
@@ -239,8 +249,10 @@ instance ApiResource GetAddrsUnspent [Store.Unspent] where
     resourcePath _ _ = "/address/unspent"
     queryParams (GetAddrsUnspent as (LimitsParam l o sM)) =
         ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
-    
-{- XPubs -}
+
+-----------
+-- XPubs --
+-----------
 
 instance ApiResource GetXPub Store.XPubSummary where
     resourcePath _ = ("/xpub/" <:>)
@@ -280,8 +292,10 @@ instance ApiResource GetXPubEvict (Store.GenericResult Bool) where
     resourcePath _ = "/xpub/" <+> "/evict"
     queryParams (GetXPubEvict p d) = ([ParamBox p], noDefBox d)
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
-    
-{- Network -}
+
+-------------
+-- Network --
+-------------
 
 instance ApiResource GetPeers [Store.PeerInformation] where
     resourcePath _ _ = "/peers"
@@ -289,7 +303,9 @@ instance ApiResource GetPeers [Store.PeerInformation] where
 instance ApiResource GetHealth Store.HealthCheck where
     resourcePath _ _ = "/health"
 
-{- Helpers -}
+-------------
+-- Helpers --
+-------------
 
 (<:>) :: Text -> [Text] -> Text
 (<:>) = (<+> "")
@@ -334,7 +350,9 @@ capturePath proxy =
 paramLabel :: Param p => p -> Text
 paramLabel = proxyLabel . asProxy
 
-{- Options -}
+-------------
+-- Options --
+-------------
 
 class Param a where
     proxyLabel :: Proxy a -> Text

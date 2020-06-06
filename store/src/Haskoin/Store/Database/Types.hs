@@ -66,18 +66,15 @@ instance Serialize AddrTxKey
     put AddrTxKey { addrTxKeyA = a
                   , addrTxKeyT = TxRef {txRefBlock = b, txRefHash = t}
                   } = do
-        putWord8 0x05
-        put a
-        put b
+        put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b}
         put t
     -- 0x05 · Address
     put AddrTxKeyA {addrTxKeyA = a} = do
-        putWord8 0x05
+        put AddrTxKeyS
         put a
     -- 0x05 · Address · BlockRef
     put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b} = do
-        putWord8 0x05
-        put a
+        put AddrTxKeyA {addrTxKeyA = a}
         put b
     -- 0x05
     put AddrTxKeyS = putWord8 0x05
@@ -113,18 +110,15 @@ instance Serialize AddrOutKey
     -- 0x06 · StoreAddr · BlockRef · OutPoint
                                               where
     put AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p} = do
-        putWord8 0x06
-        put a
-        put b
+        put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b}
         put p
     -- 0x06 · StoreAddr · BlockRef
     put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b} = do
-        putWord8 0x06
-        put a
+        put AddrOutKeyA {addrOutKeyA = a}
         put b
     -- 0x06 · StoreAddr
     put AddrOutKeyA {addrOutKeyA = a} = do
-        putWord8 0x06
+        put AddrOutKeyS
         put a
     -- 0x06
     put AddrOutKeyS = putWord8 0x06
@@ -225,8 +219,7 @@ data MemKey =
 
 instance Serialize MemKey where
     -- 0x07
-    put MemKey = do
-        putWord8 0x07
+    put MemKey = putWord8 0x07
     get = do
         guard . (== 0x07) =<< getWord8
         return MemKey

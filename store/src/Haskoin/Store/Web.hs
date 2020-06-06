@@ -160,9 +160,9 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
 
-{-----------------}
-{- Path Handlers -}
-{-----------------}
+-------------------
+-- Path Handlers --
+-------------------
 
 runWeb :: (MonadUnliftIO m , MonadLoggerIO m) => WebConfig -> m ()
 runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
@@ -284,7 +284,7 @@ setupContentType = maybe goJson setType =<< S.header "accept"
         S.setHeader "Content-Type" "application/json"
         return False
 
-{- GET Block / GET Blocks -}
+-- GET Block / GET Blocks --
 
 scottyBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlock -> WebT m BlockData
@@ -300,7 +300,7 @@ pruneTx :: Bool -> BlockData -> BlockData
 pruneTx False b = b
 pruneTx True b  = b {blockDataTxs = take 1 (blockDataTxs b)}
 
-{- GET BlockRaw -}
+-- GET BlockRaw --
 
 scottyBlockRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -326,7 +326,7 @@ refuseLargeBlock BlockData {blockDataTxs = txs} = do
     WebLimits {maxLimitFull = f} <- lift $ asks webMaxLimits
     when (length txs > fromIntegral f) $ S.raise BlockTooLarge
 
-{- GET BlockBest / BlockBestRaw -}
+-- GET BlockBest / BlockBestRaw --
 
 scottyBlockBest ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockBest -> WebT m BlockData
@@ -341,7 +341,7 @@ scottyBlockBestRaw ::
 scottyBlockBestRaw _ =
     RawResult <$> (maybe (S.raise ThingNotFound) getRawBlock =<< getBestBlock)
 
-{- GET BlockLatest -}
+-- GET BlockLatest --
 
 scottyBlockLatest ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -358,7 +358,7 @@ scottyBlockLatest (GetBlockLatest (NoTx noTx)) =
             let prev = H.prevBlock (blockDataHeader b)
             go (pruneTx noTx b : acc) =<< getBlock prev
 
-{- GET BlockHeight / BlockHeights / BlockHeightRaw -}
+-- GET BlockHeight / BlockHeights / BlockHeightRaw --
 
 scottyBlockHeight ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockHeight -> WebT m [BlockData]
@@ -380,7 +380,7 @@ scottyBlockHeightRaw ::
 scottyBlockHeightRaw (GetBlockHeightRaw h) =
     RawResultList <$> (mapM getRawBlock =<< getBlocksAtHeight (fromIntegral h))
 
-{- GET BlockTime / BlockTimeRaw -}
+-- GET BlockTime / BlockTimeRaw --
 
 scottyBlockTime ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockTime -> WebT m BlockData
@@ -396,7 +396,7 @@ scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) = do
     refuseLargeBlock b
     RawResult <$> toRawBlock b
 
-{- GET Transactions -}
+-- GET Transactions --
 
 scottyTx :: (MonadUnliftIO m, MonadLoggerIO m) => GetTx -> WebT m Transaction
 scottyTx (GetTx txid) =
@@ -434,7 +434,7 @@ scottyTxsBlockRaw ::
 scottyTxsBlockRaw (GetTxsBlockRaw h) =
     RawResultList . fmap transactionData <$> scottyTxsBlock (GetTxsBlock h)
 
-{- GET TransactionAfterHeight -}
+-- GET TransactionAfterHeight --
 
 scottyTxAfter ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -478,7 +478,7 @@ cbAfterHeight height begin =
             Just True -> return $ Just True -- Bubble up this result
             _ -> b
 
-{- POST Transaction -}
+-- POST Transaction --
 
 scottyPostTx :: (MonadUnliftIO m, MonadLoggerIO m) => PostTx -> WebT m TxId
 scottyPostTx (PostTx tx) = do
@@ -533,7 +533,7 @@ publishTx net pub mgr tx =
                 | h' == txHash tx -> return $ Right ()
             _ -> g p s
 
-{- GET Mempool / Events -}
+-- GET Mempool / Events --
 
 scottyMempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetMempool -> WebT m [TxHash]
@@ -568,7 +568,7 @@ receiveEvent sub = do
             StoreBlockReverted b -> Just (EventBlock b)
             _                    -> Nothing
 
-{- GET Address Transactions -}
+-- GET Address Transactions --
 
 scottyAddrTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrTxs -> WebT m [TxRef]
@@ -612,7 +612,7 @@ scottyAddrsUnspent ::
 scottyAddrsUnspent (GetAddrsUnspent addrs pLimits) =
     getAddressesUnspents addrs =<< paramToLimits False pLimits
 
-{- GET XPubs -}
+-- GET XPubs --
 
 scottyXPub ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetXPub -> WebT m XPubSummary
@@ -659,7 +659,7 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
     lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
     return $ GenericResult True
 
-{- GET Network Information -}
+-- GET Network Information --
 
 scottyPeers :: MonadLoggerIO m => GetPeers -> WebT m [PeerInformation]
 scottyPeers _ = getPeersInformation =<< lift (asks (storeManager . webStore))
@@ -772,9 +772,9 @@ scottyDbStats = do
     statsM <- lift (getProperty db Stats)
     S.text $ maybe "Could not get stats" cs statsM
 
-{---------------------}
-{- Parameter Parsing -}
-{---------------------}
+-----------------------
+-- Parameter Parsing --
+-----------------------
 
 -- | Returns @Nothing@ if the parameter is not supplied. Raises an exception on
 -- parse failure.
@@ -884,9 +884,9 @@ validateLimit wl full limitM =
     f 0 b = b
     f a b = min a b
 
-{-------------}
-{- Utilities -}
-{-------------}
+---------------
+-- Utilities --
+---------------
 
 runInWebReader ::
        MonadIO m

@@ -175,7 +175,9 @@ instance Batchable GetAddrsUnspent [Store.Unspent] where
     resourceBatch i (GetAddrsUnspent as l) =
         (`GetAddrsUnspent` l) <$> chunksOf i as
 
-{- API Internal -}
+------------------
+-- API Internal --
+------------------
 
 toOptions ::
        ApiResource a b => Network -> a -> Either String (Endo HTTP.Options)
@@ -228,7 +230,9 @@ checkStatus _ r
     message = r ^. HTTP.responseStatus . HTTP.statusMessage
     status = mkStatus code message
 
-{- Utilities -}
+---------------
+-- Utilities --
+---------------
 
 chunksOf :: Natural -> [a] -> [[a]]
 chunksOf n xs
