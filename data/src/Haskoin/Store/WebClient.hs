@@ -68,7 +68,6 @@ import           Control.Exception
 import           Control.Lens              ((.~), (?~), (^.))
 import           Control.Monad.Except
 import           Data.Default              (Default, def)
-import           Data.Maybe                (fromMaybe)
 import           Data.Monoid               (Endo (..), appEndo)
 import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
@@ -235,14 +234,13 @@ checkStatus req res
         throwIO $
             case e of
                 Right except -> except :: Store.Except
-                _ -> Store.StringError $ show status
+                _ -> Store.StringError err
   where
     code = res ^. HTTP.responseStatus . HTTP.statusCode
     message = res ^. HTTP.responseStatus . HTTP.statusMessage
     status = mkStatus code message
-    removeHost x = fromMaybe x $ cs (host req) `Text.stripPrefix` x
-    reqPath = removeHost $ cs $ path req
-    isHealthPath = "/health" `Text.isPrefixOf` reqPath
+    err = unwords ["Code:", show code, "Message:", cs message]
+    isHealthPath = "/health" `Text.isInfixOf` cs (path req)
 
 ---------------
 -- Utilities --
