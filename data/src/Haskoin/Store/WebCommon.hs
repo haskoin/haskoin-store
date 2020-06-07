@@ -2,11 +2,9 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE FunctionalDependencies     #-}
-{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE Strict                     #-}
 module Haskoin.Store.WebCommon
 
 where
@@ -48,25 +46,25 @@ class S.Serialize b => ApiResource a b | a -> b where
     resourceBody :: a -> Maybe PostBox
     resourceBody = const Nothing
 
-data PostBox = forall s . S.Serialize s => PostBox s
-data ParamBox = forall p . (Eq p, Param p) => ParamBox p
-data ProxyBox = forall p . Param p => ProxyBox (Proxy p)
+data PostBox = forall s . S.Serialize s => PostBox !s
+data ParamBox = forall p . (Eq p, Param p) => ParamBox !p
+data ProxyBox = forall p . Param p => ProxyBox !(Proxy p)
 
 --------------------
 -- Resource Paths --
 --------------------
 
 -- Blocks
-data GetBlock = GetBlock BlockHash NoTx
-data GetBlocks = GetBlocks [BlockHash] NoTx
+data GetBlock = GetBlock !BlockHash !NoTx
+data GetBlocks = GetBlocks ![BlockHash] !NoTx
 newtype GetBlockRaw = GetBlockRaw BlockHash
 newtype GetBlockBest = GetBlockBest NoTx
 data GetBlockBestRaw = GetBlockBestRaw
 newtype GetBlockLatest = GetBlockLatest NoTx
-data GetBlockHeight = GetBlockHeight HeightParam NoTx
-data GetBlockHeights = GetBlockHeights HeightsParam NoTx
+data GetBlockHeight = GetBlockHeight !HeightParam !NoTx
+data GetBlockHeights = GetBlockHeights !HeightsParam !NoTx
 newtype GetBlockHeightRaw = GetBlockHeightRaw HeightParam
-data GetBlockTime = GetBlockTime TimeParam NoTx
+data GetBlockTime = GetBlockTime !TimeParam !NoTx
 newtype GetBlockTimeRaw = GetBlockTimeRaw TimeParam
 -- Transactions
 newtype GetTx = GetTx TxHash
@@ -75,26 +73,26 @@ newtype GetTxRaw = GetTxRaw TxHash
 newtype GetTxsRaw = GetTxsRaw [TxHash]
 newtype GetTxsBlock = GetTxsBlock BlockHash
 newtype GetTxsBlockRaw = GetTxsBlockRaw BlockHash
-data GetTxAfter = GetTxAfter TxHash HeightParam
+data GetTxAfter = GetTxAfter !TxHash !HeightParam
 newtype PostTx = PostTx Tx
-data GetMempool = GetMempool (Maybe LimitParam) OffsetParam
+data GetMempool = GetMempool !(Maybe LimitParam) !OffsetParam
 data GetEvents = GetEvents
 -- Address
-data GetAddrTxs = GetAddrTxs Address LimitsParam
-data GetAddrsTxs = GetAddrsTxs [Address] LimitsParam
-data GetAddrTxsFull = GetAddrTxsFull Address LimitsParam
-data GetAddrsTxsFull = GetAddrsTxsFull [Address] LimitsParam
+data GetAddrTxs = GetAddrTxs !Address !LimitsParam
+data GetAddrsTxs = GetAddrsTxs ![Address] !LimitsParam
+data GetAddrTxsFull = GetAddrTxsFull !Address !LimitsParam
+data GetAddrsTxsFull = GetAddrsTxsFull ![Address] !LimitsParam
 newtype GetAddrBalance = GetAddrBalance Address
 newtype GetAddrsBalance = GetAddrsBalance [Address]
-data GetAddrUnspent = GetAddrUnspent Address LimitsParam
-data GetAddrsUnspent = GetAddrsUnspent [Address] LimitsParam
+data GetAddrUnspent = GetAddrUnspent !Address !LimitsParam
+data GetAddrsUnspent = GetAddrsUnspent ![Address] !LimitsParam
 -- XPubs
-data GetXPub = GetXPub XPubKey Store.DeriveType NoCache
-data GetXPubTxs = GetXPubTxs XPubKey Store.DeriveType LimitsParam NoCache
-data GetXPubTxsFull = GetXPubTxsFull XPubKey Store.DeriveType LimitsParam NoCache
-data GetXPubBalances = GetXPubBalances XPubKey Store.DeriveType NoCache
-data GetXPubUnspent = GetXPubUnspent XPubKey Store.DeriveType LimitsParam NoCache
-data GetXPubEvict = GetXPubEvict XPubKey Store.DeriveType
+data GetXPub = GetXPub !XPubKey !Store.DeriveType !NoCache
+data GetXPubTxs = GetXPubTxs !XPubKey !Store.DeriveType !LimitsParam !NoCache
+data GetXPubTxsFull = GetXPubTxsFull !XPubKey !Store.DeriveType !LimitsParam !NoCache
+data GetXPubBalances = GetXPubBalances !XPubKey !Store.DeriveType !NoCache
+data GetXPubUnspent = GetXPubUnspent !XPubKey !Store.DeriveType !LimitsParam !NoCache
+data GetXPubEvict = GetXPubEvict !XPubKey !Store.DeriveType
 -- Network
 data GetPeers = GetPeers
 data GetHealth = GetHealth

@@ -67,6 +67,7 @@ serialVals =
     , SerialBox (arbitrary :: Gen (GenericResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
+    , SerialBox (arbitrary :: Gen Except)
     ]
 
 jsonVals :: [JsonBox]
@@ -82,6 +83,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen (GenericResult XPubSummary))
     , JsonBox (arbitrary :: Gen (RawResult BlockData))
     , JsonBox (arbitrary :: Gen (RawResultList BlockData))
+    , JsonBox (arbitrary :: Gen Except)
     ]
 
 netVals :: [NetBox]
@@ -389,4 +391,15 @@ instance Arbitrary Event where
         oneof
         [ EventBlock <$> arbitraryBlockHash
         , EventTx <$> arbitraryTxHash
+        ]
+
+instance Arbitrary Except where
+    arbitrary =
+        oneof
+        [ return ThingNotFound
+        , return ServerError    
+        , return BadRequest
+        , UserError <$> arbitrary
+        , StringError <$> arbitrary
+        , return BlockTooLarge
         ]

@@ -3,7 +3,6 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE Strict                #-}
 module Haskoin.Store.WebClient
 ( ApiConfig(..)
 , apiCall
@@ -65,10 +64,11 @@ module Haskoin.Store.WebClient
 where
 
 import           Control.Arrow             (second)
+import           Control.Exception
 import           Control.Lens              ((.~), (?~), (^.))
-import           Control.Monad.Except      (MonadError, throwError)
-import           Control.Monad.Trans       (MonadIO, liftIO)
+import           Control.Monad.Except
 import           Data.Default              (Default, def)
+import           Data.Maybe                (fromMaybe)
 import           Data.Monoid               (Endo (..), appEndo)
 import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
@@ -79,6 +79,7 @@ import qualified Haskoin.Store.Data        as Store
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
 import           Haskoin.Util
+import           Network.HTTP.Client       (Request (..))
 import           Network.HTTP.Types        (StdMethod (..))
 import           Network.HTTP.Types.Status
 import qualified Network.Wreq              as HTTP
@@ -96,8 +97,8 @@ import           Numeric.Natural           (Natural)
 -- @
 --
 data ApiConfig = ApiConfig
-    { configNetwork :: Network
-    , configHost    :: String
+    { configNetwork :: !Network
+    , configHost    :: !String
     }
     deriving (Eq, Show)
 
@@ -118,27 +119,28 @@ instance Default ApiConfig where
 -- > apiCall def $ GetAddrsUnspent addrs def{ paramLimit = Just 10 }
 --
 apiCall ::
-       (ApiResource a b, MonadIO m, MonadError String m)
+       (ApiResource a b, MonadIO m, MonadError Store.Except m)
     => ApiConfig
     -> a
     -> m b
-apiCall (ApiConfig net host) res = do
+apiCall (ApiConfig net apiHost) res = do
     args <- liftEither $ toOptions net res
-    let url = host <> getNetworkName net <> cs (queryPath net res)
+    let url = apiHost <> getNetworkName net <> cs (queryPath net res)
     case resourceMethod $ asProxy res of
-        GET -> getBinary args url
+        GET -> liftEither =<< liftIO (getBinary args url)
         POST ->
             case resourceBody res of
-                Just (PostBox val) -> postBinary args url val
-                _                  -> throwError "Could not post resource"
-        _ -> throwError "Unsupported HTTP method"
+                Just (PostBox val) ->
+                    liftEither =<< liftIO (postBinary args url val)
+                _ -> throwError $ Store.StringError "Could not post resource"
+        _ -> throwError $ Store.StringError "Unsupported HTTP method"
 
 -- | Batch commands that have a large list of arguments:
 --
 -- > apiBatch 20 def (GetAddrsTxs addrs def)
 --
 apiBatch ::
-       (Batchable a b, MonadIO m, MonadError String m)
+       (Batchable a b, MonadIO m, MonadError Store.Except m)
     => Natural
     -> ApiConfig
     -> a
@@ -180,38 +182,42 @@ instance Batchable GetAddrsUnspent [Store.Unspent] where
 ------------------
 
 toOptions ::
-       ApiResource a b => Network -> a -> Either String (Endo HTTP.Options)
+       ApiResource a b => Network -> a -> Either Store.Except (Endo HTTP.Options)
 toOptions net res =
     mconcat <$> mapM f (snd $ queryParams res)
   where
     f (ParamBox p) = toOption net p
 
-toOption :: Param a => Network -> a -> Either String (Endo HTTP.Options)
+toOption :: Param a => Network -> a -> Either Store.Except (Endo HTTP.Options)
 toOption net a = do
-    res <- maybeToEither "Invalid Param" $ encodeParam net a
+    res <- maybeToEither (Store.UserError "Invalid Param") $ encodeParam net a
     return $ applyOpt (paramLabel a) res
 
 applyOpt :: Text -> [Text] -> Endo HTTP.Options
 applyOpt p t = Endo $ HTTP.param p .~ [Text.intercalate "," t]
 
 getBinary ::
-       (MonadIO m, MonadError String m, S.Serialize a)
+       S.Serialize a
     => Endo HTTP.Options
     -> String
-    -> m a
+    -> IO (Either Store.Except a)
 getBinary opts url = do
-    res <- liftIO $ HTTP.getWith (binaryOpts opts) url
-    liftEither $ S.decodeLazy $ res ^. HTTP.responseBody
+    resE <- try $ HTTP.getWith (binaryOpts opts) url
+    return $ do
+        res <- resE
+        toExcept $ S.decodeLazy $ res ^. HTTP.responseBody
 
 postBinary ::
-       (MonadIO m, MonadError String m, S.Serialize a, S.Serialize r)
+       (S.Serialize a, S.Serialize r)
     => Endo HTTP.Options
     -> String
     -> a
-    -> m r
+    -> IO (Either Store.Except r)
 postBinary opts url body = do
-    res <- liftIO $ HTTP.postWith (binaryOpts opts) url (S.encode body)
-    liftEither $ S.decodeLazy $ res ^. HTTP.responseBody
+    resE <- try $ HTTP.postWith (binaryOpts opts) url (S.encode body)
+    return $ do
+        res <- resE
+        toExcept $ S.decodeLazy $ res ^. HTTP.responseBody
 
 binaryOpts :: Endo HTTP.Options -> HTTP.Options
 binaryOpts opts =
@@ -220,19 +226,31 @@ binaryOpts opts =
     accept = Endo $ HTTP.header "Accept" .~ ["application/octet-stream"]
     stat   = Endo $ HTTP.checkResponse ?~ checkStatus
 
--- TODO: Capture this and return JSON error
 checkStatus :: ResponseChecker
-checkStatus _ r
+checkStatus req res
     | statusIsSuccessful status = return ()
-    | otherwise = error $ "HTTP Error " <> show code <> ": " <> cs message
+    | isHealthPath && code == 503 = return () -- Ignore health checks
+    | otherwise = do
+        e <- S.decode <$> res ^. HTTP.responseBody
+        throwIO $
+            case e of
+                Right except -> except :: Store.Except
+                _ -> Store.StringError $ show status
   where
-    code = r ^. HTTP.responseStatus . HTTP.statusCode
-    message = r ^. HTTP.responseStatus . HTTP.statusMessage
+    code = res ^. HTTP.responseStatus . HTTP.statusCode
+    message = res ^. HTTP.responseStatus . HTTP.statusMessage
     status = mkStatus code message
+    removeHost x = fromMaybe x $ cs (host req) `Text.stripPrefix` x
+    reqPath = removeHost $ cs $ path req
+    isHealthPath = "/health" `Text.isPrefixOf` reqPath
 
 ---------------
 -- Utilities --
 ---------------
+
+toExcept :: Either String a -> Either Store.Except a
+toExcept (Right a)  = Right a
+toExcept (Left err) = Left $ Store.UserError err
 
 chunksOf :: Natural -> [a] -> [[a]]
 chunksOf n xs

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2b8628a7fb583a99edccdf3ba7658a376a76a84ca77ae26498d3dd17902d3ca4
+-- hash: 92231f93e4acb93324f111af393c1b466aaa083e30abe6c66ec11495d0c8c8c1
 
 name:           haskoin-store-data
 version:        0.30.3
@@ -42,6 +42,7 @@ library
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
     , haskoin-core >=0.13.6
+    , http-client >=0.6.4.1
     , http-types >=0.12.3
     , lens >=4.18.1
     , mtl >=2.2.2
@@ -78,6 +79,7 @@ test-suite haskoin-store-test
     , hashable >=1.3.0.0
     , haskoin-core >=0.13.6
     , hspec >=2.7.1
+    , http-client >=0.6.4.1
     , http-types >=0.12.3
     , lens >=4.18.1
     , mtl >=2.2.2

@@ -99,7 +99,8 @@ import           Data.Foldable           (toList)
 import           Data.Hashable           (Hashable (..))
 import qualified Data.IntMap             as I
 import           Data.IntMap.Strict      (IntMap)
-import           Data.Maybe              (catMaybes, isJust, mapMaybe)
+import           Data.Maybe              (catMaybes, fromMaybe, isJust,
+                                          mapMaybe)
 import           Data.Serialize          (Get, Put, Serialize (..), getWord32be,
                                           getWord64be, getWord8, putWord32be,
                                           putWord64be, putWord8)
@@ -1298,15 +1299,7 @@ data Except
     | UserError !String
     | StringError !String
     | BlockTooLarge
-    deriving (Eq, Ord, Serialize, Generic, NFData)
-
-instance Show Except where
-    show ThingNotFound   = "not found"
-    show ServerError     = "you made me kill a unicorn"
-    show BadRequest      = "bad request"
-    show (UserError s)   = s
-    show (StringError _) = "you killed the dragon with your bare hands"
-    show BlockTooLarge   = "block too large"
+    deriving (Show, Eq, Ord, Serialize, Generic, NFData)
 
 instance Exception Except
 
@@ -1315,4 +1308,36 @@ instance ScottyError Except where
     showError = TL.pack . show
 
 instance ToJSON Except where
-    toJSON e = object ["error" .= TL.pack (show e)]
+    toJSON e =
+        object $
+        case e of
+            ThingNotFound ->
+                ["error" .= String "not-found"]
+            ServerError ->
+                ["error" .= String "server-error"]
+            BadRequest ->
+                ["error" .= String "bad-request"]
+            UserError msg ->
+                [ "error" .= String "user-error"
+                , "message" .= String (cs msg)
+                ]
+            StringError msg ->
+                [ "error" .= String "string-error"
+                , "message" .= String (cs msg)
+                ]
+            BlockTooLarge ->
+                ["error" .= String "block-too-large"]
+
+instance FromJSON Except where
+    parseJSON =
+        A.withObject "Except" $ \o -> do
+            ctr <- o .: "error"
+            msg <- fromMaybe "" <$> o .:? "message"
+            case ctr of
+                String "not-found"       -> return ThingNotFound
+                String "server-error"    -> return ServerError
+                String "bad-request"     -> return BadRequest
+                String "user-error"      -> return $ UserError msg
+                String "string-error"    -> return $ StringError msg
+                String "block-too-large" -> return BlockTooLarge
+                _                        -> mzero
