@@ -201,12 +201,12 @@ handlePaths = do
         scottyBlock
         blockDataToEncoding
         blockDataToJSON
-    path
+    pathCompact
         (GetBlocks <$> param <*> paramDef)
         scottyBlocks
         (list . blockDataToEncoding)
         (json_list blockDataToJSON)
-    path
+    pathCompact
         (GetBlockRaw <$> paramLazy)
         scottyBlockRaw
         (const toEncoding)
@@ -216,12 +216,12 @@ handlePaths = do
         scottyBlockBest
         blockDataToEncoding
         blockDataToJSON
-    path
+    pathCompact
         (GetBlockBestRaw & return)
         scottyBlockBestRaw
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetBlockLatest <$> paramDef)
         scottyBlockLatest
         (list . blockDataToEncoding)
@@ -231,12 +231,12 @@ handlePaths = do
         scottyBlockHeight
         (list . blockDataToEncoding)
         (json_list blockDataToJSON)
-    path
+    pathCompact
         (GetBlockHeights <$> param <*> paramDef)
         scottyBlockHeights
         (list . blockDataToEncoding)
         (json_list blockDataToJSON)
-    path
+    pathCompact
         (GetBlockHeightRaw <$> paramLazy)
         scottyBlockHeightRaw
         (const toEncoding)
@@ -246,7 +246,7 @@ handlePaths = do
         scottyBlockTime
         blockDataToEncoding
         blockDataToJSON
-    path
+    pathCompact
         (GetBlockTimeRaw <$> paramLazy)
         scottyBlockTimeRaw
         (const toEncoding)
@@ -257,37 +257,37 @@ handlePaths = do
         scottyTx
         transactionToEncoding
         transactionToJSON
-    path
+    pathCompact
         (GetTxs <$> param)
         scottyTxs
         (list . transactionToEncoding)
         (json_list transactionToJSON)
-    path
+    pathCompact
         (GetTxRaw <$> paramLazy)
         scottyTxRaw
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetTxsRaw <$> param)
         scottyTxsRaw
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetTxsBlock <$> paramLazy)
         scottyTxsBlock
         (list . transactionToEncoding)
         (json_list transactionToJSON)
-    path
+    pathCompact
         (GetTxsBlockRaw <$> paramLazy)
         scottyTxsBlockRaw
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetTxAfter <$> paramLazy <*> paramLazy)
         scottyTxAfter
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (PostTx <$> parseBody)
         scottyPostTx
         (const toEncoding)
@@ -303,17 +303,17 @@ handlePaths = do
         scottyAddrTxs
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetAddrsTxs <$> param <*> parseLimits)
         scottyAddrsTxs
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetAddrTxsFull <$> paramLazy <*> parseLimits)
         scottyAddrTxsFull
         (list . transactionToEncoding)
         (json_list transactionToJSON)
-    path
+    pathCompact
         (GetAddrsTxsFull <$> param <*> parseLimits)
         scottyAddrsTxsFull
         (list . transactionToEncoding)
@@ -323,7 +323,7 @@ handlePaths = do
         scottyAddrBalance
         balanceToEncoding
         balanceToJSON
-    pathPretty
+    pathCompact
         (GetAddrsBalance <$> param)
         scottyAddrsBalance
         (list . balanceToEncoding)
@@ -333,7 +333,7 @@ handlePaths = do
         scottyAddrUnspent
         (list . unspentToEncoding)
         (json_list unspentToJSON)
-    path
+    pathCompact
         (GetAddrsUnspent <$> param <*> parseLimits)
         scottyAddrsUnspent
         (list . unspentToEncoding)
@@ -349,7 +349,7 @@ handlePaths = do
         scottyXPubTxs
         (const toEncoding)
         (const toJSON)
-    path
+    pathCompact
         (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
         scottyXPubTxsFull
         (list . transactionToEncoding)
@@ -364,7 +364,7 @@ handlePaths = do
         scottyXPubUnspent
         (list . xPubUnspentToEncoding)
         (json_list xPubUnspentToJSON)
-    path
+    pathCompact
         (GetXPubEvict <$> paramLazy <*> paramDef)
         scottyXPubEvict
         (const toEncoding)
@@ -395,14 +395,14 @@ pathPretty ::
 pathPretty parser action encJson encValue =
     pathCommon parser action encJson encValue True
 
-path ::
+pathCompact ::
        (ApiResource a b, MonadIO m)
     => WebT m a
     -> (a -> WebT m b)
     -> (Network -> b -> Encoding)
     -> (Network -> b -> Value)
     -> S.ScottyT Except (ReaderT WebConfig m) ()
-path parser action encJson encValue =
+pathCompact parser action encJson encValue =
     pathCommon parser action encJson encValue False
 
 pathCommon ::
