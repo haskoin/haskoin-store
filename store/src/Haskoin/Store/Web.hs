@@ -21,7 +21,9 @@ import           Control.Monad.Reader          (ReaderT, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
-import           Data.Aeson                    (Encoding, ToJSON (..))
+import           Data.Aeson                    (Encoding, ToJSON (..), Value)
+import           Data.Aeson.Encode.Pretty      (Config (..), defConfig,
+                                                encodePretty')
 import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
 import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
@@ -114,6 +116,9 @@ data WebTimeouts = WebTimeouts
     }
     deriving (Eq, Show)
 
+data SerialAs = SerialAsBinary | SerialAsJSON | SerialAsPrettyJSON
+    deriving (Eq, Show)
+
 instance Default WebTimeouts where
     def = WebTimeouts {txTimeout = 300, blockTimeout = 7200}
 
@@ -176,7 +181,7 @@ runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
-    proto <- setupContentType
+    proto <- setupContentType False
     case e of
         ThingNotFound -> S.status status404
         BadRequest    -> S.status status400
@@ -184,105 +189,272 @@ defHandler e = do
         StringError _ -> S.status status400
         ServerError   -> S.status status500
         BlockTooLarge -> S.status status403
-    S.raw $ protoSerial proto toEncoding e
+    S.raw $ protoSerial proto toEncoding toJSON e
 
 handlePaths ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => S.ScottyT Except (ReaderT WebConfig m) ()
 handlePaths = do
     -- Block Paths
-    path (GetBlock <$> paramLazy <*> paramDef) scottyBlock blockDataToEncoding
-    path (GetBlocks <$> param <*> paramDef) scottyBlocks (list . blockDataToEncoding)
-    path (GetBlockRaw <$> paramLazy) scottyBlockRaw (const toEncoding)
-    path (GetBlockBest <$> paramDef) scottyBlockBest blockDataToEncoding
-    path (GetBlockBestRaw & return) scottyBlockBestRaw (const toEncoding)
-    path (GetBlockLatest <$> paramDef) scottyBlockLatest (list . blockDataToEncoding)
-    path (GetBlockHeight <$> paramLazy <*> paramDef)
-         scottyBlockHeight (list . blockDataToEncoding)
-    path (GetBlockHeights <$> param <*> paramDef)
-         scottyBlockHeights (list . blockDataToEncoding)
-    path (GetBlockHeightRaw <$> paramLazy) scottyBlockHeightRaw (const toEncoding)
-    path (GetBlockTime <$> paramLazy <*> paramDef) scottyBlockTime blockDataToEncoding
-    path (GetBlockTimeRaw <$> paramLazy) scottyBlockTimeRaw (const toEncoding)
+    pathPretty
+        (GetBlock <$> paramLazy <*> paramDef)
+        scottyBlock
+        blockDataToEncoding
+        blockDataToJSON
+    path
+        (GetBlocks <$> param <*> paramDef)
+        scottyBlocks
+        (list . blockDataToEncoding)
+        (json_list blockDataToJSON)
+    path
+        (GetBlockRaw <$> paramLazy)
+        scottyBlockRaw
+        (const toEncoding)
+        (const toJSON)
+    pathPretty
+        (GetBlockBest <$> paramDef)
+        scottyBlockBest
+        blockDataToEncoding
+        blockDataToJSON
+    path
+        (GetBlockBestRaw & return)
+        scottyBlockBestRaw
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetBlockLatest <$> paramDef)
+        scottyBlockLatest
+        (list . blockDataToEncoding)
+        (json_list blockDataToJSON)
+    pathPretty
+        (GetBlockHeight <$> paramLazy <*> paramDef)
+        scottyBlockHeight
+        (list . blockDataToEncoding)
+        (json_list blockDataToJSON)
+    path
+        (GetBlockHeights <$> param <*> paramDef)
+        scottyBlockHeights
+        (list . blockDataToEncoding)
+        (json_list blockDataToJSON)
+    path
+        (GetBlockHeightRaw <$> paramLazy)
+        scottyBlockHeightRaw
+        (const toEncoding)
+        (const toJSON)
+    pathPretty
+        (GetBlockTime <$> paramLazy <*> paramDef)
+        scottyBlockTime
+        blockDataToEncoding
+        blockDataToJSON
+    path
+        (GetBlockTimeRaw <$> paramLazy)
+        scottyBlockTimeRaw
+        (const toEncoding)
+        (const toJSON)
     -- Transaction Paths
-    path (GetTx <$> paramLazy) scottyTx transactionToEncoding
-    path (GetTxs <$> param) scottyTxs (list . transactionToEncoding)
-    path (GetTxRaw <$> paramLazy) scottyTxRaw (const toEncoding)
-    path (GetTxsRaw <$> param) scottyTxsRaw (const toEncoding)
-    path (GetTxsBlock <$> paramLazy) scottyTxsBlock (list . transactionToEncoding)
-    path (GetTxsBlockRaw <$> paramLazy) scottyTxsBlockRaw (const toEncoding)
-    path (GetTxAfter <$> paramLazy <*> paramLazy) scottyTxAfter (const toEncoding)
-    path (PostTx <$> parseBody) scottyPostTx (const toEncoding)
-    path (GetMempool <$> paramOptional <*> parseOffset) scottyMempool (const toEncoding)
+    pathPretty
+        (GetTx <$> paramLazy)
+        scottyTx
+        transactionToEncoding
+        transactionToJSON
+    path
+        (GetTxs <$> param)
+        scottyTxs
+        (list . transactionToEncoding)
+        (json_list transactionToJSON)
+    path
+        (GetTxRaw <$> paramLazy)
+        scottyTxRaw
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetTxsRaw <$> param)
+        scottyTxsRaw
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetTxsBlock <$> paramLazy)
+        scottyTxsBlock
+        (list . transactionToEncoding)
+        (json_list transactionToJSON)
+    path
+        (GetTxsBlockRaw <$> paramLazy)
+        scottyTxsBlockRaw
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetTxAfter <$> paramLazy <*> paramLazy)
+        scottyTxAfter
+        (const toEncoding)
+        (const toJSON)
+    path
+        (PostTx <$> parseBody)
+        scottyPostTx
+        (const toEncoding)
+        (const toJSON)
+    pathPretty
+        (GetMempool <$> paramOptional <*> parseOffset)
+        scottyMempool
+        (const toEncoding)
+        (const toJSON)
     -- Address Paths
-    path (GetAddrTxs <$> paramLazy <*> parseLimits) scottyAddrTxs (const toEncoding)
-    path (GetAddrsTxs <$> param <*> parseLimits) scottyAddrsTxs (const toEncoding)
-    path (GetAddrTxsFull <$> paramLazy <*> parseLimits)
-         scottyAddrTxsFull (list . transactionToEncoding)
-    path (GetAddrsTxsFull <$> param <*> parseLimits)
-         scottyAddrsTxsFull (list . transactionToEncoding)
-    path (GetAddrBalance <$> paramLazy) scottyAddrBalance balanceToEncoding
-    path (GetAddrsBalance <$> param) scottyAddrsBalance (list . balanceToEncoding)
-    path (GetAddrUnspent <$> paramLazy <*> parseLimits)
-         scottyAddrUnspent (list . unspentToEncoding)
-    path (GetAddrsUnspent <$> param <*> parseLimits)
-         scottyAddrsUnspent (list . unspentToEncoding)
+    pathPretty
+        (GetAddrTxs <$> paramLazy <*> parseLimits)
+        scottyAddrTxs
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetAddrsTxs <$> param <*> parseLimits)
+        scottyAddrsTxs
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetAddrTxsFull <$> paramLazy <*> parseLimits)
+        scottyAddrTxsFull
+        (list . transactionToEncoding)
+        (json_list transactionToJSON)
+    path
+        (GetAddrsTxsFull <$> param <*> parseLimits)
+        scottyAddrsTxsFull
+        (list . transactionToEncoding)
+        (json_list transactionToJSON)
+    pathPretty
+        (GetAddrBalance <$> paramLazy)
+        scottyAddrBalance
+        balanceToEncoding
+        balanceToJSON
+    pathPretty
+        (GetAddrsBalance <$> param)
+        scottyAddrsBalance
+        (list . balanceToEncoding)
+        (json_list balanceToJSON)
+    pathPretty
+        (GetAddrUnspent <$> paramLazy <*> parseLimits)
+        scottyAddrUnspent
+        (list . unspentToEncoding)
+        (json_list unspentToJSON)
+    path
+        (GetAddrsUnspent <$> param <*> parseLimits)
+        scottyAddrsUnspent
+        (list . unspentToEncoding)
+        (json_list unspentToJSON)
     -- XPubs
-    path (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
-         scottyXPub (const toEncoding)
-    path (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
-         scottyXPubTxs (const toEncoding)
-    path (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
-         scottyXPubTxsFull (list . transactionToEncoding)
-    path (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
-         scottyXPubBalances (list . xPubBalToEncoding)
-    path (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
-         scottyXPubUnspent (list . xPubUnspentToEncoding)
-    path (GetXPubEvict <$> paramLazy <*> paramDef)
-         scottyXPubEvict (const toEncoding)
+    pathPretty
+        (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
+        scottyXPub
+        (const toEncoding)
+        (const toJSON)
+    pathPretty
+        (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+        scottyXPubTxs
+        (const toEncoding)
+        (const toJSON)
+    path
+        (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+        scottyXPubTxsFull
+        (list . transactionToEncoding)
+        (json_list transactionToJSON)
+    pathPretty
+        (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
+        scottyXPubBalances
+        (list . xPubBalToEncoding)
+        (json_list xPubBalToJSON)
+    pathPretty
+        (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+        scottyXPubUnspent
+        (list . xPubUnspentToEncoding)
+        (json_list xPubUnspentToJSON)
+    path
+        (GetXPubEvict <$> paramLazy <*> paramDef)
+        scottyXPubEvict
+        (const toEncoding)
+        (const toJSON)
     -- Network
-    path (GetPeers & return) scottyPeers (const toEncoding)
-    path (GetHealth & return) scottyHealth (const toEncoding)
+    pathPretty
+        (GetPeers & return)
+        scottyPeers
+        (const toEncoding)
+        (const toJSON)
+    pathPretty
+         (GetHealth & return)
+         scottyHealth
+         (const toEncoding)
+         (const toJSON)
     S.get "/events" scottyEvents
     S.get "/dbstats" scottyDbStats
+  where
+    json_list f net = toJSONList . map (f net)
+
+pathPretty ::
+       (ApiResource a b, MonadIO m)
+    => WebT m a
+    -> (a -> WebT m b)
+    -> (Network -> b -> Encoding)
+    -> (Network -> b -> Value)
+    -> S.ScottyT Except (ReaderT WebConfig m) ()
+pathPretty parser action encJson encValue =
+    pathCommon parser action encJson encValue True
 
 path ::
        (ApiResource a b, MonadIO m)
     => WebT m a
     -> (a -> WebT m b)
     -> (Network -> b -> Encoding)
+    -> (Network -> b -> Value)
     -> S.ScottyT Except (ReaderT WebConfig m) ()
-path parser action encJson =
+path parser action encJson encValue =
+    pathCommon parser action encJson encValue False
+
+pathCommon ::
+       (ApiResource a b, MonadIO m)
+    => WebT m a
+    -> (a -> WebT m b)
+    -> (Network -> b -> Encoding)
+    -> (Network -> b -> Value)
+    -> Bool
+    -> S.ScottyT Except (ReaderT WebConfig m) ()
+pathCommon parser action encJson encValue pretty =
     S.addroute (resourceMethod proxy) (capturePath proxy) $ do
         setHeaders
-        proto <- setupContentType
+        proto <- setupContentType pretty
         net <- lift $ asks (storeNetwork . webStore)
         apiRes <- parser
         res <- action apiRes
-        S.raw $ protoSerial proto (encJson net) res
+        S.raw $ protoSerial proto (encJson net) (encValue net) res
   where
     toProxy :: WebT m a -> Proxy a
     toProxy = const Proxy
     proxy = toProxy parser
 
-protoSerial :: Serialize a => Bool -> (a -> Encoding) -> a -> L.ByteString
-protoSerial True _  = runPutLazy . put
-protoSerial False f = encodingToLazyByteString . f
+protoSerial
+    :: Serialize a
+    => SerialAs
+    -> (a -> Encoding)
+    -> (a -> Value)
+    -> a
+    -> L.ByteString
+protoSerial SerialAsBinary _ _     = runPutLazy . put
+protoSerial SerialAsJSON f _       = encodingToLazyByteString . f
+protoSerial SerialAsPrettyJSON _ g =
+    encodePretty' defConfig {confTrailingNewline = True} . g
 
 setHeaders :: (Monad m, S.ScottyError e) => ActionT e m ()
 setHeaders = S.setHeader "Access-Control-Allow-Origin" "*"
 
-setupContentType :: Monad m => ActionT Except m Bool
-setupContentType = maybe goJson setType =<< S.header "accept"
+setupContentType :: Monad m => Bool -> ActionT Except m SerialAs
+setupContentType pretty = do
+    accept <- S.header "accept"
+    maybe goJson setType accept
   where
     setType "application/octet-stream" = goBinary
     setType _                          = goJson
     goBinary = do
         S.setHeader "Content-Type" "application/octet-stream"
-        return True
+        return SerialAsBinary
     goJson = do
         S.setHeader "Content-Type" "application/json"
-        return False
+        p <- S.param "pretty" `S.rescue` const (return pretty)
+        return $ if p then SerialAsPrettyJSON else SerialAsJSON
 
 -- GET Block / GET Blocks --
 
@@ -444,7 +616,7 @@ scottyTxAfter (GetTxAfter txid height) =
     GenericResult <$> cbAfterHeight (fromIntegral height) txid
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
--- specified height. Returns 'Nothing' if answer cannot be computed before
+-- specified height. Returns'Nothing' if answer cannot be computed before
 -- hitting limits.
 cbAfterHeight ::
        (MonadIO m, StoreRead m)
@@ -545,7 +717,7 @@ scottyMempool (GetMempool limitM (OffsetParam o)) = do
 scottyEvents :: MonadLoggerIO m => WebT m ()
 scottyEvents = do
     setHeaders
-    proto <- setupContentType
+    proto <- setupContentType False
     pub <- lift $ asks (storePublisher . webStore)
     S.stream $ \io flush' ->
         withSubscription pub $ \sub ->
@@ -553,9 +725,10 @@ scottyEvents = do
             flush' >> receiveEvent sub >>= maybe (return ()) (io . serial proto)
   where
     serial proto e =
-        lazyByteString $ protoSerial proto toEncoding e <> newLine proto
-    newLine True  = mempty
-    newLine False = "\n"
+        lazyByteString $ protoSerial proto toEncoding toJSON e <> newLine proto
+    newLine SerialAsBinary     = mempty
+    newLine SerialAsJSON       = "\n"
+    newLine SerialAsPrettyJSON = mempty
 
 receiveEvent :: Inbox StoreEvent -> IO (Maybe Event)
 receiveEvent sub = do
@@ -577,7 +750,7 @@ scottyAddrTxs (GetAddrTxs addr pLimits) =
 
 scottyAddrsTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxs -> WebT m [TxRef]
-scottyAddrsTxs (GetAddrsTxs addrs pLimits) = 
+scottyAddrsTxs (GetAddrsTxs addrs pLimits) =
     getAddressesTxs addrs =<< paramToLimits False pLimits
 
 scottyAddrTxsFull ::

@@ -4,11 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## 0.30.3
-### Changed
-- Add a web client to interface with the haskoin-store API
-
 ## 0.30.2
+### Added
+- Add a web client to interface with the haskoin-store API
+- Add type-safe definitions for web paths and parameters.
+- Add JSON pretty encoding support.
+
 ### Changed
 - Refactor code to manipulate address balances.
 - Improving logging further.

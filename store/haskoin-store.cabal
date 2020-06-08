@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 77f5381b4ff40b0ab3b428832466fe2b4bd7a3657c6895fc9b2f78eff91ef838
+-- hash: c050657ac18cdb5dd6aadc9148ac703fd9eb19c605d89f5fe9045690aa0eac50
 
 name:           haskoin-store
 version:        0.30.3
@@ -46,6 +46,7 @@ library
       src
   build-depends:
       aeson >=1.4.7.1
+    , aeson-pretty >=0.8.8
     , base >=4.9 && <5
     , bytestring >=0.10.10.0
     , cereal >=0.5.8.1
@@ -86,6 +87,7 @@ executable haskoin-store
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       aeson >=1.4.7.1
+    , aeson-pretty >=0.8.8
     , base >=4.9 && <5
     , bytestring >=0.10.10.0
     , cereal >=0.5.8.1
@@ -138,6 +140,7 @@ test-suite haskoin-store-test
   build-depends:
       QuickCheck >=2.13.2
     , aeson >=1.4.7.1
+    , aeson-pretty >=0.8.8
     , base >=4.9 && <5
     , base64 >=0.4.1
     , bytestring >=0.10.10.0
