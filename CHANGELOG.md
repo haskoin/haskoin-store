@@ -6,17 +6,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.30.2
 ### Added
-- Add a web client to interface with the haskoin-store API
-- Add type-safe definitions for web paths and parameters.
-- Add JSON pretty encoding support.
+- Add Haskell web client code to data library.
+- Use type-safe definitions for web paths and parameters.
+- Support JSON pretty encoding and enable by default for some endpoints.
 
 ### Changed
 - Refactor code to manipulate address balances.
-- Improving logging further.
+- Improve logging.
 - Rate-limit mempool importing.
 - Do not add xpubs to cache if node not in sync.
 - Do not import transactions to cache if no xpubs in cache.
 - Refactor transaction importing logic extremely.
+
+### Fixed
+- Fix BTC double-count transaction bug.
+- Add missing xpub derive parameter to xpub evict documentation.
 
 ## 0.30.1
 ### Changed
