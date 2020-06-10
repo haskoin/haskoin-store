@@ -98,8 +98,10 @@ getSpendersH t = M.lookupDefault I.empty t . hSpender
 
 getBalanceH :: Address -> MemoryDatabase -> Balance
 getBalanceH a mem =
-    fromMaybe (zeroBalance a) . fmap (valToBalance a) . M.lookup a $
-    hBalance mem
+    maybe
+        (zeroBalance a)
+        (valToBalance a)
+        (M.lookup a (hBalance mem))
 
 getMempoolH :: MemoryDatabase -> Maybe [TxRef]
 getMempoolH = hMempool

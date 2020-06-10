@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 module Haskoin.Store.Common
@@ -51,8 +50,8 @@ import           Haskoin                   (Address, BlockHash,
                                             txHash)
 import           Haskoin.Node              (Peer)
 import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            TxRef (..), DeriveType (..),
-                                            Spender, Transaction, TxData,
+                                            DeriveType (..), Spender,
+                                            Transaction, TxData, TxRef (..),
                                             UnixTime, Unspent (..),
                                             XPubBal (..), XPubSpec (..),
                                             XPubSummary (..), XPubUnspent (..),
@@ -64,20 +63,20 @@ type DeriveAddr = XPubKey -> KeyIndex -> Address
 type Offset = Word32
 type Limit = Word32
 
-data Start
-    = AtTx
-          { atTxHash :: !TxHash
-          }
+data Start = AtTx
+    { atTxHash :: !TxHash
+    }
     | AtBlock
-          { atBlockHeight :: !BlockHeight
-          } deriving (Eq, Show)
+    { atBlockHeight :: !BlockHeight
+    }
+    deriving (Eq, Show)
 
-data Limits =
-    Limits
-        { limit  :: !Word32
-        , offset :: !Word32
-        , start  :: !(Maybe Start)
-        } deriving (Eq, Show)
+data Limits = Limits
+    { limit  :: !Word32
+    , offset :: !Word32
+    , start  :: !(Maybe Start)
+    }
+    deriving (Eq, Show)
 
 defaultLimits :: Limits
 defaultLimits = Limits { limit = 0, offset = 0, start = Nothing }
@@ -98,7 +97,7 @@ class Monad m =>
     getBalance :: Address -> m Balance
     getBalance a = head <$> getBalances [a]
     getBalances :: [Address] -> m [Balance]
-    getBalances as = mapM getBalance as
+    getBalances = mapM getBalance
     getAddressesTxs :: [Address] -> Limits -> m [TxRef]
     getAddressTxs :: Address -> Limits -> m [TxRef]
     getAddressTxs a = getAddressesTxs [a]
@@ -119,11 +118,10 @@ class Monad m =>
                 chg <- derive_until_gap gap 1 (aderiv 1 0)
                 return (ext1 <> ext2 <> chg)
       where
-        aderiv m n =
+        aderiv m =
             deriveAddresses
                 (deriveFunction (xPubDeriveType xpub))
                 (pubSubKey (xPubSpecKey xpub) m)
-                n
         xbalance m b n = XPubBal {xPubBalPath = [m, n], xPubBal = b}
         derive_until_gap _ _ [] = return []
         derive_until_gap gap m as = do
@@ -163,19 +161,10 @@ class Monad m =>
     xPubUnspents :: XPubSpec -> Limits -> m [XPubUnspent]
     xPubUnspents xpub limits = do
         xs <- filter positive <$> xPubBals xpub
-        sortBy (compare `on` unsblock) . applyLimits limits <$> go xs
+        sortBy (compare `on` unsblock) . applyLimits limits <$> xUns limits xs
       where
         unsblock = unspentBlock . xPubUnspent
         positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
-        go [] = return []
-        go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
-            uns <- getAddressUnspents a (deOffset limits)
-            let xuns =
-                    map
-                        (\t ->
-                             XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
-                        uns
-            (xuns <>) <$> go xs
     xPubTxs :: XPubSpec -> Limits -> m [TxRef]
     xPubTxs xpub limits = do
         bs <- xPubBals xpub
@@ -200,6 +189,15 @@ class StoreWrite m where
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
 
+
+xUns :: StoreRead f => Limits -> [XPubBal] -> f [XPubUnspent]
+xUns limits bs = concat <$> mapM g bs
+  where
+    f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
+    g b =
+        map (f (xPubBalPath b)) <$>
+        getAddressUnspents (balanceAddress (xPubBal b)) (deOffset limits)
+
 deriveAddresses :: DeriveAddr -> XPubKey -> Word32 -> [(Word32, Address)]
 deriveAddresses derive xpub start = map (\i -> (i, derive xpub i)) [start ..]
 
@@ -215,17 +213,9 @@ xPubBalsUnspents ::
     -> m [XPubUnspent]
 xPubBalsUnspents bals limits = do
     let xs = filter positive bals
-    applyLimits limits <$> go xs
+    applyLimits limits <$> xUns limits xs
   where
     positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
-    go [] = return []
-    go (XPubBal {xPubBalPath = p, xPubBal = Balance {balanceAddress = a}}:xs) = do
-        uns <- getAddressUnspents a (deOffset limits)
-        let xuns =
-                map
-                    (\t -> XPubUnspent {xPubUnspentPath = p, xPubUnspent = t})
-                    uns
-        (xuns <>) <$> go xs
 
 xPubBalsTxs ::
        StoreRead m
@@ -265,28 +255,18 @@ blockAtOrBefore q = runMaybeT $ do
 
 
 -- | Events that the store can generate.
-data StoreEvent
-    = StoreBestBlock !BlockHash
-      -- ^ new best block
+data StoreEvent = StoreBestBlock !BlockHash
     | StoreMempoolNew !TxHash
-      -- ^ new mempool transaction
     | StorePeerConnected !Peer !SockAddr
-      -- ^ new peer connected
     | StorePeerDisconnected !Peer !SockAddr
-      -- ^ peer has disconnected
     | StorePeerPong !Peer !Word64
-      -- ^ peer responded 'Ping'
     | StoreTxAvailable !Peer ![TxHash]
-      -- ^ peer inv transactions
     | StoreTxReject !Peer !TxHash !RejectCode !ByteString
-      -- ^ peer rejected transaction
     | StoreTxDeleted !TxHash
-      -- ^ transaction deleted from store
     | StoreBlockReverted !BlockHash
       -- ^ block no longer head of main chain
 
-data PubExcept
-    = PubNoPeers
+data PubExcept = PubNoPeers
     | PubReject RejectCode
     | PubTimeout
     | PubPeerDisconnected

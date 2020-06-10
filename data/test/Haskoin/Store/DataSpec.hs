@@ -1,159 +1,185 @@
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE OverloadedStrings         #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Haskoin.Store.DataSpec
     ( spec
     ) where
 
-import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
-                                          Value)
+import           Control.Monad           (forM_, (<=<))
+import           Data.Aeson              (Encoding, FromJSON (..), Value)
 import qualified Data.Aeson              as A
 import           Data.Aeson.Encoding     (encodingToLazyByteString)
-import           Data.Aeson.Parser       (decodeWith, json)
-import           Data.Aeson.Types        (Parser, parse)
-import           Data.ByteString         (pack)
+import           Data.Aeson.Types        (Parser, parseMaybe)
 import qualified Data.ByteString.Short   as BSS
-import           Data.Serialize          (Serialize (..), decode, encode)
+import           Data.Map.Strict         (singleton)
+import           Data.Proxy
+import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
-import           Haskoin                 (Address (..), BlockHash (..),
-                                          BlockHeader (..), Hash160 (..),
-                                          Hash256 (..), Network (..),
-                                          OutPoint (..), RejectCode (..),
-                                          Tx (..), TxHash (..), TxIn (..),
-                                          TxOut (..), XPubKey (..), bch,
-                                          bchRegTest, bchTest, btc, btcRegTest,
-                                          btcTest, ripemd160, sha256)
-import           Haskoin.Store.Data      (Balance (..), BlockData (..),
-                                          BlockRef (..), TxRef (..),
-                                          DeriveType (..), Event (..),
-                                          HealthCheck (..),
-                                          PeerInformation (..), Prev (..),
-                                          Spender (..), StoreInput (..),
-                                          StoreOutput (..), Transaction (..),
-                                          TxData (..), TxId (..), Unspent (..),
-                                          XPubBal (..), XPubSpec (..),
-                                          XPubSummary (..), XPubUnspent (..),
-                                          balanceParseJSON, balanceToEncoding,
-                                          balanceToJSON, blockDataToEncoding,
-                                          blockDataToJSON, transactionParseJSON,
-                                          transactionToEncoding,
-                                          transactionToJSON, unspentParseJSON,
-                                          unspentToEncoding, unspentToJSON,
-                                          xPubUnspentParseJSON,
-                                          xPubUnspentToEncoding,
-                                          xPubUnspentToJSON)
-import           Test.Hspec              (Expectation, Spec, describe, shouldBe)
+import qualified Data.Typeable           as T
+import           Haskoin
+import           Haskoin.Store.Data
+import           Haskoin.Util.Arbitrary
+import           Test.Hspec              (Spec, describe, shouldBe,
+                                          shouldSatisfy)
 import           Test.Hspec.QuickCheck   (prop)
-import           Test.QuickCheck         (Arbitrary (..), Gen,
-                                          arbitraryPrintableChar,
-                                          arbitraryUnicodeChar, elements,
-                                          forAll, listOf, listOf1, oneof)
+import           Test.QuickCheck
+
+data SerialBox =
+    forall a. (Show a, Eq a, T.Typeable a, S.Serialize a) =>
+              SerialBox (Gen a)
+
+data JsonBox =
+    forall a. (Show a, Eq a, T.Typeable a, A.ToJSON a, A.FromJSON a) =>
+              JsonBox (Gen a)
+
+data NetBox =
+    forall a. (Show a, Eq a, T.Typeable a, Arbitrary a) =>
+              NetBox ( Network -> a -> Value
+                     , Network -> a -> Encoding
+                     , Network -> Value -> Parser a
+                     , Gen (Network, a)
+                     )
+
+serialVals :: [SerialBox]
+serialVals =
+    [ SerialBox (arbitrary :: Gen DeriveType)
+    , SerialBox (arbitrary :: Gen XPubSpec)
+    , SerialBox (arbitrary :: Gen BlockRef)
+    , SerialBox (arbitrary :: Gen TxRef)
+    , SerialBox (arbitrary :: Gen Balance)
+    , SerialBox (arbitrary :: Gen Unspent)
+    , SerialBox (arbitrary :: Gen BlockData)
+    , SerialBox (arbitrary :: Gen StoreInput)
+    , SerialBox (arbitrary :: Gen Spender)
+    , SerialBox (arbitrary :: Gen StoreOutput)
+    , SerialBox (arbitrary :: Gen Prev)
+    , SerialBox (arbitrary :: Gen TxData)
+    , SerialBox (arbitrary :: Gen Transaction)
+    , SerialBox (arbitrary :: Gen XPubBal)
+    , SerialBox (arbitrary :: Gen XPubUnspent)
+    , SerialBox (arbitrary :: Gen XPubSummary)
+    , SerialBox (arbitrary :: Gen HealthCheck)
+    , SerialBox (arbitrary :: Gen Event)
+    , SerialBox (arbitrary :: Gen TxId)
+    , SerialBox (arbitrary :: Gen PeerInformation)
+    , SerialBox (arbitrary :: Gen (GenericResult BlockData))
+    , SerialBox (arbitrary :: Gen (RawResult BlockData))
+    , SerialBox (arbitrary :: Gen (RawResultList BlockData))
+    , SerialBox (arbitrary :: Gen Except)
+    ]
+
+jsonVals :: [JsonBox]
+jsonVals =
+    [ JsonBox (arbitrary :: Gen TxRef)
+    , JsonBox (arbitrary :: Gen BlockRef)
+    , JsonBox (arbitrary :: Gen Spender)
+    , JsonBox (arbitrary :: Gen XPubSummary)
+    , JsonBox (arbitrary :: Gen HealthCheck)
+    , JsonBox (arbitrary :: Gen Event)
+    , JsonBox (arbitrary :: Gen TxId)
+    , JsonBox (arbitrary :: Gen PeerInformation)
+    , JsonBox (arbitrary :: Gen (GenericResult XPubSummary))
+    , JsonBox (arbitrary :: Gen (RawResult BlockData))
+    , JsonBox (arbitrary :: Gen (RawResultList BlockData))
+    , JsonBox (arbitrary :: Gen Except)
+    ]
+
+netVals :: [NetBox]
+netVals =
+    [ NetBox ( balanceToJSON
+             , balanceToEncoding
+             , balanceParseJSON
+             , arbitraryNetData)
+    , NetBox ( storeOutputToJSON
+             , storeOutputToEncoding
+             , storeOutputParseJSON
+             , arbitraryNetData)
+    , NetBox ( unspentToJSON
+             , unspentToEncoding
+             , unspentParseJSON
+             , arbitraryNetData)
+    , NetBox ( xPubBalToJSON
+             , xPubBalToEncoding
+             , xPubBalParseJSON
+             , arbitraryNetData)
+    , NetBox ( xPubUnspentToJSON
+             , xPubUnspentToEncoding
+             , xPubUnspentParseJSON
+             , arbitraryNetData)
+    , NetBox ( storeInputToJSON
+             , storeInputToEncoding
+             , storeInputParseJSON
+             , arbitraryStoreInputNet)
+    , NetBox ( blockDataToJSON
+             , blockDataToEncoding
+             , const parseJSON
+             , arbitraryBlockDataNet)
+    , NetBox ( transactionToJSON
+             , transactionToEncoding
+             , transactionParseJSON
+             , arbitraryTransactionNet)
+    ]
 
 spec :: Spec
 spec = do
-    describe "Binary serialization" $ do
-        prop "identity for derivation type" $ \x -> testSerial (x :: DeriveType)
-        prop "identity for xpub spec" $ \x -> testSerial (x :: XPubSpec)
-        prop "identity for block ref" $ \x -> testSerial (x :: BlockRef)
-        prop "identity for block tx" $ \x -> testSerial (x :: TxRef)
-        prop "identity for balance" $ \x -> testSerial (x :: Balance)
-        prop "identity for unspent" $ \x -> testSerial (x :: Unspent)
-        prop "identity for block data" $ \x -> testSerial (x :: BlockData)
-        prop "identity for input" $ \x -> testSerial (x :: StoreInput)
-        prop "identity for spender" $ \x -> testSerial (x :: Spender)
-        prop "identity for output" $ \x -> testSerial (x :: StoreOutput)
-        prop "identity for previous output" $ \x -> testSerial (x :: Prev)
-        prop "identity for tx data" $ \x -> testSerial (x :: TxData)
-        prop "identity for transaction" $ \x -> testSerial (x :: Transaction)
-        prop "identity for xpub balance" $ \x -> testSerial (x :: XPubBal)
-        prop "identity for xpub unspent" $ \x -> testSerial (x :: XPubUnspent)
-        prop "identity for xpub summary" $ \x -> testSerial (x :: XPubSummary)
-        prop "identity for health check" $ \x -> testSerial (x :: HealthCheck)
-        prop "identity for event" $ \x -> testSerial (x :: Event)
-        prop "identity for txid" $ \x -> testSerial (x :: TxId)
-        prop "identity for peer info" $ \x -> testSerial (x :: PeerInformation)
-    describe "JSON serialization" $ do
-        prop "identity for balance" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON
-                (balanceParseJSON net)
-                (balanceToJSON net)
-                (balanceToEncoding net)
-                x
-        prop "identity for block tx" $ \x -> testJSON (x :: TxRef)
-        prop "identity for block ref" $ \x -> testJSON (x :: BlockRef)
-        prop "identity for unspent" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON
-                (unspentParseJSON net)
-                (unspentToJSON net)
-                (unspentToEncoding net)
-                x
-        prop "identity for block data" . forAll arbitraryNetData $ \(net, x) ->
-            let x' =
-                    if getSegWit net
-                        then x
-                        else x {blockDataWeight = 0}
-             in testNetJSON
-                    parseJSON
-                    (blockDataToJSON net)
-                    (blockDataToEncoding net)
-                    x'
-        prop "identity for spender" $ \x -> testJSON (x :: Spender)
-        prop "identity for transaction" . forAll arbitraryNetData $ \(net, x) ->
-            let f i = i {inputWitness = Nothing}
-                x' =
-                    if getSegWit net
-                        then x
-                        else x
-                                 { transactionInputs =
-                                       map f (transactionInputs x)
-                                 , transactionWeight = 0
-                                 }
-                x'' =
-                    if getReplaceByFee net
-                        then x'
-                        else x' {transactionRBF = False}
-             in testNetJSON
-                    (transactionParseJSON net)
-                    (transactionToJSON net)
-                    (transactionToEncoding net)
-                    x''
-        prop "identity for xpub summary" $ \x -> testJSON (x :: XPubSummary)
-        prop "identity for xpub unspent" . forAll arbitraryNetData $ \(net, x) ->
-            testNetJSON
-                (xPubUnspentParseJSON net)
-                (xPubUnspentToJSON net)
-                (xPubUnspentToEncoding net)
-                x
-        prop "identity for health check" $ \x -> testJSON (x :: HealthCheck)
-        prop "identity for event" $ \x -> testJSON (x :: Event)
-        prop "identity for txid" $ \x -> testJSON (x :: TxId)
-        prop "identity for peer information" $ \x ->
-            testJSON (x :: PeerInformation)
+    describe "Data.Serialize Encoding" $
+        forM_ serialVals $ \(SerialBox g) -> testSerial g
+    describe "Data.Aeson Encoding" $
+        forM_ jsonVals $ \(JsonBox g) -> testJson g
+    describe "Data.Aeson Encoding with Network" $
+        forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
 
-testJSON :: (Eq a, Show a, ToJSON a, FromJSON a) => a -> Expectation
-testJSON input = (A.decode . A.encode) input `shouldBe` Just input
+testSerial :: (Eq a, Show a, T.Typeable a, S.Serialize a) => Gen a -> Spec
+testSerial gen =
+    prop ("Data.Serialize encoding/decoding identity for " <> name) $
+    forAll gen $ \x -> (S.decode . S.encode) x `shouldBe` Right x
+  where
+    name = show $ T.typeRep $ proxy gen
+    proxy :: Gen a -> Proxy a
+    proxy = const Proxy
 
-testNetJSON ::
-       (Eq a, Show a)
-    => (Value -> Parser a)
-    -> (a -> Value)
-    -> (a -> Encoding)
-    -> a
-    -> Expectation
-testNetJSON parsejson tojson toenc x =
-    let encval = A.encode (tojson x)
-        encenc = encodingToLazyByteString (toenc x)
-        decval = decodeWith json (parse parsejson) encval
-        decenc = decodeWith json (parse parsejson) encenc
-     in do
-        decval `shouldBe` Just x
-        decenc `shouldBe` Just x
+testJson ::
+       (Eq a, Show a, T.Typeable a, A.ToJSON a, A.FromJSON a) => Gen a -> Spec
+testJson gen = do
+    prop ("Data.Aeson toJSON/fromJSON identity for " <> name) $
+        forAll gen (`shouldSatisfy` jsonID)
+    prop ("Data.Aeson toEncoding/fromJSON identity for " <> name) $
+        forAll gen (`shouldSatisfy` encodingID)
+  where
+    name = show $ T.typeRep $ proxy gen
+    proxy :: Gen a -> Proxy a
+    proxy = const Proxy
+    jsonID x =
+        (A.fromJSON . A.toJSON) (singleton ("object" :: String) x) ==
+        A.Success (singleton ("object" :: String) x)
+    encodingID x =
+        (A.decode . encodingToLazyByteString . A.toEncoding)
+            (singleton ("object" :: String) x) ==
+        Just (singleton ("object" :: String) x)
 
-testSerial :: (Eq a, Show a, Serialize a) => a -> Expectation
-testSerial input = (decode . encode) input `shouldBe` Right input
-
-arbitraryNetwork :: Gen Network
-arbitraryNetwork = elements [bch, btc, bchTest, btcTest, bchRegTest, btcRegTest]
+testNetJson ::
+       (Eq a, Show a, T.Typeable a, Arbitrary a)
+    => (Network -> a -> Value)
+    -> (Network -> a -> Encoding)
+    -> (Network -> Value -> Parser a)
+    -> Gen (Network, a)
+    -> Spec
+testNetJson j e p g = do
+    prop ("Data.Aeson toJSON/fromJSON identity (with network) for " <> name) $
+        forAll g $ \(net, x) ->
+            dec net (encVal net x) `shouldBe` Just x
+    prop ("Data.Aeson toEncoding/fromJSON identity (with network) for " <> name) $
+        forAll g $ \(net, x) ->
+            dec net (encEnc net x) `shouldBe` Just x
+  where
+    encVal net = A.encode . j net
+    encEnc net = encodingToLazyByteString . e net
+    dec net = parseMaybe (p net) <=< A.decode
+    name = show $ T.typeRep $ proxy j
+    proxy :: (Network -> a -> Value) -> Proxy a
+    proxy = const Proxy
 
 arbitraryNetData :: Arbitrary a => Gen (Network, a)
 arbitraryNetData = do
@@ -165,46 +191,14 @@ instance Arbitrary BlockRef where
     arbitrary =
         oneof [BlockRef <$> arbitrary <*> arbitrary, MemRef <$> arbitrary]
 
-instance Arbitrary Hash256 where
-    arbitrary = sha256 . pack <$> listOf1 arbitrary
-
-instance Arbitrary TxHash where
-    arbitrary = TxHash <$> arbitrary
-
-instance Arbitrary OutPoint where
-    arbitrary = OutPoint <$> arbitrary <*> arbitrary
-
-instance Arbitrary TxIn where
-    arbitrary =
-        TxIn <$> arbitrary <*> (pack <$> listOf1 arbitrary) <*>
-        arbitrary
-
-instance Arbitrary TxOut where
-    arbitrary = TxOut <$> arbitrary <*> (pack <$> listOf1 arbitrary)
-
-instance Arbitrary Tx where
-    arbitrary = do
-        ver <- arbitrary
-        txin <- listOf1 arbitrary
-        txout <- listOf1 arbitrary
-        txlock <- arbitrary
-        return
-            Tx
-                { txVersion = ver
-                , txIn = txin
-                , txOut = txout
-                , txWitness = []
-                , txLockTime = txlock
-                }
-
 instance Arbitrary Prev where
-    arbitrary = Prev <$> (pack <$> listOf1 arbitrary) <*> arbitrary
+    arbitrary = Prev <$> arbitraryBS1 <*> arbitrary
 
 instance Arbitrary TxData where
     arbitrary =
         TxData
             <$> arbitrary
-            <*> arbitrary
+            <*> arbitraryTx btc
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
@@ -213,30 +207,39 @@ instance Arbitrary TxData where
 instance Arbitrary StoreInput where
     arbitrary =
         oneof
-            [ StoreCoinbase <$> arbitrary <*> arbitrary <*>
-              (pack <$> listOf1 arbitrary) <*>
-              (oneof
-                   [ Just <$> (listOf $ pack <$> listOf1 arbitrary)
-                   , return Nothing
-                   ])
-            , StoreInput <$> arbitrary <*> arbitrary <*>
-              (pack <$> listOf1 arbitrary) <*>
-              (pack <$> listOf1 arbitrary) <*>
-              arbitrary <*>
-              (oneof
-                   [ Just <$> (listOf $ pack <$> listOf1 arbitrary)
-                   , return Nothing
-                   ]) <*>
-              arbitrary
+            [ StoreCoinbase
+                <$> arbitraryOutPoint
+                <*> arbitrary
+                <*> arbitraryBS1
+                <*> arbitraryMaybe (listOf arbitraryBS1)
+            , StoreInput
+                <$> arbitraryOutPoint
+                <*> arbitrary
+                <*> arbitraryBS1
+                <*> arbitraryBS1
+                <*> arbitrary
+                <*> arbitraryMaybe (listOf arbitraryBS1)
+                <*> arbitraryMaybe arbitraryAddress
             ]
 
+arbitraryStoreInputNet :: Gen (Network, StoreInput)
+arbitraryStoreInputNet = do
+    net <- arbitraryNetwork
+    store <- arbitrary
+    let res | getSegWit net = store
+            | otherwise = store{ inputWitness = Nothing }
+    return (net, res)
+
 instance Arbitrary Spender where
-    arbitrary = Spender <$> arbitrary <*> arbitrary
+    arbitrary = Spender <$> arbitraryTxHash <*> arbitrary
 
 instance Arbitrary StoreOutput where
     arbitrary =
-        StoreOutput <$> arbitrary <*> (pack <$> listOf1 arbitrary) <*> arbitrary <*>
-        arbitrary
+        StoreOutput
+          <$> arbitrary
+          <*> arbitraryBS1
+          <*> arbitrary
+          <*> arbitraryMaybe arbitraryAddress
 
 instance Arbitrary Transaction where
     arbitrary =
@@ -249,13 +252,27 @@ instance Arbitrary Transaction where
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
-            <*> arbitrary
+            <*> arbitraryTxHash
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
 
+arbitraryTransactionNet :: Gen (Network, Transaction)
+arbitraryTransactionNet = do
+    net <- arbitraryNetwork
+    val <- arbitrary
+    let val1 | getSegWit net = val
+             | otherwise = val{ transactionInputs = f <$> transactionInputs val
+                              , transactionWeight = 0
+                              }
+        res | getReplaceByFee net = val1
+            | otherwise = val1{ transactionRBF = False }
+    return (net, res)
+  where
+    f i = i {inputWitness = Nothing}
+
 instance Arbitrary PeerInformation where
-    arbitrary = do
+    arbitrary =
         PeerInformation
             <$> (cs <$> listOf arbitraryUnicodeChar)
             <*> listOf arbitraryPrintableChar
@@ -263,19 +280,12 @@ instance Arbitrary PeerInformation where
             <*> arbitrary
             <*> arbitrary
 
-instance Arbitrary BlockHash where
-    arbitrary = BlockHash <$> arbitrary
-
 instance Arbitrary HealthCheck where
-    arbitrary = do
-        bh <- arbitrary
-        hh <- arbitrary
-        let mb = elements [Nothing, Just bh]
-            mh = elements [Nothing, Just hh]
+    arbitrary =
         HealthCheck
-            <$> mb
+            <$> arbitraryMaybe arbitraryBlockHash
             <*> arbitrary
-            <*> mh
+            <*> arbitraryMaybe arbitraryBlockHash
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
@@ -298,37 +308,22 @@ instance Arbitrary RejectCode where
             , RejectCheckpoint
             ]
 
-instance Arbitrary XPubKey where
-    arbitrary =
-        XPubKey <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary
-
 instance Arbitrary XPubSpec where
-    arbitrary = XPubSpec <$> arbitrary <*> arbitrary
+    arbitrary = XPubSpec <$> (snd <$> arbitraryXPubKey) <*> arbitrary
 
 instance Arbitrary DeriveType where
     arbitrary = elements [DeriveNormal, DeriveP2SH, DeriveP2WPKH]
 
 instance Arbitrary TxId where
-    arbitrary = TxId <$> arbitrary
+    arbitrary = TxId <$> arbitraryTxHash
 
 instance Arbitrary TxRef where
-    arbitrary = TxRef <$> arbitrary <*> arbitrary
-
-instance Arbitrary Hash160 where
-    arbitrary = ripemd160 . pack <$> listOf1 arbitrary
-
-instance Arbitrary Address where
-    arbitrary =
-        oneof
-            [ PubKeyAddress <$> arbitrary
-            , ScriptAddress <$> arbitrary
-            ]
+    arbitrary = TxRef <$> arbitrary <*> arbitraryTxHash
 
 instance Arbitrary Balance where
     arbitrary =
         Balance
-            <$> arbitrary
+            <$> arbitraryAddress
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary
@@ -337,14 +332,12 @@ instance Arbitrary Balance where
 
 instance Arbitrary Unspent where
     arbitrary =
-        Unspent <$> arbitrary <*> arbitrary <*> arbitrary <*>
-        (BSS.toShort . pack <$> listOf1 arbitrary) <*> arbitrary
-
-instance Arbitrary BlockHeader where
-    arbitrary =
-        BlockHeader <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary
+        Unspent
+            <$> arbitrary
+            <*> arbitraryOutPoint
+            <*> arbitrary
+            <*> (BSS.toShort <$> arbitraryBS1)
+            <*> arbitraryMaybe arbitraryAddress
 
 instance Arbitrary BlockData where
     arbitrary =
@@ -352,13 +345,30 @@ instance Arbitrary BlockData where
         <$> arbitrary
         <*> arbitrary
         <*> arbitrary
+        <*> arbitraryBlockHeader
+        <*> arbitrary
+        <*> arbitrary
+        <*> listOf1 arbitraryTxHash
         <*> arbitrary
         <*> arbitrary
         <*> arbitrary
-        <*> listOf1 arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+
+arbitraryBlockDataNet :: Gen (Network, BlockData)
+arbitraryBlockDataNet = do
+    net <- arbitraryNetwork
+    dat <- arbitrary
+    let res | getSegWit net = dat
+            | otherwise = dat{ blockDataWeight = 0}
+    return (net, res)
+
+instance Arbitrary a => Arbitrary (GenericResult a) where
+    arbitrary = GenericResult <$> arbitrary
+
+instance Arbitrary a => Arbitrary (RawResult a) where
+    arbitrary = RawResult <$> arbitrary
+
+instance Arbitrary a => Arbitrary (RawResultList a) where
+    arbitrary = RawResultList <$> arbitrary
 
 instance Arbitrary XPubBal where
     arbitrary = XPubBal <$> arbitrary <*> arbitrary
@@ -378,4 +388,18 @@ instance Arbitrary XPubSummary where
 
 instance Arbitrary Event where
     arbitrary =
-        oneof [EventBlock <$> arbitrary, EventTx <$> arbitrary]
+        oneof
+        [ EventBlock <$> arbitraryBlockHash
+        , EventTx <$> arbitraryTxHash
+        ]
+
+instance Arbitrary Except where
+    arbitrary =
+        oneof
+        [ return ThingNotFound
+        , return ServerError    
+        , return BadRequest
+        , UserError <$> arbitrary
+        , StringError <$> arbitrary
+        , return BlockTooLarge
+        ]

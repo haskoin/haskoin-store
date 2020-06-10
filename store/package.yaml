@@ -22,6 +22,7 @@ homepage: http://github.com/haskoin/haskoin-store#readme
 bug-reports: http://github.com/haskoin/haskoin-store/issues
 dependencies:
   aeson: ">= 1.4.7.1"
+  aeson-pretty: ">= 0.8.8"
   base: ">=4.9 && <5"
   bytestring: ">= 0.10.10.0"
   cereal: ">= 0.5.8.1"
@@ -33,7 +34,7 @@ dependencies:
   haskoin-store-data: *version
   monad-logger: ">= 0.3.32"
   mtl: ">= 2.2.2"
-  haskoin-core: ">= 0.13.3"
+  haskoin-core: ">= 0.13.6"
   haskoin-node: ">= 0.13.0"
   nqe: ">= 0.6.1"
   random: ">= 1.1"

@@ -60,15 +60,14 @@ import           Haskoin                       (Block (..), BlockHash (..),
                                                 TxHash (..), TxIn (..),
                                                 blockHashToHex, headerHash,
                                                 txHash, txHashToHex)
-import           Haskoin.Node                  (OnlinePeer (..), Peer,
-                                                PeerException (..),
+import           Haskoin.Node                  (Chain, OnlinePeer (..), Peer,
+                                                PeerException (..), PeerManager,
                                                 chainBlockMain,
                                                 chainGetAncestor, chainGetBest,
                                                 chainGetBlock, chainGetParents,
                                                 killPeer, managerGetPeer,
-                                                managerGetPeers, sendMessage)
-import           Haskoin.Node                  (Chain, PeerManager,
-                                                managerPeerText)
+                                                managerGetPeers,
+                                                managerPeerText, sendMessage)
 import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
                                                 sortTxs)
 import           Haskoin.Store.Data            (TxData (..), TxRef (..),
@@ -93,33 +92,23 @@ import           UnliftIO                      (Exception, MonadIO,
 import           UnliftIO.Concurrent           (threadDelay)
 
 -- | Messages for block store actor.
-data BlockStoreMessage
-    = BlockNewBest !BlockNode
-      -- ^ new block header in chain
+data BlockStoreMessage = BlockNewBest !BlockNode
     | BlockPeerConnect !Peer !SockAddr
-      -- ^ new peer connected
     | BlockPeerDisconnect !Peer !SockAddr
-      -- ^ peer disconnected
     | BlockReceived !Peer !Block
-      -- ^ new block received from a peer
     | BlockNotFound !Peer ![BlockHash]
-      -- ^ block not found
     | TxRefReceived !Peer !Tx
-      -- ^ transaction received from peer
     | TxRefAvailable !Peer ![TxHash]
-      -- ^ peer has transactions available
     | BlockPing !(Listen ())
       -- ^ internal housekeeping ping
 
 -- | Mailbox for block store.
 type BlockStore = Mailbox BlockStoreMessage
 
-data BlockException
-    = BlockNotInChain !BlockHash
+data BlockException = BlockNotInChain !BlockHash
     | Uninitialized
     | CorruptDatabase
-    | AncestorNotInChain !BlockHeight
-                         !BlockHash
+    | AncestorNotInChain !BlockHeight !BlockHash
     deriving (Show, Eq, Ord, Exception)
 
 data Syncing = Syncing
@@ -128,41 +117,38 @@ data Syncing = Syncing
     , syncingHead :: !BlockNode
     }
 
-data PendingTx =
-    PendingTx
-        { pendingTxTime :: !UnixTime
-        , pendingTx     :: !Tx
-        , pendingDeps   :: !(HashSet TxHash)
-        }
+data PendingTx = PendingTx
+    { pendingTxTime :: !UnixTime
+    , pendingTx     :: !Tx
+    , pendingDeps   :: !(HashSet TxHash)
+    }
     deriving (Show, Eq, Ord)
 
 -- | Block store process state.
-data BlockRead =
-    BlockRead
-        { mySelf   :: !BlockStore
-        , myConfig :: !BlockStoreConfig
-        , myPeer   :: !(TVar (Maybe Syncing))
-        , myTxs    :: !(TVar (HashMap TxHash PendingTx))
-        }
+data BlockRead = BlockRead
+    { mySelf   :: !BlockStore
+    , myConfig :: !BlockStoreConfig
+    , myPeer   :: !(TVar (Maybe Syncing))
+    , myTxs    :: !(TVar (HashMap TxHash PendingTx))
+    }
 
 -- | Configuration for a block store.
-data BlockStoreConfig =
-    BlockStoreConfig
-        { blockConfManager     :: !PeerManager
-      -- ^ peer manager from running node
-        , blockConfChain       :: !Chain
-      -- ^ chain from a running node
-        , blockConfListener    :: !(Listen StoreEvent)
-      -- ^ listener for store events
-        , blockConfDB          :: !DatabaseReader
-      -- ^ RocksDB database handle
-        , blockConfNet         :: !Network
-      -- ^ network constants
-        , blockConfWipeMempool :: !Bool
-      -- ^ wipe mempool at start
-        , blockConfPeerTimeout :: !Int
-      -- ^ disconnect syncing peer if inactive for this long
-        }
+data BlockStoreConfig = BlockStoreConfig
+    { blockConfManager     :: !PeerManager
+    -- ^ peer manager from running node
+    , blockConfChain       :: !Chain
+    -- ^ chain from a running node
+    , blockConfListener    :: !(Listen StoreEvent)
+    -- ^ listener for store events
+    , blockConfDB          :: !DatabaseReader
+    -- ^ RocksDB database handle
+    , blockConfNet         :: !Network
+    -- ^ network constants
+    , blockConfWipeMempool :: !Bool
+    -- ^ wipe mempool at start
+    , blockConfPeerTimeout :: !Int
+    -- ^ disconnect syncing peer if inactive for this long
+    }
 
 type BlockT m = ReaderT BlockRead m
 
@@ -237,7 +223,7 @@ blockStore cfg inbox = do
         | blockConfWipeMempool cfg =
             getMempool >>= \mem -> wipeit 1 (length mem) mem
         | otherwise = return ()
-    ini = do
+    ini =
         runImport initBest >>= \case
             Left e -> do
                 $(logErrorS) "BlockStore" $
@@ -245,7 +231,7 @@ blockStore cfg inbox = do
                 throwIO e
             Right () -> return ()
     run =
-        withAsync (pingMe (inboxToMailbox inbox)) . const . forever $ do
+        withAsync (pingMe (inboxToMailbox inbox)) . const . forever $
             receive inbox >>= \x ->
                 ReaderT $ \r -> runReaderT (processBlockStoreMessage x) r
 
@@ -271,7 +257,7 @@ processBlock ::
     => Peer
     -> Block
     -> ReaderT BlockRead m ()
-processBlock peer block = do
+processBlock peer block =
     void . runMaybeT $ do
         checkpeer
         blocknode <- getblocknode
@@ -394,7 +380,7 @@ pendingTxs i = do
          in filter f
     sortit pend =
         mapMaybe (flip HashMap.lookup pend . txHash . snd) .
-        sortTxs . map pendingTx . map snd
+        sortTxs . map (pendingTx . snd)
 
 fulfillOrphans :: MonadIO m => TxHash -> BlockT m ()
 fulfillOrphans th = do
@@ -420,8 +406,7 @@ updateOrphans = do
                 then return Nothing
                 else do
                     uns <-
-                        fmap catMaybes $
-                        forM (txIn tx) (getUnspent . prevOutput)
+                        catMaybes <$> forM (txIn tx) (getUnspent . prevOutput)
                     let f p1 u =
                             p1
                                 { pendingDeps =
@@ -438,12 +423,11 @@ updateOrphans = do
             Just TxData {txDataDeleted = True} -> return False
             Just TxData {txDataDeleted = False} -> return True
 
-data MemImport
-    = MemOrphan !PendingTx
+data MemImport = MemOrphan !PendingTx
     | MemImported !TxHash ![TxHash]
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
-processMempool = do
+processMempool =
     pendingTxs 2000 >>= \txs ->
         if null txs
             then return ()
@@ -502,10 +486,10 @@ processMempool = do
                                 return Nothing
                 catchError f h
         case output of
-            Left e -> do
+            Left e ->
                 $(logErrorS) "BlockStore" $
                     "Mempool import failed: " <> cs (show e)
-            Right xs -> do
+            Right xs ->
                 forM_ xs $ \case
                     MemOrphan p -> pend p
                     MemImported th deleted -> do
@@ -606,7 +590,7 @@ processDisconnect p =
                 $(logWarnS) "BlockStore" "Syncing peer disconnected"
                 resetPeer
                 getPeer >>= \case
-                    Nothing -> do
+                    Nothing ->
                         $(logWarnS) "BlockStore" "No new syncing peer available"
                     Just peer -> do
                         ns <-
@@ -625,7 +609,7 @@ pruneMempool =
                 [] -> return ()
                 old -> deletetxs old
   where
-    deletetxs old = do
+    deletetxs old =
         forM_ (zip [(1 :: Int) ..] old) $ \(i, txid) -> do
             $(logInfoS) "BlockStore" $
                 "Deleting " <> cs (show i) <> "/" <> cs (show (length old)) <>
@@ -633,7 +617,7 @@ pruneMempool =
                 txHashToHex txid <>
                 " (old mempool tx)…"
             runImport (deleteTx True False txid) >>= \case
-                Left e -> do
+                Left e ->
                     $(logErrorS) "BlockStore" $
                         "Could not delete old mempool tx: " <> txHashToHex txid <>
                         ": " <>
@@ -668,7 +652,7 @@ syncMe peer =
             " blocks (peer " <>
             p' <>
             ")"
-        forM_ (zip [(1 :: Int) ..] blocknodes) $ \(i, bn) -> do
+        forM_ (zip [(1 :: Int) ..] blocknodes) $ \(i, bn) ->
             $(logDebugS) "BlockStore" $
                 "Requesting block " <> cs (show i) <> "/" <>
                 cs (show (length vectors)) <>
@@ -705,9 +689,9 @@ syncMe peer =
             Just Syncing {syncingHead = b} -> return b
             Nothing -> bestblocknode
     end syncbest bestblock chainbest
-        | nodeHeader bestblock == nodeHeader chainbest = do
+        | nodeHeader bestblock == nodeHeader chainbest =
             lift updateOrphans >> resetPeer >> mempool peer >> mzero
-        | nodeHeader syncbest == nodeHeader chainbest = do mzero
+        | nodeHeader syncbest == nodeHeader chainbest = mzero
         | otherwise =
             when (nodeHeight syncbest > nodeHeight bestblock + 500) mzero
     selectblocks chainbest syncbest = do

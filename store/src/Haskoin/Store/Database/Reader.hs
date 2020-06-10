@@ -142,8 +142,7 @@ getBalanceDB :: MonadIO m => Address -> DatabaseReader -> m Balance
 getBalanceDB a DatabaseReader { databaseReadOptions = opts
                               , databaseHandle = db
                               } =
-    fromMaybe (zeroBalance a) . fmap (valToBalance a) <$>
-    retrieve db opts (BalKey a)
+    maybe (zeroBalance a) (valToBalance a) <$> retrieve db opts (BalKey a)
 
 getMempoolDB :: MonadIO m => DatabaseReader -> m [TxRef]
 getMempoolDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
