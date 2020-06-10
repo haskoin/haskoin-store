@@ -451,38 +451,45 @@ processMempool =
                     th = txHash tx
                     h Orphan {} = do
                         $(logWarnS) "BlockStore" $
-                            "Mempool " <> cs (show i) <> "/" <>
-                            cs (show (length txs)) <>
-                            ": " <>
-                            txHashToHex th <>
-                            ": orphan"
+                            "Mempool "
+                            <> cs (show i)
+                            <> "/"
+                            <> cs (show (length txs))
+                            <> ": "
+                            <> txHashToHex th
+                            <> ": Orphan"
                         return (Just (MemOrphan p))
-                    h e = do
+                    h _ = do
                         $(logWarnS) "BlockStore" $
-                            "Mempool " <> cs (show i) <> "/" <>
-                            cs (show (length txs)) <>
-                            ": " <>
-                            txHashToHex th <>
-                            ": " <>
-                            cs (show e)
+                            "Mempool "
+                            <> cs (show i)
+                            <> "/"
+                            <> cs (show (length txs))
+                            <> ": "
+                            <> txHashToHex th
+                            <> ": Failed"
                         return Nothing
                     f =
                         newMempoolTx tx t >>= \case
                             Just ls -> do
                                 $(logInfoS) "BlockStore" $
-                                    "Mempool " <> cs (show i) <> "/" <>
-                                    cs (show (length txs)) <>
-                                    ": " <>
-                                    txHashToHex th <>
-                                    ": ok"
+                                    "Mempool "
+                                    <> cs (show i)
+                                    <> "/"
+                                    <> cs (show (length txs))
+                                    <> ": "
+                                    <> txHashToHex th
+                                    <> ": OK"
                                 return (Just (MemImported th ls))
                             Nothing -> do
                                 $(logInfoS) "BlockStore" $
-                                    "Mempool " <> cs (show i) <> "/" <>
-                                    cs (show (length txs)) <>
-                                    ": " <>
-                                    txHashToHex th <>
-                                    ": already imported"
+                                    "Mempool "
+                                    <> cs (show i)
+                                    <> "/"
+                                    <> cs (show (length txs))
+                                    <> ": "
+                                    <> txHashToHex th
+                                    <> ": No action"
                                 return Nothing
                 catchError f h
         case output of
