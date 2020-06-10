@@ -47,39 +47,30 @@ import           Haskoin.Store.Data      (Balance (..), BlockData (..),
                                           UnixTime, Unspent (..), confirmed)
 import           UnliftIO                (Exception)
 
-data ImportException = PrevBlockNotBest
+data ImportException
+    = PrevBlockNotBest
     | Orphan
     | UnexpectedCoinbase
-    | BestBlockUnknown
     | BestBlockNotFound
     | BlockNotBest
     | TxNotFound
     | DoubleSpend
-    | TxDeleted
-    | AlreadyUnspent
     | TxConfirmed
-    | OutputOutOfRange
-    | BalanceNotFound
     | InsufficientFunds
     | DuplicatePrevOutput
     deriving (Eq, Ord, Exception)
 
 instance Show ImportException where
-    show PrevBlockNotBest    = "previous block not best"
-    show Orphan              = "orphan"
-    show UnexpectedCoinbase  = "unexpected coinbase"
-    show BestBlockUnknown    = "best block unknown"
-    show BestBlockNotFound   = "best block not found"
-    show BlockNotBest        = "block not best"
-    show TxNotFound          = "transaction not found"
-    show DoubleSpend         = "double spend"
-    show TxDeleted           = "transaction deleted"
-    show AlreadyUnspent      = "already unspent"
-    show TxConfirmed         = "transaction confirmed"
-    show OutputOutOfRange    = "output out of range"
-    show BalanceNotFound     = "balance not found"
-    show InsufficientFunds   = "insufficient funds"
-    show DuplicatePrevOutput = "duplicate previous output"
+    show PrevBlockNotBest    = "Previous block not best"
+    show Orphan              = "Orphan"
+    show UnexpectedCoinbase  = "Unexpected coinbase"
+    show BestBlockNotFound   = "Best block not found"
+    show BlockNotBest        = "Block not best"
+    show TxNotFound          = "Transaction not found"
+    show DoubleSpend         = "Double spend"
+    show TxConfirmed         = "Transaction confirmed"
+    show InsufficientFunds   = "Insufficient funds"
+    show DuplicatePrevOutput = "Duplicate previous output"
 
 initBest ::
        ( StoreRead m
@@ -126,7 +117,7 @@ bestBlockData = do
     h <- getBestBlock >>= \case
         Nothing -> do
             $(logErrorS) "BlockStore" "Best block unknown"
-            throwError BestBlockUnknown
+            throwError BestBlockNotFound
         Just h -> return h
     getBlock h >>= \case
         Nothing -> do
@@ -173,7 +164,7 @@ checkNewBlock b n =
                 $(logErrorS) "BlockStore" $
                     "Cannot import non-genesis block: "
                     <> blockHashToHex (headerHash (blockHeader b))
-                throwError BestBlockUnknown
+                throwError BestBlockNotFound
         Just h
             | prevBlock (blockHeader b) == h -> return ()
             | otherwise -> do
@@ -321,12 +312,14 @@ checkFunds
     => [Unspent]
     -> Tx
     -> m ()
-checkFunds us tx
-    | sum (map unspentAmount us) < sum (map outValue (txOut tx)) = do
+checkFunds us tx =
+    when (outputs > unspents) $ do
         $(logDebugS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError InsufficientFunds
-    | otherwise = return ()
+  where
+    unspents = sum (map unspentAmount us)
+    outputs = sum (map outValue (txOut tx))
 
 prepareTxData :: Bool -> BlockRef -> Word64 -> [Unspent] -> Tx -> TxData
 prepareTxData rbf br tt us tx =
