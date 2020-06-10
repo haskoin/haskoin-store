@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Rate-limit mempool importing.
 - Do not add xpubs to cache if node not in sync.
 - Do not import transactions to cache if no xpubs in cache.
+- Refactor transaction importing logic extremely.
 
 ## 0.30.1
 ### Changed

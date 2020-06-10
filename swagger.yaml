@@ -723,6 +723,7 @@ paths:
       summary: Evict Extended Public Key from Cache
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/prettyParam'
       responses:
         '200':

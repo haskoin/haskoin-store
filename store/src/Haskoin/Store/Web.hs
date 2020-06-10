@@ -94,7 +94,7 @@ data WebLimits = WebLimits
 instance Default WebLimits where
     def =
         WebLimits
-            { maxLimitCount = 20000
+            { maxLimitCount = 200000
             , maxLimitFull = 5000
             , maxLimitOffset = 50000
             , maxLimitDefault = 100
