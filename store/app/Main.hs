@@ -195,9 +195,11 @@ parseBool str = case map toLower str of
     "yes"   -> Just True
     "true"  -> Just True
     "on"    -> Just True
+    "1"     -> Just True
     "no"    -> Just False
     "false" -> Just False
     "off"   -> Just False
+    "0"     -> Just False
     _       -> Nothing
 
 config :: Parser Config
