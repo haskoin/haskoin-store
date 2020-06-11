@@ -73,8 +73,7 @@ import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
 import           Haskoin.Store.Data            (TxData (..), TxRef (..),
                                                 UnixTime, Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
-import           Haskoin.Store.Database.Writer (DatabaseWriter,
-                                                runDatabaseWriter)
+import           Haskoin.Store.Database.Writer (Writer, runWriter)
 import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 deleteTx, getOldMempool,
                                                 importBlock, initBest,
@@ -154,10 +153,10 @@ type BlockT m = ReaderT BlockRead m
 
 runImport ::
        MonadLoggerIO m
-    => ReaderT DatabaseWriter (ExceptT ImportException m) a
+    => ReaderT Writer (ExceptT ImportException m) a
     -> ReaderT BlockRead m (Either ImportException a)
 runImport f =
-    ReaderT $ \r -> runExceptT (runDatabaseWriter (blockConfDB (myConfig r)) f)
+    ReaderT $ \r -> runExceptT (runWriter (blockConfDB (myConfig r)) f)
 
 runRocksDB :: ReaderT DatabaseReader m a -> ReaderT BlockRead m a
 runRocksDB f =
