@@ -223,7 +223,8 @@ blockStore cfg inbox = do
     del x n txs =
         forM (zip [x ..] txs) $ \(i, tx) -> do
             $(logInfoS) "BlockStore" $
-                "Deleting " <> cs (show i) <> "/" <> cs (show n) <> ": "
+                "Deleting "
+                <> cs (show i) <> "/" <> cs (show n) <> ": "
                 <> txHashToHex (txRefHash tx) <> "…"
             deleteTx True False (txRefHash tx)
     wipeit x n txs = do
@@ -307,7 +308,7 @@ checkPeer peer =
     >>= maybe disconnected (const connected)
   where
     disconnected = do
-        $(logWarnS) "BlockStore" "Ignoring data from disconnected peer"
+        $(logDebugS) "BlockStore" "Ignoring data from disconnected peer"
         return False
     connected = touchPeer peer >>= \case
         True -> return True
@@ -438,7 +439,7 @@ updateOrphans = do
 newOrphanTx :: (MonadUnliftIO m, MonadLoggerIO m)
             => UnixTime -> Tx -> WriterT m ()
 newOrphanTx time tx = do
-    $(logWarnS) "BlockStore" $
+    $(logDebugS) "BlockStore" $
         "Mempool "
         <> txHashToHex (txHash tx)
         <> ": Orphan"
@@ -468,7 +469,7 @@ importMempoolTx time tx =
         newOrphanTx time tx
         return Nothing
     handle_error _ = do
-        $(logWarnS) "BlockStore" $
+        $(logDebugS) "BlockStore" $
             "Mempool " <> txHashToHex tx_hash <> ": Failed"
         return Nothing
     new_mempool_tx =
@@ -583,15 +584,14 @@ processDisconnect p =
         _ -> return ()
   where
     dc = do
-        $(logWarnS) "BlockStore" "Syncing peer disconnected"
+        $(logDebugS) "BlockStore" "Syncing peer disconnected"
         resetPeer
         getPeer >>= \case
-            Nothing ->
-                $(logWarnS) "BlockStore" "No new syncing peer available"
+            Nothing -> $(logWarnS) "BlockStore" "No peers available"
             Just peer -> do
                 ns <- managerPeerText peer =<<
                       asks (blockConfManager . myConfig)
-                $(logInfoS) "BlockStore" $ "New syncing peer " <> ns
+                $(logDebugS) "BlockStore" $ "New syncing peer " <> ns
                 syncMe peer
 
 pruneMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
@@ -599,9 +599,7 @@ pruneMempool = isInSync >>= \sync -> when sync $ do
     now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     getOldMempool now >>= \old -> unless (null old) $ delete_txs old
   where
-    zip_count old f =
-        forM_ (zip [(1 :: Int) ..] old) (uncurry (f (length old)))
-    delete_txs old = zip_count old delete_it
+    delete_txs = mapM_ delete_it
     failed txid e =
         $(logErrorS) "BlockStore" $
             "Could not delete old mempool tx: "
@@ -612,9 +610,9 @@ pruneMempool = isInSync >>= \sync -> when sync $ do
             "Deleted " <> cs (show (length txids)) <> " txs"
         l <- asks (blockConfListener . myConfig)
         atomically $ mapM_ (l . StoreTxDeleted) txids
-    delete_it l i txid = do
-        $(logInfoS) "BlockStore" $
-            "Deleting " <> cs (show i) <> "/" <> cs (show l)
+    delete_it txid = do
+        $(logDebugS) "BlockStore" $
+            "Deleting "
             <> ": " <> txHashToHex txid
             <> " (old mempool tx)…"
         runImport (deleteTx True False txid)
@@ -635,8 +633,9 @@ syncMe peer = void . runMaybeT $ do
         vecf = InvVector inv . getBlockHash . headerHash . nodeHeader
         vectors = map vecf blocknodes
     pt <- managerPeerText peer =<< asks (blockConfManager . myConfig)
-    $(logInfoS) "BlockStore" $
-        "Requesting " <> fromString (show (length vectors))
+    $(logDebugS) "BlockStore" $
+        "Requesting "
+        <> fromString (show (length vectors))
         <> " blocks from peer: " <> pt
     MGetData (GetData vectors) `sendMessage` peer
   where

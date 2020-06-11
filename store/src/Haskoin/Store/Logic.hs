@@ -104,7 +104,7 @@ newMempoolTx ::
 newMempoolTx tx w =
     getActiveTxData (txHash tx) >>= \case
         Just _ -> do
-            $(logWarnS) "BlockStore" $
+            $(logDebugS) "BlockStore" $
                 "Transaction already in store: "
                 <> txHashToHex (txHash tx)
             return Nothing
@@ -260,12 +260,12 @@ checkNewTx
     -> m ()
 checkNewTx tx = do
     when (unique_inputs < length (txIn tx)) $ do
-        $(logWarnS) "BlockStore" $
+        $(logDebugS) "BlockStore" $
             "Transaction spends same output twice: "
             <> txHashToHex (txHash tx)
         throwError DuplicatePrevOutput
     when (isCoinbase tx) $ do
-        $(logWarnS) "BlockStore" $
+        $(logDebugS) "BlockStore" $
             "Coinbase cannot be imported into mempool: "
             <> txHashToHex (txHash tx)
         throwError UnexpectedCoinbase
@@ -293,16 +293,16 @@ getUnspentOutputs mem ops = do
     force_unspent op = do
         s <- getSpender op >>= \case
             Nothing -> do
-                $(logWarnS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Output not found: " <> showOutput op
                 throwError Orphan
             Just Spender {spenderHash = s} -> return s
-        $(logWarnS) "BlockStore" $
+        $(logDebugS) "BlockStore" $
             "Deleting to free output: " <> txHashToHex s
         ths <- deleteTx True mem s
         getUnspent op >>= \case
             Nothing -> do
-                $(logWarnS) "BlockStore" $
+                $(logErrorS) "BlockStore" $
                     "Unexpected absent output: " <> showOutput op
                 error $ "Unexpected absent output: " <> show op
             Just u -> return (u, ths)
@@ -474,12 +474,13 @@ deleteTx
 deleteTx memonly rbfcheck txhash =
     getActiveTxData txhash >>= \case
         Nothing -> do
-            $(logWarnS) "BlockStore" $
-                "Already deleted or not found: " <> txHashToHex txhash
+            $(logDebugS) "BlockStore" $
+                "Already deleted or not found: "
+                <> txHashToHex txhash
             return []
         Just td
             | memonly && confirmed (txDataBlock td) -> do
-                $(logWarnS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Will not delete confirmed tx: "
                     <> txHashToHex txhash
                 throwError TxConfirmed
@@ -487,19 +488,19 @@ deleteTx memonly rbfcheck txhash =
                 isRBF (txDataBlock td) (txData td) >>= \case
                     True -> go td
                     False -> do
-                        $(logWarnS) "BlockStore" $
+                        $(logDebugS) "BlockStore" $
                             "Will not delete non-RBF tx: "
                             <> txHashToHex txhash
                         throwError DoubleSpend
             | otherwise -> go td
   where
     go td = do
-        $(logWarnS) "BlockStore" $
+        $(logDebugS) "BlockStore" $
             "Deleting tx: " <> txHashToHex txhash
         ss <- nub' . map spenderHash . I.elems <$>
               getSpenders txhash
         ths <- fmap concat $ forM ss $ \s -> do
-            $(logWarnS) "BlockStore" $
+            $(logDebugS) "BlockStore" $
                 "Need to delete child tx: " <> txHashToHex s
             deleteTx True rbfcheck s
         case ths of
@@ -508,7 +509,7 @@ deleteTx memonly rbfcheck txhash =
                 return [txhash]
             _ -> getActiveTxData txhash >>= \case
                 Nothing -> do
-                    $(logWarnS) "BlockStore" $
+                    $(logErrorS) "BlockStore" $
                         "Mysteriously gone: " <> txHashToHex txhash
                     return ths
                 Just td' -> do
