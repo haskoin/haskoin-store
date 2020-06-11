@@ -10,6 +10,7 @@ import           Control.Arrow           (second)
 import           Control.Monad           (when)
 import           Control.Monad.Logger    (LogLevel (..), filterLogger, logInfoS,
                                           runStderrLoggingT)
+import           Data.Char               (toLower)
 import           Data.Default            (Default (..))
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
@@ -112,12 +113,12 @@ defRedisMin = unsafePerformIO $
 
 defRedis :: Bool
 defRedis = unsafePerformIO $
-    defEnv "CACHE" False readMaybe
+    defEnv "CACHE" False parseBool
 {-# NOINLINE defRedis #-}
 
 defDiscover :: Bool
 defDiscover = unsafePerformIO $
-    defEnv "DISCOVER" False readMaybe
+    defEnv "DISCOVER" False parseBool
 {-# NOINLINE defDiscover #-}
 
 defPeers :: [(String, Maybe Int)]
@@ -127,12 +128,12 @@ defPeers = unsafePerformIO $
 
 defDebug :: Bool
 defDebug = unsafePerformIO $
-    defEnv "DEBUG" False readMaybe
+    defEnv "DEBUG" False parseBool
 {-# NOINLINE defDebug #-}
 
 defReqLog :: Bool
 defReqLog = unsafePerformIO $
-    defEnv "REQ_LOG" False readMaybe
+    defEnv "REQ_LOG" False parseBool
 {-# NOINLINE defReqLog #-}
 
 defWebLimits :: WebLimits
@@ -163,7 +164,7 @@ defWebTimeouts = unsafePerformIO $ do
 
 defWipeMempool :: Bool
 defWipeMempool = unsafePerformIO $
-    defEnv "WIPE_MEMPOOL" False readMaybe
+    defEnv "WIPE_MEMPOOL" False parseBool
 {-# NOINLINE defWipeMempool #-}
 
 defRedisURL :: String
@@ -188,6 +189,16 @@ defPeerTooOld = unsafePerformIO $
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
+
+parseBool :: String -> Maybe Bool
+parseBool str = case map toLower str of
+    "yes"   -> Just True
+    "true"  -> Just True
+    "on"    -> Just True
+    "no"    -> Just False
+    "false" -> Just False
+    "off"   -> Just False
+    _       -> Nothing
 
 config :: Parser Config
 config = do
