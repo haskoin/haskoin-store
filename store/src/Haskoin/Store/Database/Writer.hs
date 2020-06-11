@@ -60,6 +60,38 @@ data DatabaseWriter = DatabaseWriter
     , databaseWriterState  :: !(TVar MemoryDatabase)
     }
 
+instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
+    getInitialGap = R.asks (databaseInitialGap . databaseWriterReader)
+    getNetwork = R.asks (databaseNetwork . databaseWriterReader)
+    getBestBlock = R.ask >>= getBestBlockI
+    getBlocksAtHeight h = R.ask >>= getBlocksAtHeightI h
+    getBlock b = R.ask >>= getBlockI b
+    getTxData t = R.ask >>= getTxDataI t
+    getSpender p = R.ask >>= getSpenderI p
+    getSpenders t = R.ask >>= getSpendersI t
+    getUnspent a = R.ask >>= getUnspentI a
+    getBalance a = R.ask >>= getBalanceI a
+    getMempool = R.ask >>= getMempoolI
+    getAddressesTxs = undefined
+    getAddressesUnspents = undefined
+    getMaxGap = R.asks (databaseMaxGap . databaseWriterReader)
+
+instance MonadIO m => StoreWrite (ReaderT DatabaseWriter m) where
+    setBest h = R.ask >>= setBestI h
+    insertBlock b = R.ask >>= insertBlockI b
+    setBlocksAtHeight hs g = R.ask >>= setBlocksAtHeightI hs g
+    insertTx t = R.ask >>= insertTxI t
+    insertSpender p s = R.ask >>= insertSpenderI p s
+    deleteSpender p = R.ask >>= deleteSpenderI p
+    insertAddrTx a t = R.ask >>= insertAddrTxI a t
+    deleteAddrTx a t = R.ask >>= deleteAddrTxI a t
+    insertAddrUnspent a u = R.ask >>= insertAddrUnspentI a u
+    deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentI a u
+    setMempool xs = R.ask >>= setMempoolI xs
+    insertUnspent u = R.ask >>= insertUnspentI u
+    deleteUnspent p = R.ask >>= deleteUnspentI p
+    setBalance b = R.ask >>= setBalanceI b
+
 data MemoryDatabase = MemoryDatabase
     { hBest
       :: !(Maybe BlockHash)
@@ -361,38 +393,6 @@ getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db}
     getMempoolH <$> readTVarIO hm >>= \case
         Just xs -> return xs
         Nothing -> withDatabaseReader db getMempool
-
-instance MonadIO m => StoreRead (ReaderT DatabaseWriter m) where
-    getInitialGap = R.asks (databaseInitialGap . databaseWriterReader)
-    getNetwork = R.asks (databaseNetwork . databaseWriterReader)
-    getBestBlock = R.ask >>= getBestBlockI
-    getBlocksAtHeight h = R.ask >>= getBlocksAtHeightI h
-    getBlock b = R.ask >>= getBlockI b
-    getTxData t = R.ask >>= getTxDataI t
-    getSpender p = R.ask >>= getSpenderI p
-    getSpenders t = R.ask >>= getSpendersI t
-    getUnspent a = R.ask >>= getUnspentI a
-    getBalance a = R.ask >>= getBalanceI a
-    getMempool = R.ask >>= getMempoolI
-    getAddressesTxs = undefined
-    getAddressesUnspents = undefined
-    getMaxGap = R.asks (databaseMaxGap . databaseWriterReader)
-
-instance MonadIO m => StoreWrite (ReaderT DatabaseWriter m) where
-    setBest h = R.ask >>= setBestI h
-    insertBlock b = R.ask >>= insertBlockI b
-    setBlocksAtHeight hs g = R.ask >>= setBlocksAtHeightI hs g
-    insertTx t = R.ask >>= insertTxI t
-    insertSpender p s = R.ask >>= insertSpenderI p s
-    deleteSpender p = R.ask >>= deleteSpenderI p
-    insertAddrTx a t = R.ask >>= insertAddrTxI a t
-    deleteAddrTx a t = R.ask >>= deleteAddrTxI a t
-    insertAddrUnspent a u = R.ask >>= insertAddrUnspentI a u
-    deleteAddrUnspent a u = R.ask >>= deleteAddrUnspentI a u
-    setMempool xs = R.ask >>= setMempoolI xs
-    insertUnspent u = R.ask >>= insertUnspentI u
-    deleteUnspent p = R.ask >>= deleteUnspentI p
-    setBalance b = R.ask >>= setBalanceI b
 
 withMemoryDatabase ::
        MonadIO m
