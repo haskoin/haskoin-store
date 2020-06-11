@@ -37,6 +37,7 @@ import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (MaybeT), runMaybeT)
+import qualified Data.ByteString               as B
 import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as HashMap
 import           Data.HashSet                  (HashSet)
@@ -44,6 +45,7 @@ import qualified Data.HashSet                  as HashSet
 import           Data.List                     (partition)
 import           Data.Maybe                    (catMaybes, listToMaybe,
                                                 mapMaybe)
+import           Data.Serialize                (encode)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
@@ -262,26 +264,22 @@ processBlock peer block =
         blocknode <- getblocknode
         p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
         $(logDebugS) "BlockStore" $
-            "Processing block : " <> blockText blocknode (blockTxns block) <>
-            " (peer" <>
-            p' <>
-            ")"
+            "Processing block : " <> blockText blocknode Nothing
+            <> " (peer" <> p' <> ")"
         lift (runImport (importBlock block blocknode)) >>= \case
             Right deletedtxids -> do
                 listener <- asks (blockConfListener . myConfig)
                 $(logInfoS) "BlockStore" $
-                    "Best block: " <> blockText blocknode (blockTxns block)
+                    "Best block: " <> blockText blocknode (Just block)
                 atomically $ do
                     mapM_ (listener . StoreTxDeleted) deletedtxids
                     listener (StoreBestBlock blockhash)
                 lift (touchPeer peer >> syncMe peer)
             Left e -> do
                 $(logErrorS) "BlockStore" $
-                    "Error importing block: " <> hexhash <> ": " <>
-                    fromString (show e) <>
-                    " (peer " <>
-                    p' <>
-                    ")"
+                    "Error importing block: "
+                    <> hexhash <> ": " <> cs (show e)
+                    <> " (peer " <> p' <> ")"
                 killPeer (PeerMisbehaving (show e)) peer
   where
     header = blockHeader block
@@ -313,8 +311,8 @@ processBlock peer block =
                 p' <-
                     managerPeerText peer =<< asks (blockConfManager . myConfig)
                 $(logErrorS) "BlockStore" $
-                    "Header not found for block: " <> hexhash <> " (peer " <> p' <>
-                    ")"
+                    "Header not found for block: " <> hexhash
+                    <> " (peer " <> p' <> ")"
                 killPeer (PeerMisbehaving "Sent unknown block") peer
                 mzero
             Just n -> return n
@@ -328,11 +326,8 @@ processNoBlocks p hs = do
     p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
     forM_ (zip [(1 :: Int) ..] hs) $ \(i, h) ->
         $(logErrorS) "BlockStore" $
-        "Block " <> cs (show i) <> "/" <> cs (show (length hs)) <> " " <>
-        blockHashToHex h <>
-        " not found (peer " <>
-        p' <>
-        ")"
+        "Block " <> cs (show i) <> "/" <> cs (show (length hs)) <> " "
+        <> blockHashToHex h <> " not found (peer " <> p' <> ")"
     killPeer (PeerMisbehaving "Did not find requested block(s)") p
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
@@ -663,7 +658,7 @@ syncMe peer =
                 "Requesting block " <> cs (show i) <> "/" <>
                 cs (show (length vectors)) <>
                 ": " <>
-                blockText bn [] <>
+                blockText bn Nothing <>
                 " (peer " <>
                 p' <>
                 ")"
@@ -844,10 +839,12 @@ blockStoreTxHashSTM :: Peer -> [TxHash] -> BlockStore -> STM ()
 blockStoreTxHashSTM peer txhashes store =
     TxRefAvailable peer txhashes `sendSTM` store
 
-blockText :: BlockNode -> [Tx] -> Text
-blockText bn txs
-   | null txs = height <> sep <> time <> sep <> hash
-   | otherwise = height <> sep <> time <> sep <> txcount <> sep <> hash
+blockText :: BlockNode -> Maybe Block -> Text
+blockText bn mblock = case mblock of
+    Nothing ->
+        height <> sep <> time <> sep <> hash
+    Just block ->
+        height <> sep <> time <> sep <> hash <> sep <> size block
   where
     height = cs $ show (nodeHeight bn)
     systime =
@@ -856,5 +853,5 @@ blockText bn txs
         cs $
         formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M")) systime
     hash = blockHashToHex (headerHash (nodeHeader bn))
-    txcount = cs (show (length txs)) <> " txs"
     sep = " | "
+    size = (<> " bytes") . cs . show . B.length . encode
