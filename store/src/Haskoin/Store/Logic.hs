@@ -92,7 +92,11 @@ getOldMempool now =
     <$> getMempool
 
 newMempoolTx ::
-       (StoreRead m, StoreWrite m, MonadLogger m, MonadError ImportException m)
+       ( StoreRead m
+       , StoreWrite m
+       , MonadLogger m
+       , MonadError ImportException m
+       )
     => Tx
     -> UnixTime
     -> m (Maybe [TxHash])
