@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Add Haskell web client code to data library.
 - Use type-safe definitions for web paths and parameters.
 - Support JSON pretty encoding and enable by default for some endpoints.
+- Allow environment variables for configuration.
 
 ### Changed
 - Refactor code to manipulate address balances.
