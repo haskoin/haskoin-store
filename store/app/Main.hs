@@ -36,6 +36,7 @@ import           UnliftIO.Directory      (createDirectoryIfMissing,
 
 data Config = Config
     { configDir         :: !FilePath
+    , configHost        :: !String
     , configPort        :: !Int
     , configNetwork     :: !Network
     , configDiscover    :: !Bool
@@ -54,8 +55,15 @@ data Config = Config
     , configPeerTooOld  :: !Int
     }
 
+myDirectory :: FilePath
+myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
+{-# NOINLINE myDirectory #-}
+
 defPort :: Int
 defPort = 3000
+
+defHost :: String
+defHost = "0.0.0.0"
 
 defNetwork :: Network
 defNetwork = bch
@@ -82,6 +90,11 @@ config = do
         metavar "WORKDIR" <> long "dir" <> short 'd' <> help "Data directory" <>
         showDefault <>
         value myDirectory
+    configHost <-
+        strOption $
+        metavar "HOST" <> long "host" <> help "Listen on network interface" <>
+        showDefault <>
+        value defHost
     configPort <-
         option auto $
         metavar "PORT" <> long "listen" <> short 'l' <> help "Listening port" <>
@@ -100,62 +113,62 @@ config = do
         help "Network peer (as many as required)"
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
-    configReqLog <- switch $ long "reqlog" <> help "HTTP request logging"
+    configReqLog <- switch $ long "req-log" <> help "HTTP request logging"
     maxLimitCount <-
         option auto $
-        metavar "MAXLIMIT" <> long "maxlimit" <>
+        metavar "MAXLIMIT" <> long "max-limit" <>
         help "Max limit for listings (0 for no limit)" <>
         showDefault <>
         value (maxLimitCount def)
     maxLimitFull <-
         option auto $
-        metavar "MAXLIMITFULL" <> long "maxfull" <>
+        metavar "MAXLIMITFULL" <> long "max-full" <>
         help "Max limit for full listings (0 for no limit)" <>
         showDefault <>
         value (maxLimitFull def)
     maxLimitOffset <-
         option auto $
-        metavar "MAXOFFSET" <> long "maxoffset" <>
+        metavar "MAXOFFSET" <> long "max-offset" <>
         help "Max offset (0 for no limit)" <>
         showDefault <>
         value (maxLimitOffset def)
     maxLimitDefault <-
         option auto $
-        metavar "LIMITDEFAULT" <> long "deflimit" <>
+        metavar "LIMITDEFAULT" <> long "def-limit" <>
         help "Default limit (0 for max)" <>
         showDefault <>
         value (maxLimitDefault def)
     maxLimitGap <-
         option auto $
-        metavar "MAXGAP" <> long "maxgap" <> help "Max gap for xpub queries" <>
+        metavar "MAXGAP" <> long "max-gap" <> help "Max gap for xpub queries" <>
         showDefault <>
         value (maxLimitGap def)
     maxLimitInitialGap <-
         option auto $
-        metavar "INITGAP" <> long "initgap" <> help "Max gap for empty xpub" <>
+        metavar "INITGAP" <> long "init-gap" <> help "Max gap for empty xpub" <>
         showDefault <>
         value (maxLimitInitialGap def)
     blockTimeout <-
         option auto $
-        metavar "BLOCKSECONDS" <> long "blocktimeout" <>
+        metavar "BLOCKSECONDS" <> long "block-timeout" <>
         help "Last block mined timeout (0 for infinite)" <>
         showDefault <>
         value (blockTimeout def)
     txTimeout <-
         option auto $
-        metavar "TXSECONDS" <> long "txtimeout" <>
+        metavar "TXSECONDS" <> long "tx-timeout" <>
         help "Last transaction broadcast timeout (0 for infinite)" <>
         showDefault <>
         value (txTimeout def)
     configPeerTimeout <-
         option auto $
-        metavar "TIMEOUT" <> long "peertimeout" <>
+        metavar "TIMEOUT" <> long "peer-timeout" <>
         help "Disconnect if peer doesn't send message for this many seconds" <>
         showDefault <>
         value defPeerTimeout
     configPeerTooOld <-
         option auto $
-        metavar "TIMEOUT" <> long "peertooold" <>
+        metavar "TIMEOUT" <> long "peer-old" <>
         help "Disconnect if peer has been connected for this many seconds" <>
         showDefault <>
         value defPeerTooOld
@@ -166,18 +179,18 @@ config = do
         metavar "URL" <> long "redis" <> help "URL for Redis cache" <> value ""
     configRedisMin <-
         option auto $
-        metavar "MINADDRS" <> long "cachemin" <>
+        metavar "MINADDRS" <> long "cache-min" <>
         help "Minimum used xpub addresses to cache" <>
         showDefault <>
         value defRedisMin
     configRedisMax <-
         option auto $
-        metavar "MAXKEYS" <> long "cachekeys" <>
+        metavar "MAXKEYS" <> long "cache-keys" <>
         help "Maximum number of keys in Redis xpub cache" <>
         showDefault <>
         value defRedisMax
     configWipeMempool <-
-        switch $ long "wipemempool" <> help "Wipe mempool when starting"
+        switch $ long "wipe-mempool" <> help "Wipe mempool when starting"
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -209,10 +222,6 @@ peerReader s = do
             _ -> Left "Peer information could not be parsed"
     return (host, port)
 
-myDirectory :: FilePath
-myDirectory = unsafePerformIO $ getAppUserDataDirectory "haskoin-store"
-{-# NOINLINE myDirectory #-}
-
 main :: IO ()
 main = do
     conf <- execParser opts
@@ -231,7 +240,8 @@ main = do
             ("haskoin-store version " <> showVersion P.version)
 
 run :: Config -> IO ()
-run Config { configPort = port
+run Config { configHost = host
+           , configPort = port
            , configNetwork = net
            , configDiscover = disc
            , configPeers = peers
@@ -276,7 +286,8 @@ run Config { configPort = port
         withStore scfg $ \st ->
             runWeb
                 WebConfig
-                    { webPort = port
+                    { webHost = host
+                    , webPort = port
                     , webStore = st
                     , webMaxLimits = limits
                     , webReqLog = reqlog
