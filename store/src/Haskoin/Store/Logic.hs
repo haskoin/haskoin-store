@@ -473,35 +473,43 @@ deleteTx memonly rbfcheck txhash =
             $(logWarnS) "BlockStore" $
                 "Already deleted or not found: " <> txHashToHex txhash
             return []
-        Just t
-            | memonly && confirmed (txDataBlock t) -> do
+        Just td
+            | memonly && confirmed (txDataBlock td) -> do
                 $(logWarnS) "BlockStore" $
                     "Will not delete confirmed tx: "
                     <> txHashToHex txhash
                 throwError TxConfirmed
             | rbfcheck ->
-                isRBF (txDataBlock t) (txData t) >>= \case
-                    True -> go t
+                isRBF (txDataBlock td) (txData td) >>= \case
+                    True -> go td
                     False -> do
                         $(logWarnS) "BlockStore" $
                             "Will not delete non-RBF tx: "
                             <> txHashToHex txhash
                         throwError DoubleSpend
-            | otherwise -> go t
+            | otherwise -> go td
   where
     go td = do
         $(logWarnS) "BlockStore" $
             "Deleting tx: " <> txHashToHex txhash
         ss <- nub' . map spenderHash . I.elems <$>
               getSpenders txhash
-        ths <-
-            fmap concat $
-            forM ss $ \s -> do
-                $(logWarnS) "BlockStore" $
-                    "Need to delete child tx: " <> txHashToHex s
-                deleteTx True rbfcheck s
-        commitDelTx td
-        return (txhash : ths)
+        ths <- fmap concat $ forM ss $ \s -> do
+            $(logWarnS) "BlockStore" $
+                "Need to delete child tx: " <> txHashToHex s
+            deleteTx True rbfcheck s
+        case ths of
+            [] -> do
+                commitDelTx td
+                return [txhash]
+            _ -> getActiveTxData txhash >>= \case
+                Nothing -> do
+                    $(logWarnS) "BlockStore" $
+                        "Mysteriously gone: " <> txHashToHex txhash
+                    return ths
+                Just td' -> do
+                    commitDelTx td'
+                    return (txhash : ths)
 
 commitDelTx
     :: (StoreRead m, StoreWrite m, MonadLogger m)

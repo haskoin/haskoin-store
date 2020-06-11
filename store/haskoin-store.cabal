@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 84761eca9fa20512e492b926a5bbc25a9d4ecfa6cb910c2f79e29e30dbd5e7f0
+-- hash: 9b20ec7ef35fe8d145b348b8079ed0c8fd6e549ffcd808f57570e00c575a423d
 
 name:           haskoin-store
 version:        0.30.2
@@ -33,7 +33,6 @@ library
       Haskoin.Store.BlockStore
       Haskoin.Store.Cache
       Haskoin.Store.Common
-      Haskoin.Store.Database.Memory
       Haskoin.Store.Database.Reader
       Haskoin.Store.Database.Types
       Haskoin.Store.Database.Writer
@@ -124,7 +123,6 @@ test-suite haskoin-store-test
       Haskoin.Store.BlockStore
       Haskoin.Store.Cache
       Haskoin.Store.Common
-      Haskoin.Store.Database.Memory
       Haskoin.Store.Database.Reader
       Haskoin.Store.Database.Types
       Haskoin.Store.Database.Writer
