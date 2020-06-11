@@ -17,8 +17,7 @@ module Haskoin.Store.Logic
 import           Control.Monad           (forM, forM_, guard, unless, void,
                                           when, zipWithM_)
 import           Control.Monad.Except    (MonadError (..))
-import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS,
-                                          logWarnS)
+import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS)
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
