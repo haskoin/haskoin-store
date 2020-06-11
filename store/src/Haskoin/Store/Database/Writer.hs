@@ -389,10 +389,11 @@ getMempoolI ::
        MonadIO m
     => DatabaseWriter
     -> m [TxRef]
-getMempoolI DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
+getMempoolI
+    DatabaseWriter {databaseWriterState = hm, databaseWriterReader = db} =
     getMempoolH <$> readTVarIO hm >>= \case
-        Just xs -> return xs
-        Nothing -> withDatabaseReader db getMempool
+    Just xs -> return xs
+    Nothing -> withDatabaseReader db getMempool
 
 withMemoryDatabase ::
        MonadIO m
