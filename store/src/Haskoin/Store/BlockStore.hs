@@ -440,7 +440,7 @@ newOrphanTx :: (MonadUnliftIO m, MonadLoggerIO m)
 newOrphanTx time tx = do
     $(logWarnS) "BlockStore" $
         "Mempool "
-        <> ": " <> txHashToHex (txHash tx)
+        <> txHashToHex (txHash tx)
         <> ": Orphan"
     box <- lift $ asks myTxs
     unspents <- catMaybes <$> mapM getUnspent prevs
@@ -469,18 +469,18 @@ importMempoolTx time tx =
         return Nothing
     handle_error _ = do
         $(logWarnS) "BlockStore" $
-            "Mempool " <> ": " <> txHashToHex tx_hash <> ": Failed"
+            "Mempool " <> txHashToHex tx_hash <> ": Failed"
         return Nothing
     new_mempool_tx =
         newMempoolTx tx time >>= \case
         Just deleted -> do
             $(logDebugS) "BlockStore" $
-                "Mempool " <> ": " <> txHashToHex (txHash tx) <> ": OK"
+                "Mempool " <> txHashToHex (txHash tx) <> ": OK"
             lift $ fulfillOrphans tx_hash
             return (Just deleted)
         Nothing -> do
             $(logDebugS) "BlockStore" $
-                "Mempool " <> ": " <> txHashToHex (txHash tx) <> ": No action"
+                "Mempool " <> txHashToHex (txHash tx) <> ": No action"
             return Nothing
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
