@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Allow environment variables for configuration.
 
 ### Changed
+- Change command-line arguments to better fit GNU style.
 - Refactor code to manipulate address balances.
 - Improve logging.
 - Rate-limit mempool importing.
