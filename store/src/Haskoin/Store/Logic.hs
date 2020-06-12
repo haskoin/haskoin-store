@@ -60,6 +60,7 @@ data ImportException
     | TxConfirmed
     | InsufficientFunds
     | DuplicatePrevOutput
+    | OrphanLoop
     deriving (Eq, Ord, Exception)
 
 instance Show ImportException where
@@ -73,6 +74,7 @@ instance Show ImportException where
     show TxConfirmed         = "Transaction confirmed"
     show InsufficientFunds   = "Insufficient funds"
     show DuplicatePrevOutput = "Duplicate previous output"
+    show OrphanLoop          = "Orphan loop"
 
 withLock :: MonadUnliftIO m => TVar Bool -> m () -> m ()
 withLock lockbox =
@@ -202,13 +204,13 @@ importOrConfirm bn txs = do
     go lockbox indexed_txs
   where
     go lockbox its = do
-        asyncs <- forM its (uncurry (spark_it lockbox))
+        asyncs <- forM its (async . action lockbox)
         orphans <- catMaybes <$> mapM wait asyncs
+        when (length orphans == length its) loop_detected
         unless (null orphans) (go lockbox orphans)
-    spark_it lockbox i tx = async (action lockbox i tx)
     indexed_txs = zip [0..] txs
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
-    action lockbox i tx =
+    action lockbox (i, tx) =
         handle (handle_orphan (i, tx)) $ do
             importTx
                 (Just lockbox)
@@ -216,16 +218,17 @@ importOrConfirm bn txs = do
                 (fromIntegral (blockTimestamp (nodeHeader bn)))
                 tx
             return Nothing
-    handle_orphan (i, tx) Orphan =
-        log_orphan tx >> return (Just (i, tx))
-    handle_orphan _ e =
-        log_error e >> throwIO e
-    log_error e =
-        $(logErrorS) "BlockStore" $
-        "Transaction failed importing: " <> cs (show e)
-    log_orphan tx =
+    loop_detected = do
+        $(logErrorS) "BlockStore" "Orphan loop detected"
+        throwIO OrphanLoop
+    handle_orphan (i, tx) Orphan = do
         $(logDebugS) "BlockStore" $
-        "Missing dependencies for tx: " <> txHashToHex (txHash tx)
+            "Missing dependencies for tx: " <> txHashToHex (txHash tx)
+        return (Just (i, tx))
+    handle_orphan _ e = do
+        $(logErrorS) "BlockStore" $
+            "Transaction failed importing: " <> cs (show e)
+        throwIO e
 
 importBlock
     :: ( StoreRead m
