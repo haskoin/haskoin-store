@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a8ef1dc372d5a5453e66b10b4c839e956cae7ec06de834f52511cc49c0975957
+-- hash: c5fef1d2f34e119fa142b47d873bda6c5c99c325a1e861107d9ca8ce81746b1d
 
 name:           haskoin-store
 version:        0.31.0
@@ -39,7 +39,6 @@ library
       Haskoin.Store.Logic
       Haskoin.Store.Manager
       Haskoin.Store.Web
-      Paths_haskoin_store
       Paths_haskoin_store
   hs-source-dirs:
       src
@@ -129,7 +128,6 @@ test-suite haskoin-store-test
       Haskoin.Store.Logic
       Haskoin.Store.Manager
       Haskoin.Store.Web
-      Paths_haskoin_store
       Paths_haskoin_store
   hs-source-dirs:
       test
