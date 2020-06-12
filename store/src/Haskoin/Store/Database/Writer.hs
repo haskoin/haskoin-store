@@ -5,13 +5,15 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Haskoin.Store.Database.Writer
-    ( Writer
+    ( WriterT
+    , MemoryTx
     , runWriter
+    , runTx
     ) where
 
 import           Control.Applicative           ((<|>))
 import           Control.DeepSeq               (NFData)
-import           Control.Monad.Reader          (ReaderT)
+import           Control.Monad.Reader          (ReaderT (..))
 import qualified Control.Monad.Reader          as R
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
 import qualified Data.ByteString.Short         as B.Short
@@ -43,8 +45,8 @@ import           Haskoin.Store.Database.Types  (AddrOutKey (..), AddrTxKey (..),
                                                 UnspentVal (..), balanceToVal,
                                                 unspentToVal, valToBalance,
                                                 valToUnspent)
-import           UnliftIO                      (MonadIO, TVar, atomically,
-                                                modifyTVar, newTVarIO,
+import           UnliftIO                      (MonadIO, STM, TVar, atomically,
+                                                modifyTVar, newTVarIO, readTVar,
                                                 readTVarIO)
 
 data Dirty a = Modified a | Deleted
@@ -57,65 +59,38 @@ instance Functor Dirty where
 data Writer = Writer { getReader :: !DatabaseReader
                      , getState  :: !(TVar Memory) }
 
-instance MonadIO m => StoreRead (ReaderT Writer m) where
-    getInitialGap =
-        R.asks (databaseInitialGap . getReader)
-    getNetwork =
-        R.asks (databaseNetwork . getReader)
-    getBestBlock =
-        R.ask >>= getBestBlockI
-    getBlocksAtHeight h =
-        R.ask >>= getBlocksAtHeightI h
-    getBlock b =
-        R.ask >>= getBlockI b
-    getTxData t =
-        R.ask >>= getTxDataI t
-    getSpender p =
-        R.ask >>= getSpenderI p
-    getSpenders t =
-        R.ask >>= getSpendersI t
-    getUnspent a =
-        R.ask >>= getUnspentI a
-    getBalance a =
-        R.ask >>= getBalanceI a
-    getMempool =
-        R.ask >>= getMempoolI
+type MemoryTx = ReaderT (TVar Memory) STM
+type WriterT = ReaderT Writer
+
+instance MonadIO m => StoreRead (WriterT m) where
+    getInitialGap = R.asks $
+        databaseInitialGap . getReader
+    getNetwork = R.asks $
+        databaseNetwork . getReader
+    getBestBlock = R.ask >>=
+        getBestBlockI
+    getBlocksAtHeight h = R.ask >>=
+        getBlocksAtHeightI h
+    getBlock b = R.ask >>=
+        getBlockI b
+    getTxData t = R.ask >>=
+        getTxDataI t
+    getSpender p = R.ask >>=
+        getSpenderI p
+    getSpenders t = R.ask >>=
+        getSpendersI t
+    getUnspent a = R.ask >>=
+        getUnspentI a
+    getBalance a = R.ask >>=
+        getBalanceI a
+    getMempool = R.ask >>=
+        getMempoolI
     getAddressesTxs =
         undefined
     getAddressesUnspents =
         undefined
-    getMaxGap =
-        R.asks (databaseMaxGap . getReader)
-
-instance MonadIO m => StoreWrite (ReaderT Writer m) where
-    setBest h =
-        R.ask >>= setBestI h
-    insertBlock b =
-        R.ask >>= insertBlockI b
-    setBlocksAtHeight hs g =
-        R.ask >>= setBlocksAtHeightI hs g
-    insertTx t =
-        R.ask >>= insertTxI t
-    insertSpender p s =
-        R.ask >>= insertSpenderI p s
-    deleteSpender p =
-        R.ask >>= deleteSpenderI p
-    insertAddrTx a t =
-        R.ask >>= insertAddrTxI a t
-    deleteAddrTx a t =
-        R.ask >>= deleteAddrTxI a t
-    insertAddrUnspent a u =
-        R.ask >>= insertAddrUnspentI a u
-    deleteAddrUnspent a u =
-        R.ask >>= deleteAddrUnspentI a u
-    setMempool xs =
-        R.ask >>= setMempoolI xs
-    insertUnspent u =
-        R.ask >>= insertUnspentI u
-    deleteUnspent p =
-        R.ask >>= deleteUnspentI p
-    setBalance b =
-        R.ask >>= setBalanceI b
+    getMaxGap = R.asks $
+        databaseMaxGap . getReader
 
 data Memory = Memory
     { hBest
@@ -145,54 +120,94 @@ data Memory = Memory
       :: !(Maybe [TxRef])
     } deriving (Eq, Show)
 
-instance MonadIO m => StoreWrite (ReaderT (TVar Memory) m) where
-    setBest h = do
-        v <- R.ask
-        atomically $ modifyTVar v (setBestH h)
-    insertBlock b = do
-        v <- R.ask
-        atomically $ modifyTVar v (insertBlockH b)
-    setBlocksAtHeight h g = do
-        v <- R.ask
-        atomically $ modifyTVar v (setBlocksAtHeightH h g)
-    insertTx t = do
-        v <- R.ask
-        atomically $ modifyTVar v (insertTxH t)
-    insertSpender p s = do
-        v <- R.ask
-        atomically $ modifyTVar v (insertSpenderH p s)
-    deleteSpender p = do
-        v <- R.ask
-        atomically $ modifyTVar v (deleteSpenderH p)
-    insertAddrTx a t = do
-        v <- R.ask
-        atomically $ modifyTVar v (insertAddrTxH a t)
-    deleteAddrTx a t = do
-        v <- R.ask
-        atomically $ modifyTVar v (deleteAddrTxH a t)
-    insertAddrUnspent a u = do
-        v <- R.ask
-        atomically $ modifyTVar v (insertAddrUnspentH a u)
-    deleteAddrUnspent a u = do
-        v <- R.ask
-        atomically $ modifyTVar v (deleteAddrUnspentH a u)
-    setMempool xs = do
-        v <- R.ask
-        atomically $ modifyTVar v (setMempoolH xs)
-    setBalance b = do
-        v <- R.ask
-        atomically $ modifyTVar v (setBalanceH b)
-    insertUnspent h = do
-        v <- R.ask
-        atomically $ modifyTVar v (insertUnspentH h)
-    deleteUnspent p = do
-        v <- R.ask
-        atomically $ modifyTVar v (deleteUnspentH p)
+instance StoreWrite MemoryTx where
+    setBest h =
+        ReaderT $ \v -> modifyTVar v $
+        setBestH h
+    insertBlock b =
+        ReaderT $ \v -> modifyTVar v $
+        insertBlockH b
+    setBlocksAtHeight h g =
+        ReaderT $ \v -> modifyTVar v $
+        setBlocksAtHeightH h g
+    insertTx t =
+        ReaderT $ \v -> modifyTVar v $
+        insertTxH t
+    insertSpender p s =
+        ReaderT $ \v -> modifyTVar v $
+        insertSpenderH p s
+    deleteSpender p =
+        ReaderT $ \v -> modifyTVar v $
+        deleteSpenderH p
+    insertAddrTx a t =
+        ReaderT $ \v -> modifyTVar v $
+        insertAddrTxH a t
+    deleteAddrTx a t =
+        ReaderT $ \v -> modifyTVar v $
+        deleteAddrTxH a t
+    insertAddrUnspent a u =
+        ReaderT $ \v -> modifyTVar v $
+        insertAddrUnspentH a u
+    deleteAddrUnspent a u =
+        ReaderT $ \v -> modifyTVar v $
+        deleteAddrUnspentH a u
+    setMempool xs =
+        ReaderT $ \v -> modifyTVar v $
+        setMempoolH xs
+    setBalance b =
+        ReaderT $ \v -> modifyTVar v $
+        setBalanceH b
+    insertUnspent h =
+        ReaderT $ \v -> modifyTVar v $
+        insertUnspentH h
+    deleteUnspent p =
+        ReaderT $ \v -> modifyTVar v $
+        deleteUnspentH p
+
+instance StoreRead MemoryTx where
+    getInitialGap =
+        error "Cannot query initial gap in STM"
+    getNetwork =
+        error "Cannot query network in STM"
+    getBestBlock =
+        error "Cannot query best block in STM"
+    getBlocksAtHeight _ =
+        error "Cannot query block heights in STM"
+    getBlock _ =
+        error "Cannot query block in STM"
+    getTxData t =
+        ReaderT $ fmap (getTxDataH t) . readTVar
+    getSpender _ =
+        error "Cannot query spender in STM"
+    getSpenders _ =
+        error "Cannot query spenders in STM"
+    getUnspent op =
+        ReaderT $ \v -> do
+        m <- getUnspentH op <$> readTVar v
+        case m of
+            Just (Modified u) -> return (Just (valToUnspent op u))
+            Just Deleted      -> return Nothing
+            Nothing           -> return Nothing
+    getBalance a =
+        ReaderT $ \v -> do
+        m <- getBalanceH a <$> readTVar v
+        case m of
+            Just b  -> return $ valToBalance a b
+            Nothing -> error "Balance not pre-loaded"
+    getMempool =
+        ReaderT $ \v -> do
+        m <- getMempoolH <$> readTVar v
+        case m of
+            Just mp -> return mp
+            Nothing -> error "Mempool not pre-loaded"
+    getAddressesTxs = undefined
+    getAddressesUnspents = undefined
+    getMaxGap = error "Cannot query max gap in STM"
 
 runWriter
     :: MonadIO m
     => DatabaseReader
-    -> ReaderT Writer m a
+    -> WriterT m a
     -> m a
 runWriter bdb@DatabaseReader{databaseHandle = db} f = do
     hm <- newTVarIO emptyMemory
@@ -292,77 +307,6 @@ unspentOps = concatMap (uncurry f) . M.toList
     g h i Deleted =
         deleteOp (UnspentKey (OutPoint h (fromIntegral i)))
 
-setBestI :: MonadIO m => BlockHash -> Writer -> m ()
-setBestI bh Writer {getState = hm} =
-    withMemory hm $ setBest bh
-
-insertBlockI :: MonadIO m => BlockData -> Writer -> m ()
-insertBlockI b Writer {getState = hm} =
-    withMemory hm $ insertBlock b
-
-setBlocksAtHeightI :: MonadIO m
-                   => [BlockHash]
-                   -> BlockHeight
-                   -> Writer
-                   -> m ()
-setBlocksAtHeightI hs g Writer {getState = hm} =
-    withMemory hm $ setBlocksAtHeight hs g
-
-insertTxI :: MonadIO m => TxData -> Writer -> m ()
-insertTxI t Writer {getState = hm} =
-    withMemory hm $ insertTx t
-
-insertSpenderI :: MonadIO m
-               => OutPoint
-               -> Spender
-               -> Writer
-               -> m ()
-insertSpenderI p s Writer {getState = hm} =
-    withMemory hm $ insertSpender p s
-
-deleteSpenderI :: MonadIO m
-               => OutPoint
-               -> Writer
-               -> m ()
-deleteSpenderI p Writer {getState = hm} =
-    withMemory hm $ deleteSpender p
-
-insertAddrTxI :: MonadIO m
-              => Address
-              -> TxRef
-              -> Writer
-              -> m ()
-insertAddrTxI a t Writer {getState = hm} =
-    withMemory hm $ insertAddrTx a t
-
-deleteAddrTxI :: MonadIO m
-              => Address
-              -> TxRef
-              -> Writer
-              -> m ()
-deleteAddrTxI a t Writer {getState = hm} =
-    withMemory hm $ deleteAddrTx a t
-
-insertAddrUnspentI :: MonadIO m
-                   => Address
-                   -> Unspent
-                   -> Writer
-                   -> m ()
-insertAddrUnspentI a u Writer {getState = hm} =
-    withMemory hm $ insertAddrUnspent a u
-
-deleteAddrUnspentI :: MonadIO m
-                   => Address
-                   -> Unspent
-                   -> Writer
-                   -> m ()
-deleteAddrUnspentI a u Writer {getState = hm} =
-    withMemory hm $ deleteAddrUnspent a u
-
-setMempoolI :: MonadIO m => [TxRef] -> Writer -> m ()
-setMempoolI xs Writer {getState = hm} =
-    withMemory hm $ setMempool xs
-
 getBestBlockI :: MonadIO m => Writer -> m (Maybe BlockHash)
 getBestBlockI Writer {getState = hm, getReader = db} =
     runMaybeT $ MaybeT f <|> MaybeT g
@@ -421,10 +365,6 @@ getBalanceI a Writer {getReader = db, getState = hm} =
         Just b -> return $ valToBalance a b
         Nothing -> withDatabaseReader db $ getBalance a
 
-setBalanceI :: MonadIO m => Balance -> Writer -> m ()
-setBalanceI b Writer {getState = hm} =
-    withMemory hm $ setBalance b
-
 getUnspentI :: MonadIO m
             => OutPoint
             -> Writer
@@ -435,25 +375,14 @@ getUnspentI op Writer {getReader = db, getState = hm} =
         Just (Modified u) -> return (Just (valToUnspent op u))
         Nothing -> withDatabaseReader db (getUnspent op)
 
-insertUnspentI :: MonadIO m => Unspent -> Writer -> m ()
-insertUnspentI u Writer {getState = hm} =
-    withMemory hm $ insertUnspent u
-
-deleteUnspentI :: MonadIO m => OutPoint -> Writer -> m ()
-deleteUnspentI p Writer {getState = hm} =
-    withMemory hm $ deleteUnspent p
-
 getMempoolI :: MonadIO m => Writer -> m [TxRef]
 getMempoolI Writer {getState = hm, getReader = db} =
     getMempoolH <$> readTVarIO hm >>= \case
         Just xs -> return xs
         Nothing -> withDatabaseReader db getMempool
 
-withMemory :: MonadIO m
-           => TVar Memory
-           -> ReaderT (TVar Memory) m a
-           -> m a
-withMemory = flip R.runReaderT
+runTx :: MonadIO m => MemoryTx a -> WriterT m a
+runTx f = ReaderT $ atomically . runReaderT f . getState
 
 emptyMemory :: Memory
 emptyMemory = Memory { hBest    = Nothing
