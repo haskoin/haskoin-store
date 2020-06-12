@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 module Haskoin.Store.Common
@@ -11,6 +12,8 @@ module Haskoin.Store.Common
     , StoreWrite(..)
     , StoreEvent(..)
     , PubExcept(..)
+    , getActiveBlock
+    , getActiveTxData
     , xPubBalsTxs
     , xPubBalsUnspents
     , getTransaction
@@ -51,8 +54,8 @@ import           Haskoin                   (Address, BlockHash,
 import           Haskoin.Node              (Peer)
 import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             DeriveType (..), Spender,
-                                            Transaction, TxData, TxRef (..),
-                                            UnixTime, Unspent (..),
+                                            Transaction, TxData (..),
+                                            TxRef (..), UnixTime, Unspent (..),
                                             XPubBal (..), XPubSpec (..),
                                             XPubSummary (..), XPubUnspent (..),
                                             nullBalance, toTransaction)
@@ -189,6 +192,16 @@ class StoreWrite m where
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
 
+
+getActiveBlock :: StoreRead m => BlockHash -> m (Maybe BlockData)
+getActiveBlock bh = getBlock bh >>= \case
+    Just b | blockDataMainChain b -> return (Just b)
+    _ -> return Nothing
+
+getActiveTxData :: StoreRead m => TxHash -> m (Maybe TxData)
+getActiveTxData th = getTxData th >>= \case
+    Just td | not (txDataDeleted td) -> return (Just td)
+    _ -> return Nothing
 
 xUns :: StoreRead f => Limits -> [XPubBal] -> f [XPubUnspent]
 xUns limits bs = concat <$> mapM g bs

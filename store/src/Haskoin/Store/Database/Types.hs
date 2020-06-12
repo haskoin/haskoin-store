@@ -160,9 +160,9 @@ data SpenderKey
 instance Serialize SpenderKey where
     -- 0x10 · TxHash · Index
     put (SpenderKey OutPoint {outPointHash = h, outPointIndex = i}) = do
-        putWord8 0x10
-        put h
+        put (SpenderKeyS h)
         put i
+    -- 0x10 · TxHash
     put (SpenderKeyS h) = do
         putWord8 0x10
         put h

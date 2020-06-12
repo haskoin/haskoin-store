@@ -36,6 +36,7 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 listToMaybe, mapMaybe)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
+import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
 import qualified Data.Text.Encoding            as T
@@ -70,6 +71,8 @@ import           Network.HTTP.Types            (Status (..), status400,
                                                 status503)
 import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
+import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
+                                                setPort)
 import           NQE                           (Inbox, Publisher, receive,
                                                 withSubscription)
 import qualified Paths_haskoin_store           as P (version)
@@ -94,7 +97,7 @@ data WebLimits = WebLimits
 instance Default WebLimits where
     def =
         WebLimits
-            { maxLimitCount = 20000
+            { maxLimitCount = 200000
             , maxLimitFull = 5000
             , maxLimitOffset = 50000
             , maxLimitDefault = 100
@@ -103,7 +106,8 @@ instance Default WebLimits where
             }
 
 data WebConfig = WebConfig
-    { webPort        :: !Int
+    { webHost        :: !String
+    , webPort        :: !Int
     , webStore       :: !Store
     , webMaxLimits   :: !WebLimits
     , webReqLog      :: !Bool
@@ -170,14 +174,17 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
 -------------------
 
 runWeb :: (MonadUnliftIO m , MonadLoggerIO m) => WebConfig -> m ()
-runWeb cfg@WebConfig {webPort = port, webReqLog = reqlog} = do
+runWeb cfg@WebConfig {webHost = host, webPort = port, webReqLog = reqlog} = do
     reqLogger <- logIt
     runner <- askRunInIO
-    S.scottyT port (runner . (`runReaderT` cfg)) $ do
+    S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
         when reqlog $ S.middleware reqLogger
         S.defaultHandler defHandler
         handlePaths
         S.notFound $ S.raise ThingNotFound
+  where
+    opts = def {S.settings = settings defaultSettings}
+    settings = setPort port . setHost (fromString host)
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
