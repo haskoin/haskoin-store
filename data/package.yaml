@@ -1,7 +1,7 @@
 name: haskoin-store-data
 version: &version 0.31.0
 synopsis: Data for Haskoin Store
-description: Data and its (de)serialisation functions for Haskoin Store
+description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
 author: Jean-Pierre Rupp
 maintainer: jprupp@protonmail.ch

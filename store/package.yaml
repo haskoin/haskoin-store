@@ -1,17 +1,7 @@
 name: haskoin-store
 version: &version 0.31.0
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
-description: >
-  Store and index Bitcoin or Bitcoin Cash blocks, transactions,
-  balances and unspent outputs.
-
-  All data is available via REST API in JSON or binary format.
-
-  Uses in-process RocksDB database to store data.
-
-  Supports Redis cache that can be shared by multiple nodes for
-  faster access to extended public key balances, transactions
-  and unspent outputs.
+description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
 author: Jean-Pierre Rupp
 maintainer: jprupp@protonmail.ch

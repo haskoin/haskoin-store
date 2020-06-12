@@ -4,15 +4,12 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 088669ea1551f98931bddf65e2e0430906d4761a63b5b51ccc964c15066fffec
+-- hash: 672bea416dae07cf21537dde8256fe688b49794dfffdc89d0cc666285e65c0f5
 
 name:           haskoin-store
 version:        0.31.0
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
-description:    Store and index Bitcoin or Bitcoin Cash blocks, transactions, balances and unspent outputs.
-                All data is available via REST API in JSON or binary format.
-                Uses in-process RocksDB database to store data.
-                Supports Redis cache that can be shared by multiple nodes for faster access to extended public key balances, transactions and unspent outputs.
+description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
 homepage:       http://github.com/haskoin/haskoin-store#readme
 bug-reports:    http://github.com/haskoin/haskoin-store/issues
