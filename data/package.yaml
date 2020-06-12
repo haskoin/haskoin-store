@@ -1,5 +1,5 @@
 name: haskoin-store-data
-version: 0.30.2
+version: 0.31.0
 synopsis: Data for Haskoin Store
 description: Data and its (de)serialisation functions for Haskoin Store
 category: Bitcoin, Finance, Network

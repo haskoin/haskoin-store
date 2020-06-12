@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.30.2'
+  version: '0.31.0'
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
