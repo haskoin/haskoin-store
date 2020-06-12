@@ -16,8 +16,7 @@ module Haskoin.Store.Logic
 
 import           Control.Monad           (forM, forM_, guard, unless, void,
                                           when, zipWithM_)
-import           Control.Monad.Logger    (MonadLoggerIO, logDebugS, logErrorS,
-                                          logWarnS)
+import           Control.Monad.Logger    (MonadLoggerIO, logDebugS, logErrorS)
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
@@ -204,29 +203,23 @@ importOrConfirm bn txs = do
   where
     go lockbox its = do
         asyncs <- forM its (uncurry (spark_it lockbox))
-        orphans <- catMaybes <$> forM asyncs (uncurry handle_orphan)
+        orphans <- catMaybes <$> mapM wait asyncs
         unless (null orphans) (go lockbox orphans)
-    spark_it lockbox i tx = ((i, tx), ) <$> async (action lockbox i tx)
+    spark_it lockbox i tx = async (action lockbox i tx)
     indexed_txs = zip [0..] txs
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
-    action lockbox i tx = getActiveTxData (txHash tx) >>= \case
-        Just td
-            | confirmed (txDataBlock td) ->
-                  $(logWarnS) "BlockStore" $
-                  "Transaction already confirmed: "
-                  <> txHashToHex (txHash tx)
-            | otherwise ->
-                  confirmTx td (br i)
-        Nothing ->
+    action lockbox i tx =
+        handle (handle_orphan (i, tx)) $ do
             importTx
-            (Just lockbox)
-            (br i)
-            (fromIntegral (blockTimestamp (nodeHeader bn)))
-            tx
-    handle_orphan (i, tx) a =
-        let h Orphan = log_orphan tx >> return (Just (i, tx))
-            h e      = log_error e >> throwIO e
-         in handle h $ wait a >> return Nothing
+                (Just lockbox)
+                (br i)
+                (fromIntegral (blockTimestamp (nodeHeader bn)))
+                tx
+            return Nothing
+    handle_orphan (i, tx) Orphan =
+        log_orphan tx >> return (Just (i, tx))
+    handle_orphan _ e =
+        log_error e >> throwIO e
     log_error e =
         $(logErrorS) "BlockStore" $
         "Transaction failed importing: " <> cs (show e)
@@ -400,13 +393,6 @@ unConfirmTx
     => TxData
     -> m ()
 unConfirmTx t = confTx t Nothing
-
-confirmTx
-    :: (StoreRead m, StoreWrite m, MonadLoggerIO m)
-    => TxData
-    -> BlockRef
-    -> m ()
-confirmTx t br = confTx t (Just br)
 
 replaceAddressTx
     :: ( StoreRead m
