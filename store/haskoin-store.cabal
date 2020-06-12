@@ -1,13 +1,13 @@
-cabal-version: 1.12
+cabal-version: 2.2
 
 -- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: c5fef1d2f34e119fa142b47d873bda6c5c99c325a1e861107d9ca8ce81746b1d
+-- hash: 31ef0346a44018cc18928033c98fed6749812d543ddd60752ccfefab3f10d3a5
 
 name:           haskoin-store
-version:        0.31.0
+version:        0.32.0
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Store and index Bitcoin or Bitcoin Cash blocks, transactions, balances and unspent outputs.
                 All data is available via REST API in JSON or binary format.
@@ -18,7 +18,7 @@ homepage:       http://github.com/haskoin/haskoin-store#readme
 bug-reports:    http://github.com/haskoin/haskoin-store/issues
 author:         Jean-Pierre Rupp
 maintainer:     jprupp@protonmail.ch
-license:        PublicDomain
+license:        Unlicense
 license-file:   UNLICENSE
 build-type:     Simple
 
@@ -29,7 +29,6 @@ source-repository head
 library
   exposed-modules:
       Haskoin.Store
-  other-modules:
       Haskoin.Store.BlockStore
       Haskoin.Store.Cache
       Haskoin.Store.Common
@@ -39,6 +38,8 @@ library
       Haskoin.Store.Logic
       Haskoin.Store.Manager
       Haskoin.Store.Web
+      Paths_haskoin_store
+  autogen-modules:
       Paths_haskoin_store
   hs-source-dirs:
       src
@@ -55,7 +56,7 @@ library
     , hashable >=1.3.0.0
     , haskoin-core >=0.13.6
     , haskoin-node >=0.13.0
-    , haskoin-store-data ==0.31.0
+    , haskoin-store-data ==0.32.0
     , hedis >=0.12.13
     , http-types >=0.12.3
     , monad-logger >=0.3.32
@@ -98,7 +99,7 @@ executable haskoin-store
     , haskoin-core >=0.13.6
     , haskoin-node >=0.13.0
     , haskoin-store
-    , haskoin-store-data ==0.31.0
+    , haskoin-store-data ==0.32.0
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , nqe >=0.6.1
@@ -118,20 +119,9 @@ test-suite haskoin-store-test
   other-modules:
       Haskoin.Store.CacheSpec
       Haskoin.StoreSpec
-      Haskoin.Store
-      Haskoin.Store.BlockStore
-      Haskoin.Store.Cache
-      Haskoin.Store.Common
-      Haskoin.Store.Database.Reader
-      Haskoin.Store.Database.Types
-      Haskoin.Store.Database.Writer
-      Haskoin.Store.Logic
-      Haskoin.Store.Manager
-      Haskoin.Store.Web
       Paths_haskoin_store
   hs-source-dirs:
       test
-      src
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck >=2.13.2
@@ -148,7 +138,8 @@ test-suite haskoin-store-test
     , hashable >=1.3.0.0
     , haskoin-core >=0.13.6
     , haskoin-node >=0.13.0
-    , haskoin-store-data ==0.31.0
+    , haskoin-store ==0.32.0
+    , haskoin-store-data ==0.32.0
     , hedis >=0.12.13
     , hspec >=2.7.1
     , http-types >=0.12.3

@@ -746,7 +746,7 @@ importBlockC bh =
             " transactions from block " <>
             blockHashToHex bh
         importMultiTxC tds
-        $(logInfoS) "Cache" $
+        $(logDebugS) "Cache" $
             "Done importing " <> cs (show (length tds)) <>
             " transactions from block " <>
             blockHashToHex bh
@@ -1018,10 +1018,10 @@ cachePrime ::
 cachePrime =
     cacheGetHead >>= \case
         Nothing -> do
-            $(logInfoS) "Cache" "Cache has no best block set"
+            $(logDebugS) "Cache" "Cache has no best block set"
             lift getBestBlock >>= \case
                 Nothing -> do
-                    $(logInfoS) "Cache" "Best block not set yet"
+                    $(logDebugS) "Cache" "Best block not set yet"
                     return Nothing
                 Just newhead -> do
                     ch <- asks cacheChain
@@ -1030,7 +1030,7 @@ cachePrime =
                         then do
                             mem <- lift getMempool
                             withLockWait lockKey $ do
-                                $(logDebugS) "Cache" "Priming cache…"
+                                $(logInfoS) "Cache" "Priming cache…"
                                 runRedis $ do
                                     a <- redisAddToMempool mem
                                     b <- redisSetHead newhead

@@ -15,8 +15,8 @@ description: >
 category: Bitcoin, Finance, Network
 author: Jean-Pierre Rupp
 maintainer: jprupp@protonmail.ch
-license: PublicDomain
-license-file: UNLICENSE
+license: MIT
+license-file: LICENSE
 github: haskoin/haskoin-store.git
 homepage: http://github.com/haskoin/haskoin-store#readme
 bug-reports: http://github.com/haskoin/haskoin-store/issues
@@ -46,8 +46,8 @@ dependencies:
   unordered-containers: ">= 0.2.10.0"
 library:
   source-dirs: src
-  exposed-modules:
-    - Haskoin.Store
+  generated-exposed-modules:
+    - Paths_haskoin_store
   dependencies: &lib-deps
     hedis: ">= 0.12.13"
     http-types: ">= 0.12.3"
@@ -72,9 +72,7 @@ executables:
 tests:
   haskoin-store-test:
     main: Spec.hs
-    source-dirs:
-      - test
-      - src
+    source-dirs: test
     verbatim:
       build-tool-depends:
         hspec-discover:hspec-discover
@@ -84,6 +82,7 @@ tests:
       - -with-rtsopts=-N
     dependencies:
       <<: *lib-deps
+      haskoin-store: *version
       hspec: ">= 2.7.1"
       QuickCheck: ">= 2.13.2"
       base64: ">= 0.4.1"
