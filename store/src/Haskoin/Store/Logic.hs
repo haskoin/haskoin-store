@@ -224,9 +224,15 @@ importOrConfirm bn txs = do
             (fromIntegral (blockTimestamp (nodeHeader bn)))
             tx
     handle_orphan (i, tx) a =
-        let h Orphan = return (Just (i, tx))
-            h e      = throwIO e
+        let h Orphan = log_orphan tx >> return (Just (i, tx))
+            h e      = log_error e >> throwIO e
          in handle h $ wait a >> return Nothing
+    log_error e =
+        $(logErrorS) "BlockStore" $
+        "Transaction failed importing: " <> cs (show e)
+    log_orphan tx =
+        $(logDebugS) "BlockStore" $
+        "Missing dependencies for tx: " <> txHashToHex (txHash tx)
 
 importBlock
     :: ( StoreRead m
