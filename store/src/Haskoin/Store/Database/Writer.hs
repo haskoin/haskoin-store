@@ -11,7 +11,6 @@ module Haskoin.Store.Database.Writer
 
 import           Control.Applicative           ((<|>))
 import           Control.DeepSeq               (NFData)
-import           Control.Monad.Except          (MonadError)
 import           Control.Monad.Reader          (ReaderT)
 import qualified Control.Monad.Reader          as R
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
@@ -191,7 +190,7 @@ instance MonadIO m => StoreWrite (ReaderT (TVar Memory) m) where
         atomically $ modifyTVar v (deleteUnspentH p)
 
 runWriter
-    :: (MonadIO m, MonadError e m)
+    :: MonadIO m
     => DatabaseReader
     -> ReaderT Writer m a
     -> m a

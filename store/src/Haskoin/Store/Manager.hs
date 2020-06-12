@@ -192,7 +192,6 @@ cacheWriterEvents evts cwm = forever $ receive evts >>= (`cacheWriterDispatch` c
 cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
 cacheWriterDispatch (StoreBestBlock _)   = cacheNewBlock
 cacheWriterDispatch (StoreMempoolNew th) = cacheNewTx th
-cacheWriterDispatch (StoreTxDeleted th)  = cacheNewTx th
 cacheWriterDispatch _                    = const (return ())
 
 -- | Dispatcher of node events.

@@ -43,7 +43,7 @@ import qualified Data.Text.Encoding            as T
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
-import           Data.Version                  (showVersion)
+import qualified Data.Version                  as Version
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
 import qualified Haskoin.Block                 as H
@@ -75,7 +75,7 @@ import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
 import           NQE                           (Inbox, Publisher, receive,
                                                 withSubscription)
-import qualified Paths_haskoin_store           as P (version)
+import           Text.ParserCombinators.ReadP  (readP_to_S)
 import           Text.Printf                   (printf)
 import           UnliftIO                      (MonadIO, MonadUnliftIO,
                                                 askRunInIO, liftIO, timeout)
@@ -83,6 +83,9 @@ import           Web.Scotty.Internal.Types     (ActionT)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
+
+myVersion :: Version.Version
+myVersion = fst $ head $ readP_to_S Version.parseVersion "0.31.0"
 
 data WebLimits = WebLimits
     { maxLimitCount      :: !Word32
@@ -742,11 +745,9 @@ receiveEvent sub = do
     se <- receive sub
     return $
         case se of
-            StoreBestBlock b     -> Just (EventBlock b)
-            StoreMempoolNew t    -> Just (EventTx t)
-            StoreTxDeleted t     -> Just (EventTx t)
-            StoreBlockReverted b -> Just (EventBlock b)
-            _                    -> Nothing
+            StoreBestBlock b  -> Just (EventBlock b)
+            StoreMempoolNew t -> Just (EventTx t)
+            _                 -> Nothing
 
 -- GET Address Transactions --
 
@@ -909,7 +910,7 @@ healthCheck net mgr ch tos = do
             , healthSynced = sy
             , healthLastBlock = bd
             , healthLastTx = td
-            , healthVersion = showVersion P.version
+            , healthVersion = Version.showVersion myVersion
             }
   where
     block_hash = H.headerHash . blockDataHeader

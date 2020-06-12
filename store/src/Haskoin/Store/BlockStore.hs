@@ -30,8 +30,6 @@ module Haskoin.Store.BlockStore
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forM, forM_, forever, mzero,
                                                 unless, void, when)
-import           Control.Monad.Except          (ExceptT, MonadError (..),
-                                                runExceptT)
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
                                                 logErrorS, logInfoS, logWarnS)
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), asks)
@@ -86,9 +84,10 @@ import           NQE                           (Inbox, Listen, Mailbox,
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar,
-                                                atomically, liftIO, modifyTVar,
-                                                newTVarIO, readTVar, readTVarIO,
-                                                throwIO, withAsync, writeTVar)
+                                                atomically, catch, liftIO,
+                                                modifyTVar, newTVarIO, readTVar,
+                                                readTVarIO, throwIO, withAsync,
+                                                writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 
 -- | Messages for block store actor.
@@ -154,15 +153,15 @@ data BlockStoreConfig = BlockStoreConfig
     }
 
 type BlockT m = ReaderT BlockRead m
-type WriterT m = ReaderT Writer (ExceptT ImportException (BlockT m))
+type WriterT m = ReaderT Writer (BlockT m)
 
 runImport ::
        MonadLoggerIO m
     => WriterT m a
-    -> BlockT m (Either ImportException a)
+    -> BlockT m a
 runImport f = do
     db <- asks (blockConfDB . myConfig)
-    runExceptT (runWriter db f)
+    runWriter db f
 
 runRocksDB :: ReaderT DatabaseReader m a -> BlockT m a
 runRocksDB f =
@@ -221,7 +220,7 @@ blockStore cfg inbox = do
                   }
   where
     del x n txs =
-        forM (zip [x ..] txs) $ \(i, tx) -> do
+        forM_ (zip [x ..] txs) $ \(i, tx) -> do
             $(logInfoS) "BlockStore" $
                 "Deleting "
                 <> cs (show i) <> "/" <> cs (show n) <> ": "
@@ -229,25 +228,14 @@ blockStore cfg inbox = do
             deleteTx True False (txRefHash tx)
     wipeit x n txs = do
         let (txs1, txs2) = splitAt 1000 txs
-        unless (null txs1) $ runImport (del x n txs1) >>= \case
-            Left e -> do
-                $(logErrorS) "BlockStore" $
-                    "Could not delete mempool, database corrupt: "
-                    <> cs (show e)
-                throwIO CorruptDatabase
-            Right _ -> wipeit (x + length txs1) n txs2
+        unless (null txs1) $ do
+            runImport (del x n txs1)
+            wipeit (x + length txs1) n txs2
     wipe
         | blockConfWipeMempool cfg =
             getMempool >>= \mem -> wipeit 1 (length mem) mem
         | otherwise = return ()
-    ini =
-        runImport initBest >>= \case
-            Left e -> do
-                $(logErrorS) "BlockStore" $
-                    "Could not initialize block store: "
-                    <> fromString (show e)
-                throwIO e
-            Right () -> return ()
+    ini = runImport initBest
     run = withAsync (pingMe (inboxToMailbox inbox)) . const . forever $
         receive inbox >>= ReaderT . runReaderT . processBlockStoreMessage
 
@@ -278,28 +266,27 @@ processBlock peer block = void . runMaybeT $ do
     $(logDebugS) "BlockStore" $
         "Processing block : " <> blockText blocknode Nothing
         <> " (peer" <> pt <> ")"
-    imported <- lift . runImport $ importBlock block blocknode
-    either (failure pt) (success blocknode) imported
+    let do_import = runImport $ importBlock block blocknode
+    lift $ catch (do_import >> success blocknode) (failure pt)
   where
     header = blockHeader block
     blockhash = headerHash header
     hexhash = blockHashToHex blockhash
-    success blocknode deletedtxids = do
+    success blocknode = do
         $(logInfoS) "BlockStore" $
             "Best block: " <> blockText blocknode (Just block)
-        notify deletedtxids
+        notify
+        _ <- touchPeer peer
+        syncMe peer
     failure pt e = do
         $(logErrorS) "BlockStore" $
             "Error importing block: "
-            <> hexhash <> ": " <> cs (show e)
+            <> hexhash <> ": " <> cs (show (e :: ImportException))
             <> " (peer " <> pt <> ")"
         killPeer (PeerMisbehaving (show e)) peer
-    notify deletedtxids = do
+    notify = do
         listener <- asks (blockConfListener . myConfig)
-        atomically $ do
-            mapM_ (listener . StoreTxDeleted) deletedtxids
-            listener (StoreBestBlock blockhash)
-        lift (touchPeer peer >> syncMe peer)
+        atomically $ listener (StoreBestBlock blockhash)
 
 checkPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => Peer -> m Bool
 checkPeer peer =
@@ -460,49 +447,44 @@ newOrphanTx time tx = do
     prevs = map prevOutput (txIn tx)
 
 importMempoolTx :: (MonadUnliftIO m, MonadLoggerIO m)
-                => UnixTime -> Tx -> WriterT m (Maybe [TxHash])
+                => UnixTime -> Tx -> WriterT m Bool
 importMempoolTx time tx =
-    catchError new_mempool_tx handle_error
+    catch new_mempool_tx handle_error
   where
     tx_hash = txHash tx
     handle_error Orphan = do
         newOrphanTx time tx
-        return Nothing
+        return False
     handle_error _ = do
         $(logDebugS) "BlockStore" $
             "Mempool " <> txHashToHex tx_hash <> ": Failed"
-        return Nothing
+        return False
     new_mempool_tx =
         newMempoolTx tx time >>= \case
-        Just deleted -> do
+        True -> do
             $(logDebugS) "BlockStore" $
                 "Mempool " <> txHashToHex (txHash tx) <> ": OK"
             lift $ fulfillOrphans tx_hash
-            return (Just deleted)
-        Nothing -> do
+            return True
+        False -> do
             $(logDebugS) "BlockStore" $
                 "Mempool " <> txHashToHex (txHash tx) <> ": No action"
-            return Nothing
+            return False
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processMempool = do
     txs <- pendingTxs 2000
-    unless (null txs) $ import_txs txs >>= either failed success
+    unless (null txs) (import_txs txs >>= success)
   where
-    run_import p = importMempoolTx (pendingTxTime p) (pendingTx p)
-    add_txid p deleted = (txHash (pendingTx p), deleted)
-    import_pending p = fmap (add_txid p) <$> run_import p
-    import_txs = runImport . mapM import_pending
-    failed e = do
-        $(logErrorS) "BlockStore" $
-            "Mempool import failed: " <> cs (show e)
-        throwIO MempoolImportFailed
-    success = mapM_ (uncurry notify) . catMaybes
-    notify txid deleted = do
+    run_import p =
+        importMempoolTx (pendingTxTime p) (pendingTx p) >>= \case
+        True -> return $ Just (txHash (pendingTx p))
+        False -> return Nothing
+    import_txs = fmap catMaybes . runImport . mapM run_import
+    success = mapM_ notify
+    notify txid = do
         l <- asks (blockConfListener . myConfig)
-        atomically $ do
-            mapM_ (l . StoreTxDeleted) deleted
-            l (StoreMempoolNew txid)
+        atomically $ l (StoreMempoolNew txid)
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -604,19 +586,13 @@ pruneMempool = isInSync >>= \sync -> when sync $ do
         $(logErrorS) "BlockStore" $
             "Could not delete old mempool tx: "
             <> txHashToHex txid <> ": "
-            <> cs (show e)
-    success txids = do
-        $(logDebugS) "BlockStore" $
-            "Deleted " <> cs (show (length txids)) <> " txs"
-        l <- asks (blockConfListener . myConfig)
-        atomically $ mapM_ (l . StoreTxDeleted) txids
+            <> cs (show (e :: ImportException))
     delete_it txid = do
         $(logDebugS) "BlockStore" $
             "Deleting "
             <> ": " <> txHashToHex txid
             <> " (old mempool tx)…"
-        runImport (deleteTx True False txid)
-            >>= either (failed txid) success
+        catch (runImport (deleteTx True False txid)) (failed txid)
 
 syncMe :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 syncMe peer = void . runMaybeT $ do
@@ -708,23 +684,13 @@ syncMe peer = void . runMaybeT $ do
         ch <- asks (blockConfChain . myConfig)
         chainBlockMain bestblockhash ch >>= \y ->
             unless y $ do_revert bestblockhash
-    fail_revert e = do
-        $(logErrorS) "BlockStore" $
-            "Could not revert best block: " <> cs (show e)
-        throwIO e
-    success_revert bestblockhash txids = do
-        listener <- asks (blockConfListener . myConfig)
-        atomically $ do
-            mapM_ (listener . StoreTxDeleted) txids
-            listener (StoreBlockReverted bestblockhash)
-        reverttomainchain
     do_revert bestblockhash = do
         $(logErrorS) "BlockStore" $
             "Reverting best block: "
             <> blockHashToHex bestblockhash
         resetPeer
-        lift (runImport (revertBlock bestblockhash)) >>=
-            either fail_revert (success_revert bestblockhash)
+        lift $ runImport $ revertBlock bestblockhash
+        reverttomainchain
 
 resetPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
 resetPeer = do

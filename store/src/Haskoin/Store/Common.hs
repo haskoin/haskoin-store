@@ -275,8 +275,6 @@ data StoreEvent = StoreBestBlock !BlockHash
     | StorePeerPong !Peer !Word64
     | StoreTxAvailable !Peer ![TxHash]
     | StoreTxReject !Peer !TxHash !RejectCode !ByteString
-    | StoreTxDeleted !TxHash
-    | StoreBlockReverted !BlockHash
       -- ^ block no longer head of main chain
 
 data PubExcept = PubNoPeers
