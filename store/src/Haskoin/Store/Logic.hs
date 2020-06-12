@@ -17,7 +17,8 @@ module Haskoin.Store.Logic
 import           Control.Monad           (forM, forM_, guard, unless, void,
                                           when, zipWithM_)
 import           Control.Monad.Except    (MonadError (..))
-import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS)
+import           Control.Monad.Logger    (MonadLogger, logDebugS, logErrorS,
+                                          logWarnS)
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as B.Short
 import           Data.Either             (rights)
@@ -190,10 +191,10 @@ importOrConfirm bn txs =
     getActiveTxData (txHash tx) >>= \case
         Just td
             | confirmed (txDataBlock td) -> do
-                  $(logErrorS) "BlockStore" $
+                  $(logWarnS) "BlockStore" $
                       "Transaction already confirmed: "
                       <> txHashToHex (txHash tx)
-                  throwError TxConfirmed
+                  return []
             | otherwise -> do
                   confirmTx td (br i)
                   return []
