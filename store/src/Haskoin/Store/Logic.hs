@@ -28,7 +28,6 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isNothing,
                                                 mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
-import           Data.String.Conversions       (cs)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
@@ -124,25 +123,20 @@ newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
         runTx $ importTx (MemRef w) w rbf tx
         return True
 
-preLoadTxs :: MonadLoggerIO m => [TxHash] -> WriterT m ()
-preLoadTxs ths =
-    forM_ ths $ \th ->
-    getTxData th >>= \case
-        Nothing -> do
-            $(logErrorS) "BlockStore" $
-                "Transaction to preload not found: "
-                <> txHashToHex th
-            throwIO TxNotFound
+preLoadTxs :: MonadUnliftIO m => [TxHash] -> WriterT m ()
+preLoadTxs ths = do
+    as <- forM ths $ \th -> async $ getTxData th >>= \case
+        Nothing -> return ()
         Just td -> do
             ss <- fix_spenders th <$> getSpenders th
             runTx $ do
                 mapM_ (uncurry insertSpender) ss
                 insertTx td
+    mapM_ wait as
   where
-    fix_spenders th im =
-        let ls = I.toList im
-            f i s = (OutPoint th (fromIntegral i), s)
-         in map (uncurry f) ls
+    fix_spenders th =
+        let f i s = (OutPoint th (fromIntegral i), s)
+         in map (uncurry f) . I.toList
 
 preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
               => [Tx]
@@ -150,26 +144,21 @@ preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
     free_utxo
+    preLoadTxs (map txHash txs)
     us <- runTx $ concat <$> mapM getUnspentOutputs txs
     let uaddrs = HashSet.fromList $ mapMaybe unspentAddress us
         addrs = HashSet.toList $ HashSet.union uaddrs oaddrs
-    mp <- getMempool
-    bals <- gbals addrs
-    $(logDebugS) "BlockStore" $
-        "Inserting " <> cs (show (length us)) <> " unspent outputs"
-    $(logDebugS) "BlockStore" $
-        "Inserting " <> cs (show (length bals)) <> " address balances"
-    $(logDebugS) "BlockStore" $
-        "Inserting " <> cs (show (length mp)) <> " mempool txs"
-    runTx $ do
-        mapM_ setBalance bals
-        setMempool mp
+    gbals addrs
+    getMempool >>= runTx . setMempool
   where
     addr = eitherToMaybe . scriptToAddressBS . scriptOutput
     oaddrs = HashSet.fromList . mapMaybe addr $ concatMap txOut txs
+    get_balance a = do
+        bal <- getBalance a
+        runTx $ setBalance bal
     gbals addrs = do
-        as <- mapM (async . getBalance) addrs
-        mapM wait as
+        as <- mapM (async . get_balance) addrs
+        mapM_ wait as
     free_utxo = do
         lock <- newLock
         as <- mapM (async . freeUnspentOutputs lock True) txs
@@ -224,9 +213,6 @@ checkNewBlock b n =
                     <> blockHashToHex (headerHash (blockHeader b))
                 throwIO PrevBlockNotBest
 
-testMempool :: MonadIO m => TxHash -> WriterT m Bool
-testMempool th = elem th . map txRefHash <$> getMempool
-
 importOrConfirm :: (MonadLoggerIO m, MonadUnliftIO m)
                 => BlockNode -> [Tx] -> WriterT m ()
 importOrConfirm bn txs = do
@@ -241,22 +227,16 @@ importOrConfirm bn txs = do
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
     bn_time = fromIntegral . blockTimestamp $ nodeHeader bn
     action (i, tx) =
-        testMempool (txHash tx) >>= \case
-            False -> do
+        getActiveTxData (txHash tx) >>= \case
+            Nothing -> do
                 $(logDebugS) "BlockStore" $
                     "Importing tx: " <> txHashToHex (txHash tx)
                 import_it i tx
-            True -> getActiveTxData (txHash tx) >>= \case
-                Just t -> do
-                    $(logDebugS) "BlockStore" $
-                        "Confirming tx: " <> txHashToHex (txHash tx)
-                    preLoadTxs [txHash tx]
-                    runTx $ confTx t (Just (br i))
-                    return Nothing
-                Nothing -> do
-                    $(logErrorS) "BlockStore" $
-                        "Tx not found: " <> txHashToHex (txHash tx)
-                    throwIO TxNotFound
+            Just t -> do
+                $(logDebugS) "BlockStore" $
+                    "Confirming tx: " <> txHashToHex (txHash tx)
+                runTx $ confTx t (Just (br i))
+                return Nothing
     import_it i tx = runTx $ do
         us <- getUnspentOutputs tx
         if orphanTest us tx
@@ -501,12 +481,7 @@ deleteTx memonly rbfcheck txhash =
             deleteTx True rbfcheck s
         getActiveTxData txhash >>= \case
             Just td' -> do
-                let ths = nub'
-                        . map (outPointHash . prevOutput)
-                        . txIn
-                        $ txData td'
                 preLoadMemory [txData td']
-                preLoadTxs ths
                 runTx $ commitDelTx td'
             Nothing -> return ()
 
