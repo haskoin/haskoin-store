@@ -1,4 +1,5 @@
 {-# LANGUAGE ApplicativeDo     #-}
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -15,7 +16,6 @@ import           Data.Default            (Default (..))
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
-import           Data.Version            (showVersion)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest, eitherToMaybe)
@@ -28,7 +28,6 @@ import           Options.Applicative     (Parser, auto, eitherReader,
                                           help, helper, info, long, many,
                                           metavar, option, progDesc, short,
                                           showDefault, strOption, switch, value)
-import           Paths_haskoin_store     as P
 import           System.Exit             (exitSuccess)
 import           System.FilePath         ((</>))
 import           System.IO.Unsafe        (unsafePerformIO)
@@ -37,6 +36,13 @@ import           UnliftIO                (MonadIO)
 import           UnliftIO.Directory      (createDirectoryIfMissing,
                                           getAppUserDataDirectory)
 import           UnliftIO.Environment    (lookupEnv)
+
+version :: String
+#ifdef CURRENT_PACKAGE_VERSION
+version = CURRENT_PACKAGE_VERSION
+#else
+version = "Unavailable"
+#endif
 
 data Config = Config
     { configDir         :: !FilePath
@@ -394,7 +400,7 @@ main :: IO ()
 main = do
     conf <- execParser opts
     when (configVersion conf) $ do
-        putStrLn $ showVersion P.version
+        putStrLn version
         exitSuccess
     if null (configPeers conf) && not (configDiscover conf)
         then run conf {configDiscover = True}
@@ -405,7 +411,7 @@ main = do
         fullDesc <>
         progDesc "Bitcoin (BCH & BTC) block chain index with HTTP API" <>
         Options.Applicative.header
-            ("haskoin-store version " <> showVersion P.version)
+            ("haskoin-store version " <> version)
 
 run :: Config -> IO ()
 run Config { configHost = host
@@ -460,6 +466,7 @@ run Config { configHost = host
                     , webMaxLimits = limits
                     , webReqLog = reqlog
                     , webWebTimeouts = tos
+                    , webVersion = version
                     }
   where
     l _ lvl

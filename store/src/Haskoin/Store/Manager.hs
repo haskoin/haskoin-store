@@ -8,6 +8,7 @@ import           Control.Monad                 (forever, unless, when)
 import           Control.Monad.Logger          (MonadLoggerIO)
 import           Data.Serialize                (decode)
 import           Data.Word                     (Word32)
+import           Database.Redis                (Connection)
 import           Haskoin                       (BlockHash (..), Inv (..),
                                                 InvType (..), InvVector (..),
                                                 Message (..),
@@ -18,13 +19,15 @@ import           Haskoin                       (BlockHash (..), Inv (..),
                                                 VarString (..),
                                                 sockToHostAddress)
 import           Haskoin.Node                  (Chain, ChainEvent (..),
-                                                HostPort, NodeConfig (..),
-                                                NodeEvent (..), PeerEvent (..),
-                                                PeerManager, WithConnection,
-                                                node)
+                                                ChainMessage, HostPort,
+                                                NodeConfig (..), NodeEvent (..),
+                                                PeerEvent (..), PeerManager,
+                                                PeerManagerMessage,
+                                                WithConnection, node)
 import           Haskoin.Store.BlockStore      (BlockStore,
                                                 BlockStoreConfig (..),
-                                                blockStore, blockStoreBlockSTM,
+                                                BlockStoreInbox, blockStore,
+                                                blockStoreBlockSTM,
                                                 blockStoreHeadSTM,
                                                 blockStoreNotFoundSTM,
                                                 blockStorePeerConnectSTM,
@@ -33,7 +36,8 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxSTM)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheNewTx,
-                                                cacheWriter, connectRedis)
+                                                cachePing, cacheWriter,
+                                                connectRedis)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 connectRocksDB,
@@ -45,8 +49,10 @@ import           NQE                           (Inbox, Listen, Process (..),
                                                 inboxToMailbox, newInbox,
                                                 receive, sendSTM, withProcess,
                                                 withPublisher, withSubscription)
+import           System.Random                 (randomRIO)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, STM,
-                                                link, withAsync)
+                                                liftIO, link, withAsync)
+import           UnliftIO.Concurrent           (threadDelay)
 
 -- | Store mailboxes.
 data Store =
@@ -101,90 +107,154 @@ withStore ::
 withStore cfg action = do
     chaininbox <- newInbox
     let chain = inboxToMailbox chaininbox
-    maybecacheconn <-
-        case storeConfCache cfg of
-            Nothing       -> return Nothing
-            Just redisurl -> Just <$> connectRedis redisurl
-    db <-
-        connectRocksDB
-            (storeConfNetwork cfg)
-            (storeConfInitialGap cfg)
-            (storeConfGap cfg)
-            (storeConfDB cfg)
+    maybecacheconn <- case storeConfCache cfg of
+        Nothing       -> return Nothing
+        Just redisurl -> Just <$> connectRedis redisurl
+    db <- connectRocksDB
+          (storeConfNetwork cfg)
+          (storeConfInitialGap cfg)
+          (storeConfGap cfg)
+          (storeConfDB cfg)
     case maybecacheconn of
-        Nothing -> launch db Nothing chaininbox
-        Just cacheconn -> do
-            let cachecfg =
-                    CacheConfig
-                        { cacheConn = cacheconn
-                        , cacheMin = storeConfCacheMin cfg
-                        , cacheChain = chain
-                        , cacheMax = storeConfMaxKeys cfg
-                        }
-            withProcess (withDatabaseReader db . cacheWriter cachecfg) $ \p ->
-                launch db (Just (cachecfg, getProcessMailbox p)) chaininbox
+        Nothing ->
+            launch db chaininbox Nothing
+        Just cacheconn ->
+            cacheProcess cfg chain cacheconn db $
+            launch db chaininbox . Just
   where
-    launch db maybecache chaininbox =
+    launch db chaininbox maybecache =
         withPublisher $ \pub -> do
-            managerinbox <- newInbox
-            blockstoreinbox <- newInbox
-            let blockstore = inboxToMailbox blockstoreinbox
-                manager = inboxToMailbox managerinbox
-                chain = inboxToMailbox chaininbox
-            let nodeconfig =
-                    NodeConfig
-                        { nodeConfMaxPeers = storeConfMaxPeers cfg
-                        , nodeConfDB = databaseHandle db
-                        , nodeConfPeers = storeConfInitPeers cfg
-                        , nodeConfDiscover = storeConfDiscover cfg
-                        , nodeConfEvents =
-                              storeDispatch blockstore ((`sendSTM` pub) . Event)
-                        , nodeConfNetAddr =
-                              NetworkAddress
-                                  0
-                                  (sockToHostAddress (SockAddrInet 0 0))
-                        , nodeConfNet = storeConfNetwork cfg
-                        , nodeConfTimeout = storeConfPeerTimeout cfg
-                        , nodeConfPeerOld = storeConfPeerTooOld cfg
-                        , nodeConfConnect = storeConfConnect cfg
-                        }
-            withAsync (node nodeconfig managerinbox chaininbox) $ \nodeasync -> do
-                link nodeasync
-                let blockstoreconfig =
-                        BlockStoreConfig
-                            { blockConfChain = chain
-                            , blockConfManager = manager
-                            , blockConfListener = (`sendSTM` pub) . Event
-                            , blockConfDB = db
-                            , blockConfNet = storeConfNetwork cfg
-                            , blockConfWipeMempool = storeConfWipeMempool cfg
-                            , blockConfPeerTimeout = storeConfPeerTimeout cfg
-                            }
-                    runaction =
-                        action
-                            Store
-                                { storeManager = manager
-                                , storeChain = chain
-                                , storeBlock = blockstore
-                                , storeDB = db
-                                , storeCache = fst <$> maybecache
-                                , storePublisher = pub
-                                , storeNetwork = storeConfNetwork cfg
-                                }
-                case maybecache of
-                    Nothing ->
-                        launch2 blockstoreconfig blockstoreinbox runaction
-                    Just (_, cache) ->
-                        withSubscription pub $ \evts ->
-                            withAsync (cacheWriterEvents evts cache) $ \evtsasync ->
-                                link evtsasync >>
-                                launch2
-                                    blockstoreconfig
-                                    blockstoreinbox
-                                    runaction
-    launch2 blockstoreconfig blockstoreinbox runaction =
-        withAsync (blockStore blockstoreconfig blockstoreinbox) $ \blockstoreasync ->
-            link blockstoreasync >> runaction
+        managerinbox <- newInbox
+        blockstoreinbox <- newInbox
+        let blockstore = inboxToMailbox blockstoreinbox
+            manager = inboxToMailbox managerinbox
+            chain = inboxToMailbox chaininbox
+            nodeconfig = buildNodeConfig cfg db blockstore pub
+            blockstoreconfig = buildBlockStoreConfig cfg chain manager pub db
+            store = Store { storeManager = manager
+                          , storeChain = chain
+                          , storeBlock = blockstore
+                          , storeDB = db
+                          , storeCache = fst <$> maybecache
+                          , storePublisher = pub
+                          , storeNetwork = storeConfNetwork cfg
+                          }
+        nodeProcess nodeconfig managerinbox chaininbox $
+            case maybecache of
+                Nothing ->
+                    blockStoreProcesses
+                        blockstoreconfig
+                        blockstoreinbox
+                        (action store)
+                Just (_, cache) ->
+                    withSubscription pub $ \evts ->
+                    cacheWriterProcesses evts cache $
+                    blockStoreProcesses
+                        blockstoreconfig
+                        blockstoreinbox
+                        (action store)
+
+buildBlockStoreConfig :: StoreConfig
+                      -> Chain
+                      -> PeerManager
+                      -> Publisher StoreEvent
+                      -> DatabaseReader
+                      -> BlockStoreConfig
+buildBlockStoreConfig cfg chain manager pub db =
+    BlockStoreConfig
+    { blockConfChain = chain
+    , blockConfManager = manager
+    , blockConfListener = (`sendSTM` pub) . Event
+    , blockConfDB = db
+    , blockConfNet = storeConfNetwork cfg
+    , blockConfWipeMempool = storeConfWipeMempool cfg
+    , blockConfPeerTimeout = storeConfPeerTimeout cfg
+    }
+
+buildNodeConfig :: StoreConfig
+                -> DatabaseReader
+                -> BlockStore
+                -> Publisher StoreEvent
+                -> NodeConfig
+buildNodeConfig cfg db blockstore pub =
+    NodeConfig
+    { nodeConfMaxPeers =
+            storeConfMaxPeers cfg
+    , nodeConfDB =
+            databaseHandle db
+    , nodeConfPeers =
+            storeConfInitPeers cfg
+    , nodeConfDiscover =
+            storeConfDiscover cfg
+    , nodeConfEvents =
+            storeDispatch blockstore ((`sendSTM` pub) . Event)
+    , nodeConfNetAddr =
+            NetworkAddress 0 (sockToHostAddress (SockAddrInet 0 0))
+    , nodeConfNet =
+            storeConfNetwork cfg
+    , nodeConfTimeout =
+            storeConfPeerTimeout cfg
+    , nodeConfPeerOld =
+            storeConfPeerTooOld cfg
+    , nodeConfConnect =
+            storeConfConnect cfg
+    }
+
+cacheProcess :: (MonadUnliftIO m, MonadLoggerIO m)
+             => StoreConfig
+             -> Chain
+             -> Connection
+             -> DatabaseReader
+             -> ((CacheConfig, CacheWriter) -> m a)
+             -> m a
+cacheProcess cfg chain cacheconn db action =
+    withProcess f $ \p ->
+    action (cachecfg, getProcessMailbox p)
+  where
+    f = withDatabaseReader db . cacheWriter cachecfg
+    cachecfg = CacheConfig
+               { cacheConn = cacheconn
+               , cacheMin = storeConfCacheMin cfg
+               , cacheChain = chain
+               , cacheMax = storeConfMaxKeys cfg
+               }
+
+nodeProcess :: (MonadUnliftIO m, MonadLoggerIO m)
+            => NodeConfig
+            -> Inbox PeerManagerMessage
+            -> Inbox ChainMessage
+            -> m a
+            -> m a
+nodeProcess nodeconfig managerinbox chaininbox action =
+    withAsync (node nodeconfig managerinbox chaininbox) $ \a ->
+    link a >> action
+
+blockStoreProcesses :: (MonadUnliftIO m, MonadLoggerIO m)
+                    => BlockStoreConfig
+                    -> BlockStoreInbox
+                    -> m a
+                    -> m a
+blockStoreProcesses conf ibox action =
+    withAsync (blockStore conf ibox) $ \a1 ->
+    link a1 >> action
+
+
+cacheWriterProcesses :: MonadUnliftIO m
+                     => Inbox StoreEvent
+                     -> CacheWriter
+                     -> m a
+                     -> m a
+cacheWriterProcesses evts cwm action =
+    withAsync events $ \a1 ->
+    withAsync ping   $ \a2 ->
+    link a1 >> link a2 >> action
+  where
+    events = cacheWriterEvents evts cwm
+    ping = forever $ do
+        time <- liftIO $ randomRIO (5 * second, 15 * second)
+        threadDelay time
+        cachePing cwm
+    second = 1000000
 
 cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents evts cwm = forever $ receive evts >>= (`cacheWriterDispatch` cwm)

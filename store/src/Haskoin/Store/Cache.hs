@@ -19,6 +19,7 @@ module Haskoin.Store.Cache
     , CacheWriterInbox
     , cacheNewBlock
     , cacheNewTx
+    , cachePing
     , cacheWriter
     , isInCache
     , evictFromCache
@@ -413,8 +414,10 @@ getAllFromMap n = do
             , let Right v = decode v'
             ]
 
-data CacheWriterMessage = CacheNewBlock
+data CacheWriterMessage
+    = CacheNewBlock
     | CacheNewTx !TxHash
+    | CachePing
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 type CacheWriter = Mailbox CacheWriterMessage
@@ -585,6 +588,7 @@ cacheWriterReact ::
     -> CacheX m ()
 cacheWriterReact CacheNewBlock   = newBlockC
 cacheWriterReact (CacheNewTx th) = newTxC th
+cacheWriterReact CachePing       = syncMempoolC
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
@@ -992,14 +996,14 @@ syncMempoolC = do
             (HashSet.difference cachepool nodepool)
     unless (null txs) $ do
         $(logDebugS) "Cache" $
-            "Importing " <> cs (show (length txs)) <> " mempool transactions"
+            "Importing " <> cs (show (length txs))
+            <> " mempool transactions"
         importMultiTxC (rights txs)
         forM_ (zip [(1 :: Int) ..] (lefts txs)) $ \(i, h) ->
             $(logDebugS) "Cache" $
-            "Ignoring cache mempool tx " <> cs (show i) <> "/" <>
-            cs (show (length txs)) <>
-            ": " <>
-            txHashToHex h
+            "Ignoring cache mempool tx " <> cs (show i) <> "/"
+            <> cs (show (length txs)) <> ": "
+            <> txHashToHex h
   where
     getit th =
         lift (getTxData th) >>= \case
@@ -1239,3 +1243,6 @@ cacheNewBlock = send CacheNewBlock
 
 cacheNewTx :: MonadIO m => TxHash -> CacheWriter -> m ()
 cacheNewTx th = send (CacheNewTx th)
+
+cachePing :: MonadIO m => CacheWriter -> m ()
+cachePing = send CachePing

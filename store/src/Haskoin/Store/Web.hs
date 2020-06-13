@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -43,7 +44,6 @@ import qualified Data.Text.Encoding            as T
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
-import qualified Data.Version                  as Version
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
 import qualified Haskoin.Block                 as H
@@ -75,7 +75,6 @@ import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
 import           NQE                           (Inbox, Publisher, receive,
                                                 withSubscription)
-import           Text.ParserCombinators.ReadP  (readP_to_S)
 import           Text.Printf                   (printf)
 import           UnliftIO                      (MonadIO, MonadUnliftIO,
                                                 askRunInIO, liftIO, timeout)
@@ -83,9 +82,6 @@ import           Web.Scotty.Internal.Types     (ActionT)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
-
-myVersion :: Version.Version
-myVersion = fst $ head $ readP_to_S Version.parseVersion "0.31.0"
 
 data WebLimits = WebLimits
     { maxLimitCount      :: !Word32
@@ -115,6 +111,7 @@ data WebConfig = WebConfig
     , webMaxLimits   :: !WebLimits
     , webReqLog      :: !Bool
     , webWebTimeouts :: !WebTimeouts
+    , webVersion     :: !String
     }
 
 data WebTimeouts = WebTimeouts
@@ -872,7 +869,8 @@ scottyHealth _ = do
     mgr <- lift $ asks (storeManager . webStore)
     chn <- lift $ asks (storeChain . webStore)
     tos <- lift $ asks webWebTimeouts
-    h <- lift $ healthCheck net mgr chn tos
+    ver <- lift $ asks webVersion
+    h <- lift $ healthCheck net mgr chn tos ver
     when (not (healthOK h) || not (healthSynced h)) $ S.status status503
     return h
 
@@ -882,68 +880,73 @@ healthCheck ::
     -> PeerManager
     -> Chain
     -> WebTimeouts
+    -> String
     -> m HealthCheck
-healthCheck net mgr ch tos = do
-    cb <- chain_best
-    bb <- block_best
-    pc <- peer_count
-    tm <- get_current_time
-    ml <- get_mempool_last
-    let ck = block_ok cb
-        bk = block_ok bb
-        pk = peer_count_ok pc
-        bd = block_time_delta tm cb
-        td = tx_time_delta tm bd ml
-        lk = timeout_ok (blockTimeout tos) bd
-        tk = timeout_ok (txTimeout tos) td
-        sy = in_sync bb cb
-        ok = ck && bk && pk && lk && (tk || not sy)
+healthCheck net mgr ch tos ver = do
+    chain_best <- get_chain_best
+    block_best <- get_block_store_best
+    peer_count <- get_peer_count
+    time <- get_current_time
+    mempool_last <- get_mempool_last
+    let chain_ok = is_block_ok chain_best
+        block_ok = is_block_ok block_best
+        peer_count_ok = is_peer_count_ok peer_count
+        block_time_delta = get_block_time_delta time chain_best
+        tx_time_delta = get_tx_time_delta time block_time_delta mempool_last
+        block_timeout_ok = is_timeout_ok (blockTimeout tos) block_time_delta
+        tx_timeout_ok = is_timeout_ok (txTimeout tos) tx_time_delta
+        in_sync = is_in_sync block_best chain_best
+        ok = chain_ok &&
+             block_ok &&
+             peer_count_ok &&
+             block_timeout_ok &&
+             (tx_timeout_ok || not in_sync)
     return
         HealthCheck
-            { healthBlockBest = block_hash <$> bb
-            , healthBlockHeight = block_height <$> bb
-            , healthHeaderBest = node_hash <$> cb
-            , healthHeaderHeight = node_height <$> cb
-            , healthPeers = pc
+            { healthBlockBest = block_data_hash <$> block_best
+            , healthBlockHeight = block_data_height <$> block_best
+            , healthHeaderBest = node_hash <$> chain_best
+            , healthHeaderHeight = node_height <$> chain_best
+            , healthPeers = peer_count
             , healthNetwork = getNetworkName net
             , healthOK = ok
-            , healthSynced = sy
-            , healthLastBlock = bd
-            , healthLastTx = td
-            , healthVersion = Version.showVersion myVersion
+            , healthSynced = in_sync
+            , healthLastBlock = block_time_delta
+            , healthLastTx = tx_time_delta
+            , healthVersion = ver
             }
   where
-    block_hash = H.headerHash . blockDataHeader
-    block_height = blockDataHeight
+    block_data_hash = H.headerHash . blockDataHeader
+    block_data_height = blockDataHeight
     node_hash = H.headerHash . H.nodeHeader
     node_height = H.nodeHeight
     get_mempool_last = listToMaybe <$> getMempool
     get_current_time = fromIntegral . systemSeconds <$> liftIO getSystemTime
-    peer_count_ok pc = fromMaybe 0 pc > 0
-    block_ok = isJust
+    is_peer_count_ok pc = fromMaybe 0 pc > 0
+    is_block_ok = isJust
     node_timestamp = fromIntegral . H.blockTimestamp . H.nodeHeader
-    in_sync bb cb = fromMaybe False $ do
+    is_in_sync bb cb = fromMaybe False $ do
         bh <- blockDataHeight <$> bb
         nh <- H.nodeHeight <$> cb
         return $ compute_delta bh nh <= 1
-    block_time_delta tm cb = do
+    get_block_time_delta tm cb = do
         bt <- node_timestamp <$> cb
         return $ compute_delta bt tm
-    tx_time_delta tm bd ml = do
+    get_tx_time_delta tm bd ml = do
         bd' <- bd
         tt <- memRefTime . txRefBlock <$> ml <|> bd
         return $ min (compute_delta tt tm) bd'
-    timeout_ok to td = fromMaybe False $ do
+    is_timeout_ok to td = fromMaybe False $ do
         td' <- td
         return $
           getAllowMinDifficultyBlocks net ||
           to == 0 ||
           td' <= to
-    peer_count = fmap length <$> timeout 10000000 (managerGetPeers mgr)
-    block_best = runMaybeT $ do
+    get_peer_count = fmap length <$> timeout 10000000 (managerGetPeers mgr)
+    get_block_store_best = runMaybeT $ do
         h <- MaybeT getBestBlock
         MaybeT $ getBlock h
-    chain_best = timeout 10000000 $ chainGetBest ch
+    get_chain_best = timeout 10000000 $ chainGetBest ch
     compute_delta a b = if b > a then b - a else 0
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()

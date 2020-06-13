@@ -9,6 +9,7 @@ module Haskoin.Store.BlockStore
     ( -- * Block Store
       BlockStore
     , BlockStoreMessage
+    , BlockStoreInbox
     , BlockStoreConfig(..)
     , blockStore
     , blockStorePeerConnect
@@ -91,7 +92,6 @@ import           UnliftIO                      (Exception, MonadIO,
                                                 writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 
--- | Messages for block store actor.
 data BlockStoreMessage
     = BlockNewBest !BlockNode
     | BlockPeerConnect !Peer !SockAddr
@@ -101,9 +101,9 @@ data BlockStoreMessage
     | TxRefReceived !Peer !Tx
     | TxRefAvailable !Peer ![TxHash]
     | BlockPing !(Listen ())
-      -- ^ internal housekeeping ping
 
--- | Mailbox for block store.
+type BlockStoreInbox = Inbox BlockStoreMessage
+
 type BlockStore = Mailbox BlockStoreMessage
 
 data BlockException
@@ -201,7 +201,7 @@ instance MonadIO m => StoreRead (BlockT m) where
 blockStore ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => BlockStoreConfig
-    -> Inbox BlockStoreMessage
+    -> BlockStoreInbox
     -> m ()
 blockStore cfg inbox = do
     pb <- newTVarIO Nothing
