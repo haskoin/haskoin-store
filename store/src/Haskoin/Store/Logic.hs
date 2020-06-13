@@ -133,8 +133,16 @@ preLoadTxs ths =
                 "Transaction to preload not found: "
                 <> txHashToHex th
             throwIO TxNotFound
-        Just td ->
-            runTx $ insertTx td
+        Just td -> do
+            ss <- fix_spenders th <$> getSpenders th
+            runTx $ do
+                mapM_ (uncurry insertSpender) ss
+                insertTx td
+  where
+    fix_spenders th im =
+        let ls = I.toList im
+            f i s = (OutPoint th (fromIntegral i), s)
+         in map (uncurry f) ls
 
 preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
               => [Tx]
@@ -242,6 +250,7 @@ importOrConfirm bn txs = do
                 Just t -> do
                     $(logDebugS) "BlockStore" $
                         "Confirming tx: " <> txHashToHex (txHash tx)
+                    preLoadTxs [txHash tx]
                     runTx $ confTx t (Just (br i))
                     return Nothing
                 Nothing -> do

@@ -177,8 +177,13 @@ instance StoreRead MemoryTx where
         error "Cannot query block in STM"
     getTxData t =
         ReaderT $ fmap (getTxDataH t) . readTVar
-    getSpender _ =
-        error "Cannot query spender in STM"
+    getSpender op =
+        ReaderT $ \v -> do
+        m <- getSpenderH op <$> readTVar v
+        case m of
+            Just (Modified s) -> return (Just s)
+            Just Deleted      -> return Nothing
+            Nothing           -> return Nothing
     getSpenders _ =
         error "Cannot query spenders in STM"
     getUnspent op =
