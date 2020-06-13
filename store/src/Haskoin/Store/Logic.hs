@@ -50,8 +50,10 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
 import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, async, throwIO,
-                                                wait)
+                                                MonadUnliftIO, TVar, async,
+                                                atomically, bracket_, newTVarIO,
+                                                readTVar, retrySTM, throwIO,
+                                                wait, writeTVar)
 
 data ImportException
     = PrevBlockNotBest
@@ -80,6 +82,8 @@ instance Show ImportException where
     show DuplicatePrevOutput = "Duplicate previous output"
     show OrphanLoop          = "Orphan loop"
 
+type Lock = TVar Bool
+
 initBest :: (MonadLoggerIO m, MonadUnliftIO m) => WriterT m ()
 initBest = do
     net <- getNetwork
@@ -93,6 +97,16 @@ getOldMempool now =
   where
     f = (< now - 3600 * 72) . memRefTime . txRefBlock
 
+newLock :: MonadIO m => m Lock
+newLock = newTVarIO False
+
+withLock :: MonadUnliftIO m => Lock -> m a -> m a
+withLock lock = bracket_ take_lock put_lock
+  where
+    take_lock = atomically $
+        readTVar lock >>= \t -> when t retrySTM
+    put_lock = atomically $ writeTVar lock False
+
 newMempoolTx :: (MonadLoggerIO m, MonadUnliftIO m)
              => Tx -> UnixTime -> WriterT m Bool
 newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
@@ -103,7 +117,8 @@ newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
         return False
     Nothing -> do
         preLoadMemory [tx]
-        us <- freeUnspentOutputs True tx
+        lock <- newLock
+        us <- freeUnspentOutputs lock True tx
         rbf <- isRBF (MemRef w) tx
         checkNewTx us tx
         runTx $ importTx (MemRef w) w us rbf tx
@@ -121,16 +136,16 @@ preLoadTxs ths =
         Just td ->
             runTx $ insertTx td
 
-preLoadMemory :: MonadLoggerIO m
+preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
               => [Tx]
               -> WriterT m ()
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
     mp <- getMempool
-    us <- concat <$> forM txs (freeUnspentOutputs True)
+    us <- futxo
     let uaddrs = HashSet.fromList $ mapMaybe unspentAddress us
         addrs = HashSet.toList $ HashSet.union uaddrs oaddrs
-    bals <- mapM getBalance addrs
+    bals <- gbals addrs
     $(logDebugS) "BlockStore" $
         "Inserting " <> cs (show (length us)) <> " unspent outputs"
     $(logDebugS) "BlockStore" $
@@ -144,6 +159,13 @@ preLoadMemory txs = do
   where
     addr = eitherToMaybe . scriptToAddressBS . scriptOutput
     oaddrs = HashSet.fromList . mapMaybe addr $ concatMap txOut txs
+    gbals addrs = do
+        as <- mapM (async . getBalance) addrs
+        mapM wait as
+    futxo = do
+        lock <- newLock
+        as <- mapM (async . freeUnspentOutputs lock True) txs
+        concat <$> mapM wait as
 
 bestBlockData :: MonadLoggerIO m => WriterT m BlockData
 bestBlockData = do
@@ -158,7 +180,8 @@ bestBlockData = do
             throwIO BestBlockNotFound
         Just b -> return b
 
-revertBlock :: MonadLoggerIO m => BlockHash -> WriterT m ()
+revertBlock :: (MonadLoggerIO m, MonadUnliftIO m)
+            => BlockHash -> WriterT m ()
 revertBlock bh = do
     bd <- bestBlockData >>= \b ->
         if headerHash (blockDataHeader b) == bh
@@ -205,8 +228,7 @@ importOrConfirm bn txs = do
     go (zip [0..] txs)
   where
     go itxs = do
-        asyncs <- forM itxs (async . action)
-        orphans <- catMaybes <$> mapM wait asyncs
+        orphans <- catMaybes <$> forM itxs action
         unless (null orphans) $ do
             when (length orphans == length itxs) loop_detected
             go orphans
@@ -308,11 +330,12 @@ getUnspentOutputs :: Tx -> MemoryTx [Unspent]
 getUnspentOutputs tx = catMaybes <$> mapM getUnspent (prevOuts tx)
 
 freeUnspentOutputs
-    :: (MonadLoggerIO m, MonadIO m)
-    => Bool -- ^ only delete from mempool
+    :: (MonadLoggerIO m, MonadUnliftIO m)
+    => Lock
+    -> Bool -- ^ only delete from mempool
     -> Tx
     -> WriterT m [Unspent]
-freeUnspentOutputs mem tx =
+freeUnspentOutputs lock mem tx =
     catMaybes <$> forM ops go
   where
     ops = prevOuts tx
@@ -326,7 +349,7 @@ freeUnspentOutputs mem tx =
     delete_spender op s = do
         $(logDebugS) "BlockStore" $
             "Deleting to free output: " <> txHashToHex s
-        deleteTx True mem s
+        withLock lock $ deleteTx True mem s
         getUnspent op
 
 
@@ -431,7 +454,7 @@ confTx t mbr = do
     td = t {txDataBlock = new}
 
 deleteTx
-    :: MonadLoggerIO m
+    :: (MonadLoggerIO m, MonadUnliftIO m)
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
