@@ -28,18 +28,19 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isNothing,
                                                 mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
+import           Data.Text                     (Text)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
                                                 BlockNode (..), Network (..),
                                                 OutPoint (..), Tx (..), TxHash,
                                                 TxIn (..), TxOut (..),
-                                                blockHashToHex, computeSubsidy,
-                                                eitherToMaybe, genesisBlock,
-                                                genesisNode, headerHash,
-                                                isGenesis, nullOutPoint,
-                                                scriptToAddressBS, txHash,
-                                                txHashToHex)
+                                                addrToString, blockHashToHex,
+                                                computeSubsidy, eitherToMaybe,
+                                                genesisBlock, genesisNode,
+                                                headerHash, isGenesis,
+                                                nullOutPoint, scriptToAddressBS,
+                                                txHash, txHashToHex)
 import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..),
                                                 getActiveTxData, nub')
 import           Haskoin.Store.Data            (Balance (..), BlockData (..),
@@ -123,11 +124,16 @@ newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
         runTx $ importTx (MemRef w) w rbf tx
         return True
 
-preLoadTxs :: MonadUnliftIO m => [TxHash] -> WriterT m ()
+preLoadTxs :: (MonadLoggerIO m, MonadUnliftIO m)
+           => [TxHash] -> WriterT m ()
 preLoadTxs ths = do
     as <- forM ths $ \th -> async $ getTxData th >>= \case
-        Nothing -> return ()
+        Nothing ->
+            $(logDebugS) "BlockStore" $
+            "Could not get data for tx: " <> txHashToHex th
         Just td -> do
+            $(logDebugS) "BlockStore" $
+                "Preloading tx: " <> txHashToHex th
             ss <- fix_spenders th <$> getSpenders th
             runTx $ do
                 mapM_ (uncurry insertSpender) ss
@@ -154,7 +160,10 @@ preLoadMemory txs = do
     addr = eitherToMaybe . scriptToAddressBS . scriptOutput
     oaddrs = HashSet.fromList . mapMaybe addr $ concatMap txOut txs
     get_balance a = do
+        net <- getNetwork
         bal <- getBalance a
+        $(logDebugS) "BlockStore" $
+            "Pre-loading balance for address: " <> showAddr net a
         runTx $ setBalance bal
     gbals addrs = do
         as <- mapM (async . get_balance) addrs
@@ -481,6 +490,8 @@ deleteTx memonly rbfcheck txhash =
             deleteTx True rbfcheck s
         getActiveTxData txhash >>= \case
             Just td' -> do
+                $(logDebugS) "BlockStore" $
+                    "Got tx data for: " <> txHashToHex txhash
                 preLoadMemory [txData td']
                 runTx $ commitDelTx td'
             Nothing -> return ()
@@ -717,3 +728,6 @@ isCoinbase = all ((== nullOutPoint) . prevOutput) . txIn
 
 prevOuts :: Tx -> [OutPoint]
 prevOuts tx = filter (/= nullOutPoint) (map prevOutput (txIn tx))
+
+showAddr :: Network -> Address -> Text
+showAddr net = fromMaybe "[unrepresentable]" . addrToString net
