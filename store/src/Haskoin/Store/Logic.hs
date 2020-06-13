@@ -21,10 +21,8 @@ import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
 import qualified Data.ByteString               as B
 import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
-import           Data.Function                 (on)
-import qualified Data.HashSet                  as HashSet
 import qualified Data.IntMap.Strict            as I
-import           Data.List                     (nub, nubBy, sortOn)
+import           Data.List                     (nub, sortOn)
 import           Data.Maybe                    (catMaybes, fromMaybe, isNothing)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
@@ -50,10 +48,8 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
 import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, TVar, async,
-                                                atomically, bracket_, newTVarIO,
-                                                readTVar, retrySTM, throwIO,
-                                                wait, writeTVar)
+                                                MonadUnliftIO, async, throwIO,
+                                                wait)
 
 data ImportException
     = PrevBlockNotBest
@@ -84,8 +80,6 @@ instance Show ImportException where
     show TxSpent             = "Transaction is spent"
     show OrphanLoop          = "Orphan loop"
 
-type Lock = TVar Bool
-
 initBest :: (MonadLoggerIO m, MonadUnliftIO m) => WriterT m ()
 initBest = do
     net <- getNetwork
@@ -98,16 +92,6 @@ getOldMempool now =
     map txRefHash . filter f <$> getMempool
   where
     f = (< now - 3600 * 72) . memRefTime . txRefBlock
-
-newLock :: MonadIO m => m Lock
-newLock = newTVarIO False
-
-withLock :: MonadUnliftIO m => Lock -> m a -> m a
-withLock lock = bracket_ take_lock put_lock
-  where
-    take_lock = atomically $
-        readTVar lock >>= \t -> when t retrySTM
-    put_lock = atomically $ writeTVar lock False
 
 newMempoolTx :: (MonadLoggerIO m, MonadUnliftIO m)
              => Tx -> UnixTime -> WriterT m Bool
