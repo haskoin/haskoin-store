@@ -217,9 +217,7 @@ checkNewBlock b n =
                 throwIO PrevBlockNotBest
 
 testMempool :: MonadIO m => TxHash -> WriterT m Bool
-testMempool th = do
-    mp <- HashSet.fromList . map txRefHash <$> getMempool
-    return $ HashSet.member th mp
+testMempool th = elem th . map txRefHash <$> getMempool
 
 importOrConfirm :: (MonadLoggerIO m, MonadUnliftIO m)
                 => BlockNode -> [Tx] -> WriterT m ()
