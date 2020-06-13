@@ -11,5 +11,5 @@ packages:
 extra-deps:
   - haskoin-node-0.13.0
   - haskoin-core-0.13.6
-  - secp256k1-haskell-0.2.2
+  - secp256k1-haskell-0.2.5
   - ./data

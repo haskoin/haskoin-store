@@ -118,10 +118,10 @@ newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
     Nothing -> do
         preLoadMemory [tx]
         lock <- newLock
-        us <- freeUnspentOutputs lock True tx
+        freeUnspentOutputs lock True tx
         rbf <- isRBF (MemRef w) tx
-        checkNewTx us tx
-        runTx $ importTx (MemRef w) w us rbf tx
+        checkNewTx tx
+        runTx $ importTx (MemRef w) w rbf tx
         return True
 
 preLoadTxs :: MonadLoggerIO m => [TxHash] -> WriterT m ()
@@ -141,10 +141,11 @@ preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
               -> WriterT m ()
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
-    mp <- getMempool
-    us <- futxo
+    free_utxo
+    us <- runTx $ concat <$> mapM getUnspentOutputs txs
     let uaddrs = HashSet.fromList $ mapMaybe unspentAddress us
         addrs = HashSet.toList $ HashSet.union uaddrs oaddrs
+    mp <- getMempool
     bals <- gbals addrs
     $(logDebugS) "BlockStore" $
         "Inserting " <> cs (show (length us)) <> " unspent outputs"
@@ -153,7 +154,6 @@ preLoadMemory txs = do
     $(logDebugS) "BlockStore" $
         "Inserting " <> cs (show (length mp)) <> " mempool txs"
     runTx $ do
-        mapM_ insertUnspent us
         mapM_ setBalance bals
         setMempool mp
   where
@@ -162,10 +162,10 @@ preLoadMemory txs = do
     gbals addrs = do
         as <- mapM (async . getBalance) addrs
         mapM wait as
-    futxo = do
+    free_utxo = do
         lock <- newLock
         as <- mapM (async . freeUnspentOutputs lock True) txs
-        concat <$> mapM wait as
+        mapM_ wait as
 
 bestBlockData :: MonadLoggerIO m => WriterT m BlockData
 bestBlockData = do
@@ -252,7 +252,7 @@ importOrConfirm bn txs = do
         us <- getUnspentOutputs tx
         if orphanTest us tx
             then return $ Just (i, tx)
-            else do importTx (br i) bn_time us False tx
+            else do importTx (br i) bn_time False tx
                     return Nothing
     loop_detected = do
         $(logErrorS) "BlockStore" "Orphan loop detected"
@@ -296,8 +296,9 @@ importBlock b n = do
             s = B.length (encode b')
          in fromIntegral $ s * 3 + x
 
-checkNewTx :: MonadLoggerIO m => [Unspent] -> Tx -> WriterT m ()
-checkNewTx us tx = do
+checkNewTx :: MonadLoggerIO m => Tx -> WriterT m ()
+checkNewTx tx = do
+    us <- runTx $ getUnspentOutputs tx
     when (unique_inputs < length (txIn tx)) $ do
         $(logDebugS) "BlockStore" $
             "Transaction spends same output twice: "
@@ -308,7 +309,7 @@ checkNewTx us tx = do
             "Coinbase cannot be imported into mempool: "
             <> txHashToHex (txHash tx)
         throwIO UnexpectedCoinbase
-    when (outputs > unspents) $ do
+    when (outputs > unspents us) $ do
         $(logDebugS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwIO InsufficientFunds
@@ -317,7 +318,7 @@ checkNewTx us tx = do
             "Orphan: " <> txHashToHex (txHash tx)
         throwIO Orphan
   where
-    unspents = sum (map unspentAmount us)
+    unspents = sum . map unspentAmount
     outputs = sum (map outValue (txOut tx))
     unique_inputs = length (nub' (map prevOutput (txIn tx)))
 
@@ -332,24 +333,25 @@ freeUnspentOutputs
     => Lock
     -> Bool -- ^ only delete from mempool
     -> Tx
-    -> WriterT m [Unspent]
+    -> WriterT m ()
 freeUnspentOutputs lock mem tx =
-    catMaybes <$> forM ops go
+    mapM_ go ops
   where
     ops = prevOuts tx
     go op = getUnspent op >>= \case
+        Just u -> runTx $ insertUnspent u
         Nothing -> force_unspent op
-        Just u -> return (Just u)
     force_unspent op = getSpender op >>= \case
-        Nothing -> return Nothing
-        Just Spender {spenderHash = s} ->
-            delete_spender op s
-    delete_spender op s = do
+        Just Spender {spenderHash = s}
+            | s /= txHash tx -> delete_spender op s
+        _ -> return ()
+    delete_spender op s = withLock lock $ do
         $(logDebugS) "BlockStore" $
             "Deleting to free output: " <> txHashToHex s
-        withLock lock $ deleteTx True mem s
-        getUnspent op
-
+        deleteTx True mem s
+        getUnspent op >>= \case
+            Just u -> runTx $ insertUnspent u
+            Nothing -> return ()
 
 prepareTxData :: Bool -> BlockRef -> Word64 -> [Unspent] -> Tx -> TxData
 prepareTxData rbf br tt us tx =
@@ -367,11 +369,11 @@ prepareTxData rbf br tt us tx =
 importTx
     :: BlockRef
     -> Word64 -- ^ unix time
-    -> [Unspent]
     -> Bool -- ^ RBF
     -> Tx
     -> MemoryTx ()
-importTx br tt us rbf tx = do
+importTx br tt rbf tx = do
+    us <- getUnspentOutputs tx
     let td = prepareTxData rbf br tt us tx
     commitAddTx us td
 

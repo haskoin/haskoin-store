@@ -63,34 +63,34 @@ type MemoryTx = ReaderT (TVar Memory) STM
 type WriterT = ReaderT Writer
 
 instance MonadIO m => StoreRead (WriterT m) where
-    getInitialGap = R.asks $
-        databaseInitialGap . getReader
-    getNetwork = R.asks $
-        databaseNetwork . getReader
-    getBestBlock = R.ask >>=
-        getBestBlockI
-    getBlocksAtHeight h = R.ask >>=
-        getBlocksAtHeightI h
-    getBlock b = R.ask >>=
-        getBlockI b
-    getTxData t = R.ask >>=
-        getTxDataI t
-    getSpender p = R.ask >>=
-        getSpenderI p
-    getSpenders t = R.ask >>=
-        getSpendersI t
-    getUnspent a = R.ask >>=
-        getUnspentI a
-    getBalance a = R.ask >>=
-        getBalanceI a
-    getMempool = R.ask >>=
-        getMempoolI
+    getInitialGap =
+        R.asks $ databaseInitialGap . getReader
+    getNetwork =
+        R.asks $ databaseNetwork . getReader
+    getBestBlock =
+        R.ask >>= getBestBlockI
+    getBlocksAtHeight h =
+        R.ask >>= getBlocksAtHeightI h
+    getBlock b =
+        R.ask >>= getBlockI b
+    getTxData t =
+        R.ask >>= getTxDataI t
+    getSpender p =
+        R.ask >>= getSpenderI p
+    getSpenders t =
+        R.ask >>= getSpendersI t
+    getUnspent a =
+        R.ask >>= getUnspentI a
+    getBalance a =
+        R.ask >>= getBalanceI a
+    getMempool =
+        R.ask >>= getMempoolI
     getAddressesTxs =
         undefined
     getAddressesUnspents =
         undefined
-    getMaxGap = R.asks $
-        databaseMaxGap . getReader
+    getMaxGap =
+        R.asks $ databaseMaxGap . getReader
 
 data Memory = Memory
     { hBest
