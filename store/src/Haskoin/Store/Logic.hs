@@ -21,11 +21,9 @@ import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
 import qualified Data.ByteString               as B
 import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
-import qualified Data.HashSet                  as HashSet
 import qualified Data.IntMap.Strict            as I
 import           Data.List                     (nub, sortOn)
-import           Data.Maybe                    (catMaybes, fromMaybe, isNothing,
-                                                mapMaybe)
+import           Data.Maybe                    (catMaybes, fromMaybe, isNothing)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
 import           Data.Text                     (Text)
@@ -117,32 +115,10 @@ newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
         return False
     Nothing -> do
         preLoadMemory [tx]
-        lock <- newLock
-        freeUnspentOutputs lock True tx
         rbf <- isRBF (MemRef w) tx
         checkNewTx tx
         runTx $ importTx (MemRef w) w rbf tx
         return True
-
-preLoadTxs :: (MonadLoggerIO m, MonadUnliftIO m)
-           => [TxHash] -> WriterT m ()
-preLoadTxs ths = do
-    as <- forM ths $ \th -> async $ getTxData th >>= \case
-        Nothing ->
-            $(logDebugS) "BlockStore" $
-            "Could not get data for tx: " <> txHashToHex th
-        Just td -> do
-            $(logDebugS) "BlockStore" $
-                "Preloading tx: " <> txHashToHex th
-            ss <- fix_spenders th <$> getSpenders th
-            runTx $ do
-                mapM_ (uncurry insertSpender) ss
-                insertTx td
-    mapM_ wait as
-  where
-    fix_spenders th =
-        let f i s = (OutPoint th (fromIntegral i), s)
-         in map (uncurry f) . I.toList
 
 preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
               => [Tx]
@@ -150,28 +126,39 @@ preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
     free_utxo
-    preLoadTxs (map txHash txs)
-    us <- runTx $ concat <$> mapM getUnspentOutputs txs
-    let uaddrs = HashSet.fromList $ mapMaybe unspentAddress us
-        addrs = HashSet.toList $ HashSet.union uaddrs oaddrs
-    gbals addrs
-    getMempool >>= runTx . setMempool
+    preload_txs
+    preload_mempool
   where
-    addr = eitherToMaybe . scriptToAddressBS . scriptOutput
-    oaddrs = HashSet.fromList . mapMaybe addr $ concatMap txOut txs
+    preload_mempool = getMempool >>= runTx . setMempool
     get_balance a = do
         net <- getNetwork
         bal <- getBalance a
         $(logDebugS) "BlockStore" $
             "Pre-loading balance for address: " <> showAddr net a
         runTx $ setBalance bal
-    gbals addrs = do
-        as <- mapM (async . get_balance) addrs
-        mapM_ wait as
     free_utxo = do
         lock <- newLock
-        as <- mapM (async . freeUnspentOutputs lock True) txs
+        as <- mapM (async . loadUnspentOutputs lock True) txs
         mapM_ wait as
+    preload_txs = do
+        as <- forM txs $ \tx -> async $ do
+            getTxData (txHash tx) >>= mapM_ preload_tx
+            forM_ (txOut tx) $
+                  mapM_ get_balance . scriptToAddressBS . scriptOutput
+        mapM_ wait as
+    preload_tx td = do
+        let th = txHash (txData td)
+        $(logDebugS) "BlockStore" $
+            "Preloading tx: " <> txHashToHex th
+        ss <- fix_spenders th <$> getSpenders th
+        forM_ (txDataPrevs td) $ \p ->
+            forM_ (scriptToAddressBS (prevScript p)) get_balance
+        runTx $ do
+            mapM_ (uncurry insertSpender) ss
+            insertTx td
+    fix_spenders th =
+        let f i s = (OutPoint th (fromIntegral i), s)
+         in map (uncurry f) . I.toList
 
 bestBlockData :: MonadLoggerIO m => WriterT m BlockData
 bestBlockData = do
@@ -326,18 +313,18 @@ orphanTest us tx = length (prevOuts tx) > length us
 getUnspentOutputs :: Tx -> MemoryTx [Unspent]
 getUnspentOutputs tx = catMaybes <$> mapM getUnspent (prevOuts tx)
 
-freeUnspentOutputs
+loadUnspentOutputs
     :: (MonadLoggerIO m, MonadUnliftIO m)
     => Lock
     -> Bool -- ^ only delete from mempool
     -> Tx
     -> WriterT m ()
-freeUnspentOutputs lock mem tx =
+loadUnspentOutputs lock mem tx =
     mapM_ go ops
   where
     ops = prevOuts tx
     go op = getUnspent op >>= \case
-        Just u -> runTx $ insertUnspent u
+        Just u -> insert_unspent u
         Nothing -> force_unspent op
     force_unspent op = getSpender op >>= \case
         Just Spender {spenderHash = s}
@@ -347,9 +334,12 @@ freeUnspentOutputs lock mem tx =
         $(logDebugS) "BlockStore" $
             "Deleting to free output: " <> txHashToHex s
         deleteTx True mem s
-        getUnspent op >>= \case
-            Just u -> runTx $ insertUnspent u
-            Nothing -> return ()
+        getUnspent op >>= mapM_ insert_unspent
+    insert_unspent u = do
+        bal <- mapM getBalance (unspentAddress u)
+        runTx $ do
+            insertUnspent u
+            mapM_ setBalance bal
 
 prepareTxData :: Bool -> BlockRef -> Word64 -> [Unspent] -> Tx -> TxData
 prepareTxData rbf br tt us tx =
