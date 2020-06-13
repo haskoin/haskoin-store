@@ -469,6 +469,15 @@ deleteTx memonly rbfcheck txhash =
                         throwIO DoubleSpend
             | otherwise -> go
   where
+    preload_prevs ins = do
+        let ths = nub' $ map (outPointHash . prevOutput) ins
+        tds <- forM ths $ \th -> getActiveTxData th >>= \case
+            Nothing -> do
+                $(logDebugS) "BlockStore" $
+                    "Could not get prev tx: " <> txHashToHex th
+                throwIO TxNotFound
+            Just td -> return td
+        preLoadMemory $ map txData tds
     go = do
         $(logDebugS) "BlockStore" $
             "Deleting tx: " <> txHashToHex txhash
@@ -482,7 +491,7 @@ deleteTx memonly rbfcheck txhash =
             Just td' -> do
                 $(logDebugS) "BlockStore" $
                     "Got tx data for: " <> txHashToHex txhash
-                preLoadMemory [txData td']
+                preload_prevs $ txIn $ txData td'
                 runTx $ commitDelTx td'
             Nothing -> return ()
 
