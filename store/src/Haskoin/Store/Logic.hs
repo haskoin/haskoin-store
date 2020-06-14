@@ -40,7 +40,7 @@ import           Haskoin                       (Address, Block (..), BlockHash,
                                                 nullOutPoint, scriptToAddressBS,
                                                 txHash, txHashToHex)
 import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..),
-                                                getActiveTxData, nub')
+                                                getActiveTxData, nub', sortTxs)
 import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 BlockRef (..), Prev (..),
                                                 Spender (..), TxData (..),
@@ -423,19 +423,20 @@ freeOutputs
     -> WriterT m ()
 freeOutputs memonly rbfcheck txs = do
     as <- mapM (async . get_chain) txs
-    chain <- concat <$> mapM wait as
-    mapM_ deleteSingleTx (nub chain)
+    txs' <- reverse . map snd . sortTxs . nub' . concat
+            <$> mapM wait as
+    mapM_ (deleteSingleTx . txHash) txs'
   where
     get_chain tx =
-        fmap concat $
+        fmap concat .
         forM (nub' (prevOuts tx)) $
         getSpender >=> \case
-        Nothing -> return []
-        Just Spender {spenderHash = s} ->
-            getChain memonly rbfcheck s >>= \case
-            td : _ | txHash tx == txHash (txData td) ->
-                     return []
-            ts -> return ts
+            Nothing ->
+                return []
+            Just Spender {spenderHash = s} ->
+                getChain memonly rbfcheck s >>= \case
+                tx' : _ | tx == tx' -> return []
+                ts -> return ts
 
 deleteTx
     :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -444,16 +445,18 @@ deleteTx
     -> TxHash
     -> WriterT m ()
 deleteTx memonly rbfcheck txhash =
-    getChain memonly rbfcheck txhash >>= mapM_ deleteSingleTx
+    getChain memonly rbfcheck txhash >>=
+    mapM_ (deleteSingleTx . txHash)
 
 getChain
     :: (MonadLoggerIO m, StoreRead m)
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
-    -> m [TxData]
+    -> m [Tx]
 getChain memonly rbfcheck txhash =
-    fmap (nub . reverse) $ getActiveTxData txhash >>= \case
+    fmap (nub . reverse) $
+    getActiveTxData txhash >>= \case
         Nothing ->
             return []
         Just td
@@ -468,24 +471,30 @@ getChain memonly rbfcheck txhash =
     go td = do
         spenders <- nub' . map spenderHash . I.elems <$> getSpenders txhash
         chains <- concat <$> mapM (getChain memonly rbfcheck) spenders
-        return $ td : chains
+        return $ txData td : chains
 
 deleteSingleTx :: (MonadLoggerIO m, MonadUnliftIO m)
-               => TxData -> WriterT m ()
-deleteSingleTx td = do
-    $(logDebugS) "BlockStore" $
-        "Deleting tx: " <> txHashToHex (txHash (txData td))
-    preload
-    runTx $ commitDelTx td
+               => TxHash -> WriterT m ()
+deleteSingleTx th =
+    getActiveTxData th >>= \case
+        Nothing ->
+            $(logDebugS) "BlockStore" $
+                "Already deleted: " <> txHashToHex th
+        Just td -> do
+            $(logDebugS) "BlockStore" $
+                "Deleting tx: " <> txHashToHex th
+            preload td
+            runTx $ commitDelTx td
   where
-    preload = do
+    preload td = do
         let ths = nub' $ map outPointHash (prevOuts (txData td))
-        tds <- forM ths $ \th -> getActiveTxData th >>= \case
-            Nothing -> do
-                $(logDebugS) "BlockStore" $
-                    "Could not get prev tx: " <> txHashToHex th
-                throwIO TxNotFound
-            Just d -> return d
+        tds <- forM ths $ \h ->
+            getActiveTxData h >>= \case
+                Nothing -> do
+                    $(logDebugS) "BlockStore" $
+                        "Could not get prev tx: " <> txHashToHex h
+                    throwIO TxNotFound
+                Just d -> return d
         preLoadMemory $ txData td : map txData tds
 
 commitDelTx :: TxData -> MemoryTx ()
