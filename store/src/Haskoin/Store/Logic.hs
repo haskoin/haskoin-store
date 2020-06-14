@@ -82,12 +82,14 @@ instance Show ImportException where
 
 initBest :: (MonadLoggerIO m, MonadUnliftIO m) => WriterT m ()
 initBest = do
+    $(logDebugS) "BlockStore" "Initializing best block"
     net <- getNetwork
     m <- getBestBlock
-    when (isNothing m) . void $
+    when (isNothing m) . void $ do
+        $(logDebugS) "BlockStore" "Importing Genesis block"
         importBlock (genesisBlock net) (genesisNode net)
 
-getOldMempool :: MonadIO m => UnixTime -> WriterT m [TxHash]
+getOldMempool :: StoreRead m => UnixTime -> m [TxHash]
 getOldMempool now =
     map txRefHash . filter f <$> getMempool
   where
@@ -98,10 +100,11 @@ newMempoolTx :: (MonadLoggerIO m, MonadUnliftIO m)
 newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
     Just _ -> do
         $(logDebugS) "BlockStore" $
-            "Transaction already in store: "
-            <> txHashToHex (txHash tx)
+            "Already have tx: " <> txHashToHex (txHash tx)
         return False
     Nothing -> do
+        $(logDebugS) "BlockStore" $
+            "Importing mempool tx: " <> txHashToHex (txHash tx)
         freeOutputs True True [tx]
         preLoadMemory [tx]
         rbf <- isRBF (MemRef w) tx
@@ -201,12 +204,16 @@ importOrConfirm bn txs = do
                     <> txHashToHex (txHash tx)
                 throwIO TxNotFound
     import_it i tx = do
-        $(logDebugS) "BlockStore" $
-            "Importing tx: " <> txHashToHex (txHash tx)
         us <- getUnspentOutputs tx
         if orphanTest us tx
-            then return $ Just (i, tx)
+            then do
+                $(logDebugS) "BlockStore" $
+                    "Temporarily orphan: "
+                    <> txHashToHex (txHash tx)
+                return $ Just (i, tx)
             else do
+                $(logDebugS) "BlockStore" $
+                    "Importing tx: " <> txHashToHex (txHash tx)
                 runTx $ importTx (br i) bn_time False tx
                 return Nothing
     orphan_detected orphan = do
@@ -217,10 +224,17 @@ importOrConfirm bn txs = do
 importBlock :: (MonadLoggerIO m, MonadUnliftIO m)
             => Block -> BlockNode -> WriterT m ()
 importBlock b n = do
+    $(logDebugS) "BlockStore" $
+        "Checking new block: "
+        <> blockHashToHex (headerHash (nodeHeader n))
     checkNewBlock b n
+    $(logDebugS) "BlockStore" "Passed check"
     net <- getNetwork
     let subsidy = computeSubsidy net (nodeHeight n)
     bs <- getBlocksAtHeight (nodeHeight n)
+    $(logDebugS) "BlockStore" $
+        "Inserting block entries for: "
+        <> blockHashToHex (headerHash (nodeHeader n))
     runTx $ do
         insertBlock
             BlockData
@@ -240,6 +254,9 @@ importBlock b n = do
             (nodeHeight n)
         setBest (headerHash (nodeHeader n))
     importOrConfirm n (blockTxns b)
+    $(logDebugS) "BlockStore" $
+        "Finished importing transactions for: "
+        <> blockHashToHex (headerHash (nodeHeader n))
   where
     cb_out_val =
         sum $ map outValue $ txOut $ head $ blockTxns b

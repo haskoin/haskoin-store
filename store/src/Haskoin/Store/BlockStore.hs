@@ -157,12 +157,13 @@ data BlockStoreConfig = BlockStoreConfig
 type BlockT m = ReaderT BlockRead m
 
 runImport :: MonadLoggerIO m => WriterT m a -> BlockT m a
-runImport f = ReaderT $ \r -> runWriter (blockConfDB (myConfig r)) f
+runImport f =
+    ReaderT $ \r ->
+        runWriter (blockConfDB (myConfig r)) f
 
 runRocksDB :: ReaderT DatabaseReader m a -> BlockT m a
 runRocksDB f =
-    ReaderT $ \BlockRead {myConfig = BlockStoreConfig {blockConfDB = db}} ->
-        runReaderT f db
+    ReaderT $ runReaderT f . blockConfDB . myConfig
 
 instance MonadIO m => StoreRead (BlockT m) where
     getMaxGap =
@@ -215,22 +216,21 @@ blockStore cfg inbox = do
                   , myTxs = ts
                   }
   where
-    del x n txs =
-        forM_ (zip [x ..] txs) $ \(i, tx) -> do
-            $(logInfoS) "BlockStore" $
-                "Deleting "
-                <> cs (show i) <> "/" <> cs (show n) <> ": "
-                <> txHashToHex (txRefHash tx) <> "…"
+    del txs = do
+        $(logInfoS) "BlockStore" $
+            "Deleting " <> cs (show (length txs)) <> " transactions"
+        forM_ txs $ \tx ->
             deleteUnconfirmedTx False (txRefHash tx)
-    wipeit x n txs = do
+    wipeit txs = do
         let (txs1, txs2) = splitAt 1000 txs
         unless (null txs1) $ do
-            runImport (del x n txs1)
-            wipeit (x + length txs1) n txs2
+            runImport (del txs1)
+            wipeit txs2
     wipe
         | blockConfWipeMempool cfg =
-            getMempool >>= \mem -> wipeit 1 (length mem) mem
-        | otherwise = return ()
+              getMempool >>= wipeit
+        | otherwise =
+              return ()
     ini = runImport initBest
     run = withAsync (pingMe (inboxToMailbox inbox)) . const . forever $
         receive inbox >>= ReaderT . runReaderT . processBlockStoreMessage
@@ -260,7 +260,7 @@ processBlock peer block = void . runMaybeT $ do
     blocknode <- MaybeT $ getBlockNode peer blockhash
     pt <- managerPeerText peer =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockStore" $
-        "Processing block : " <> blockText blocknode Nothing
+        "Processing block: " <> blockText blocknode Nothing
         <> " (peer" <> pt <> ")"
     let do_import = runImport $ importBlock block blocknode
     lift $ catch (do_import >> success blocknode) (failure pt)
@@ -290,16 +290,11 @@ checkPeer peer =
     >>= managerGetPeer peer
     >>= maybe disconnected (const connected)
   where
-    disconnected = do
-        $(logDebugS) "BlockStore" "Ignoring data from disconnected peer"
-        return False
+    disconnected = return False
     connected = touchPeer peer >>= \case
         True -> return True
         False -> remove
     remove = do
-        pt <- managerPeerText peer =<< asks (blockConfManager . myConfig)
-        $(logDebugS) "BlockStore" $
-            "Ignoring data from non-syncing peer: " <> pt
         killPeer (PeerMisbehaving "Sent unpexpected data") peer
         return False
 
@@ -337,7 +332,8 @@ processTx p tx = do
     t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockManager" $
-        "Received tx " <> txHashToHex (txHash tx) <> " (peer " <> p' <> ")"
+        "Received tx " <> txHashToHex (txHash tx)
+        <> " (peer " <> p' <> ")"
     addPendingTx $ PendingTx t tx HashSet.empty
 
 pruneOrphans :: MonadIO m => BlockT m ()
@@ -450,19 +446,22 @@ importMempoolTx block_read time tx =
         return False
     handle_error _ = do
         $(logDebugS) "BlockStore" $
-            "Mempool " <> txHashToHex tx_hash <> ": Failed"
+            "Mempool " <> txHashToHex tx_hash
+            <> ": Failed"
         return False
     new_mempool_tx =
         newMempoolTx tx time >>= \case
-        True -> do
-            $(logDebugS) "BlockStore" $
-                "Mempool " <> txHashToHex (txHash tx) <> ": OK"
-            fulfillOrphans block_read tx_hash
-            return True
-        False -> do
-            $(logDebugS) "BlockStore" $
-                "Mempool " <> txHashToHex (txHash tx) <> ": No action"
-            return False
+            True -> do
+                $(logDebugS) "BlockStore" $
+                    "Mempool " <> txHashToHex (txHash tx)
+                    <> ": OK"
+                fulfillOrphans block_read tx_hash
+                return True
+            False -> do
+                $(logDebugS) "BlockStore" $
+                    "Mempool " <> txHashToHex (txHash tx)
+                    <> ": No action"
+                return False
 
 processMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 processMempool = do
@@ -472,11 +471,11 @@ processMempool = do
   where
     run_import block_read p =
         importMempoolTx
-        block_read
-        (pendingTxTime p)
-        (pendingTx p) >>= \case
-            True -> return $ Just (txHash (pendingTx p))
-            False -> return Nothing
+            block_read
+            (pendingTxTime p)
+            (pendingTx p) >>= \case
+                True -> return $ Just (txHash (pendingTx p))
+                False -> return Nothing
     import_txs block_read =
         fmap catMaybes . runImport . mapM (run_import block_read)
     success = mapM_ notify
@@ -494,7 +493,8 @@ processTxs p hs = isInSync >>= \s -> when s $ do
     $(logDebugS) "BlockStore" $
         "Received inventory with "
         <> cs (show (length hs))
-        <> " transactions from peer " <> pt
+        <> " transactions "
+        <> "(peer " <> pt <> ")"
     xs <- catMaybes <$> zip_counter (process_tx pt)
     unless (null xs) $ go xs
   where
@@ -511,14 +511,15 @@ processTxs p hs = isInSync >>= \s -> when s $ do
     do_have pt i h = do
         $(logDebugS) "BlockStore" $
             "Tx inv " <> cs (show i) <> "/" <> cs (show len)
-            <> ": " <> txHashToHex h
-            <> ": Already have it (peer " <> pt <> ")"
+            <> " [" <> txHashToHex h <> "]: "
+            <> "Already have it "
+            <> "(peer " <> pt <> ")"
         return Nothing
     dont_have pt i h = do
         $(logDebugS) "BlockStore" $
             "Tx inv " <> cs (show i) <> "/" <> cs (show len)
-            <> ": " <> txHashToHex h
-            <> ": Requesting… (peer " <> pt <> ")"
+            <> " [" <> txHashToHex h <> "]: "
+            <> "Requesting… (peer " <> pt <> ")"
         return (Just h)
     go xs = do
         net <- asks (blockConfNet . myConfig)
@@ -576,12 +577,10 @@ processDisconnect p =
 
 pruneMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
 pruneMempool =
-    isInSync >>= \sync ->
-    when sync . runImport $ do
+    isInSync >>= \sync -> when sync $ do
         now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
         getOldMempool now >>= \old ->
-            unless (null old) $
-            mapM_ delete_it old
+            unless (null old) . runImport $ mapM_ delete_it old
   where
     failed txid e =
         $(logErrorS) "BlockStore" $
@@ -686,7 +685,7 @@ syncMe peer = void . runMaybeT $ do
         chainBlockMain bestblockhash ch >>= \y ->
             unless y $ do_revert bestblockhash
     do_revert bestblockhash = do
-        $(logErrorS) "BlockStore" $
+        $(logWarnS) "BlockStore" $
             "Reverting best block: "
             <> blockHashToHex bestblockhash
         resetPeer

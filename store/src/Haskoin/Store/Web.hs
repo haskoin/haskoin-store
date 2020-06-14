@@ -17,7 +17,7 @@ module Haskoin.Store.Web
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forever, when, (<=<))
-import           Control.Monad.Logger
+import           Control.Monad.Logger          (MonadLoggerIO, logInfoS)
 import           Control.Monad.Reader          (ReaderT, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
@@ -875,7 +875,7 @@ scottyHealth _ = do
     return h
 
 healthCheck ::
-       (MonadUnliftIO m, StoreRead m)
+       (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
     => Network
     -> PeerManager
     -> Chain
