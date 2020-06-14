@@ -5,26 +5,38 @@
 
 packages:
 - completed:
-    hackage: haskoin-node-0.13.0@sha256:ebbcaafb023002db344e235dec7dd0180902f29f642f3dff71b855d1713a36fb,2295
+    size: 266117
+    url: https://github.com/haskoin/haskoin-core/archive/d313ac58b2f22fa7570a5e1234244b7249a48382.tar.gz
+    name: haskoin-core
+    version: 0.14.1
+    sha256: c33453bad087010a282a59d801dc56abfe5478cf06522e48a16c1e59e68a2b67
     pantry-tree:
-      size: 705
-      sha256: 4e261e9eae1ac234d1ab73029401458ec5f003ed33d9a09fc490f42d1c647645
+      size: 4977
+      sha256: 1d49211744296e7fb946a02e7959ad46581165ef8977cac3f44bfd53570f9ca3
   original:
-    hackage: haskoin-node-0.13.0
+    url: https://github.com/haskoin/haskoin-core/archive/d313ac58b2f22fa7570a5e1234244b7249a48382.tar.gz
 - completed:
-    hackage: haskoin-core-0.13.6@sha256:a16dc3cb38fd8cad6aab309cefd34686880f255a6f006f3fa4a3f25379d4b765,5797
+    size: 25923
+    url: https://github.com/haskoin/haskoin-node/archive/05a1e0e5f6e853f94123d849e15b4d447a410e4e.tar.gz
+    name: haskoin-node
+    version: 0.13.0
+    sha256: a59693568aa5cfde0a92c7f4464064336bbe8f5b783f00e8d82de6894052ea91
     pantry-tree:
-      size: 4720
-      sha256: b6fe74664d4766366832c4f00e47cbdfae5801a9cd6798203813c71c801409f1
+      size: 964
+      sha256: 53290240eb3464e75e4adfaaee364cd1ed825abebb9c4fbb81a8a071a017ef9b
   original:
-    hackage: haskoin-core-0.13.6
+    url: https://github.com/haskoin/haskoin-node/archive/05a1e0e5f6e853f94123d849e15b4d447a410e4e.tar.gz
 - completed:
-    hackage: secp256k1-haskell-0.2.5@sha256:618d5f4178b31e0d6f04c9d7536aac18785a1c0e7e49889e39996cd1efb2ca47,2614
+    size: 13899
+    url: https://github.com/haskoin/secp256k1-haskell/archive/239159122cc6f830957759a1d247ded7ffeba915.tar.gz
+    name: secp256k1-haskell
+    version: 0.3.0
+    sha256: 748bdcc885ec1e0c1b5db4896651f963d8a29dee7237e7f604c828be0d1ed2b2
     pantry-tree:
-      size: 601
-      sha256: 2c5b74cda6608ec3ea07bbdc006de838525de74341e1965c0e2ce49ad55bdc00
+      size: 859
+      sha256: 59325b14a11858dfbeb7b788018401e061c2a24ca4c1609d5a39932f4b478167
   original:
-    hackage: secp256k1-haskell-0.2.5
+    url: https://github.com/haskoin/secp256k1-haskell/archive/239159122cc6f830957759a1d247ded7ffeba915.tar.gz
 snapshots:
 - completed:
     size: 531237
