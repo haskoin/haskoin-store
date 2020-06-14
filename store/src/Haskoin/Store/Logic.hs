@@ -14,8 +14,8 @@ module Haskoin.Store.Logic
     , deleteUnconfirmedTx
     ) where
 
-import           Control.Monad                 (forM, forM_, guard, unless,
-                                                void, when, zipWithM_, (>=>))
+import           Control.Monad                 (forM, forM_, guard, void, when,
+                                                zipWithM_, (<=<), (>=>))
 import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
                                                 logDebugS, logErrorS)
 import qualified Data.ByteString               as B
@@ -23,22 +23,22 @@ import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
 import qualified Data.IntMap.Strict            as I
 import           Data.List                     (nub, sortOn)
-import           Data.Maybe                    (catMaybes, fromMaybe, isNothing)
+import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
+                                                isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
-import           Data.Text                     (Text)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
                                                 BlockNode (..), Network (..),
                                                 OutPoint (..), Tx (..), TxHash,
                                                 TxIn (..), TxOut (..),
-                                                addrToString, blockHashToHex,
-                                                computeSubsidy, eitherToMaybe,
-                                                genesisBlock, genesisNode,
-                                                headerHash, isGenesis,
-                                                nullOutPoint, scriptToAddressBS,
-                                                txHash, txHashToHex)
+                                                blockHashToHex, computeSubsidy,
+                                                eitherToMaybe, genesisBlock,
+                                                genesisNode, headerHash,
+                                                isGenesis, nullOutPoint,
+                                                scriptToAddressBS, txHash,
+                                                txHashToHex)
 import           Haskoin.Store.Common          (StoreRead (..), StoreWrite (..),
                                                 getActiveTxData, nub', sortTxs)
 import           Haskoin.Store.Data            (Balance (..), BlockData (..),
@@ -114,39 +114,10 @@ preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
               -> WriterT m ()
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
-    load_utxo
-    preload_txs
-    preload_mempool
-  where
-    preload_mempool = getMempool >>= runTx . setMempool
-    get_balance a = do
-        net <- getNetwork
-        bal <- getBalance a
-        $(logDebugS) "BlockStore" $
-            "Pre-loading balance for address: " <> showAddr net a
-        runTx $ setBalance bal
-    load_utxo = do
-        as <- mapM (async . loadUnspentOutputs) txs
-        mapM_ wait as
-    preload_txs = do
-        as <- forM txs $ \tx -> async $ do
-            getTxData (txHash tx) >>= mapM_ preload_tx
-            forM_ (txOut tx) $
-                  mapM_ get_balance . scriptToAddressBS . scriptOutput
-        mapM_ wait as
-    preload_tx td = do
-        let th = txHash (txData td)
-        $(logDebugS) "BlockStore" $
-            "Preloading tx: " <> txHashToHex th
-        spenders <- fix_spenders th <$> getSpenders th
-        forM_ (txDataPrevs td) $
-            mapM_ get_balance . scriptToAddressBS . prevScript
-        runTx $ do
-            mapM_ (uncurry insertSpender) spenders
-            insertTx td
-    fix_spenders th =
-        let f i s = (OutPoint th (fromIntegral i), s)
-         in map (uncurry f) . I.toList
+    prev_asyncs <- mapM (async . loadPrevOutputs) txs
+    out_asyncs <- mapM (async . loadOutputBalances) txs
+    mapM_ wait $ prev_asyncs <> out_asyncs
+    runTx . setMempool =<< getMempool
 
 bestBlockData :: MonadLoggerIO m => WriterT m BlockData
 bestBlockData = do
@@ -204,33 +175,44 @@ importOrConfirm bn txs = do
     preLoadMemory txs
     go (zip [0..] txs)
   where
-    go itxs = do
-        orphans <- catMaybes <$> forM itxs action
-        unless (null orphans) $ do
-            when (length orphans == length itxs) loop_detected
-            go orphans
+    go ts = do
+        os <- catMaybes <$> mapM (uncurry action) ts
+        case os of
+            (_, o) : _ | length os == length ts ->
+                orphan_detected (txHash o)
+            _ -> return ()
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
     bn_time = fromIntegral . blockTimestamp $ nodeHeader bn
-    action (i, tx) =
+    action i tx =
+        testPresent tx >>= \case
+            False -> import_it i tx
+            True -> confirm_it i tx
+    confirm_it i tx =
         getActiveTxData (txHash tx) >>= \case
-            Nothing -> do
-                $(logDebugS) "BlockStore" $
-                    "Importing tx: " <> txHashToHex (txHash tx)
-                import_it i tx
             Just t -> do
                 $(logDebugS) "BlockStore" $
-                    "Confirming tx: " <> txHashToHex (txHash tx)
+                    "Confirming tx: "
+                    <> txHashToHex (txHash tx)
                 runTx $ confTx t (Just (br i))
                 return Nothing
-    import_it i tx = runTx $ do
+            Nothing -> do
+                $(logErrorS) "BlockStore" $
+                    "Cannot find tx to confirm: "
+                    <> txHashToHex (txHash tx)
+                throwIO TxNotFound
+    import_it i tx = do
+        $(logDebugS) "BlockStore" $
+            "Importing tx: " <> txHashToHex (txHash tx)
         us <- getUnspentOutputs tx
         if orphanTest us tx
             then return $ Just (i, tx)
-            else do importTx (br i) bn_time False tx
-                    return Nothing
-    loop_detected = do
-        $(logErrorS) "BlockStore" "Orphan loop detected"
-        throwIO OrphanLoop
+            else do
+                runTx $ importTx (br i) bn_time False tx
+                return Nothing
+    orphan_detected orphan = do
+        $(logErrorS) "BlockStore" $
+            "Orphan " <> txHashToHex orphan
+        throwIO Orphan
 
 importBlock :: (MonadLoggerIO m, MonadUnliftIO m)
             => Block -> BlockNode -> WriterT m ()
@@ -299,21 +281,48 @@ checkNewTx tx = do
 orphanTest :: [Unspent] -> Tx -> Bool
 orphanTest us tx = length (prevOuts tx) > length us
 
-getUnspentOutputs :: Tx -> MemoryTx [Unspent]
+getUnspentOutputs :: StoreRead m => Tx -> m [Unspent]
 getUnspentOutputs tx = catMaybes <$> mapM getUnspent (prevOuts tx)
 
-loadUnspentOutputs :: (MonadLoggerIO m, MonadUnliftIO m)
-                   => Tx -> WriterT m ()
-loadUnspentOutputs tx =
+loadPrevOutputs :: (MonadLoggerIO m, MonadUnliftIO m)
+                => Tx -> WriterT m ()
+loadPrevOutputs tx =
     mapM_ go ops
   where
     ops = prevOuts tx
-    go op = getUnspent op >>= mapM_ insert_unspent
+    go op =
+        getUnspent op >>= \case
+            Just u -> insert_unspent u
+            Nothing -> do
+                insert_tx (outPointHash op)
+                insert_spender op
+    insert_tx h = do
+        mt <- getActiveTxData h
+        forM_ mt $ \t -> do
+            let addrs = get_addrs (txData t)
+            bals <- mapM getBalance addrs
+            runTx $ do
+                insertTx t
+                mapM_ setBalance bals
+    get_addrs tx' =
+        let f i o =
+                if OutPoint (txHash tx') i `elem` ops
+                then eitherToMaybe . scriptToAddressBS $ scriptOutput o
+                else Nothing
+        in catMaybes $ zipWith f [0..] (txOut tx')
+    insert_spender op =
+        getSpender op >>= runTx . mapM_ (insertSpender op)
     insert_unspent u = do
-        bal <- mapM getBalance (unspentAddress u)
+        mbal <- mapM getBalance (unspentAddress u)
         runTx $ do
             insertUnspent u
-            mapM_ setBalance bal
+            mapM_ setBalance mbal
+
+loadOutputBalances :: MonadIO m => Tx -> WriterT m ()
+loadOutputBalances tx = do
+    let f = eitherToMaybe . scriptToAddressBS . scriptOutput
+    let addrs = mapMaybe f (txOut tx)
+    forM_ addrs $ runTx . setBalance <=< getBalance
 
 prepareTxData :: Bool -> BlockRef -> Word64 -> [Unspent] -> Tx -> TxData
 prepareTxData rbf br tt us tx =
@@ -741,5 +750,12 @@ isCoinbase = all ((== nullOutPoint) . prevOutput) . txIn
 prevOuts :: Tx -> [OutPoint]
 prevOuts tx = filter (/= nullOutPoint) (map prevOutput (txIn tx))
 
-showAddr :: Network -> Address -> Text
-showAddr net = fromMaybe "[unrepresentable]" . addrToString net
+testPresent :: StoreRead m => Tx -> m Bool
+testPresent tx =
+    case prevOuts tx of
+        [] -> isJust <$> getActiveTxData (txHash tx)
+        op : _ -> getSpender op >>= \case
+            Nothing ->
+                return False
+            Just Spender { spenderHash = s } ->
+                return $ s == txHash tx
