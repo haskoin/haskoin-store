@@ -76,9 +76,10 @@ import           Haskoin.Store.Data            (TxData (..), TxRef (..),
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer
 import           Haskoin.Store.Logic           (ImportException (Orphan),
-                                                deleteTx, getOldMempool,
-                                                importBlock, initBest,
-                                                newMempoolTx, revertBlock)
+                                                deleteUnconfirmedTx,
+                                                getOldMempool, importBlock,
+                                                initBest, newMempoolTx,
+                                                revertBlock)
 import           Network.Socket                (SockAddr)
 import           NQE                           (Inbox, Listen, Mailbox,
                                                 inboxToMailbox, query, receive,
@@ -220,7 +221,7 @@ blockStore cfg inbox = do
                 "Deleting "
                 <> cs (show i) <> "/" <> cs (show n) <> ": "
                 <> txHashToHex (txRefHash tx) <> "…"
-            deleteTx True False (txRefHash tx)
+            deleteUnconfirmedTx False (txRefHash tx)
     wipeit x n txs = do
         let (txs1, txs2) = splitAt 1000 txs
         unless (null txs1) $ do
@@ -511,7 +512,7 @@ processTxs p hs = isInSync >>= \s -> when s $ do
         $(logDebugS) "BlockStore" $
             "Tx inv " <> cs (show i) <> "/" <> cs (show len)
             <> ": " <> txHashToHex h
-            <> ": Already have (peer " <> pt <> ")"
+            <> ": Already have it (peer " <> pt <> ")"
         return Nothing
     dont_have pt i h = do
         $(logDebugS) "BlockStore" $
@@ -592,7 +593,7 @@ pruneMempool =
             "Deleting "
             <> ": " <> txHashToHex txid
             <> " (old mempool tx)…"
-        catch (deleteTx True False txid) (failed txid)
+        catch (deleteUnconfirmedTx False txid) (failed txid)
 
 syncMe :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 syncMe peer = void . runMaybeT $ do

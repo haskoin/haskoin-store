@@ -11,7 +11,7 @@ module Haskoin.Store.Logic
     , revertBlock
     , importBlock
     , newMempoolTx
-    , deleteTx
+    , deleteUnconfirmedTx
     ) where
 
 import           Control.Monad                 (forM, forM_, guard, unless,
@@ -177,7 +177,7 @@ revertBlock bh = do
         setBest (prevBlock (blockDataHeader bd))
         insertBlock bd {blockDataMainChain = False}
         forM_ (tail tds) unConfirmTx
-    deleteTx False False (txHash (txData (head tds)))
+    deleteConfirmedTx (txHash (txData (head tds)))
 
 checkNewBlock :: MonadLoggerIO m => Block -> BlockNode -> WriterT m ()
 checkNewBlock b n =
@@ -437,6 +437,14 @@ freeOutputs memonly rbfcheck txs = do
                 getChain memonly rbfcheck s >>= \case
                 tx' : _ | tx == tx' -> return []
                 ts -> return ts
+
+deleteConfirmedTx :: (MonadLoggerIO m, MonadUnliftIO m)
+                  => TxHash -> WriterT m ()
+deleteConfirmedTx = deleteTx False False
+
+deleteUnconfirmedTx :: (MonadLoggerIO m, MonadUnliftIO m)
+                    => Bool -> TxHash -> WriterT m()
+deleteUnconfirmedTx = deleteTx True
 
 deleteTx
     :: (MonadLoggerIO m, MonadUnliftIO m)
