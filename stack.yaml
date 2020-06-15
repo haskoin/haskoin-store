@@ -12,7 +12,9 @@ extra-deps:
   - github: haskoin/haskoin-core
     commit: d313ac58b2f22fa7570a5e1234244b7249a48382
   - github: haskoin/haskoin-node
-    commit: 5a9f032511da42873b6632a7bd9fe5b699e1e8fe
+    commit: 6bd9323cade6302dd4197cf474ca48a6da9f994c
   - github: haskoin/secp256k1-haskell
     commit: 239159122cc6f830957759a1d247ded7ffeba915
+  - github: jprupp/nqe
+    commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
   - ./data

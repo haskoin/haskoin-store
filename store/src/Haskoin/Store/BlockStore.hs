@@ -66,9 +66,8 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..), Peer,
                                                 chainBlockMain,
                                                 chainGetAncestor, chainGetBest,
                                                 chainGetBlock, chainGetParents,
-                                                killPeer, managerGetPeer,
-                                                managerGetPeers,
-                                                managerPeerText, sendMessage)
+                                                getOnlinePeer, getPeers,
+                                                killPeer, peerText, sendMessage)
 import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
                                                 sortTxs)
 import           Haskoin.Store.Data            (TxData (..), TxRef (..),
@@ -80,10 +79,10 @@ import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 getOldMempool, importBlock,
                                                 initBest, newMempoolTx,
                                                 revertBlock)
-import           Network.Socket                (SockAddr)
 import           NQE                           (Inbox, Listen, Mailbox,
-                                                inboxToMailbox, query, receive,
-                                                send, sendSTM)
+                                                Publisher, inboxToMailbox,
+                                                publish, query, receive, send,
+                                                sendSTM)
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar,
@@ -95,8 +94,8 @@ import           UnliftIO.Concurrent           (threadDelay)
 
 data BlockStoreMessage
     = BlockNewBest !BlockNode
-    | BlockPeerConnect !Peer !SockAddr
-    | BlockPeerDisconnect !Peer !SockAddr
+    | BlockPeerConnect !Peer
+    | BlockPeerDisconnect !Peer
     | BlockReceived !Peer !Block
     | BlockNotFound !Peer ![BlockHash]
     | TxRefReceived !Peer !Tx
@@ -104,7 +103,6 @@ data BlockStoreMessage
     | BlockPing !(Listen ())
 
 type BlockStoreInbox = Inbox BlockStoreMessage
-
 type BlockStore = Mailbox BlockStoreMessage
 
 data BlockException
@@ -115,44 +113,48 @@ data BlockException
     | MempoolImportFailed
     deriving (Show, Eq, Ord, Exception)
 
-data Syncing = Syncing
-    { syncingPeer :: !Peer
-    , syncingTime :: !UnixTime
-    , syncingHead :: !BlockNode
-    }
+data Syncing =
+    Syncing
+        { syncingPeer :: !Peer
+        , syncingTime :: !UnixTime
+        , syncingHead :: !BlockNode
+        }
 
-data PendingTx = PendingTx
-    { pendingTxTime :: !UnixTime
-    , pendingTx     :: !Tx
-    , pendingDeps   :: !(HashSet TxHash)
-    }
+data PendingTx =
+    PendingTx
+        { pendingTxTime :: !UnixTime
+        , pendingTx     :: !Tx
+        , pendingDeps   :: !(HashSet TxHash)
+        }
     deriving (Show, Eq, Ord)
 
 -- | Block store process state.
-data BlockRead = BlockRead
-    { mySelf   :: !BlockStore
-    , myConfig :: !BlockStoreConfig
-    , myPeer   :: !(TVar (Maybe Syncing))
-    , myTxs    :: !(TVar (HashMap TxHash PendingTx))
-    }
+data BlockRead =
+    BlockRead
+        { mySelf   :: !BlockStore
+        , myConfig :: !BlockStoreConfig
+        , myPeer   :: !(TVar (Maybe Syncing))
+        , myTxs    :: !(TVar (HashMap TxHash PendingTx))
+        }
 
 -- | Configuration for a block store.
-data BlockStoreConfig = BlockStoreConfig
-    { blockConfManager     :: !PeerManager
-    -- ^ peer manager from running node
-    , blockConfChain       :: !Chain
-    -- ^ chain from a running node
-    , blockConfListener    :: !(Listen StoreEvent)
-    -- ^ listener for store events
-    , blockConfDB          :: !DatabaseReader
-    -- ^ RocksDB database handle
-    , blockConfNet         :: !Network
-    -- ^ network constants
-    , blockConfWipeMempool :: !Bool
-    -- ^ wipe mempool at start
-    , blockConfPeerTimeout :: !Int
-    -- ^ disconnect syncing peer if inactive for this long
-    }
+data BlockStoreConfig =
+    BlockStoreConfig
+        { blockConfManager     :: !PeerManager
+        -- ^ peer manager from running node
+        , blockConfChain       :: !Chain
+        -- ^ chain from a running node
+        , blockConfListener    :: !(Publisher StoreEvent)
+        -- ^ listener for store events
+        , blockConfDB          :: !DatabaseReader
+        -- ^ RocksDB database handle
+        , blockConfNet         :: !Network
+        -- ^ network constants
+        , blockConfWipeMempool :: !Bool
+        -- ^ wipe mempool at start
+        , blockConfPeerTimeout :: !Int
+        -- ^ disconnect syncing peer if inactive for this long
+        }
 
 type BlockT m = ReaderT BlockRead m
 
@@ -258,12 +260,13 @@ processBlock peer block = void . runMaybeT $ do
     checks <- checkPeer peer
     unless checks mzero
     blocknode <- MaybeT $ getBlockNode peer blockhash
-    pt <- managerPeerText peer =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockStore" $
         "Processing block: " <> blockText blocknode Nothing
-        <> " (peer" <> pt <> ")"
+        <> " (peer " <> peerText peer <> ")"
     let do_import = runImport $ importBlock block blocknode
-    lift $ catch (do_import >> success blocknode) (failure pt)
+    lift $ catch
+           (do_import >> success blocknode)
+           (failure (peerText peer))
   where
     header = blockHeader block
     blockhash = headerHash header
@@ -282,12 +285,12 @@ processBlock peer block = void . runMaybeT $ do
         killPeer (PeerMisbehaving (show e)) peer
     notify = do
         listener <- asks (blockConfListener . myConfig)
-        atomically $ listener (StoreBestBlock blockhash)
+        publish (StoreBestBlock blockhash) listener
 
 checkPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => Peer -> m Bool
 checkPeer peer =
     asks (blockConfManager . myConfig)
-    >>= managerGetPeer peer
+    >>= getOnlinePeer peer
     >>= maybe disconnected (const connected)
   where
     disconnected = return False
@@ -305,11 +308,10 @@ getBlockNode peer blockhash = runMaybeT $
     >>= chainGetBlock blockhash
     >>= \case
         Nothing -> do
-            p' <- managerPeerText peer =<< asks (blockConfManager . myConfig)
             $(logErrorS) "BlockStore" $
                 "Header not found for block: "
                 <> blockHashToHex blockhash
-                <> " (peer " <> p' <> ")"
+                <> " (peer " <> peerText peer <> ")"
             killPeer (PeerMisbehaving "Sent unknown block") peer
             mzero
         Just n -> return n
@@ -320,20 +322,18 @@ processNoBlocks ::
     -> [BlockHash]
     -> BlockT m ()
 processNoBlocks p hs = do
-    p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
     forM_ (zip [(1 :: Int) ..] hs) $ \(i, h) ->
         $(logErrorS) "BlockStore" $
         "Block " <> cs (show i) <> "/" <> cs (show (length hs)) <> " "
-        <> blockHashToHex h <> " not found (peer " <> p' <> ")"
+        <> blockHashToHex h <> " not found (peer " <> peerText p <> ")"
     killPeer (PeerMisbehaving "Did not find requested block(s)") p
 
 processTx :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> Tx -> BlockT m ()
 processTx p tx = do
     t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-    p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockManager" $
         "Received tx " <> txHashToHex (txHash tx)
-        <> " (peer " <> p' <> ")"
+        <> " (peer " <> peerText p <> ")"
     addPendingTx $ PendingTx t tx HashSet.empty
 
 pruneOrphans :: MonadIO m => BlockT m ()
@@ -480,8 +480,8 @@ processMempool = do
         fmap catMaybes . runImport . mapM (run_import block_read)
     success = mapM_ notify
     notify txid = do
-        l <- asks (blockConfListener . myConfig)
-        atomically $ l (StoreMempoolNew txid)
+        listener <- asks (blockConfListener . myConfig)
+        publish (StoreMempoolNew txid) listener
 
 processTxs ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -489,13 +489,12 @@ processTxs ::
     -> [TxHash]
     -> BlockT m ()
 processTxs p hs = isInSync >>= \s -> when s $ do
-    pt <- managerPeerText p =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockStore" $
         "Received inventory with "
         <> cs (show (length hs))
         <> " transactions "
-        <> "(peer " <> pt <> ")"
-    xs <- catMaybes <$> zip_counter (process_tx pt)
+        <> "(peer " <> peerText p <> ")"
+    xs <- catMaybes <$> zip_counter (process_tx (peerText p))
     unless (null xs) $ go xs
   where
     len = length hs
@@ -550,8 +549,8 @@ checkTime =
             n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
             peertout <- asks (blockConfPeerTimeout . myConfig)
             when (n > t + fromIntegral peertout) $ do
-                p' <- managerPeerText p =<< asks (blockConfManager . myConfig)
-                $(logErrorS) "BlockStore" $ "Timeout syncing peer " <> p'
+                $(logErrorS) "BlockStore" $
+                    "Timeout syncing peer " <> peerText p
                 resetPeer
                 killPeer PeerTimeout p
 
@@ -570,9 +569,8 @@ processDisconnect p =
         getPeer >>= \case
             Nothing -> $(logWarnS) "BlockStore" "No peers available"
             Just peer -> do
-                ns <- managerPeerText peer =<<
-                      asks (blockConfManager . myConfig)
-                $(logDebugS) "BlockStore" $ "New syncing peer " <> ns
+                $(logDebugS) "BlockStore" $
+                    "New syncing peer " <> peerText p
                 syncMe peer
 
 pruneMempool :: (MonadUnliftIO m, MonadLoggerIO m) => BlockT m ()
@@ -608,11 +606,10 @@ syncMe peer = void . runMaybeT $ do
     let inv = if getSegWit net then InvWitnessBlock else InvBlock
         vecf = InvVector inv . getBlockHash . headerHash . nodeHeader
         vectors = map vecf blocknodes
-    pt <- managerPeerText peer =<< asks (blockConfManager . myConfig)
     $(logDebugS) "BlockStore" $
         "Requesting "
         <> fromString (show (length vectors))
-        <> " blocks from peer: " <> pt
+        <> " blocks from peer: " <> peerText peer
     MGetData (GetData vectors) `sendMessage` peer
   where
     checksyncingpeer = getSyncingState >>= \case
@@ -704,13 +701,13 @@ setPeer p b = do
     atomically . writeTVar box $
         Just Syncing {syncingPeer = p, syncingHead = b, syncingTime = now}
 
-getPeer :: (MonadIO m, MonadReader BlockRead m) => m (Maybe Peer)
+getPeer :: (MonadReader BlockRead m, MonadLoggerIO m) => m (Maybe Peer)
 getPeer = runMaybeT $ MaybeT syncingpeer <|> MaybeT onlinepeer
   where
     syncingpeer = fmap syncingPeer <$> getSyncingState
     onlinepeer =
         listToMaybe . map onlinePeerMailbox <$>
-        (managerGetPeers =<< asks (blockConfManager . myConfig))
+        (getPeers =<< asks (blockConfManager . myConfig))
 
 getSyncingState :: (MonadIO m, MonadReader BlockRead m) => m (Maybe Syncing)
 getSyncingState = readTVarIO =<< asks myPeer
@@ -719,16 +716,30 @@ processBlockStoreMessage ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => BlockStoreMessage
     -> BlockT m ()
+
 processBlockStoreMessage (BlockNewBest _) =
     getPeer >>= \case
         Nothing -> return ()
         Just p -> syncMe p
-processBlockStoreMessage (BlockPeerConnect p _) = syncMe p
-processBlockStoreMessage (BlockPeerDisconnect p _sa) = processDisconnect p
-processBlockStoreMessage (BlockReceived p b) = processBlock p b
-processBlockStoreMessage (BlockNotFound p bs) = processNoBlocks p bs
-processBlockStoreMessage (TxRefReceived p tx) = processTx p tx
-processBlockStoreMessage (TxRefAvailable p ts) = processTxs p ts
+
+processBlockStoreMessage (BlockPeerConnect p) =
+    syncMe p
+
+processBlockStoreMessage (BlockPeerDisconnect p) =
+    processDisconnect p
+
+processBlockStoreMessage (BlockReceived p b) =
+    processBlock p b
+
+processBlockStoreMessage (BlockNotFound p bs) =
+    processNoBlocks p bs
+
+processBlockStoreMessage (TxRefReceived p tx) =
+    processTx p tx
+
+processBlockStoreMessage (TxRefAvailable p ts) =
+    processTxs p ts
+
 processBlockStoreMessage (BlockPing r) = do
     processMempool
     pruneOrphans
@@ -739,52 +750,79 @@ processBlockStoreMessage (BlockPing r) = do
 pingMe :: MonadLoggerIO m => BlockStore -> m ()
 pingMe mbox =
     forever $ do
-        threadDelay =<< liftIO (randomRIO (100 * 1000, 1000 * 1000))
+        delay <- liftIO $
+            randomRIO (  100 * 1000
+                      , 1000 * 1000 )
+        threadDelay delay
         BlockPing `query` mbox
 
-blockStorePeerConnect :: MonadIO m => Peer -> SockAddr -> BlockStore -> m ()
-blockStorePeerConnect peer addr store = BlockPeerConnect peer addr `send` store
+blockStorePeerConnect
+    :: MonadIO m => Peer -> BlockStore -> m ()
+blockStorePeerConnect peer store =
+    BlockPeerConnect peer `send` store
 
-blockStorePeerDisconnect :: MonadIO m => Peer -> SockAddr -> BlockStore -> m ()
-blockStorePeerDisconnect peer addr store =
-    BlockPeerDisconnect peer addr `send` store
+blockStorePeerDisconnect
+    :: MonadIO m => Peer -> BlockStore -> m ()
+blockStorePeerDisconnect peer store =
+    BlockPeerDisconnect peer `send` store
 
-blockStoreHead :: MonadIO m => BlockNode -> BlockStore -> m ()
-blockStoreHead node store = BlockNewBest node `send` store
+blockStoreHead
+    :: MonadIO m => BlockNode -> BlockStore -> m ()
+blockStoreHead node store =
+    BlockNewBest node `send` store
 
-blockStoreBlock :: MonadIO m => Peer -> Block -> BlockStore -> m ()
-blockStoreBlock peer block store = BlockReceived peer block `send` store
+blockStoreBlock
+    :: MonadIO m => Peer -> Block -> BlockStore -> m ()
+blockStoreBlock peer block store =
+    BlockReceived peer block `send` store
 
-blockStoreNotFound :: MonadIO m => Peer -> [BlockHash] -> BlockStore -> m ()
-blockStoreNotFound peer blocks store = BlockNotFound peer blocks `send` store
+blockStoreNotFound
+    :: MonadIO m => Peer -> [BlockHash] -> BlockStore -> m ()
+blockStoreNotFound peer blocks store =
+    BlockNotFound peer blocks `send` store
 
-blockStoreTx :: MonadIO m => Peer -> Tx -> BlockStore -> m ()
-blockStoreTx peer tx store = TxRefReceived peer tx `send` store
+blockStoreTx
+    :: MonadIO m => Peer -> Tx -> BlockStore -> m ()
+blockStoreTx peer tx store =
+    TxRefReceived peer tx `send` store
 
-blockStoreTxHash :: MonadIO m => Peer -> [TxHash] -> BlockStore -> m ()
+blockStoreTxHash
+    :: MonadIO m => Peer -> [TxHash] -> BlockStore -> m ()
 blockStoreTxHash peer txhashes store =
     TxRefAvailable peer txhashes `send` store
 
-blockStorePeerConnectSTM :: Peer -> SockAddr -> BlockStore -> STM ()
-blockStorePeerConnectSTM peer addr store = BlockPeerConnect peer addr `sendSTM` store
+blockStorePeerConnectSTM
+    :: Peer -> BlockStore -> STM ()
+blockStorePeerConnectSTM peer store =
+    BlockPeerConnect peer `sendSTM` store
 
-blockStorePeerDisconnectSTM :: Peer -> SockAddr -> BlockStore -> STM ()
-blockStorePeerDisconnectSTM peer addr store =
-    BlockPeerDisconnect peer addr `sendSTM` store
+blockStorePeerDisconnectSTM
+    :: Peer -> BlockStore -> STM ()
+blockStorePeerDisconnectSTM peer store =
+    BlockPeerDisconnect peer `sendSTM` store
 
-blockStoreHeadSTM :: BlockNode -> BlockStore -> STM ()
-blockStoreHeadSTM node store = BlockNewBest node `sendSTM` store
+blockStoreHeadSTM
+    :: BlockNode -> BlockStore -> STM ()
+blockStoreHeadSTM node store =
+    BlockNewBest node `sendSTM` store
 
-blockStoreBlockSTM :: Peer -> Block -> BlockStore -> STM ()
-blockStoreBlockSTM peer block store = BlockReceived peer block `sendSTM` store
+blockStoreBlockSTM
+    :: Peer -> Block -> BlockStore -> STM ()
+blockStoreBlockSTM peer block store =
+    BlockReceived peer block `sendSTM` store
 
-blockStoreNotFoundSTM :: Peer -> [BlockHash] -> BlockStore -> STM ()
-blockStoreNotFoundSTM peer blocks store = BlockNotFound peer blocks `sendSTM` store
+blockStoreNotFoundSTM
+    :: Peer -> [BlockHash] -> BlockStore -> STM ()
+blockStoreNotFoundSTM peer blocks store =
+    BlockNotFound peer blocks `sendSTM` store
 
-blockStoreTxSTM :: Peer -> Tx -> BlockStore -> STM ()
-blockStoreTxSTM peer tx store = TxRefReceived peer tx `sendSTM` store
+blockStoreTxSTM
+    :: Peer -> Tx -> BlockStore -> STM ()
+blockStoreTxSTM peer tx store =
+    TxRefReceived peer tx `sendSTM` store
 
-blockStoreTxHashSTM :: Peer -> [TxHash] -> BlockStore -> STM ()
+blockStoreTxHashSTM
+    :: Peer -> [TxHash] -> BlockStore -> STM ()
 blockStoreTxHashSTM peer txhashes store =
     TxRefAvailable peer txhashes `sendSTM` store
 

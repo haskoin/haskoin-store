@@ -11,6 +11,7 @@ import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B
 import           Data.ByteString.Base64
 import           Data.Either
+import           Data.List
 import           Data.Maybe
 import           Data.Serialize
 import           Data.Time.Clock.POSIX
@@ -170,7 +171,7 @@ allBlocksBase64 =
     \AAAAAAAAAAAAAAAAAAD/////DF8BAQgvRUIzMi4wL/////8BAPIFKgEAAAAjIQME7KZAozHsyrOO\
     \wT6Wn6LtY47B39Th44JKsZ8BGJCvc6wAAAAA"
 
-dummyPeerConnect :: Network -> NetworkAddress -> WithConnection
+dummyPeerConnect :: Network -> NetworkAddress -> SockAddr -> WithConnection
 dummyPeerConnect net ad sa f = do
     r <- newInbox
     s <- newInbox
@@ -214,7 +215,7 @@ mockPeerReact (MGetHeaders (GetHeaders _ _hs _)) = [MHeaders (Headers hs')]
     hs' = map f allBlocks
 mockPeerReact (MGetData (GetData ivs)) = mapMaybe f ivs
   where
-    f (InvVector InvBlock h) = MBlock <$> listToMaybe (filter (l h) allBlocks)
+    f (InvVector InvBlock h) = MBlock <$> find (l h) allBlocks
     f _                      = Nothing
     l h b = headerHash (blockHeader b) == BlockHash h
 mockPeerReact _ = []

@@ -51,7 +51,7 @@ import           Haskoin.Constants
 import           Haskoin.Network
 import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
-                                                managerGetPeers, sendMessage)
+                                                getPeers, sendMessage)
 import           Haskoin.Store.Cache           (CacheT, evictFromCache,
                                                 withCache)
 import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
@@ -671,7 +671,7 @@ scottyPostTx (PostTx tx) = do
 
 -- | Publish a new transaction to the network.
 publishTx ::
-       (MonadUnliftIO m, StoreRead m)
+       (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
     => Network
     -> Publisher StoreEvent
     -> PeerManager
@@ -684,7 +684,7 @@ publishTx net pub mgr tx =
             Nothing -> go s
   where
     go s =
-        managerGetPeers mgr >>= \case
+        getPeers mgr >>= \case
             [] -> return $ Left PubNoPeers
             OnlinePeer {onlinePeerMailbox = p}:_ -> do
                 MTx tx `sendMessage` p
@@ -706,7 +706,7 @@ publishTx net pub mgr tx =
         receive s >>= \case
             StoreTxReject p' h' c _
                 | p == p' && h' == txHash tx -> return . Left $ PubReject c
-            StorePeerDisconnected p' _
+            StorePeerDisconnected p'
                 | p == p' -> return $ Left PubPeerDisconnected
             StoreMempoolNew h'
                 | h' == txHash tx -> return $ Right ()
@@ -840,11 +840,14 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
 -- GET Network Information --
 
 scottyPeers :: MonadLoggerIO m => GetPeers -> WebT m [PeerInformation]
-scottyPeers _ = getPeersInformation =<< lift (asks (storeManager . webStore))
+scottyPeers _ = lift $
+    getPeersInformation =<< asks (storeManager . webStore)
 
 -- | Obtain information about connected peers from peer manager process.
-getPeersInformation :: MonadIO m => PeerManager -> m [PeerInformation]
-getPeersInformation mgr = mapMaybe toInfo <$> managerGetPeers mgr
+getPeersInformation
+    :: MonadLoggerIO m => PeerManager -> m [PeerInformation]
+getPeersInformation mgr =
+    mapMaybe toInfo <$> getPeers mgr
   where
     toInfo op = do
         ver <- onlinePeerVersion op
@@ -942,7 +945,7 @@ healthCheck net mgr ch tos ver = do
           getAllowMinDifficultyBlocks net ||
           to == 0 ||
           td' <= to
-    get_peer_count = fmap length <$> timeout 10000000 (managerGetPeers mgr)
+    get_peer_count = fmap length <$> timeout 10000000 (getPeers mgr)
     get_block_store_best = runMaybeT $ do
         h <- MaybeT getBestBlock
         MaybeT $ getBlock h
