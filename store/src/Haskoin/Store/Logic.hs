@@ -176,17 +176,8 @@ importOrConfirm :: (MonadLoggerIO m, MonadUnliftIO m)
 importOrConfirm bn txs = do
     freeOutputs True False txs
     preLoadMemory txs
-    go (zip [0..] txs)
+    mapM_ (uncurry action) (sortTxs txs)
   where
-    go ts = do
-        os <- catMaybes <$> mapM (uncurry action) ts
-        case os of
-            (_, o) : _
-                | length os == length ts ->
-                      orphan_detected (txHash o)
-                | otherwise ->
-                      go os
-            [] -> return ()
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
     bn_time = fromIntegral . blockTimestamp $ nodeHeader bn
     action i tx =
@@ -210,19 +201,14 @@ importOrConfirm bn txs = do
         us <- getUnspentOutputs tx
         if orphanTest us tx
             then do
-                $(logDebugS) "BlockStore" $
-                    "Temporarily orphan: "
-                    <> txHashToHex (txHash tx)
-                return $ Just (i, tx)
+                $(logErrorS) "BlockStore" $
+                    "Orphan: " <> txHashToHex (txHash tx)
+                throwIO Orphan
             else do
                 $(logDebugS) "BlockStore" $
                     "Importing tx: " <> txHashToHex (txHash tx)
                 runTx $ importTx (br i) bn_time False tx
                 return Nothing
-    orphan_detected orphan = do
-        $(logErrorS) "BlockStore" $
-            "Orphan " <> txHashToHex orphan
-        throwIO Orphan
 
 importBlock :: (MonadLoggerIO m, MonadUnliftIO m)
             => Block -> BlockNode -> WriterT m ()
