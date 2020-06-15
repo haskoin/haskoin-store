@@ -181,9 +181,12 @@ importOrConfirm bn txs = do
     go ts = do
         os <- catMaybes <$> mapM (uncurry action) ts
         case os of
-            (_, o) : _ | length os == length ts ->
-                orphan_detected (txHash o)
-            _ -> return ()
+            (_, o) : _
+                | length os == length ts ->
+                      orphan_detected (txHash o)
+                | otherwise ->
+                      go os
+            [] -> return ()
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
     bn_time = fromIntegral . blockTimestamp $ nodeHeader bn
     action i tx =
