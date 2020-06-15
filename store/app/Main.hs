@@ -212,7 +212,7 @@ config :: Parser Config
 config = do
     configDir <-
         strOption $
-        metavar "WORKDIR"
+        metavar "PATH"
         <> long "dir"
         <> short 'd'
         <> help "Data directory"
@@ -269,70 +269,70 @@ config = do
         <> help "HTTP request logging"
     maxLimitCount <-
         option auto $
-        metavar "MAXLIMIT"
+        metavar "INT"
         <> long "max-limit"
-        <> help "Hard limit for simple listings (0 = ∞)"
+        <> help "Hard limit for simple listings (0 = inf)"
         <> showDefault
         <> value (maxLimitCount (configWebLimits def))
     maxLimitFull <-
         option auto $
-        metavar "MAXLIMITFULL"
+        metavar "INT"
         <> long "max-full"
-        <> help "Hard limit for full listings (0 = ∞)"
+        <> help "Hard limit for full listings (0 = inf)"
         <> showDefault
         <> value (maxLimitFull (configWebLimits def))
     maxLimitOffset <-
         option auto $
-        metavar "MAXOFFSET"
+        metavar "INT"
         <> long "max-offset"
-        <> help "Hard limit for offsets (0 = ∞)"
+        <> help "Hard limit for offsets (0 = inf)"
         <> showDefault
         <> value (maxLimitOffset (configWebLimits def))
     maxLimitDefault <-
         option auto $
-        metavar "LIMITDEFAULT"
+        metavar "INT"
         <> long "def-limit"
-        <> help "Soft default limit (0 = ∞)"
+        <> help "Soft default limit (0 = inf)"
         <> showDefault
         <> value (maxLimitDefault (configWebLimits def))
     maxLimitGap <-
         option auto $
-        metavar "MAXGAP"
+        metavar "INT"
         <> long "max-gap"
         <> help "Max gap for xpub queries"
         <> showDefault
         <> value (maxLimitGap (configWebLimits def))
     maxLimitInitialGap <-
         option auto $
-        metavar "INITGAP"
+        metavar "INT"
         <> long "init-gap"
         <> help "Max gap for empty xpub"
         <> showDefault
         <> value (maxLimitInitialGap (configWebLimits def))
     blockTimeout <-
         option auto $
-        metavar "BLOCKSECONDS"
+        metavar "SECONDS"
         <> long "block-timeout"
-        <> help "Last block mined health timeout (0 = ∞)"
+        <> help "Last block mined health timeout (0 = inf)"
         <> showDefault
         <> value (blockTimeout (configWebTimeouts def))
     txTimeout <-
         option auto $
-        metavar "TXSECONDS"
+        metavar "SECONDS"
         <> long "tx-timeout"
-        <> help "Last tx recived health timeout (0 = ∞)"
+        <> help "Last tx recived health timeout (0 = inf)"
         <> showDefault
         <> value (txTimeout (configWebTimeouts def))
     configPeerTimeout <-
         option auto $
-        metavar "TIMEOUT"
+        metavar "SECONDS"
         <> long "peer-timeout"
         <> help "Unresponsive peer timeout"
         <> showDefault
         <> value (configPeerTimeout def)
     configPeerTooOld <-
         option auto $
-        metavar "TIMEOUT"
+        metavar "SECONDS"
         <> long "peer-old"
         <> help "Disconnect peers older than this"
         <> showDefault
@@ -349,14 +349,14 @@ config = do
         <> value (configRedisURL def)
     configRedisMin <-
         option auto $
-        metavar "MINADDRS"
+        metavar "INT"
         <> long "cache-min"
         <> help "Minimum used xpub addresses to cache"
         <> showDefault
         <> value (configRedisMin def)
     configRedisMax <-
         option auto $
-        metavar "MAXKEYS"
+        metavar "INT"
         <> long "cache-keys"
         <> help "Maximum number of keys in Redis xpub cache"
         <> showDefault
