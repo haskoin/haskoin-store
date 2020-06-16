@@ -16,16 +16,16 @@ packages:
   original:
     url: https://github.com/haskoin/haskoin-core/archive/d313ac58b2f22fa7570a5e1234244b7249a48382.tar.gz
 - completed:
-    size: 24316
-    url: https://github.com/haskoin/haskoin-node/archive/67709261e5cbfbe47485b905c755badd35b75153.tar.gz
+    size: 24187
+    url: https://github.com/haskoin/haskoin-node/archive/17ecd00e7336f154d6dd3e00f2eadbece8221aa5.tar.gz
     name: haskoin-node
     version: 0.14.0
-    sha256: c0292bc1abaf356b187168b79be4ba4e8e98c520cd4d44e93191284b7ea6d155
+    sha256: 07c2452a9fab4fd33ab16ca59750bd7eb8556c81d9f829bca70057d60c50cc18
     pantry-tree:
       size: 897
-      sha256: 9383bbe491d34d60374919dfd6e0d5dec74aac6095ad0323b02149f41e2d87e5
+      sha256: 241d750e499ded5cfcb39017c69e2474f33beda6c54d68d88f49ee1af23bb725
   original:
-    url: https://github.com/haskoin/haskoin-node/archive/67709261e5cbfbe47485b905c755badd35b75153.tar.gz
+    url: https://github.com/haskoin/haskoin-node/archive/17ecd00e7336f154d6dd3e00f2eadbece8221aa5.tar.gz
 - completed:
     size: 13899
     url: https://github.com/haskoin/secp256k1-haskell/archive/239159122cc6f830957759a1d247ded7ffeba915.tar.gz
