@@ -278,14 +278,14 @@ checkNewTx tx = do
             "Coinbase cannot be imported into mempool: "
             <> txHashToHex (txHash tx)
         throwError UnexpectedCoinbase
-    when (outputs > unspents us) $ do
-        $(logDebugS) "BlockStore" $
-            "Insufficient funds for tx: " <> txHashToHex (txHash tx)
-        throwError InsufficientFunds
     when (orphanTest us tx) $ do
         $(logDebugS) "BlockStore" $
             "Orphan: " <> txHashToHex (txHash tx)
         throwError Orphan
+    when (outputs > unspents us) $ do
+        $(logDebugS) "BlockStore" $
+            "Insufficient funds for tx: " <> txHashToHex (txHash tx)
+        throwError InsufficientFunds
   where
     unspents = sum . map unspentAmount
     outputs = sum (map outValue (txOut tx))
