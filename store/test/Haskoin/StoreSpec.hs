@@ -94,7 +94,7 @@ withTestStore net t f =
                         , storeConfMaxKeys = 100 * 1000 * 1000
                         , storeConfWipeMempool = False
                         , storeConfPeerTimeout = 60
-                        , storeConfPeerTooOld = 48 * 3600
+                        , storeConfPeerMaxLife = 48 * 3600
                         , storeConfConnect = dummyPeerConnect net ad
                         }
             withStore cfg $ \Store {..} ->

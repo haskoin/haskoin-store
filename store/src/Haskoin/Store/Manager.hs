@@ -91,7 +91,7 @@ data StoreConfig =
       -- ^ wipe mempool when starting
         , storeConfPeerTimeout :: !NominalDiffTime
       -- ^ disconnect peer if message not received for this many seconds
-        , storeConfPeerTooOld  :: !NominalDiffTime
+        , storeConfPeerMaxLife :: !NominalDiffTime
       -- ^ disconnect peer if it has been connected this long
         , storeConfConnect     :: !(SockAddr -> WithConnection)
       -- ^ connect to peers using the function 'withConnection'
@@ -160,7 +160,7 @@ nodeCfg cfg db pub =
                 (sockToHostAddress (SockAddrInet 0 0))
         , nodeConfNet = storeConfNetwork cfg
         , nodeConfTimeout = storeConfPeerTimeout cfg
-        , nodeConfPeerOld = storeConfPeerTooOld cfg
+        , nodeConfPeerMaxLife = storeConfPeerMaxLife cfg
         , nodeConfConnect = storeConfConnect cfg
         }
 

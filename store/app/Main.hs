@@ -62,7 +62,7 @@ data Config = Config
     , configRedisMax    :: !Integer
     , configWipeMempool :: !Bool
     , configPeerTimeout :: !Int
-    , configPeerTooOld  :: !Int
+    , configPeerMaxLife :: !Int
     }
 
 instance Default Config where
@@ -83,7 +83,7 @@ instance Default Config where
                  , configRedisMax    = defRedisMax
                  , configWipeMempool = defWipeMempool
                  , configPeerTimeout = defPeerTimeout
-                 , configPeerTooOld  = defPeerTooOld
+                 , configPeerMaxLife = defPeerMaxLife
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -188,10 +188,10 @@ defPeerTimeout = unsafePerformIO $
     defEnv "PEER_TIMEOUT" 120 readMaybe
 {-# NOINLINE defPeerTimeout #-}
 
-defPeerTooOld :: Int
-defPeerTooOld = unsafePerformIO $
-    defEnv "PEER_TOO_OLD" (48 * 3600) readMaybe
-{-# NOINLINE defPeerTooOld #-}
+defPeerMaxLife :: Int
+defPeerMaxLife = unsafePerformIO $
+    defEnv "PEER_MAX_LIFE" (48 * 3600) readMaybe
+{-# NOINLINE defPeerMaxLife #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -330,13 +330,13 @@ config = do
         <> help "Unresponsive peer timeout"
         <> showDefault
         <> value (configPeerTimeout def)
-    configPeerTooOld <-
+    configPeerMaxLife <-
         option auto $
         metavar "SECONDS"
-        <> long "peer-old"
+        <> long "peer-max-life"
         <> help "Disconnect peers older than this"
         <> showDefault
-        <> value (configPeerTooOld def)
+        <> value (configPeerMaxLife def)
     configRedis <-
         flag (configRedis def) True $
         long "cache"
@@ -430,7 +430,7 @@ run Config { configHost = host
            , configRedisMax = redismax
            , configWipeMempool = wipemempool
            , configPeerTimeout = peertimeout
-           , configPeerTooOld = peerold
+           , configPeerMaxLife = peerlife
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -454,7 +454,7 @@ run Config { configHost = host
                     , storeConfMaxKeys = redismax
                     , storeConfWipeMempool = wipemempool
                     , storeConfPeerTimeout = fromIntegral peertimeout
-                    , storeConfPeerTooOld = fromIntegral peerold
+                    , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
                     }
         withStore scfg $ \st ->
