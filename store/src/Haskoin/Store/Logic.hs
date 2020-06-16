@@ -33,6 +33,7 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
+import           Data.String.Conversions       (cs)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
@@ -450,7 +451,9 @@ freeOutputs memonly rbfcheck txs = do
                        $ sortTxs
                        $ nub'
                        $ concat txs'
-            Left e ->
+            Left e -> do
+                $(logErrorS) "BlockStore" $
+                    "While freeing outputs: " <> cs (show e)
                 throwError e
     async_get tx =
         ReaderT $ \r -> liftIO (async (runReaderT (get_chain tx) r))
