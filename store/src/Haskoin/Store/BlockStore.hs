@@ -46,7 +46,7 @@ import           Data.HashSet                  (HashSet)
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (delete)
 import           Data.Maybe                    (catMaybes, fromJust, isJust,
-                                                mapMaybe)
+                                                isNothing, mapMaybe)
 import           Data.Serialize                (encode)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
@@ -844,9 +844,8 @@ getSyncingState
 getSyncingState =
     readTVarIO =<< asks myPeer
 
-processBlockStoreMessage
-    :: MonadLoggerIO m
-    => BlockStoreMessage -> BlockT m ()
+processBlockStoreMessage :: MonadLoggerIO m
+                         => BlockStoreMessage -> BlockT m ()
 
 processBlockStoreMessage (BlockNewBest _) =
     getPeer >>= mapM_ syncMe
@@ -872,11 +871,22 @@ processBlockStoreMessage (TxRefAvailable p ts) =
     processTxs p ts
 
 processBlockStoreMessage (BlockPing r) = do
+    nudgeSync
     processMempool
     pruneOrphans
     checkTime
     pruneMempool
     atomically (r ())
+
+nudgeSync :: MonadLoggerIO m => BlockT m ()
+nudgeSync =
+    isInSync >>= \x -> unless x $
+    getSyncingState >>= \y -> when (isNothing y) $
+    getPeer >>= \m -> forM_ m $ \p -> do
+    $(logDebugS) "BlockStore" $
+        "Nudging to sync against peer: "
+        <> peerText p
+    syncMe p
 
 pingMe :: MonadLoggerIO m => BlockStore -> m ()
 pingMe mbox =
@@ -887,8 +897,7 @@ pingMe mbox =
         threadDelay delay
         BlockPing `query` mbox
 
-blockStorePeerConnect
-    :: MonadIO m => Peer -> BlockStore -> m ()
+blockStorePeerConnect :: MonadIO m => Peer -> BlockStore -> m ()
 blockStorePeerConnect peer store =
     BlockPeerConnect peer `send` store
 
