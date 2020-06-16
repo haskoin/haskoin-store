@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds   #-}
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE LambdaCase        #-}
@@ -6,6 +7,7 @@
 {-# LANGUAGE TupleSections     #-}
 module Haskoin.Store.Logic
     ( ImportException (..)
+    , MonadImport
     , initBest
     , getOldMempool
     , revertBlock
@@ -16,8 +18,12 @@ module Haskoin.Store.Logic
 
 import           Control.Monad                 (forM, forM_, guard, void, when,
                                                 zipWithM_, (<=<), (>=>))
-import           Control.Monad.Logger          (MonadLogger, MonadLoggerIO,
-                                                logDebugS, logErrorS)
+import           Control.Monad.Except          (ExceptT (..), MonadError,
+                                                runExceptT, throwError)
+import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
+                                                logErrorS)
+import           Control.Monad.Reader          (ReaderT (ReaderT), runReaderT)
+import           Control.Monad.Trans           (lift)
 import qualified Data.ByteString               as B
 import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
@@ -47,9 +53,15 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 TxRef (..), UnixTime,
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
-import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, async, throwIO,
-                                                wait)
+import           UnliftIO                      (Exception, MonadIO, async,
+                                                liftIO, wait)
+
+type MonadImport m =
+    ( MonadError ImportException m
+    , MonadLoggerIO m
+    )
+
+type MonadMemory = ExceptT ImportException MemoryTx
 
 data ImportException
     = PrevBlockNotBest
@@ -80,7 +92,13 @@ instance Show ImportException where
     show TxSpent             = "Transaction is spent"
     show OrphanLoop          = "Orphan loop"
 
-initBest :: (MonadLoggerIO m, MonadUnliftIO m) => WriterT m ()
+runMonadMemory :: MonadImport m => MonadMemory a -> WriterT m a
+runMonadMemory f =
+    runTx (runExceptT f) >>= \case
+        Left e -> throwError e
+        Right x -> return x
+
+initBest :: MonadImport m => WriterT m ()
 initBest = do
     $(logDebugS) "BlockStore" "Initializing best block"
     net <- getNetwork
@@ -95,48 +113,48 @@ getOldMempool now =
   where
     f = (< now - 3600 * 72) . memRefTime . txRefBlock
 
-newMempoolTx :: (MonadLoggerIO m, MonadUnliftIO m)
-             => Tx -> UnixTime -> WriterT m Bool
-newMempoolTx tx w = getActiveTxData (txHash tx) >>= \case
-    Just _ -> do
-        $(logDebugS) "BlockStore" $
-            "Already have tx: " <> txHashToHex (txHash tx)
-        return False
-    Nothing -> do
-        $(logDebugS) "BlockStore" $
-            "Importing mempool tx: " <> txHashToHex (txHash tx)
-        freeOutputs True True [tx]
-        preLoadMemory [tx]
-        rbf <- isRBF (MemRef w) tx
-        checkNewTx tx
-        runTx $ importTx (MemRef w) w rbf tx
-        return True
+newMempoolTx :: MonadImport m => Tx -> UnixTime -> WriterT m Bool
+newMempoolTx tx w =
+    getActiveTxData (txHash tx) >>= \case
+        Just _ -> do
+            $(logDebugS) "BlockStore" $
+                "Already have tx: " <> txHashToHex (txHash tx)
+            return False
+        Nothing -> do
+            $(logDebugS) "BlockStore" $
+                "Importing mempool tx: " <> txHashToHex (txHash tx)
+            freeOutputs True True [tx]
+            preLoadMemory [tx]
+            rbf <- isRBF (MemRef w) tx
+            checkNewTx tx
+            runMonadMemory $ importTx (MemRef w) w rbf tx
+            return True
 
-preLoadMemory :: (MonadLoggerIO m, MonadUnliftIO m)
-              => [Tx]
-              -> WriterT m ()
+preLoadMemory :: MonadLoggerIO m => [Tx] -> WriterT m ()
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
-    prev_asyncs <- mapM (async . loadPrevOutputs) txs
-    out_asyncs <- mapM (async . loadOutputBalances) txs
-    mapM_ wait $ prev_asyncs <> out_asyncs
-    runTx . setMempool =<< getMempool
+    ReaderT $ liftIO . runReaderT go
+  where
+    go = do
+        prev_asyncs <- mapM (async . loadPrevOutputs) txs
+        out_asyncs <- mapM (async . loadOutputBalances) txs
+        mapM_ wait $ prev_asyncs <> out_asyncs
+        runTx . setMempool =<< getMempool
 
-bestBlockData :: MonadLoggerIO m => WriterT m BlockData
+bestBlockData :: MonadImport m => WriterT m BlockData
 bestBlockData = do
     h <- getBestBlock >>= \case
         Nothing -> do
             $(logErrorS) "BlockStore" "Best block unknown"
-            throwIO BestBlockNotFound
+            throwError BestBlockNotFound
         Just h -> return h
     getBlock h >>= \case
         Nothing -> do
             $(logErrorS) "BlockStore" "Best block not found"
-            throwIO BestBlockNotFound
+            throwError BestBlockNotFound
         Just b -> return b
 
-revertBlock :: (MonadLoggerIO m, MonadUnliftIO m)
-            => BlockHash -> WriterT m ()
+revertBlock :: MonadImport m => BlockHash -> WriterT m ()
 revertBlock bh = do
     bd <- bestBlockData >>= \b ->
         if headerHash (blockDataHeader b) == bh
@@ -144,7 +162,7 @@ revertBlock bh = do
         else do
             $(logErrorS) "BlockStore" $
                 "Cannot revert non-head block: " <> blockHashToHex bh
-            throwIO BlockNotBest
+            throwError BlockNotBest
     tds <- mapM getImportTxData (blockDataTxs bd)
     preLoadMemory $ map txData tds
     runTx $ do
@@ -153,7 +171,7 @@ revertBlock bh = do
         forM_ (tail tds) unConfirmTx
     deleteConfirmedTx (txHash (txData (head tds)))
 
-checkNewBlock :: MonadLoggerIO m => Block -> BlockNode -> WriterT m ()
+checkNewBlock :: MonadImport m => Block -> BlockNode -> WriterT m ()
 checkNewBlock b n =
     getBestBlock >>= \case
         Nothing
@@ -162,17 +180,16 @@ checkNewBlock b n =
                 $(logErrorS) "BlockStore" $
                     "Cannot import non-genesis block: "
                     <> blockHashToHex (headerHash (blockHeader b))
-                throwIO BestBlockNotFound
+                throwError BestBlockNotFound
         Just h
             | prevBlock (blockHeader b) == h -> return ()
             | otherwise -> do
                 $(logErrorS) "BlockStore" $
                     "Block does not build on head: "
                     <> blockHashToHex (headerHash (blockHeader b))
-                throwIO PrevBlockNotBest
+                throwError PrevBlockNotBest
 
-importOrConfirm :: (MonadLoggerIO m, MonadUnliftIO m)
-                => BlockNode -> [Tx] -> WriterT m ()
+importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> WriterT m ()
 importOrConfirm bn txs = do
     freeOutputs True False txs
     preLoadMemory txs
@@ -196,22 +213,12 @@ importOrConfirm bn txs = do
                 $(logErrorS) "BlockStore" $
                     "Cannot find tx to confirm: "
                     <> txHashToHex (txHash tx)
-                throwIO TxNotFound
+                throwError TxNotFound
     import_it i tx = do
-        us <- getUnspentOutputs tx
-        if orphanTest us tx
-            then do
-                $(logErrorS) "BlockStore" $
-                    "Orphan: " <> txHashToHex (txHash tx)
-                throwIO Orphan
-            else do
-                $(logDebugS) "BlockStore" $
-                    "Importing tx: " <> txHashToHex (txHash tx)
-                runTx $ importTx (br i) bn_time False tx
-                return Nothing
+        runMonadMemory $ importTx (br i) bn_time False tx
+        return Nothing
 
-importBlock :: (MonadLoggerIO m, MonadUnliftIO m)
-            => Block -> BlockNode -> WriterT m ()
+importBlock :: MonadImport m => Block -> BlockNode -> WriterT m ()
 importBlock b n = do
     $(logDebugS) "BlockStore" $
         "Checking new block: "
@@ -258,27 +265,27 @@ importBlock b n = do
             s = B.length (encode b')
          in fromIntegral $ s * 3 + x
 
-checkNewTx :: MonadLoggerIO m => Tx -> WriterT m ()
+checkNewTx :: MonadImport m => Tx -> WriterT m ()
 checkNewTx tx = do
     us <- runTx $ getUnspentOutputs tx
     when (unique_inputs < length (txIn tx)) $ do
         $(logDebugS) "BlockStore" $
             "Transaction spends same output twice: "
             <> txHashToHex (txHash tx)
-        throwIO DuplicatePrevOutput
+        throwError DuplicatePrevOutput
     when (isCoinbase tx) $ do
         $(logDebugS) "BlockStore" $
             "Coinbase cannot be imported into mempool: "
             <> txHashToHex (txHash tx)
-        throwIO UnexpectedCoinbase
+        throwError UnexpectedCoinbase
     when (outputs > unspents us) $ do
         $(logDebugS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
-        throwIO InsufficientFunds
+        throwError InsufficientFunds
     when (orphanTest us tx) $ do
         $(logDebugS) "BlockStore" $
             "Orphan: " <> txHashToHex (txHash tx)
-        throwIO Orphan
+        throwError Orphan
   where
     unspents = sum . map unspentAmount
     outputs = sum (map outValue (txOut tx))
@@ -290,8 +297,7 @@ orphanTest us tx = length (prevOuts tx) > length us
 getUnspentOutputs :: StoreRead m => Tx -> m [Unspent]
 getUnspentOutputs tx = catMaybes <$> mapM getUnspent (prevOuts tx)
 
-loadPrevOutputs :: (MonadLoggerIO m, MonadUnliftIO m)
-                => Tx -> WriterT m ()
+loadPrevOutputs :: MonadIO m => Tx -> WriterT m ()
 loadPrevOutputs tx =
     mapM_ go ops
   where
@@ -348,11 +354,11 @@ importTx
     -> Word64 -- ^ unix time
     -> Bool -- ^ RBF
     -> Tx
-    -> MemoryTx ()
+    -> MonadMemory ()
 importTx br tt rbf tx = do
-    us <- getUnspentOutputs tx
+    us <- lift $ getUnspentOutputs tx
     let td = prepareTxData rbf br tt us tx
-    commitAddTx us td
+    lift $ commitAddTx us td
 
 unConfirmTx :: TxData -> MemoryTx ()
 unConfirmTx t = confTx t Nothing
@@ -372,12 +378,7 @@ replaceAddressTx t new = forM_ (txDataAddresses t) $ \a -> do
         , txRefHash = txHash (txData t)
         }
 
-adjustAddressOutput
-    :: OutPoint
-    -> TxOut
-    -> BlockRef
-    -> BlockRef
-    -> MemoryTx ()
+adjustAddressOutput :: OutPoint -> TxOut -> BlockRef -> BlockRef -> MemoryTx ()
 adjustAddressOutput op o old new = do
     let pk = scriptOutput o
     s <- getSpender op
@@ -431,73 +432,90 @@ confTx t mbr = do
     td = t {txDataBlock = new}
 
 freeOutputs
-    :: (MonadLoggerIO m, MonadUnliftIO m)
+    :: MonadImport m
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> [Tx]
     -> WriterT m ()
 freeOutputs memonly rbfcheck txs = do
-    as <- mapM (async . get_chain) txs
-    txs' <- reverse . map snd . sortTxs . nub' . concat
-            <$> mapM wait as
+    as <- mapM async_get txs
+    txs' <- map_asyncs as
     mapM_ (deleteSingleTx . txHash) txs'
   where
+    map_asyncs as =
+        sequence <$> mapM wait as >>= \case
+            Right txs' ->
+                return $ reverse
+                       $ map snd
+                       $ sortTxs
+                       $ nub'
+                       $ concat txs'
+            Left e ->
+                throwError e
+    async_get tx =
+        ReaderT $ \r -> liftIO (async (runReaderT (get_chain tx) r))
     get_chain tx =
-        fmap concat .
+        fmap (fmap concat . sequence) $
         forM (nub' (prevOuts tx)) $
         getSpender >=> \case
             Nothing ->
-                return []
+                return (Right [])
             Just Spender {spenderHash = s} ->
-                getChain memonly rbfcheck s >>= \case
-                tx' : _ | tx == tx' -> return []
-                ts -> return ts
+                map_chain tx <$> getChain memonly rbfcheck s
+    map_chain tx = \case
+        Right (tx' : _)
+            | tx == tx' -> Right []
+        Right ts -> Right ts
+        Left e -> Left e
 
-deleteConfirmedTx :: (MonadLoggerIO m, MonadUnliftIO m)
-                  => TxHash -> WriterT m ()
+deleteConfirmedTx :: MonadImport m => TxHash -> WriterT m ()
 deleteConfirmedTx = deleteTx False False
 
-deleteUnconfirmedTx :: (MonadLoggerIO m, MonadUnliftIO m)
-                    => Bool -> TxHash -> WriterT m()
+deleteUnconfirmedTx :: MonadImport m => Bool -> TxHash -> WriterT m ()
 deleteUnconfirmedTx = deleteTx True
 
 deleteTx
-    :: (MonadLoggerIO m, MonadUnliftIO m)
+    :: MonadImport m
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
     -> WriterT m ()
 deleteTx memonly rbfcheck txhash =
-    getChain memonly rbfcheck txhash >>=
-    mapM_ (deleteSingleTx . txHash)
+    getChain memonly rbfcheck txhash >>= \case
+        Left e -> throwError e
+        Right txs -> mapM_ (deleteSingleTx . txHash) txs
 
 getChain
-    :: (MonadLoggerIO m, StoreRead m)
+    :: StoreRead m
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
-    -> m [Tx]
+    -> m (Either ImportException [Tx])
 getChain memonly rbfcheck txhash =
-    fmap (nub . reverse) $
-    getActiveTxData txhash >>= \case
-        Nothing ->
-            return []
-        Just td
-            | memonly && confirmed (txDataBlock td) ->
-                throwIO TxConfirmed
-            | rbfcheck ->
-                isRBF (txDataBlock td) (txData td) >>= \case
-                    True -> go td
-                    False -> throwIO DoubleSpend
-            | otherwise -> go td
+    runExceptT (go txhash)
   where
-    go td = do
-        spenders <- nub' . map spenderHash . I.elems <$> getSpenders txhash
-        chains <- concat <$> mapM (getChain memonly rbfcheck) spenders
+    go th =
+        fmap (nub . reverse) $
+        lift (getActiveTxData th) >>= \case
+            Nothing ->
+                return []
+            Just td
+                | memonly && confirmed (txDataBlock td) ->
+                    throwError TxConfirmed
+                | rbfcheck ->
+                    lift (isRBF (txDataBlock td) (txData td)) >>= \case
+                        True -> get_it td
+                        False -> throwError DoubleSpend
+                | otherwise -> get_it td
+    get_it td = do
+        let th = txHash (txData td)
+        spenders <-
+            nub' . map spenderHash . I.elems
+            <$> lift (getSpenders th)
+        chains <- concat <$> mapM go spenders
         return $ txData td : chains
 
-deleteSingleTx :: (MonadLoggerIO m, MonadUnliftIO m)
-               => TxHash -> WriterT m ()
+deleteSingleTx :: MonadImport m => TxHash -> WriterT m ()
 deleteSingleTx th =
     getActiveTxData th >>= \case
         Nothing ->
@@ -516,7 +534,7 @@ deleteSingleTx th =
                 Nothing -> do
                     $(logDebugS) "BlockStore" $
                         "Could not get prev tx: " <> txHashToHex h
-                    throwIO TxNotFound
+                    throwError TxNotFound
                 Just d -> return d
         preLoadMemory $ txData td : map txData tds
 
@@ -567,52 +585,42 @@ addOutputs td =
         [0 ..]
         (txOut (txData td))
 
-isRBF :: (MonadLogger m, StoreRead m) => BlockRef -> Tx -> m Bool
+isRBF :: StoreRead m
+      => BlockRef
+      -> Tx
+      -> m Bool
 isRBF br tx
     | confirmed br =
-      return False
+          return False
     | otherwise =
-      getNetwork >>= \net ->
-          if getReplaceByFee net
-          then go
-          else return False
+          getNetwork >>= \net ->
+              if getReplaceByFee net
+              then go
+              else return False
   where
     go | any ((< 0xffffffff - 1) . txInSequence) (txIn tx) =
-         return True
+             return True
        | otherwise =
-         let hs = nub' $ map (outPointHash . prevOutput) (txIn tx)
-             ck [] = return False
-             ck (h:hs') =
-                 getActiveTxData h >>= \case
-                 Nothing -> do
-                     $(logErrorS) "BlockStore" $
-                         "Parent transaction not found: "
-                         <> txHashToHex h
-                     error $ "Parent transaction not found: " <> show h
-                 Just t
-                     | confirmed (txDataBlock t) -> ck hs'
-                     | txDataRBF t -> return True
-                     | otherwise -> ck hs'
+             carry_on
+    carry_on =
+        let hs = nub' $ map (outPointHash . prevOutput) (txIn tx)
+            ck [] = return False
+            ck (h : hs') =
+                getActiveTxData h >>= \case
+                    Nothing -> return False
+                    Just t
+                        | confirmed (txDataBlock t) -> ck hs'
+                        | txDataRBF t -> return True
+                        | otherwise -> ck hs'
          in ck hs
 
-addOutput
-    :: BlockRef
-    -> OutPoint
-    -> TxOut
-    -> MemoryTx ()
+addOutput :: BlockRef -> OutPoint -> TxOut -> MemoryTx ()
 addOutput = modOutput True
 
-delOutput :: BlockRef
-          -> OutPoint
-          -> TxOut
-          -> MemoryTx ()
+delOutput :: BlockRef -> OutPoint -> TxOut -> MemoryTx ()
 delOutput = modOutput False
 
-modOutput :: Bool
-          -> BlockRef
-          -> OutPoint
-          -> TxOut
-          -> MemoryTx ()
+modOutput :: Bool -> BlockRef -> OutPoint -> TxOut -> MemoryTx ()
 modOutput add br op o = do
     mod_unspent
     forM_ ma $ \a -> do
@@ -642,12 +650,12 @@ delOutputs td =
   where
     outs = txOut (txData td)
 
-getImportTxData :: MonadLoggerIO m => TxHash -> WriterT m TxData
+getImportTxData :: MonadImport m => TxHash -> WriterT m TxData
 getImportTxData th =
     getActiveTxData th >>= \case
         Nothing -> do
             $(logDebugS) "BlockStore" $ "Tx not found: " <> txHashToHex th
-            throwIO TxNotFound
+            throwError TxNotFound
         Just d -> return d
 
 getTxOut :: Word32 -> Tx -> Maybe TxOut
@@ -700,18 +708,10 @@ modifyReceived a f =
     getBalance a >>= \b ->
     setBalance b {balanceTotalReceived = f (balanceTotalReceived b)}
 
-decreaseBalance
-    :: Bool
-    -> Address
-    -> Word64
-    -> MemoryTx ()
+decreaseBalance :: Bool -> Address -> Word64 -> MemoryTx ()
 decreaseBalance conf = modBalance conf False
 
-increaseBalance
-    :: Bool
-    -> Address
-    -> Word64
-    -> MemoryTx ()
+increaseBalance :: Bool -> Address -> Word64 -> MemoryTx ()
 increaseBalance conf = modBalance conf True
 
 modBalance
