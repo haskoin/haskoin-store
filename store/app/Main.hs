@@ -453,8 +453,8 @@ run Config { configHost = host
                     , storeConfCacheMin = cachemin
                     , storeConfMaxKeys = redismax
                     , storeConfWipeMempool = wipemempool
-                    , storeConfPeerTimeout = peertimeout
-                    , storeConfPeerTooOld = peerold
+                    , storeConfPeerTimeout = fromIntegral peertimeout
+                    , storeConfPeerTooOld = fromIntegral peerold
                     , storeConfConnect = withConnection
                     }
         withStore scfg $ \st ->

@@ -50,8 +50,10 @@ import           Data.Serialize                (encode)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
-import           Data.Time.Clock.POSIX         (posixSecondsToUTCTime)
-import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
+import           Data.Time.Clock               (NominalDiffTime, UTCTime,
+                                                diffUTCTime, getCurrentTime)
+import           Data.Time.Clock.POSIX         (posixSecondsToUTCTime,
+                                                utcTimeToPOSIXSeconds)
 import           Data.Time.Format              (defaultTimeLocale, formatTime,
                                                 iso8601DateFormat)
 import           Haskoin                       (Block (..), BlockHash (..),
@@ -73,7 +75,7 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..), Peer,
 import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
                                                 sortTxs)
 import           Haskoin.Store.Data            (TxData (..), TxRef (..),
-                                                UnixTime, Unspent (..))
+                                                Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
 import           Haskoin.Store.Database.Writer
 import           Haskoin.Store.Logic           (ImportException (Orphan),
@@ -117,13 +119,13 @@ data BlockException
 data Syncing =
     Syncing
         { syncingPeer :: !Peer
-        , syncingTime :: !UnixTime
+        , syncingTime :: !UTCTime
         , syncingHead :: !BlockNode
         }
 
 data PendingTx =
     PendingTx
-        { pendingTxTime :: !UnixTime
+        { pendingTxTime :: !UTCTime
         , pendingTx     :: !Tx
         , pendingDeps   :: !(HashSet TxHash)
         }
@@ -153,7 +155,7 @@ data BlockStoreConfig =
         -- ^ network constants
         , blockConfWipeMempool :: !Bool
         -- ^ wipe mempool at start
-        , blockConfPeerTimeout :: !Int
+        , blockConfPeerTimeout :: !NominalDiffTime
         -- ^ disconnect syncing peer if inactive for this long
         }
 
@@ -348,7 +350,7 @@ processNoBlocks p hs = do
 
 processTx :: MonadLoggerIO m => Peer -> Tx -> BlockT m ()
 processTx p tx = do
-    t <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    t <- liftIO getCurrentTime
     $(logDebugS) "BlockManager" $
         "Received tx " <> txHashToHex (txHash tx)
         <> " (peer " <> peerText p <> ")"
@@ -357,9 +359,9 @@ processTx p tx = do
 pruneOrphans :: MonadIO m => BlockT m ()
 pruneOrphans = do
     ts <- asks myTxs
-    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    now <- liftIO getCurrentTime
     atomically . modifyTVar ts . HashMap.filter $ \p ->
-        pendingTxTime p > now - 600
+        now `diffUTCTime` pendingTxTime p > 600
 
 addPendingTx :: MonadIO m => PendingTx -> BlockT m ()
 addPendingTx p = do
@@ -431,7 +433,10 @@ updateOrphans = do
         return $ foldl fulfill p unspents
 
 newOrphanTx :: MonadLoggerIO m
-            => BlockRead -> UnixTime -> Tx -> WriterT m ()
+            => BlockRead
+            -> UTCTime
+            -> Tx
+            -> WriterT m ()
 newOrphanTx block_read time tx = do
     $(logDebugS) "BlockStore" $
         "Mempool "
@@ -456,7 +461,7 @@ newOrphanTx block_read time tx = do
 importMempoolTx
     :: (MonadLoggerIO m, MonadError ImportException m)
     => BlockRead
-    -> UnixTime
+    -> UTCTime
     -> Tx
     -> WriterT m Bool
 importMempoolTx block_read time tx =
@@ -474,8 +479,9 @@ importMempoolTx block_read time tx =
             "Mempool " <> txHashToHex tx_hash
             <> ": Failed"
         return False
+    seconds = floor (utcTimeToPOSIXSeconds time)
     new_mempool_tx =
-        newMempoolTx tx time >>= \case
+        newMempoolTx tx seconds >>= \case
             True -> do
                 $(logDebugS) "BlockStore" $
                     "Mempool " <> txHashToHex (txHash tx)
@@ -566,10 +572,10 @@ touchPeer p =
         Just Syncing {syncingPeer = s}
             | p == s -> do
                 box <- asks myPeer
-                now <- fromIntegral . systemSeconds <$>
-                    liftIO getSystemTime
-                atomically . modifyTVar box . fmap $ \x ->
-                    x {syncingTime = now}
+                now <- liftIO getCurrentTime
+                atomically $
+                    modifyTVar box $
+                    fmap $ \x -> x {syncingTime = now}
                 return True
         _ -> return False
 
@@ -578,9 +584,9 @@ checkTime =
     asks myPeer >>= readTVarIO >>= \case
         Nothing -> return ()
         Just Syncing {syncingTime = t, syncingPeer = p} -> do
-            n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-            peertout <- asks (blockConfPeerTimeout . myConfig)
-            when (n > t + fromIntegral peertout) $ do
+            now <- liftIO getCurrentTime
+            peer_time_out <- asks (blockConfPeerTimeout . myConfig)
+            when (now `diffUTCTime` t > peer_time_out) $ do
                 $(logErrorS) "BlockStore" $
                     "Timeout syncing peer " <> peerText p
                 resetPeer
@@ -608,8 +614,9 @@ processDisconnect p =
 pruneMempool :: MonadLoggerIO m => BlockT m ()
 pruneMempool =
     isInSync >>= \sync -> when sync $ do
-        now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
-        getOldMempool now >>= \old ->
+        now <- liftIO getCurrentTime
+        let seconds = floor (utcTimeToPOSIXSeconds now)
+        getOldMempool seconds >>= \old ->
             unless (null old) $
             runImport (mapM_ delete_it old) >>= \case
                 Left e -> do
@@ -727,7 +734,7 @@ syncMe peer = void . runMaybeT $ do
             Right () -> return ()
         reverttomainchain
 
-resetPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
+resetPeer :: (MonadIO m, MonadReader BlockRead m) => m ()
 resetPeer = do
     box <- asks myPeer
     atomically $ writeTVar box Nothing
@@ -735,7 +742,7 @@ resetPeer = do
 setPeer :: (MonadIO m, MonadReader BlockRead m) => Peer -> BlockNode -> m ()
 setPeer p b = do
     box <- asks myPeer
-    now <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    now <- liftIO getCurrentTime
     atomically . writeTVar box $
         Just Syncing {syncingPeer = p, syncingHead = b, syncingTime = now}
 
@@ -872,11 +879,15 @@ blockText bn mblock = case mblock of
         height <> sep <> time <> sep <> hash <> sep <> size block
   where
     height = cs $ show (nodeHeight bn)
-    systime =
-        posixSecondsToUTCTime (fromIntegral (blockTimestamp (nodeHeader bn)))
+    systime = posixSecondsToUTCTime
+            $ fromIntegral
+            $ blockTimestamp
+            $ nodeHeader bn
     time =
-        cs $
-        formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M")) systime
+        cs $ formatTime
+                defaultTimeLocale
+                (iso8601DateFormat (Just "%H:%M"))
+                systime
     hash = blockHashToHex (headerHash (nodeHeader bn))
     sep = " | "
     size = (<> " bytes") . cs . show . B.length . encode

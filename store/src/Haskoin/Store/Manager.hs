@@ -8,6 +8,7 @@ module Haskoin.Store.Manager
 import           Control.Monad                 (forever, unless, when)
 import           Control.Monad.Logger          (MonadLoggerIO)
 import           Data.Serialize                (decode)
+import           Data.Time.Clock               (NominalDiffTime)
 import           Data.Word                     (Word32)
 import           Haskoin                       (BlockHash (..), Inv (..),
                                                 InvType (..), InvVector (..),
@@ -88,9 +89,9 @@ data StoreConfig =
       -- ^ maximum number of keys in Redis cache
         , storeConfWipeMempool :: !Bool
       -- ^ wipe mempool when starting
-        , storeConfPeerTimeout :: !Int
+        , storeConfPeerTimeout :: !NominalDiffTime
       -- ^ disconnect peer if message not received for this many seconds
-        , storeConfPeerTooOld  :: !Int
+        , storeConfPeerTooOld  :: !NominalDiffTime
       -- ^ disconnect peer if it has been connected this long
         , storeConfConnect     :: !(SockAddr -> WithConnection)
       -- ^ connect to peers using the function 'withConnection'
