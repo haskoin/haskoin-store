@@ -485,7 +485,7 @@ deleteTx
     -> WriterT m ()
 deleteTx memonly rbfcheck txhash =
     getChain memonly rbfcheck txhash >>= \case
-        Left e -> throwError e
+        Left e    -> throwError e
         Right txs -> mapM_ (deleteSingleTx . txHash) txs
 
 getChain
@@ -498,7 +498,7 @@ getChain memonly rbfcheck txhash =
     runExceptT (go txhash)
   where
     go th =
-        fmap (nub . reverse) $
+        fmap (reverse . map snd . sortTxs . nub') $
         lift (getActiveTxData th) >>= \case
             Nothing ->
                 return []
