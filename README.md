@@ -1,18 +1,17 @@
 # Haskoin Store
 
-Full block store and index featuring:
+Block chain store and index featuring:
 
-- Persistent storage using the [RocksDB](https://rocksdb.org/) engine.
-- [Bitcoin Cash](https://www.bitcoincash.org/) (BCH) support.
-- [Bitcoin Segwit](httsp://bitcoin.org/) (BTC) support.
+- Persistent storage using [RocksDB](https://rocksdb.org/).
+- [Bitcoin Cash (BCH)](https://www.bitcoincash.org/) support.
+- [Bitcoin Core (BTC)](https://bitcoin.org/) support.
 - Indices for address balances, transactions, and unspent outputs (UTXO).
 - Persistent mempool.
-- Allow replacing BTC RBF transactions on mempool.
+- Replace Bitcoin Core (BTC) RBF transactions by default.
 - Query transactions, balances and UTXO on extended keys (xpub).
 - Optional accelerated xpub cache using Redis.
-- REST API (mostly).
-- High-performance concurrent architecture.
-- Support for both JSON and binary formats.
+- RESTful API with JSON and binary serialization.
+- High performance concurrent architecture.
 
 ## Quick Install with Nix Anywhere
 

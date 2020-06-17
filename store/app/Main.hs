@@ -63,6 +63,7 @@ data Config = Config
     , configWipeMempool :: !Bool
     , configPeerTimeout :: !Int
     , configPeerMaxLife :: !Int
+    , configMaxPeers    :: !Int
     }
 
 instance Default Config where
@@ -84,12 +85,18 @@ instance Default Config where
                  , configWipeMempool = defWipeMempool
                  , configPeerTimeout = defPeerTimeout
                  , configPeerMaxLife = defPeerMaxLife
+                 , configMaxPeers    = defMaxPeers
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
 defEnv e d p = do
     ms <- lookupEnv e
     return $ fromMaybe d $ p =<< ms
+
+defMaxPeers :: Int
+defMaxPeers = unsafePerformIO $
+    defEnv "MAX_PEERS" 20 readMaybe
+{-# NOINLINE defMaxPeers #-}
 
 defDirectory :: FilePath
 defDirectory = unsafePerformIO $ do
@@ -254,6 +261,12 @@ config = do
         <> long "peer"
         <> short 'p'
         <> help "Network peer (as many as required)"
+    configMaxPeers <-
+        option auto $
+        metavar "INT"
+        <> long "max-peers"
+        <> showDefault
+        <> value (configMaxPeers def)
     configVersion <-
         switch $
         long "version"
@@ -431,6 +444,7 @@ run Config { configHost = host
            , configWipeMempool = wipemempool
            , configPeerTimeout = peertimeout
            , configPeerMaxLife = peerlife
+           , configMaxPeers = maxpeers
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -438,7 +452,7 @@ run Config { configHost = host
         createDirectoryIfMissing True wd
         let scfg =
                 StoreConfig
-                    { storeConfMaxPeers = 20
+                    { storeConfMaxPeers = maxpeers
                     , storeConfInitPeers =
                           map (second (fromMaybe (getDefaultPort net))) peers
                     , storeConfDiscover = disc
