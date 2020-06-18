@@ -74,8 +74,7 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..), Peer,
                                                 getOnlinePeer, getPeers,
                                                 killPeer, peerText, sendMessage,
                                                 setBusy, setFree)
-import           Haskoin.Store.Common          (StoreEvent (..), StoreRead (..),
-                                                sortTxs)
+import           Haskoin.Store.Common
 import           Haskoin.Store.Data            (TxData (..), TxRef (..),
                                                 Unspent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader)
@@ -91,7 +90,7 @@ import           NQE                           (Inbox, Listen, Mailbox,
                                                 sendSTM)
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, STM, TVar,
+                                                MonadUnliftIO, STM, TVar, async,
                                                 atomically, liftIO, modifyTVar,
                                                 newTVarIO, readTVar, readTVarIO,
                                                 throwIO, withAsync, writeTVar)
@@ -136,10 +135,11 @@ data PendingTx =
 -- | Block store process state.
 data BlockRead =
     BlockRead
-        { mySelf   :: !BlockStore
-        , myConfig :: !BlockStoreConfig
-        , myPeer   :: !(TVar (Maybe Syncing))
-        , myTxs    :: !(TVar (HashMap TxHash PendingTx))
+        { mySelf    :: !BlockStore
+        , myConfig  :: !BlockStoreConfig
+        , myPeer    :: !(TVar (Maybe Syncing))
+        , myTxs     :: !(TVar (HashMap TxHash PendingTx))
+        , requested :: !(TVar (HashSet TxHash))
         }
 
 -- | Configuration for a block store.
@@ -216,12 +216,14 @@ blockStore ::
 blockStore cfg inbox = do
     pb <- newTVarIO Nothing
     ts <- newTVarIO HashMap.empty
+    rq <- newTVarIO HashSet.empty
     runReaderT
         (ini >> wipe >> run)
         BlockRead { mySelf = inboxToMailbox inbox
                   , myConfig = cfg
                   , myPeer = pb
                   , myTxs = ts
+                  , requested = rq
                   }
   where
     del txs = do
@@ -400,10 +402,23 @@ addPendingTx p = do
   where
     th = txHash (pendingTx p)
 
+addRequestedTx :: MonadIO m => TxHash -> BlockT m ()
+addRequestedTx th = do
+    qbox <- asks requested
+    atomically $ modifyTVar qbox $ HashSet.insert th
+    liftIO $ void $ async $ do
+        threadDelay 20000000
+        atomically $ modifyTVar qbox $ HashSet.delete th
+
 isPending :: MonadIO m => TxHash -> BlockT m Bool
 isPending th = do
-    ts <- asks myTxs
-    atomically $ HashMap.member th <$> readTVar ts
+    tbox <- asks myTxs
+    qbox  <- asks requested
+    atomically $ do
+        ts <- readTVar tbox
+        rs <- readTVar qbox
+        return $ th `HashMap.member` ts
+              || th `HashSet.member` rs
 
 pendingTxs :: MonadIO m => Int -> BlockT m [PendingTx]
 pendingTxs i = asks myTxs >>= \box -> atomically $ do
@@ -567,27 +582,29 @@ processTxs p hs = isInSync >>= \s -> when s $ do
   where
     len = length hs
     zip_counter = forM (zip [(1 :: Int) ..] hs) . uncurry
-    have_it h = isPending h >>= \case
-        True -> return True
-        False -> getTxData h >>= \case
-            Nothing -> return False
-            Just txd -> return (not (txDataDeleted txd))
-    process_tx i h = have_it h >>= \case
-        True  -> do_have i h
-        False -> dont_have i h
-    do_have i h = do
-        $(logDebugS) "BlockStore" $
-            "Tx " <> cs (show i) <> "/" <> cs (show len)
-            <> " " <> txHashToHex h <> ": "
-            <> "Present"
-        return Nothing
-    dont_have i h = do
-        $(logDebugS) "BlockStore" $
-            "Tx " <> cs (show i) <> "/" <> cs (show len)
-            <> " " <> txHashToHex h <> ": "
-            <> "New"
-        return (Just h)
+    process_tx i h =
+        isPending h >>= \case
+            True -> do
+                $(logDebugS) "BlockStore" $
+                    "Tx " <> cs (show i) <> "/" <> cs (show len)
+                    <> " " <> txHashToHex h <> ": "
+                    <> "Pending"
+                return Nothing
+            False -> getActiveTxData h >>= \case
+                Just _ -> do
+                    $(logDebugS) "BlockStore" $
+                        "Tx " <> cs (show i) <> "/" <> cs (show len)
+                        <> " " <> txHashToHex h <> ": "
+                        <> "Got it"
+                    return Nothing
+                Nothing -> do
+                    $(logDebugS) "BlockStore" $
+                        "Tx " <> cs (show i) <> "/" <> cs (show len)
+                        <> " " <> txHashToHex h <> ": "
+                        <> "Requesting"
+                    return (Just h)
     go xs = do
+        mapM_ addRequestedTx xs
         net <- asks (blockConfNet . myConfig)
         let inv = if getSegWit net then InvWitnessTx else InvTx
             vec = map (InvVector inv . getTxHash) xs
