@@ -100,13 +100,13 @@ data StoreConfig =
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
           => StoreConfig -> (Store -> m a) -> m a
 withStore cfg action =
-    withPublisher $ \pub ->
     connectDB cfg >>= \db ->
+    newMailbox >>= \(bi, b) ->
+    withPublisher $ \pub ->
     withPublisher $ \node_pub ->
     withSubscription node_pub $ \node_sub ->
     withNode (nodeCfg cfg db node_pub) $ \node ->
-    cacheProcess cfg (nodeChain node) db pub $ \mcache ->
-    newMailbox >>= \(bi, b) ->
+    withCache cfg (nodeChain node) db pub $ \mcache ->
     withAsync (nodeForwarder b pub node_sub) $ \a1 ->
     withAsync (blockStore (blockStoreCfg cfg node pub db) bi) $ \a2 ->
     link a1 >> link a2 >>
@@ -164,14 +164,14 @@ nodeCfg cfg db pub =
         , nodeConfConnect = storeConfConnect cfg
         }
 
-cacheProcess :: (MonadUnliftIO m, MonadLoggerIO m)
-             => StoreConfig
-             -> Chain
-             -> DatabaseReader
-             -> Publisher StoreEvent
-             -> (Maybe CacheConfig -> m a)
-             -> m a
-cacheProcess cfg chain db pub action =
+withCache :: (MonadUnliftIO m, MonadLoggerIO m)
+          => StoreConfig
+          -> Chain
+          -> DatabaseReader
+          -> Publisher StoreEvent
+          -> (Maybe CacheConfig -> m a)
+          -> m a
+withCache cfg chain db pub action =
     case storeConfCache cfg of
         Nothing ->
             action Nothing
