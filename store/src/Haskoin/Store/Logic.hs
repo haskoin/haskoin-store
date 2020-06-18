@@ -20,7 +20,8 @@ import           Control.Monad                 (forM, forM_, guard, void, when,
                                                 zipWithM_, (<=<), (>=>))
 import           Control.Monad.Except          (ExceptT (..), MonadError,
                                                 runExceptT, throwError)
-import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
+import           Control.Monad.Logger          (LoggingT (..),
+                                                MonadLoggerIO (..), logDebugS,
                                                 logErrorS)
 import           Control.Monad.Reader          (ReaderT (ReaderT), runReaderT)
 import           Control.Monad.Trans           (lift)
@@ -33,7 +34,6 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
-import           Data.String.Conversions       (cs)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
@@ -117,13 +117,8 @@ getOldMempool now =
 newMempoolTx :: MonadImport m => Tx -> UnixTime -> WriterT m Bool
 newMempoolTx tx w =
     getActiveTxData (txHash tx) >>= \case
-        Just _ -> do
-            $(logDebugS) "BlockStore" $
-                "Already have tx: " <> txHashToHex (txHash tx)
-            return False
+        Just _ -> return False
         Nothing -> do
-            $(logDebugS) "BlockStore" $
-                "Importing mempool tx: " <> txHashToHex (txHash tx)
             freeOutputs True True [tx]
             preLoadMemory [tx]
             rbf <- isRBF (MemRef w) tx
@@ -216,6 +211,8 @@ importOrConfirm bn txs = do
                     <> txHashToHex (txHash tx)
                 throwError TxNotFound
     import_it i tx = do
+        $(logDebugS) "BlockStore" $
+            "Importing tx: " <> txHashToHex (txHash tx)
         runMonadMemory $ importTx (br i) bn_time False tx
         return Nothing
 
@@ -270,21 +267,21 @@ checkNewTx :: MonadImport m => Tx -> WriterT m ()
 checkNewTx tx = do
     us <- runTx $ getUnspentOutputs tx
     when (unique_inputs < length (txIn tx)) $ do
-        $(logDebugS) "BlockStore" $
+        $(logErrorS) "BlockStore" $
             "Transaction spends same output twice: "
             <> txHashToHex (txHash tx)
         throwError DuplicatePrevOutput
     when (isCoinbase tx) $ do
-        $(logDebugS) "BlockStore" $
+        $(logErrorS) "BlockStore" $
             "Coinbase cannot be imported into mempool: "
             <> txHashToHex (txHash tx)
         throwError UnexpectedCoinbase
     when (orphanTest us tx) $ do
-        $(logDebugS) "BlockStore" $
+        $(logErrorS) "BlockStore" $
             "Orphan: " <> txHashToHex (txHash tx)
         throwError Orphan
     when (outputs > unspents us) $ do
-        $(logDebugS) "BlockStore" $
+        $(logErrorS) "BlockStore" $
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError InsufficientFunds
   where
@@ -451,12 +448,12 @@ freeOutputs memonly rbfcheck txs = do
                        $ sortTxs
                        $ nub'
                        $ concat txs'
-            Left e -> do
-                $(logErrorS) "BlockStore" $
-                    "While freeing outputs: " <> cs (show e)
-                throwError e
-    async_get tx =
-        ReaderT $ \r -> liftIO (async (runReaderT (get_chain tx) r))
+            Left e -> throwError e
+    async_get tx = do
+        g <- askLoggerIO
+        ReaderT $ \r ->
+            liftIO $ async $
+            runLoggingT (runReaderT (get_chain tx) r) g
     get_chain tx =
         fmap (fmap concat . sequence) $
         forM (nub' (prevOuts tx)) $
@@ -489,7 +486,7 @@ deleteTx memonly rbfcheck txhash =
         Right txs -> mapM_ (deleteSingleTx . txHash) txs
 
 getChain
-    :: StoreRead m
+    :: (MonadLoggerIO m, StoreRead m)
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
@@ -503,12 +500,19 @@ getChain memonly rbfcheck txhash =
             Nothing ->
                 return []
             Just td
-                | memonly && confirmed (txDataBlock td) ->
-                    throwError TxConfirmed
+                | memonly && confirmed (txDataBlock td) -> do
+                      $(logErrorS) "BlockStore" $
+                          "Transaction already confirmed: "
+                          <> txHashToHex th
+                      throwError TxConfirmed
                 | rbfcheck ->
                     lift (isRBF (txDataBlock td) (txData td)) >>= \case
                         True -> get_it td
-                        False -> throwError DoubleSpend
+                        False -> do
+                            $(logErrorS) "BlockStore" $
+                                "Double-spending transaction: "
+                                <> txHashToHex th
+                            throwError DoubleSpend
                 | otherwise -> get_it td
     get_it td = do
         let th = txHash (txData td)

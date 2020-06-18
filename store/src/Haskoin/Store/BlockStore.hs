@@ -28,7 +28,6 @@ module Haskoin.Store.BlockStore
     , blockStoreTxHashSTM
     ) where
 
-import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forM, forM_, forever, mzero,
                                                 unless, void, when)
 import           Control.Monad.Except          (ExceptT (..), MonadError,
@@ -38,7 +37,7 @@ import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
 import           Control.Monad.Reader          (MonadReader, ReaderT (..), ask,
                                                 asks)
 import           Control.Monad.Trans           (lift)
-import           Control.Monad.Trans.Maybe     (MaybeT (MaybeT), runMaybeT)
+import           Control.Monad.Trans.Maybe     (runMaybeT)
 import qualified Data.ByteString               as B
 import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as HashMap
@@ -46,7 +45,7 @@ import           Data.HashSet                  (HashSet)
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (delete)
 import           Data.Maybe                    (catMaybes, fromJust, isJust,
-                                                isNothing, mapMaybe)
+                                                mapMaybe)
 import           Data.Serialize                (encode)
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
@@ -71,9 +70,8 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..), Peer,
                                                 chainBlockMain,
                                                 chainGetAncestor, chainGetBest,
                                                 chainGetBlock, chainGetParents,
-                                                getOnlinePeer, getPeers,
-                                                killPeer, peerText, sendMessage,
-                                                setBusy, setFree)
+                                                getPeers, killPeer, peerText,
+                                                sendMessage, setBusy, setFree)
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data            (TxData (..), TxRef (..),
                                                 Unspent (..))
@@ -258,13 +256,16 @@ blockStore cfg inbox = do
           ReaderT . runReaderT . processBlockStoreMessage
 
 isInSync :: MonadLoggerIO m => BlockT m Bool
-isInSync = getBestBlock >>= \case
-    Nothing -> do
-        $(logErrorS) "BlockStore" "Block database uninitialized"
-        throwIO Uninitialized
-    Just bb -> do
-        cb <- asks (blockConfChain . myConfig) >>= chainGetBest
-        return (headerHash (nodeHeader cb) == bb)
+isInSync =
+    getBestBlock >>= \case
+        Nothing -> do
+            $(logErrorS) "BlockStore" "Block database uninitialized"
+            throwIO Uninitialized
+        Just bb -> do
+            cb <- asks (blockConfChain . myConfig) >>= chainGetBest
+            if headerHash (nodeHeader cb) == bb
+                then clearSyncingState >> return True
+                else return False
 
 mempool :: MonadLoggerIO m => Peer -> m ()
 mempool p = do
@@ -274,9 +275,24 @@ mempool p = do
 
 processBlock :: MonadLoggerIO m => Peer -> Block -> BlockT m ()
 processBlock peer block = void . runMaybeT $ do
-    checks <- checkPeer peer
-    unless checks mzero
-    node <- MaybeT $ getBlockNode peer blockhash
+    checkPeer peer >>= \case
+        True -> return ()
+        False -> do
+            $(logErrorS) "BlockStore" $
+                "Non-syncing peer " <> peerText peer
+                <> " sent me a block: "
+                <> blockHashToHex blockhash
+            PeerMisbehaving "Sent unexpected block" `killPeer` peer
+            mzero
+    node <- getBlockNode blockhash >>= \case
+        Just b -> return b
+        Nothing -> do
+            $(logErrorS) "BlockStore" $
+                "Peer " <> peerText peer
+                <> " sent unknown block: "
+                <> blockHashToHex blockhash
+            PeerMisbehaving "Sent unknown block" `killPeer` peer
+            mzero
     $(logDebugS) "BlockStore" $
         "Processing block: " <> blockText node Nothing
         <> " from peer: " <> peerText peer
@@ -292,9 +308,12 @@ processBlock peer block = void . runMaybeT $ do
             "Best block: " <> blockText node (Just block)
         notify
         removeSyncingBlock $ headerHash $ nodeHeader node
-        touchPeer peer >>= \case
-            True  -> syncMe peer
-            False -> return ()
+        touchPeer
+        isInSync >>= \case
+            False -> syncMe
+            True -> do
+                updateOrphans
+                mempool peer
     failure e = do
         $(logErrorS) "BlockStore" $
             "Error importing block " <> hexhash
@@ -329,40 +348,22 @@ addSyncingBlocks hs =
 
 removeSyncingBlock :: (MonadReader BlockRead m, MonadIO m)
                    => BlockHash -> m ()
-removeSyncingBlock h =
-    asks myPeer >>= \box ->
+removeSyncingBlock h = do
+    box <- asks myPeer
     atomically $ modifyTVar box $ \case
         Nothing -> Nothing
         Just x  -> Just x { syncingBlocks = delete h (syncingBlocks x) }
 
 checkPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => Peer -> m Bool
-checkPeer peer =
-    asks (blockConfManager . myConfig) >>=
-    getOnlinePeer peer >>=
-    maybe disconnected (const connected)
-  where
-    disconnected = return False
-    connected =
-        touchPeer peer >>= \case
-            True -> return True
-            False -> remove
-    remove = do
-        killPeer (PeerMisbehaving "Sent unpexpected data") peer
-        return False
+checkPeer p =
+    fmap syncingPeer <$> getSyncingState >>= \case
+        Nothing -> return False
+        Just p' -> return $ p == p'
 
 getBlockNode :: (MonadLoggerIO m, MonadReader BlockRead m)
-             => Peer -> BlockHash -> m (Maybe BlockNode)
-getBlockNode peer blockhash = runMaybeT $
-    asks (blockConfChain . myConfig) >>=
-    chainGetBlock blockhash >>= \case
-        Nothing -> do
-            $(logErrorS) "BlockStore" $
-                "Header not found for block: "
-                <> blockHashToHex blockhash
-                <> " (peer " <> peerText peer <> ")"
-            killPeer (PeerMisbehaving "Sent unknown block") peer
-            mzero
-        Just n -> return n
+             => BlockHash -> m (Maybe BlockNode)
+getBlockNode blockhash =
+    chainGetBlock blockhash =<< asks (blockConfChain . myConfig)
 
 processNoBlocks ::
        MonadLoggerIO m
@@ -528,15 +529,15 @@ importMempoolTx block_read time tx =
     new_mempool_tx =
         newMempoolTx tx seconds >>= \case
             True -> do
-                $(logDebugS) "BlockStore" $
+                $(logInfoS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
                     <> ": OK"
                 fulfillOrphans block_read tx_hash
                 return True
             False -> do
-                $(logDebugS) "BlockStore" $
+                $(logInfoS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
-                    <> ": No action"
+                    <> ": Already imported"
                 return False
 
 processMempool :: MonadLoggerIO m => BlockT m ()
@@ -571,14 +572,16 @@ processTxs ::
     => Peer
     -> [TxHash]
     -> BlockT m ()
-processTxs p hs = isInSync >>= \s -> when s $ do
-    $(logDebugS) "BlockStore" $
-        "Received inventory with "
-        <> cs (show (length hs))
-        <> " transactions from peer: "
-        <> peerText p
-    xs <- catMaybes <$> zip_counter process_tx
-    unless (null xs) $ go xs
+processTxs p hs = do
+    s <- isInSync
+    when s $ do
+        $(logDebugS) "BlockStore" $
+            "Received inventory with "
+            <> cs (show (length hs))
+            <> " transactions from peer: "
+            <> peerText p
+        xs <- catMaybes <$> zip_counter process_tx
+        unless (null xs) $ go xs
   where
     len = length hs
     zip_counter = forM (zip [(1 :: Int) ..] hs) . uncurry
@@ -595,7 +598,7 @@ processTxs p hs = isInSync >>= \s -> when s $ do
                     $(logDebugS) "BlockStore" $
                         "Tx " <> cs (show i) <> "/" <> cs (show len)
                         <> " " <> txHashToHex h <> ": "
-                        <> "Got it"
+                        <> "Already Imported"
                     return Nothing
                 Nothing -> do
                     $(logDebugS) "BlockStore" $
@@ -614,19 +617,16 @@ processTxs p hs = isInSync >>= \s -> when s $ do
 touchPeer :: ( MonadIO m
              , MonadReader BlockRead m
              )
-          => Peer
-          -> m Bool
-touchPeer p =
+          => m ()
+touchPeer =
     getSyncingState >>= \case
-        Just Syncing {syncingPeer = s}
-            | p == s -> do
-                  box <- asks myPeer
-                  now <- liftIO getCurrentTime
-                  atomically $
-                      modifyTVar box $
-                      fmap $ \x -> x { syncingTime = now }
-                  return True
-        _ -> return False
+        Nothing -> return ()
+        Just _ -> do
+            box <- asks myPeer
+            now <- liftIO getCurrentTime
+            atomically $
+                modifyTVar box $
+                fmap $ \x -> x { syncingTime = now }
 
 checkTime :: MonadLoggerIO m => BlockT m ()
 checkTime =
@@ -642,29 +642,10 @@ checkTime =
                     "Syncing peer timeout: " <> peerText p
                 killPeer PeerTimeout p
 
-processDisconnect
-    :: MonadLoggerIO m
-    => Peer
-    -> BlockT m ()
-processDisconnect p =
-    asks myPeer >>= readTVarIO >>= \case
-        Just Syncing {syncingPeer = p'}
-            | p == p' -> dc
-        _ -> return ()
-  where
-    new_peer =
-        getPeer >>= \case
-            Nothing -> $(logWarnS) "BlockStore" "No peers available"
-            Just p' -> syncMe p'
-    dc = do
-        $(logDebugS) "BlockStore"
-            "Syncing peer disconnected"
-        resetPeer
-        new_peer
-
 pruneMempool :: MonadLoggerIO m => BlockT m ()
-pruneMempool =
-    isInSync >>= \sync -> when sync $ do
+pruneMempool = do
+    s <- isInSync
+    when s $ do
         now <- liftIO getCurrentTime
         let seconds = floor (utcTimeToPOSIXSeconds now)
         getOldMempool seconds >>= \old ->
@@ -736,25 +717,24 @@ getSyncBest = do
                 <> blockHashToHex bb
             throwIO (BlockNotInChain bb)
 
-doneSyncing :: MonadLoggerIO m => BlockT m Bool
-doneSyncing =
-    getBestBlock >>= \case
-        Nothing -> return False
-        Just bb -> do
-            ch <- asks (blockConfChain . myConfig)
-            bh <- headerHash . nodeHeader <$> chainGetBest ch
-            return $ bb == bh
+shouldSync :: MonadLoggerIO m => BlockT m (Maybe Peer)
+shouldSync =
+    isInSync >>= \case
+        True -> return Nothing
+        False -> cont
+  where
+    cont = getSyncingState >>= \case
+        Nothing -> return Nothing
+        Just Syncing { syncingPeer = p, syncingBlocks = bs }
+            | 100 > length bs -> return (Just p)
+            | otherwise -> return Nothing
 
-syncMe :: MonadLoggerIO m => Peer -> BlockT m ()
-syncMe peer = do
+syncMe :: MonadLoggerIO m => BlockT m ()
+syncMe = do
     revertToMainChain
-    x <- shouldSync peer
-    when x $ doneSyncing >>= \case
-        True -> do
-            updateOrphans
-            resetPeer
-            mempool peer
-        False -> do
+    shouldSync >>= \case
+        Nothing -> return ()
+        Just p -> do
             bb <- getSyncBest
             bh <- getbh
             when (bb /= bh) $ do
@@ -763,9 +743,9 @@ syncMe peer = do
                 $(logDebugS) "BlockStore" $
                     "Requesting "
                     <> fromString (show (length iv))
-                    <> " blocks from peer: " <> peerText peer
+                    <> " blocks from peer: " <> peerText p
                 addSyncingBlocks $ map (headerHash . nodeHeader) bns
-                MGetData (GetData iv) `sendMessage` peer
+                MGetData (GetData iv) `sendMessage` p
   where
     getiv bns = do
         w <- getSegWit <$> asks (blockConfNet . myConfig)
@@ -790,15 +770,6 @@ syncMe peer = do
         then return bh
         else findAncestor sh bh
 
-shouldSync :: (MonadIO m, MonadReader BlockRead m)
-           => Peer -> m Bool
-shouldSync p =
-    getSyncingState >>= \case
-        Nothing -> return False
-        Just Syncing { syncingPeer = p', syncingBlocks = bs }
-            | p == p' && 100 > length bs -> return True
-            | otherwise -> return False
-
 findAncestor :: (MonadLoggerIO m, MonadReader BlockRead m)
              => BlockHeight -> BlockNode -> m BlockNode
 findAncestor height target = do
@@ -813,67 +784,89 @@ findAncestor height target = do
                 <> cs (show (nodeHeight target))
             throwIO $ AncestorNotInChain height h
 
-resetPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
-resetPeer = do
+finishPeer :: (MonadLoggerIO m, MonadReader BlockRead m)
+           => Peer -> m ()
+finishPeer p = do
     box <- asks myPeer
-    m <- atomically $ do
-        m <- readTVar box
-        writeTVar box Nothing
-        return m
-    forM_ m $ \Syncing { syncingPeer = p } -> do
-        $(logDebugS) "BlockStore" $ "Free peer: " <> peerText p
+    readTVarIO box >>= \case
+        Just Syncing { syncingPeer = p' } | p == p' -> reset_it box
+        _ -> return ()
+  where
+    reset_it box = do
+        atomically $ writeTVar box Nothing
+        $(logDebugS) "BlockStore" $ "Releasing peer: " <> peerText p
         setFree p
 
-setPeer :: (MonadIO m, MonadReader BlockRead m)
-        => Peer -> m ()
-setPeer p = do
-    box <- asks myPeer
-    now <- liftIO getCurrentTime
-    atomically . writeTVar box $
-        Just Syncing { syncingPeer = p
-                     , syncingTime = now
-                     , syncingBlocks = []
-                     }
-
-getPeer :: (MonadReader BlockRead m, MonadLoggerIO m)
-        => m (Maybe Peer)
-getPeer = runMaybeT $
-    MaybeT syncingpeer <|> MaybeT onlinepeer
+trySetPeer :: MonadLoggerIO m => Peer -> BlockT m Bool
+trySetPeer p =
+    getSyncingState >>= \case
+        Just _ -> return False
+        Nothing -> set_it
   where
-    syncingpeer = fmap syncingPeer <$> getSyncingState
-    recurse [] = return Nothing
-    recurse (p : ps) =
+    set_it =
         setBusy p >>= \case
-            False -> recurse ps
+            False -> return False
             True -> do
                 $(logDebugS) "BlockStore" $
                     "Locked peer: " <> peerText p
-                setPeer p
-                return (Just p)
-    onlinepeer = do
+                box <- asks myPeer
+                now <- liftIO getCurrentTime
+                atomically . writeTVar box $
+                    Just Syncing { syncingPeer = p
+                                  , syncingTime = now
+                                  , syncingBlocks = []
+                                  }
+                return True
+
+trySyncing :: MonadLoggerIO m => BlockT m ()
+trySyncing =
+    isInSync >>= \case
+        True -> return ()
+        False -> getSyncingState >>= \case
+            Just _ -> return ()
+            Nothing -> online_peer
+  where
+    recurse [] = return ()
+    recurse (p : ps) =
+        trySetPeer p >>= \case
+            False -> recurse ps
+            True -> syncMe
+    online_peer = do
         ops <- getPeers =<< asks (blockConfManager . myConfig)
         let ps = map onlinePeerMailbox ops
         recurse ps
 
+trySyncingPeer :: MonadLoggerIO m => Peer -> BlockT m ()
+trySyncingPeer p =
+    isInSync >>= \case
+        True -> return ()
+        False -> trySetPeer p >>= \case
+            False -> return ()
+            True -> syncMe
+
 getSyncingState
-    :: (MonadIO m, MonadReader BlockRead m)
-    => m (Maybe Syncing)
+    :: (MonadIO m, MonadReader BlockRead m) => m (Maybe Syncing)
 getSyncingState =
     readTVarIO =<< asks myPeer
 
-processBlockStoreMessage :: MonadLoggerIO m
-                         => BlockStoreMessage -> BlockT m ()
+clearSyncingState
+    :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
+clearSyncingState =
+    asks myPeer >>= readTVarIO >>= \case
+        Nothing -> return ()
+        Just Syncing { syncingPeer = p } -> finishPeer p
+
+processBlockStoreMessage
+    :: MonadLoggerIO m => BlockStoreMessage -> BlockT m ()
 
 processBlockStoreMessage (BlockNewBest _) =
-    getPeer >>= mapM_ syncMe
+    trySyncing
 
 processBlockStoreMessage (BlockPeerConnect p) =
-    getSyncingState >>= \case
-        Just _  -> return ()
-        Nothing -> setBusy p >>= \x -> when x (syncMe p)
+    trySyncingPeer p
 
 processBlockStoreMessage (BlockPeerDisconnect p) =
-    processDisconnect p
+    finishPeer p
 
 processBlockStoreMessage (BlockReceived p b) =
     processBlock p b
@@ -888,22 +881,12 @@ processBlockStoreMessage (TxRefAvailable p ts) =
     processTxs p ts
 
 processBlockStoreMessage (BlockPing r) = do
-    nudgeSync
+    trySyncing
     processMempool
     pruneOrphans
     checkTime
     pruneMempool
     atomically (r ())
-
-nudgeSync :: MonadLoggerIO m => BlockT m ()
-nudgeSync =
-    isInSync >>= \x -> unless x $
-    getSyncingState >>= \y -> when (isNothing y) $
-    getPeer >>= \m -> forM_ m $ \p -> do
-    $(logDebugS) "BlockStore" $
-        "Nudging to sync against peer: "
-        <> peerText p
-    syncMe p
 
 pingMe :: MonadLoggerIO m => BlockStore -> m ()
 pingMe mbox =
