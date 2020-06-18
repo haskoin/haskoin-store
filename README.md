@@ -25,12 +25,12 @@ stack --nix build --copy-bins
 ~/.local/bin/haskoin-store --help
 ```
 
-## Install on Ubuntu 20.04
+## Install on Ubuntu 20.04 or Debian 10
 
 * Get [Stack](https://haskellstack.org/)
 
 ```sh
-apt install git libsecp256k1-dev librocksdb-dev
+apt install git libsecp256k1-dev librocksdb-dev pkg-config
 git clone https://github.com/haskoin/haskoin-store.git
 cd haskoin-store
 stack build --copy-bins
