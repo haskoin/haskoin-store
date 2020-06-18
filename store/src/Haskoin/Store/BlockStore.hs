@@ -737,18 +737,18 @@ syncMe peer =
             updateOrphans
             resetPeer
             mempool peer
-        False ->
-            getSyncBest >>= \bb ->
-            getbh >>= \bh ->
+        False -> do
+            bb <- getSyncBest
+            bh <- getbh
             when (bb /= bh) $ do
-            bns <- sel bb bh
-            iv <- getiv bns
-            $(logDebugS) "BlockStore" $
-                "Requesting "
-                <> fromString (show (length iv))
-                <> " blocks from peer: " <> peerText peer
-            addSyncingBlocks $ map (headerHash . nodeHeader) bns
-            MGetData (GetData iv) `sendMessage` peer
+                bns <- sel bb bh
+                iv <- getiv bns
+                $(logDebugS) "BlockStore" $
+                    "Requesting "
+                    <> fromString (show (length iv))
+                    <> " blocks from peer: " <> peerText peer
+                addSyncingBlocks $ map (headerHash . nodeHeader) bns
+                MGetData (GetData iv) `sendMessage` peer
   where
     getiv bns = do
         w <- getSegWit <$> asks (blockConfNet . myConfig)
