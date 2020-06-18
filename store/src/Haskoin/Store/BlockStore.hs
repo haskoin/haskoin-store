@@ -729,10 +729,10 @@ doneSyncing =
             return $ bb == bh
 
 syncMe :: MonadLoggerIO m => Peer -> BlockT m ()
-syncMe peer =
-    revertToMainChain >>
-    shouldSync peer >>= \x -> when x $
-    doneSyncing >>= \case
+syncMe peer = do
+    revertToMainChain
+    x <- shouldSync peer
+    when x $ doneSyncing >>= \case
         True -> do
             updateOrphans
             resetPeer
