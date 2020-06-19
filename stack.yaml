@@ -10,7 +10,7 @@ packages:
   - store
 extra-deps:
   - github: haskoin/haskoin-core
-    commit: d313ac58b2f22fa7570a5e1234244b7249a48382
+    commit: 88b68285e815ed658b49ab98be77b6834c6ecb97
   - github: haskoin/haskoin-node
     commit: 315e1dca7f007071e5ee7c6a926b7032a15e00b7
   - github: haskoin/secp256k1-haskell

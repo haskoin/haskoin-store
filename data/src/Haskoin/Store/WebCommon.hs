@@ -359,14 +359,14 @@ class Param a where
 
 instance Param Address where
     proxyLabel = const "address"
-    encodeParam net a = (:[]) <$> addrToString net a
-    parseParam net [a] = stringToAddr net a
+    encodeParam net a = (:[]) <$> addrToText net a
+    parseParam net [a] = textToAddr net a
     parseParam _ _     = Nothing
 
 instance Param [Address] where
     proxyLabel = const "addresses"
-    encodeParam = mapM . addrToString
-    parseParam = mapM . stringToAddr
+    encodeParam = mapM . addrToText
+    parseParam = mapM . textToAddr
 
 data StartParam = StartParamHash
     { startParamHash :: Hash256
