@@ -20,7 +20,8 @@ import           Control.Monad                 (forM_, guard, void, when,
                                                 zipWithM_, (<=<), (>=>))
 import           Control.Monad.Except          (ExceptT (..), MonadError,
                                                 runExceptT, throwError)
-import           Control.Monad.Logger          (MonadLoggerIO (..), logDebugS,
+import           Control.Monad.Logger          (LoggingT (..),
+                                                MonadLoggerIO (..), logDebugS,
                                                 logErrorS)
 import           Control.Monad.Reader          (ReaderT (ReaderT), runReaderT)
 import           Control.Monad.Trans           (lift)
@@ -33,6 +34,8 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
+import           Data.String.Conversions       (cs)
+import           Data.Text                     (Text)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
@@ -128,7 +131,9 @@ newMempoolTx tx w =
 preLoadMemory :: MonadLoggerIO m => [Tx] -> WriterT m ()
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
-    ReaderT $ liftIO . runReaderT go
+    ReaderT $ \r -> do
+        l <- askLoggerIO
+        liftIO (runLoggingT (runReaderT go r) l)
   where
     go = do
         prev_asyncs <- mapM (async . loadPrevOutputs) txs
@@ -294,25 +299,33 @@ orphanTest us tx = length (prevOuts tx) > length us
 getUnspentOutputs :: StoreRead m => Tx -> m [Unspent]
 getUnspentOutputs tx = catMaybes <$> mapM getUnspent (prevOuts tx)
 
-loadPrevOutputs :: MonadIO m => Tx -> WriterT m ()
+loadPrevOutputs :: MonadLoggerIO m => Tx -> WriterT m ()
 loadPrevOutputs tx =
     mapM_ go ops
   where
     ops = prevOuts tx
     go op =
         getUnspent op >>= \case
-            Just u -> insert_unspent u
+            Just u ->
+                insert_unspent u
             Nothing -> do
+                $(logDebugS) "BlockStore" $
+                    "No UTXO: " <> logOutput op
                 insert_tx (outPointHash op)
                 insert_spender op
-    insert_tx h = do
-        mt <- getActiveTxData h
-        forM_ mt $ \t -> do
-            let addrs = get_addrs (txData t)
-            bals <- mapM getBalance addrs
-            runTx $ do
-                insertTx t
-                mapM_ setBalance bals
+    insert_tx h =
+        getActiveTxData h >>= \case
+            Nothing -> do
+                $(logDebugS) "BlockStore" $
+                    "No active tx: " <> txHashToHex h
+            Just t -> do
+                let addrs = get_addrs (txData t)
+                bals <- mapM getBalance addrs
+                $(logDebugS) "BlockStore" $
+                    "Preloading tx: " <> txHashToHex h
+                runTx $ do
+                    insertTx t
+                    mapM_ setBalance bals
     get_addrs tx' =
         let f i o =
                 if OutPoint (txHash tx') i `elem` ops
@@ -320,8 +333,17 @@ loadPrevOutputs tx =
                 else Nothing
         in catMaybes $ zipWith f [0..] (txOut tx')
     insert_spender op =
-        getSpender op >>= runTx . mapM_ (insertSpender op)
+        getSpender op >>= \case
+            Nothing ->
+                $(logDebugS) "BlockStore" $
+                    "No spender found for output: " <> logOutput op
+            Just x -> do
+                $(logDebugS) "BlockStore" $
+                    "Preloading spender for output: " <> logOutput op
+                runTx $ insertSpender op x
     insert_unspent u = do
+        $(logDebugS) "BlockStore" $
+            "Preloading UTXO: " <> logOutput (unspentPoint u)
         mbal <- mapM getBalance (unspentAddress u)
         runTx $ do
             insertUnspent u
@@ -742,3 +764,7 @@ testPresent tx =
                 return False
             Just Spender { spenderHash = s } ->
                 return $ s == txHash tx
+
+logOutput :: OutPoint -> Text
+logOutput op =
+    txHashToHex (outPointHash op) <> ":" <> cs (show (outPointIndex op))
