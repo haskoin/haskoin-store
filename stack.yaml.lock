@@ -5,16 +5,16 @@
 
 packages:
 - completed:
-    size: 266117
-    url: https://github.com/haskoin/haskoin-core/archive/d313ac58b2f22fa7570a5e1234244b7249a48382.tar.gz
+    size: 288608
+    url: https://github.com/haskoin/haskoin-core/archive/88b68285e815ed658b49ab98be77b6834c6ecb97.tar.gz
     name: haskoin-core
     version: 0.14.1
-    sha256: c33453bad087010a282a59d801dc56abfe5478cf06522e48a16c1e59e68a2b67
+    sha256: cb19e037303eb00f2313d0ecc139651a06ab2319d3e981f52ed8a7da7e7c6192
     pantry-tree:
-      size: 4977
-      sha256: 1d49211744296e7fb946a02e7959ad46581165ef8977cac3f44bfd53570f9ca3
+      size: 5370
+      sha256: c8a377f7050cd636fa211a813999a885249c17d64b25230099bf8a9d0c0cbc00
   original:
-    url: https://github.com/haskoin/haskoin-core/archive/d313ac58b2f22fa7570a5e1234244b7249a48382.tar.gz
+    url: https://github.com/haskoin/haskoin-core/archive/88b68285e815ed658b49ab98be77b6834c6ecb97.tar.gz
 - completed:
     size: 24892
     url: https://github.com/haskoin/haskoin-node/archive/315e1dca7f007071e5ee7c6a926b7032a15e00b7.tar.gz
