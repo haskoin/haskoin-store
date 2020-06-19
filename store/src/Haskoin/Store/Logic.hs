@@ -309,15 +309,11 @@ loadPrevOutputs tx =
             Just u ->
                 insert_unspent u
             Nothing -> do
-                $(logDebugS) "BlockStore" $
-                    "No unspent output: " <> logOutput op
                 insert_tx (outPointHash op)
                 insert_spender op
     insert_tx h =
         getActiveTxData h >>= \case
-            Nothing ->
-                $(logDebugS) "BlockStore" $
-                    "No active tx: " <> txHashToHex h
+            Nothing -> return ()
             Just t -> do
                 let addrs = get_addrs (txData t)
                 bals <- mapM getBalance addrs
@@ -334,16 +330,10 @@ loadPrevOutputs tx =
         in catMaybes $ zipWith f [0..] (txOut tx')
     insert_spender op =
         getSpender op >>= \case
-            Nothing ->
-                $(logDebugS) "BlockStore" $
-                    "No spender found for output: " <> logOutput op
-            Just x -> do
-                $(logDebugS) "BlockStore" $
-                    "Preloading spender for output: " <> logOutput op
+            Nothing -> return ()
+            Just x ->
                 runTx $ insertSpender op x
     insert_unspent u = do
-        $(logDebugS) "BlockStore" $
-            "Preloading unspent output: " <> logOutput (unspentPoint u)
         mbal <- mapM getBalance (unspentAddress u)
         runTx $ do
             insertUnspent u
