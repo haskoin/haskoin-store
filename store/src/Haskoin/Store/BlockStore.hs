@@ -516,15 +516,8 @@ importMempoolTx block_read time tx =
     tx_hash = txHash tx
     handle_error Orphan = do
         newOrphanTx block_read time tx
-        $(logWarnS) "BlockStore" $
-            "Import tx " <> txHashToHex tx_hash
-            <> ": Orphan"
         return False
-    handle_error _ = do
-        $(logWarnS) "BlockStore" $
-            "Import tx " <> txHashToHex tx_hash
-            <> ": Failed"
-        return False
+    handle_error _ = return False
     seconds = floor (utcTimeToPOSIXSeconds time)
     new_mempool_tx =
         newMempoolTx tx seconds >>= \case
@@ -535,7 +528,7 @@ importMempoolTx block_read time tx =
                 fulfillOrphans block_read tx_hash
                 return True
             False -> do
-                $(logInfoS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
                     <> ": Already imported"
                 return False
