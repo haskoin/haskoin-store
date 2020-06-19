@@ -27,6 +27,7 @@ import           Control.Monad.Trans           (lift)
 import qualified Data.ByteString               as B
 import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
+import qualified Data.HashMap.Strict           as M
 import qualified Data.IntMap.Strict            as I
 import           Data.List                     (nub, sortOn)
 import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
@@ -453,47 +454,47 @@ deleteTx
     -> Bool -- ^ only delete RBF
     -> TxHash
     -> WriterT m ()
-deleteTx memonly rbfcheck txhash =
-    getChain memonly rbfcheck txhash >>= \case
-        Left e    -> throwError e
-        Right txs -> mapM_ (deleteSingleTx . txHash) txs
+deleteTx memonly rbfcheck th =
+    getChain memonly rbfcheck th >>=
+    mapM_ (deleteSingleTx . txHash . txData)
 
 getChain
-    :: (MonadLoggerIO m, StoreRead m)
+    :: MonadImport m
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
-    -> m (Either ImportException [Tx])
-getChain memonly rbfcheck txhash =
-    runExceptT (go txhash)
+    -> WriterT m [TxData]
+getChain memonly rbfcheck th =
+    fmap sort_clean $
+    getActiveTxData th >>= \case
+        Nothing -> do
+            $(logErrorS) "BlockStore" $
+                "Transaction not found: " <> txHashToHex th
+            throwError TxNotFound
+        Just td
+            | memonly && confirmed (txDataBlock td) -> do
+                  $(logErrorS) "BlockStore" $
+                      "Transaction already confirmed: "
+                      <> txHashToHex th
+                  throwError TxConfirmed
+            | rbfcheck ->
+                isRBF (txDataBlock td) (txData td) >>= \case
+                    True -> go td
+                    False -> do
+                        $(logErrorS) "BlockStore" $
+                            "Double-spending transaction: "
+                            <> txHashToHex th
+                        throwError DoubleSpend
+            | otherwise -> go td
   where
-    go th =
-        fmap (reverse . map snd . sortTxs . nub') $
-        lift (getActiveTxData th) >>= \case
-            Nothing ->
-                return []
-            Just td
-                | memonly && confirmed (txDataBlock td) -> do
-                      $(logErrorS) "BlockStore" $
-                          "Transaction already confirmed: "
-                          <> txHashToHex th
-                      throwError TxConfirmed
-                | rbfcheck ->
-                    lift (isRBF (txDataBlock td) (txData td)) >>= \case
-                        True -> get_it td
-                        False -> do
-                            $(logErrorS) "BlockStore" $
-                                "Double-spending transaction: "
-                                <> txHashToHex th
-                            throwError DoubleSpend
-                | otherwise -> get_it td
-    get_it td = do
-        let th = txHash (txData td)
-        spenders <-
-            nub' . map spenderHash . I.elems
-            <$> lift (getSpenders th)
-        chains <- concat <$> mapM go spenders
-        return $ txData td : chains
+    sort_clean tds =
+        let m = M.fromList $ map (\x -> (txHash (txData x), x)) tds
+            xs = reverse $ map snd $ sortTxs $ nub' $ map txData tds
+         in mapMaybe (\x -> txHash x `M.lookup` m) xs
+    go td = do
+        ss <- nub' . map spenderHash . I.elems <$> getSpenders th
+        xs <- concat <$> mapM (getChain memonly rbfcheck) ss
+        return $ td : xs
 
 deleteSingleTx :: MonadImport m => TxHash -> WriterT m ()
 deleteSingleTx th =
