@@ -22,7 +22,7 @@ import           Control.Monad.Except          (ExceptT (..), MonadError,
                                                 runExceptT, throwError)
 import           Control.Monad.Logger          (LoggingT (..),
                                                 MonadLoggerIO (..), logDebugS,
-                                                logErrorS, logWarnS)
+                                                logErrorS)
 import           Control.Monad.Reader          (ReaderT (ReaderT), runReaderT)
 import           Control.Monad.Trans           (lift)
 import qualified Data.ByteString               as B
@@ -460,8 +460,8 @@ deleteUnconfirmedTx rbfcheck th =
         Just _ ->
             deleteTx True rbfcheck th
         Nothing ->
-            $(logWarnS) "BlockStore" $
-            "Not found or deleted: " <> txHashToHex th
+            $(logDebugS) "BlockStore" $
+            "Not found or already deleted: " <> txHashToHex th
 
 deleteTx
     :: MonadImport m
