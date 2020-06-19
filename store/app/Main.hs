@@ -1,4 +1,5 @@
 {-# LANGUAGE ApplicativeDo     #-}
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -15,7 +16,6 @@ import           Data.Default            (Default (..))
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
-import           Data.Version            (showVersion)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest, eitherToMaybe)
@@ -28,7 +28,6 @@ import           Options.Applicative     (Parser, auto, eitherReader,
                                           help, helper, info, long, many,
                                           metavar, option, progDesc, short,
                                           showDefault, strOption, switch, value)
-import           Paths_haskoin_store     as P
 import           System.Exit             (exitSuccess)
 import           System.FilePath         ((</>))
 import           System.IO.Unsafe        (unsafePerformIO)
@@ -37,6 +36,13 @@ import           UnliftIO                (MonadIO)
 import           UnliftIO.Directory      (createDirectoryIfMissing,
                                           getAppUserDataDirectory)
 import           UnliftIO.Environment    (lookupEnv)
+
+version :: String
+#ifdef CURRENT_PACKAGE_VERSION
+version = CURRENT_PACKAGE_VERSION
+#else
+version = "Unavailable"
+#endif
 
 data Config = Config
     { configDir         :: !FilePath
@@ -56,7 +62,8 @@ data Config = Config
     , configRedisMax    :: !Integer
     , configWipeMempool :: !Bool
     , configPeerTimeout :: !Int
-    , configPeerTooOld  :: !Int
+    , configPeerMaxLife :: !Int
+    , configMaxPeers    :: !Int
     }
 
 instance Default Config where
@@ -77,13 +84,19 @@ instance Default Config where
                  , configRedisMax    = defRedisMax
                  , configWipeMempool = defWipeMempool
                  , configPeerTimeout = defPeerTimeout
-                 , configPeerTooOld  = defPeerTooOld
+                 , configPeerMaxLife = defPeerMaxLife
+                 , configMaxPeers    = defMaxPeers
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
 defEnv e d p = do
     ms <- lookupEnv e
     return $ fromMaybe d $ p =<< ms
+
+defMaxPeers :: Int
+defMaxPeers = unsafePerformIO $
+    defEnv "MAX_PEERS" 20 readMaybe
+{-# NOINLINE defMaxPeers #-}
 
 defDirectory :: FilePath
 defDirectory = unsafePerformIO $ do
@@ -182,10 +195,10 @@ defPeerTimeout = unsafePerformIO $
     defEnv "PEER_TIMEOUT" 120 readMaybe
 {-# NOINLINE defPeerTimeout #-}
 
-defPeerTooOld :: Int
-defPeerTooOld = unsafePerformIO $
-    defEnv "PEER_TOO_OLD" (48 * 3600) readMaybe
-{-# NOINLINE defPeerTooOld #-}
+defPeerMaxLife :: Int
+defPeerMaxLife = unsafePerformIO $
+    defEnv "PEER_MAX_LIFE" (48 * 3600) readMaybe
+{-# NOINLINE defPeerMaxLife #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -206,7 +219,7 @@ config :: Parser Config
 config = do
     configDir <-
         strOption $
-        metavar "WORKDIR"
+        metavar "PATH"
         <> long "dir"
         <> short 'd'
         <> help "Data directory"
@@ -248,6 +261,12 @@ config = do
         <> long "peer"
         <> short 'p'
         <> help "Network peer (as many as required)"
+    configMaxPeers <-
+        option auto $
+        metavar "INT"
+        <> long "max-peers"
+        <> showDefault
+        <> value (configMaxPeers def)
     configVersion <-
         switch $
         long "version"
@@ -263,74 +282,74 @@ config = do
         <> help "HTTP request logging"
     maxLimitCount <-
         option auto $
-        metavar "MAXLIMIT"
+        metavar "INT"
         <> long "max-limit"
-        <> help "Hard limit for simple listings (0 = ∞)"
+        <> help "Hard limit for simple listings (0 = inf)"
         <> showDefault
         <> value (maxLimitCount (configWebLimits def))
     maxLimitFull <-
         option auto $
-        metavar "MAXLIMITFULL"
+        metavar "INT"
         <> long "max-full"
-        <> help "Hard limit for full listings (0 = ∞)"
+        <> help "Hard limit for full listings (0 = inf)"
         <> showDefault
         <> value (maxLimitFull (configWebLimits def))
     maxLimitOffset <-
         option auto $
-        metavar "MAXOFFSET"
+        metavar "INT"
         <> long "max-offset"
-        <> help "Hard limit for offsets (0 = ∞)"
+        <> help "Hard limit for offsets (0 = inf)"
         <> showDefault
         <> value (maxLimitOffset (configWebLimits def))
     maxLimitDefault <-
         option auto $
-        metavar "LIMITDEFAULT"
+        metavar "INT"
         <> long "def-limit"
-        <> help "Soft default limit (0 = ∞)"
+        <> help "Soft default limit (0 = inf)"
         <> showDefault
         <> value (maxLimitDefault (configWebLimits def))
     maxLimitGap <-
         option auto $
-        metavar "MAXGAP"
+        metavar "INT"
         <> long "max-gap"
         <> help "Max gap for xpub queries"
         <> showDefault
         <> value (maxLimitGap (configWebLimits def))
     maxLimitInitialGap <-
         option auto $
-        metavar "INITGAP"
+        metavar "INT"
         <> long "init-gap"
         <> help "Max gap for empty xpub"
         <> showDefault
         <> value (maxLimitInitialGap (configWebLimits def))
     blockTimeout <-
         option auto $
-        metavar "BLOCKSECONDS"
+        metavar "SECONDS"
         <> long "block-timeout"
-        <> help "Last block mined health timeout (0 = ∞)"
+        <> help "Last block mined health timeout (0 = inf)"
         <> showDefault
         <> value (blockTimeout (configWebTimeouts def))
     txTimeout <-
         option auto $
-        metavar "TXSECONDS"
+        metavar "SECONDS"
         <> long "tx-timeout"
-        <> help "Last tx recived health timeout (0 = ∞)"
+        <> help "Last tx recived health timeout (0 = inf)"
         <> showDefault
         <> value (txTimeout (configWebTimeouts def))
     configPeerTimeout <-
         option auto $
-        metavar "TIMEOUT"
+        metavar "SECONDS"
         <> long "peer-timeout"
         <> help "Unresponsive peer timeout"
         <> showDefault
         <> value (configPeerTimeout def)
-    configPeerTooOld <-
+    configPeerMaxLife <-
         option auto $
-        metavar "TIMEOUT"
-        <> long "peer-old"
+        metavar "SECONDS"
+        <> long "peer-max-life"
         <> help "Disconnect peers older than this"
         <> showDefault
-        <> value (configPeerTooOld def)
+        <> value (configPeerMaxLife def)
     configRedis <-
         flag (configRedis def) True $
         long "cache"
@@ -343,14 +362,14 @@ config = do
         <> value (configRedisURL def)
     configRedisMin <-
         option auto $
-        metavar "MINADDRS"
+        metavar "INT"
         <> long "cache-min"
         <> help "Minimum used xpub addresses to cache"
         <> showDefault
         <> value (configRedisMin def)
     configRedisMax <-
         option auto $
-        metavar "MAXKEYS"
+        metavar "INT"
         <> long "cache-keys"
         <> help "Maximum number of keys in Redis xpub cache"
         <> showDefault
@@ -394,7 +413,7 @@ main :: IO ()
 main = do
     conf <- execParser opts
     when (configVersion conf) $ do
-        putStrLn $ showVersion P.version
+        putStrLn version
         exitSuccess
     if null (configPeers conf) && not (configDiscover conf)
         then run conf {configDiscover = True}
@@ -405,7 +424,7 @@ main = do
         fullDesc <>
         progDesc "Bitcoin (BCH & BTC) block chain index with HTTP API" <>
         Options.Applicative.header
-            ("haskoin-store version " <> showVersion P.version)
+            ("haskoin-store version " <> version)
 
 run :: Config -> IO ()
 run Config { configHost = host
@@ -424,7 +443,8 @@ run Config { configHost = host
            , configRedisMax = redismax
            , configWipeMempool = wipemempool
            , configPeerTimeout = peertimeout
-           , configPeerTooOld = peerold
+           , configPeerMaxLife = peerlife
+           , configMaxPeers = maxpeers
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -432,7 +452,7 @@ run Config { configHost = host
         createDirectoryIfMissing True wd
         let scfg =
                 StoreConfig
-                    { storeConfMaxPeers = 20
+                    { storeConfMaxPeers = maxpeers
                     , storeConfInitPeers =
                           map (second (fromMaybe (getDefaultPort net))) peers
                     , storeConfDiscover = disc
@@ -447,8 +467,8 @@ run Config { configHost = host
                     , storeConfCacheMin = cachemin
                     , storeConfMaxKeys = redismax
                     , storeConfWipeMempool = wipemempool
-                    , storeConfPeerTimeout = peertimeout
-                    , storeConfPeerTooOld = peerold
+                    , storeConfPeerTimeout = fromIntegral peertimeout
+                    , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
                     }
         withStore scfg $ \st ->
@@ -460,6 +480,7 @@ run Config { configHost = host
                     , webMaxLimits = limits
                     , webReqLog = reqlog
                     , webWebTimeouts = tos
+                    , webVersion = version
                     }
   where
     l _ lvl

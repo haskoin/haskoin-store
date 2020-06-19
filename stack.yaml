@@ -9,7 +9,12 @@ nix:
 packages:
   - store
 extra-deps:
-  - haskoin-node-0.13.0
-  - haskoin-core-0.13.6
-  - secp256k1-haskell-0.2.2
+  - github: haskoin/haskoin-core
+    commit: d313ac58b2f22fa7570a5e1234244b7249a48382
+  - github: haskoin/haskoin-node
+    commit: 315e1dca7f007071e5ee7c6a926b7032a15e00b7
+  - github: haskoin/secp256k1-haskell
+    commit: 239159122cc6f830957759a1d247ded7ffeba915
+  - github: jprupp/nqe
+    commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
   - ./data

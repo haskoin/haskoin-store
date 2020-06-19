@@ -59,7 +59,6 @@ import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             XPubBal (..), XPubSpec (..),
                                             XPubSummary (..), XPubUnspent (..),
                                             nullBalance, toTransaction)
-import           Network.Socket            (SockAddr)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
@@ -268,15 +267,14 @@ blockAtOrBefore q = runMaybeT $ do
 
 
 -- | Events that the store can generate.
-data StoreEvent = StoreBestBlock !BlockHash
+data StoreEvent
+    = StoreBestBlock !BlockHash
     | StoreMempoolNew !TxHash
-    | StorePeerConnected !Peer !SockAddr
-    | StorePeerDisconnected !Peer !SockAddr
+    | StorePeerConnected !Peer
+    | StorePeerDisconnected !Peer
     | StorePeerPong !Peer !Word64
     | StoreTxAvailable !Peer ![TxHash]
     | StoreTxReject !Peer !TxHash !RejectCode !ByteString
-    | StoreTxDeleted !TxHash
-    | StoreBlockReverted !BlockHash
       -- ^ block no longer head of main chain
 
 data PubExcept = PubNoPeers
