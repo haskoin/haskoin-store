@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Fixed
 - Fix corruption bug when deleting transactions during some reorgs.
 - Fix tests on data package.
+- Rename upstream address string functions.
 
 ## 0.32.0
 ### Changed
