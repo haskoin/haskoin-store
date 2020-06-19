@@ -310,12 +310,12 @@ loadPrevOutputs tx =
                 insert_unspent u
             Nothing -> do
                 $(logDebugS) "BlockStore" $
-                    "No UTXO: " <> logOutput op
+                    "No unspent output: " <> logOutput op
                 insert_tx (outPointHash op)
                 insert_spender op
     insert_tx h =
         getActiveTxData h >>= \case
-            Nothing -> do
+            Nothing ->
                 $(logDebugS) "BlockStore" $
                     "No active tx: " <> txHashToHex h
             Just t -> do
@@ -343,7 +343,7 @@ loadPrevOutputs tx =
                 runTx $ insertSpender op x
     insert_unspent u = do
         $(logDebugS) "BlockStore" $
-            "Preloading UTXO: " <> logOutput (unspentPoint u)
+            "Preloading unspent output: " <> logOutput (unspentPoint u)
         mbal <- mapM getBalance (unspentAddress u)
         runTx $ do
             insertUnspent u
