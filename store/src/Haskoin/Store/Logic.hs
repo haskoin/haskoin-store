@@ -22,7 +22,7 @@ import           Control.Monad.Except          (ExceptT (..), MonadError,
                                                 runExceptT, throwError)
 import           Control.Monad.Logger          (LoggingT (..),
                                                 MonadLoggerIO (..), logDebugS,
-                                                logErrorS)
+                                                logErrorS, logWarnS)
 import           Control.Monad.Reader          (ReaderT (ReaderT), runReaderT)
 import           Control.Monad.Trans           (lift)
 import qualified Data.ByteString               as B
@@ -34,8 +34,6 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
-import           Data.String.Conversions       (cs)
-import           Data.Text                     (Text)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
@@ -457,7 +455,13 @@ deleteConfirmedTx :: MonadImport m => TxHash -> WriterT m ()
 deleteConfirmedTx = deleteTx False False
 
 deleteUnconfirmedTx :: MonadImport m => Bool -> TxHash -> WriterT m ()
-deleteUnconfirmedTx = deleteTx True
+deleteUnconfirmedTx rbfcheck th =
+    getActiveTxData th >>= \case
+        Just _ ->
+            deleteTx True rbfcheck th
+        Nothing ->
+            $(logWarnS) "BlockStore" $
+            "Not found or deleted: " <> txHashToHex th
 
 deleteTx
     :: MonadImport m
@@ -754,7 +758,3 @@ testPresent tx =
                 return False
             Just Spender { spenderHash = s } ->
                 return $ s == txHash tx
-
-logOutput :: OutPoint -> Text
-logOutput op =
-    txHashToHex (outPointHash op) <> ":" <> cs (show (outPointIndex op))

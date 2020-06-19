@@ -653,9 +653,7 @@ pruneMempool = do
   where
     delete_it txid = do
         $(logDebugS) "BlockStore" $
-            "Deleting "
-            <> ": " <> txHashToHex txid
-            <> " (old mempool tx)"
+            "Deleting old mempool tx: " <> txHashToHex txid
         deleteUnconfirmedTx False txid
 
 revertToMainChain :: MonadLoggerIO m => BlockT m ()
