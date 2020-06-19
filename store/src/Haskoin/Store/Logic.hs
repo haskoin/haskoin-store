@@ -27,7 +27,6 @@ import           Control.Monad.Trans           (lift)
 import qualified Data.ByteString               as B
 import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
-import qualified Data.HashMap.Strict           as M
 import qualified Data.IntMap.Strict            as I
 import           Data.List                     (nub, sortOn)
 import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
@@ -456,14 +455,14 @@ deleteTx
     -> WriterT m ()
 deleteTx memonly rbfcheck th =
     getChain memonly rbfcheck th >>=
-    mapM_ (deleteSingleTx . txHash . txData)
+    mapM_ (deleteSingleTx . txHash)
 
 getChain
     :: MonadImport m
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> TxHash
-    -> WriterT m [TxData]
+    -> WriterT m [Tx]
 getChain memonly rbfcheck th =
     fmap sort_clean $
     getActiveTxData th >>= \case
@@ -487,14 +486,13 @@ getChain memonly rbfcheck th =
                         throwError DoubleSpend
             | otherwise -> go td
   where
-    sort_clean tds =
-        let m = M.fromList $ map (\x -> (txHash (txData x), x)) tds
-            xs = reverse $ map snd $ sortTxs $ nub' $ map txData tds
-         in mapMaybe (\x -> txHash x `M.lookup` m) xs
+    sort_clean =
+        reverse . map snd . sortTxs . nub'
     go td = do
+        let tx = txData td
         ss <- nub' . map spenderHash . I.elems <$> getSpenders th
         xs <- concat <$> mapM (getChain memonly rbfcheck) ss
-        return $ td : xs
+        return $ tx : xs
 
 deleteSingleTx :: MonadImport m => TxHash -> WriterT m ()
 deleteSingleTx th =
