@@ -7,40 +7,15 @@ module Haskoin.Store.DataSpec
     ( spec
     ) where
 
-import           Control.Monad           (forM_, (<=<))
-import           Data.Aeson              (Encoding, FromJSON (..), Value)
-import qualified Data.Aeson              as A
-import           Data.Aeson.Encoding     (encodingToLazyByteString)
-import           Data.Aeson.Types        (Parser, parseMaybe)
+import           Control.Monad           (forM_)
+import           Data.Aeson              (FromJSON (..))
 import qualified Data.ByteString.Short   as BSS
-import           Data.Map.Strict         (singleton)
-import           Data.Proxy
-import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
-import qualified Data.Typeable           as T
 import           Haskoin
 import           Haskoin.Store.Data
 import           Haskoin.Util.Arbitrary
-import           Test.Hspec              (Spec, describe, shouldBe,
-                                          shouldSatisfy)
-import           Test.Hspec.QuickCheck   (prop)
+import           Test.Hspec              (Spec, describe)
 import           Test.QuickCheck
-
-data SerialBox =
-    forall a. (Show a, Eq a, T.Typeable a, S.Serialize a) =>
-              SerialBox (Gen a)
-
-data JsonBox =
-    forall a. (Show a, Eq a, T.Typeable a, A.ToJSON a, A.FromJSON a) =>
-              JsonBox (Gen a)
-
-data NetBox =
-    forall a. (Show a, Eq a, T.Typeable a, Arbitrary a) =>
-              NetBox ( Network -> a -> Value
-                     , Network -> a -> Encoding
-                     , Network -> Value -> Parser a
-                     , Gen (Network, a)
-                     )
 
 serialVals :: [SerialBox]
 serialVals =
@@ -130,62 +105,6 @@ spec = do
         forM_ jsonVals $ \(JsonBox g) -> testJson g
     describe "Data.Aeson Encoding with Network" $
         forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
-
-testSerial :: (Eq a, Show a, T.Typeable a, S.Serialize a) => Gen a -> Spec
-testSerial gen =
-    prop ("Data.Serialize encoding/decoding identity for " <> name) $
-    forAll gen $ \x -> (S.decode . S.encode) x `shouldBe` Right x
-  where
-    name = show $ T.typeRep $ proxy gen
-    proxy :: Gen a -> Proxy a
-    proxy = const Proxy
-
-testJson ::
-       (Eq a, Show a, T.Typeable a, A.ToJSON a, A.FromJSON a) => Gen a -> Spec
-testJson gen = do
-    prop ("Data.Aeson toJSON/fromJSON identity for " <> name) $
-        forAll gen (`shouldSatisfy` jsonID)
-    prop ("Data.Aeson toEncoding/fromJSON identity for " <> name) $
-        forAll gen (`shouldSatisfy` encodingID)
-  where
-    name = show $ T.typeRep $ proxy gen
-    proxy :: Gen a -> Proxy a
-    proxy = const Proxy
-    jsonID x =
-        (A.fromJSON . A.toJSON) (singleton ("object" :: String) x) ==
-        A.Success (singleton ("object" :: String) x)
-    encodingID x =
-        (A.decode . encodingToLazyByteString . A.toEncoding)
-            (singleton ("object" :: String) x) ==
-        Just (singleton ("object" :: String) x)
-
-testNetJson ::
-       (Eq a, Show a, T.Typeable a, Arbitrary a)
-    => (Network -> a -> Value)
-    -> (Network -> a -> Encoding)
-    -> (Network -> Value -> Parser a)
-    -> Gen (Network, a)
-    -> Spec
-testNetJson j e p g = do
-    prop ("Data.Aeson toJSON/fromJSON identity (with network) for " <> name) $
-        forAll g $ \(net, x) ->
-            dec net (encVal net x) `shouldBe` Just x
-    prop ("Data.Aeson toEncoding/fromJSON identity (with network) for " <> name) $
-        forAll g $ \(net, x) ->
-            dec net (encEnc net x) `shouldBe` Just x
-  where
-    encVal net = A.encode . j net
-    encEnc net = encodingToLazyByteString . e net
-    dec net = parseMaybe (p net) <=< A.decode
-    name = show $ T.typeRep $ proxy j
-    proxy :: (Network -> a -> Value) -> Proxy a
-    proxy = const Proxy
-
-arbitraryNetData :: Arbitrary a => Gen (Network, a)
-arbitraryNetData = do
-    net <- arbitraryNetwork
-    x <- arbitrary
-    return (net, x)
 
 instance Arbitrary BlockRef where
     arbitrary =
@@ -397,7 +316,7 @@ instance Arbitrary Except where
     arbitrary =
         oneof
         [ return ThingNotFound
-        , return ServerError    
+        , return ServerError
         , return BadRequest
         , UserError <$> arbitrary
         , StringError <$> arbitrary

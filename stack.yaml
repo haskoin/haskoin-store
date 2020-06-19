@@ -8,6 +8,7 @@ nix:
     - pkg-config
 packages:
   - store
+  - data
 extra-deps:
   - github: haskoin/haskoin-core
     commit: 88b68285e815ed658b49ab98be77b6834c6ecb97
@@ -17,4 +18,3 @@ extra-deps:
     commit: 239159122cc6f830957759a1d247ded7ffeba915
   - github: jprupp/nqe
     commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
-  - ./data
