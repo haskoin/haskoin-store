@@ -497,14 +497,22 @@ getChain memonly rbfcheck th =
 deleteSingleTx :: MonadImport m => TxHash -> WriterT m ()
 deleteSingleTx th =
     getActiveTxData th >>= \case
-        Nothing ->
-            $(logDebugS) "BlockStore" $
+        Nothing -> do
+            $(logErrorS) "BlockStore" $
                 "Already deleted: " <> txHashToHex th
+            throwError TxNotFound
         Just td -> do
             $(logDebugS) "BlockStore" $
                 "Deleting tx: " <> txHashToHex th
-            preLoadMemory [txData td]
-            runTx $ commitDelTx td
+            getSpenders th >>= \case
+                m | I.null m -> do
+                        preLoadMemory [txData td]
+                        runTx $ commitDelTx td
+                  | otherwise -> do
+                        $(logErrorS) "BlockStore" $
+                            "Tried to delete spent tx: "
+                            <> txHashToHex th
+                        throwError TxSpent
 
 commitDelTx :: TxData -> MemoryTx ()
 commitDelTx = commitModTx False []
