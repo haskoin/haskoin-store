@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.32.1
 ### Fixed
 - Fix corruption bug when deleting transactions during some reorgs.
+- Fix tests on data package.
 
 ## 0.32.0
 ### Changed
