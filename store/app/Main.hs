@@ -136,7 +136,7 @@ defDiscover = unsafePerformIO $
 
 defPeers :: [(String, Maybe Int)]
 defPeers = unsafePerformIO $
-    defEnv "PEERS" [] (mapM (eitherToMaybe . peerReader) . words)
+    defEnv "PEER" [] (mapM (eitherToMaybe . peerReader) . words)
 {-# NOINLINE defPeers #-}
 
 defDebug :: Bool
@@ -151,12 +151,12 @@ defReqLog = unsafePerformIO $
 
 defWebLimits :: WebLimits
 defWebLimits = unsafePerformIO $ do
-    max_limit <- defEnv "MAX_LIMIT" (maxLimitCount def) readMaybe
-    max_full <- defEnv "MAX_FULL" (maxLimitFull def) readMaybe
+    max_limit  <- defEnv "MAX_LIMIT" (maxLimitCount def) readMaybe
+    max_full   <- defEnv "MAX_FULL" (maxLimitFull def) readMaybe
     max_offset <- defEnv "MAX_OFFSET" (maxLimitOffset def) readMaybe
-    def_limit <- defEnv "DEF_LIMIT" (maxLimitDefault def) readMaybe
-    max_gap <- defEnv "MAX_GAP" (maxLimitGap def) readMaybe
-    init_gap <- defEnv "INIT_GAP" (maxLimitInitialGap def) readMaybe
+    def_limit  <- defEnv "DEF_LIMIT" (maxLimitDefault def) readMaybe
+    max_gap    <- defEnv "MAX_GAP" (maxLimitGap def) readMaybe
+    init_gap   <- defEnv "INIT_GAP" (maxLimitInitialGap def) readMaybe
     return WebLimits { maxLimitCount = max_limit
                      , maxLimitFull = max_full
                      , maxLimitOffset = max_offset
@@ -169,7 +169,7 @@ defWebLimits = unsafePerformIO $ do
 defWebTimeouts :: WebTimeouts
 defWebTimeouts = unsafePerformIO $ do
     block_timeout <- defEnv "BLOCK_TIMEOUT" (blockTimeout def) readMaybe
-    tx_timeout <- defEnv "TX_TIMEOUT" (txTimeout def) readMaybe
+    tx_timeout    <- defEnv "TX_TIMEOUT" (txTimeout def) readMaybe
     return WebTimeouts { txTimeout = tx_timeout
                        , blockTimeout = block_timeout
                        }
@@ -229,15 +229,14 @@ config = do
         strOption $
         metavar "HOST"
         <> long "host"
-        <> help "Listen on network interface"
+        <> help "Host to bind"
         <> showDefault
         <> value (configHost def)
     configPort <-
         option auto $
-        metavar "PORT"
-        <> long "listen"
-        <> short 'l'
-        <> help "Listening port"
+        metavar "INT"
+        <> long "port"
+        <> help "REST API listening port"
         <> showDefault
         <> value (configPort def)
     configNetwork <-
@@ -249,9 +248,8 @@ config = do
         <> showDefault
         <> value (configNetwork def)
     configDiscover <-
-        switch $
-        long "auto"
-        <> short 'a'
+        flag (configDiscover def) True $
+        long "discover"
         <> help "Peer discovery"
     configPeers <-
         fmap (mappend defPeers) $
