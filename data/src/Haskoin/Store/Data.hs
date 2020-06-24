@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 module Haskoin.Store.Data
     ( -- * Address Balances
       Balance(..)
@@ -71,6 +72,10 @@ module Haskoin.Store.Data
     , RawResult(..)
     , RawResultList(..)
     , PeerInformation(..)
+    , Healthy(..)
+    , BlockHealth(..)
+    , TimeHealth(..)
+    , CountHealth(..)
     , HealthCheck(..)
     , Event(..)
     , Except(..)
@@ -1103,92 +1108,195 @@ instance FromJSON XPubSummary where
                     , xPubChangeIndex = change
                     }
 
+class Healthy a where
+    isOK :: a -> Bool
+
+data BlockHealth =
+    BlockHealth
+        { blockHealthHeaders :: !BlockHeight
+        , blockHealthBlocks  :: !BlockHeight
+        , blockHealthMaxDiff :: !BlockHeight
+        }
+    deriving (Show, Eq, Generic, NFData)
+
+instance Serialize BlockHealth where
+    put h@BlockHealth {..} = do
+        put (isOK h)
+        put blockHealthHeaders
+        put blockHealthBlocks
+        put blockHealthMaxDiff
+    get = do
+        k <- get
+        blockHealthHeaders <- get
+        blockHealthBlocks  <- get
+        blockHealthMaxDiff <- get
+        let h = BlockHealth {..}
+        guard (k == isOK h)
+        return h
+
+instance Healthy BlockHealth where
+    isOK BlockHealth {..} =
+        blockHealthHeaders - blockHealthBlocks <= blockHealthMaxDiff
+
+instance ToJSON BlockHealth where
+    toJSON h@BlockHealth {..} =
+        object
+            [ "headers"  .= blockHealthHeaders
+            , "blocks"   .= blockHealthBlocks
+            , "diff"     .= diff
+            , "max"      .= blockHealthMaxDiff
+            , "ok"       .= isOK h
+            ]
+      where
+        diff = blockHealthHeaders - blockHealthBlocks
+
+instance FromJSON BlockHealth where
+    parseJSON =
+        A.withObject "BlockHealth" $ \o -> do
+            blockHealthHeaders  <- o .: "headers"
+            blockHealthBlocks   <- o .: "blocks"
+            blockHealthMaxDiff  <- o .: "max"
+            return BlockHealth {..}
+
+data TimeHealth =
+    TimeHealth
+        { timeHealthAge :: !Int
+        , timeHealthMax :: !Int
+        }
+    deriving (Show, Eq, Generic, NFData)
+
+instance Serialize TimeHealth where
+    put h@TimeHealth {..} = do
+        put (isOK h)
+        put timeHealthAge
+        put timeHealthMax
+    get = do
+        k <- get
+        timeHealthAge <- get
+        timeHealthMax <- get
+        let t = TimeHealth {..}
+        guard (k == isOK t)
+        return t
+
+instance Healthy TimeHealth where
+    isOK TimeHealth {..} =
+        timeHealthAge <= timeHealthMax
+
+instance ToJSON TimeHealth where
+    toJSON h@TimeHealth {..} =
+        object
+            [ "age"  .= timeHealthAge
+            , "max"  .= timeHealthMax
+            , "ok"   .= isOK h
+            ]
+
+instance FromJSON TimeHealth where
+    parseJSON =
+        A.withObject "TimeHealth" $ \o -> do
+            timeHealthAge <- o .: "age"
+            timeHealthMax <- o .: "max"
+            return TimeHealth {..}
+
+data CountHealth =
+    CountHealth
+        { countHealthNum :: !Int
+        , countHealthMin :: !Int
+        }
+    deriving (Show, Eq, Generic, NFData)
+
+instance Serialize CountHealth where
+    put h@CountHealth {..} = do
+        put (isOK h)
+        put countHealthNum
+        put countHealthMin
+    get = do
+        k <- get
+        countHealthNum <- get
+        countHealthMin <- get
+        let c = CountHealth {..}
+        guard (k == isOK c)
+        return c
+
+instance Healthy CountHealth where
+    isOK CountHealth {..} =
+        countHealthMin <= countHealthNum
+
+instance ToJSON CountHealth where
+    toJSON h@CountHealth {..} =
+        object
+            [ "count"  .= countHealthNum
+            , "min"    .= countHealthMin
+            , "ok"     .= isOK h
+            ]
+
+instance FromJSON CountHealth where
+    parseJSON =
+        A.withObject "CountHealth" $ \o -> do
+            countHealthNum <- o .: "count"
+            countHealthMin <- o .: "min"
+            return CountHealth {..}
+
 data HealthCheck =
     HealthCheck
-        { healthHeaderBest   :: !(Maybe BlockHash)
-        , healthHeaderHeight :: !(Maybe BlockHeight)
-        , healthBlockBest    :: !(Maybe BlockHash)
-        , healthBlockHeight  :: !(Maybe BlockHeight)
-        , healthPeers        :: !(Maybe Int)
-        , healthNetwork      :: !String
-        , healthOK           :: !Bool
-        , healthSynced       :: !Bool
-        , healthLastBlock    :: !(Maybe Word64)
-        , healthLastTx       :: !(Maybe Word64)
-        , healthVersion      :: !String
+        { healthBlocks     :: !BlockHealth
+        , healthLastBlock  :: !TimeHealth
+        , healthLastTx     :: !TimeHealth
+        , healthPeers      :: !CountHealth
+        , healthNetwork    :: !String
+        , healthVersion    :: !String
         }
-    deriving (Show, Eq, Generic, Serialize, NFData)
+    deriving (Show, Eq, Generic, NFData)
+
+instance Serialize HealthCheck where
+    put h@HealthCheck {..} = do
+        put (isOK h)
+        put healthBlocks
+        put healthLastBlock
+        put healthLastTx
+        put healthPeers
+        put healthNetwork
+        put healthVersion
+    get = do
+        k <- get
+        healthBlocks        <- get
+        healthLastBlock     <- get
+        healthLastTx        <- get
+        healthPeers         <- get
+        healthNetwork       <- get
+        healthVersion       <- get
+        let h = HealthCheck {..}
+        guard (k == isOK h)
+        return h
+
+instance Healthy HealthCheck where
+    isOK HealthCheck {..} =
+        isOK healthBlocks &&
+        isOK healthLastBlock &&
+        isOK healthLastTx &&
+        isOK healthPeers
 
 instance ToJSON HealthCheck where
-    toJSON h =
+    toJSON h@HealthCheck {..} =
         object
-            [ "headers" .=
-              object
-                  [ "hash" .= healthHeaderBest h
-                  , "height" .= healthHeaderHeight h
-                  ]
-            , "blocks" .=
-              object
-                  ["hash" .= healthBlockBest h, "height" .= healthBlockHeight h]
-            , "peers" .= healthPeers h
-            , "net" .= healthNetwork h
-            , "ok" .= healthOK h
-            , "synced" .= healthSynced h
-            , "version" .= healthVersion h
-            , "lastblock" .= healthLastBlock h
-            , "lasttx" .= healthLastTx h
+            [ "blocks"      .= healthBlocks
+            , "last-block"  .= healthLastBlock
+            , "last-tx"     .= healthLastTx
+            , "peers"       .= healthPeers
+            , "net"         .= healthNetwork
+            , "version"     .= healthVersion
+            , "ok"          .= isOK h
             ]
-    toEncoding h =
-        pairs
-            (  "headers" `pair`
-              pairs
-                  (  "hash" .= healthHeaderBest h
-                  <> "height" .= healthHeaderHeight h
-                  )
-            <> "blocks" `pair`
-              pairs
-                  (  "hash" .= healthBlockBest h
-                  <> "height" .= healthBlockHeight h
-                  )
-            <> "peers" .= healthPeers h
-            <> "net" .= healthNetwork h
-            <> "ok" .= healthOK h
-            <> "synced" .= healthSynced h
-            <> "version" .= healthVersion h
-            <> "lastblock" .= healthLastBlock h
-            <> "lasttx" .= healthLastTx h
-            )
 
 instance FromJSON HealthCheck where
     parseJSON =
-        A.withObject "healthcheck" $ \o -> do
-            headers <- o .: "headers"
-            headers_hash <- headers .: "hash"
-            headers_height <- headers .: "height"
-            blocks <- o .: "blocks"
-            blocks_hash <- blocks .: "hash"
-            blocks_height <- blocks .: "height"
-            peers <- o .: "peers"
-            net <- o .: "net"
-            ok <- o .: "ok"
-            synced <- o .: "synced"
-            lastblock <- o .: "lastblock"
-            lasttx <- o .: "lasttx"
-            ver <- o .: "version"
-            return
-                HealthCheck
-                    { healthHeaderBest = headers_hash
-                    , healthHeaderHeight = headers_height
-                    , healthBlockBest = blocks_hash
-                    , healthBlockHeight = blocks_height
-                    , healthPeers = peers
-                    , healthNetwork = net
-                    , healthOK = ok
-                    , healthSynced = synced
-                    , healthLastBlock = lastblock
-                    , healthLastTx = lasttx
-                    , healthVersion = ver
-                    }
+        A.withObject "HealthCheck" $ \o -> do
+            healthBlocks    <- o .: "blocks"
+            healthLastBlock <- o .: "last-block"
+            healthLastTx    <- o .: "last-tx"
+            healthPeers     <- o .: "peers"
+            healthNetwork   <- o .: "net"
+            healthVersion   <- o .: "version"
+            return HealthCheck {..}
 
 data Event
     = EventBlock !BlockHash

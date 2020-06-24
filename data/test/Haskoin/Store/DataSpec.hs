@@ -199,15 +199,29 @@ instance Arbitrary PeerInformation where
             <*> arbitrary
             <*> arbitrary
 
+instance Arbitrary BlockHealth where
+    arbitrary =
+        BlockHealth
+            <$> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+
+instance Arbitrary TimeHealth where
+    arbitrary =
+        TimeHealth
+            <$> arbitrary
+            <*> arbitrary
+
+instance Arbitrary CountHealth where
+    arbitrary =
+        CountHealth
+            <$> arbitrary
+            <*> arbitrary
+
 instance Arbitrary HealthCheck where
     arbitrary =
         HealthCheck
-            <$> arbitraryMaybe arbitraryBlockHash
-            <*> arbitrary
-            <*> arbitraryMaybe arbitraryBlockHash
-            <*> arbitrary
-            <*> arbitrary
-            <*> arbitrary
+            <$> arbitrary
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary

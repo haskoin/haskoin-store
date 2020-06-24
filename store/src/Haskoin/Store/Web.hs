@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
 module Haskoin.Store.Web
@@ -16,7 +17,7 @@ module Haskoin.Store.Web
 
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
-import           Control.Monad                 (forever, when, (<=<))
+import           Control.Monad                 (forever, unless, when, (<=<))
 import           Control.Monad.Logger          (MonadLoggerIO, logInfoS)
 import           Control.Monad.Reader          (ReaderT, asks, local,
                                                 runReaderT)
@@ -33,7 +34,7 @@ import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
 import           Data.Function                 ((&))
 import           Data.List                     (nub)
-import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
+import           Data.Maybe                    (catMaybes, fromMaybe,
                                                 listToMaybe, mapMaybe)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
@@ -874,83 +875,64 @@ scottyHealth _ = do
     tos <- lift $ asks webWebTimeouts
     ver <- lift $ asks webVersion
     h <- lift $ healthCheck net mgr chn tos ver
-    when (not (healthOK h) || not (healthSynced h)) $ S.status status503
+    unless (isOK h) $ S.status status503
     return h
 
-healthCheck ::
-       (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
-    => Network
-    -> PeerManager
-    -> Chain
-    -> WebTimeouts
-    -> String
-    -> m HealthCheck
+blockHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+                 => Chain -> m BlockHealth
+blockHealthCheck ch = do
+    let blockHealthMaxDiff = 2
+    blockHealthHeaders <-
+        H.nodeHeight <$> chainGetBest ch
+    blockHealthBlocks <-
+        maybe 0 blockDataHeight <$>
+        runMaybeT (MaybeT getBestBlock >>= MaybeT . getBlock)
+    return BlockHealth {..}
+
+lastBlockHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+                     => Chain -> WebTimeouts -> m TimeHealth
+lastBlockHealthCheck ch tos = do
+    n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    t <- fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
+    let timeHealthAge = n - t
+        timeHealthMax = fromIntegral $ blockTimeout tos
+    return TimeHealth {..}
+
+lastTxHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+                  => Chain -> WebTimeouts -> m TimeHealth
+lastTxHealthCheck ch tos = do
+    n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    t <- listToMaybe <$> getMempool >>= \case
+        Just  t ->
+            return $ fromIntegral $ memRefTime $ txRefBlock t
+        Nothing ->
+            fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
+    let timeHealthAge = n - t
+        timeHealthMax = fromIntegral $ txTimeout tos
+    return TimeHealth {..}
+
+peerHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+                => PeerManager -> m CountHealth
+peerHealthCheck mgr = do
+    let countHealthMin = 1
+    countHealthNum <- length <$> getPeers mgr
+    return CountHealth {..}
+
+healthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+            => Network
+            -> PeerManager
+            -> Chain
+            -> WebTimeouts
+            -> String
+            -> m HealthCheck
 healthCheck net mgr ch tos ver = do
-    chain_best <- get_chain_best
-    block_best <- get_block_store_best
-    peer_count <- get_peer_count
-    time <- get_current_time
-    mempool_last <- get_mempool_last
-    let chain_ok = is_block_ok chain_best
-        block_ok = is_block_ok block_best
-        peer_count_ok = is_peer_count_ok peer_count
-        block_time_delta = get_block_time_delta time chain_best
-        tx_time_delta = get_tx_time_delta time block_time_delta mempool_last
-        block_timeout_ok = is_timeout_ok (blockTimeout tos) block_time_delta
-        tx_timeout_ok = is_timeout_ok (txTimeout tos) tx_time_delta
-        in_sync = is_in_sync block_best chain_best
-        ok = chain_ok &&
-             block_ok &&
-             peer_count_ok &&
-             block_timeout_ok &&
-             (tx_timeout_ok || not in_sync)
-    return
-        HealthCheck
-            { healthBlockBest = block_data_hash <$> block_best
-            , healthBlockHeight = block_data_height <$> block_best
-            , healthHeaderBest = node_hash <$> chain_best
-            , healthHeaderHeight = node_height <$> chain_best
-            , healthPeers = peer_count
-            , healthNetwork = getNetworkName net
-            , healthOK = ok
-            , healthSynced = in_sync
-            , healthLastBlock = block_time_delta
-            , healthLastTx = tx_time_delta
-            , healthVersion = ver
-            }
-  where
-    block_data_hash = H.headerHash . blockDataHeader
-    block_data_height = blockDataHeight
-    node_hash = H.headerHash . H.nodeHeader
-    node_height = H.nodeHeight
-    get_mempool_last = listToMaybe <$> getMempool
-    get_current_time = fromIntegral . systemSeconds <$> liftIO getSystemTime
-    is_peer_count_ok pc = fromMaybe 0 pc > 0
-    is_block_ok = isJust
-    node_timestamp = fromIntegral . H.blockTimestamp . H.nodeHeader
-    is_in_sync bb cb = fromMaybe False $ do
-        bh <- blockDataHeight <$> bb
-        nh <- H.nodeHeight <$> cb
-        return $ compute_delta bh nh <= 1
-    get_block_time_delta tm cb = do
-        bt <- node_timestamp <$> cb
-        return $ compute_delta bt tm
-    get_tx_time_delta tm bd ml = do
-        bd' <- bd
-        tt <- memRefTime . txRefBlock <$> ml <|> bd
-        return $ min (compute_delta tt tm) bd'
-    is_timeout_ok to td = fromMaybe False $ do
-        td' <- td
-        return $
-          getAllowMinDifficultyBlocks net ||
-          to == 0 ||
-          td' <= to
-    get_peer_count = fmap length <$> timeout 10000000 (getPeers mgr)
-    get_block_store_best = runMaybeT $ do
-        h <- MaybeT getBestBlock
-        MaybeT $ getBlock h
-    get_chain_best = timeout 10000000 $ chainGetBest ch
-    compute_delta a b = if b > a then b - a else 0
+    healthBlocks <- blockHealthCheck ch
+    healthLastBlock <- lastBlockHealthCheck ch tos
+    healthLastTx <- lastTxHealthCheck ch tos
+    healthPeers <- peerHealthCheck mgr
+    let healthNetwork = getNetworkName net
+        healthVersion = ver
+    return HealthCheck {..}
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do

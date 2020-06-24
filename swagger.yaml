@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: '0.33.1'
+  version: &version 0.34.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
@@ -49,18 +49,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthCheck'
-              example:
-                headers:
-                  height: 1283593
-                  hash: '00000000000003ad033d7508575ea8f8fd4d9d5d331a9ecd22ab712bdbc35dbb'
-                blocks:
-                  height: 0
-                  hash: '000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943'
-                peers: 0
-                net: bchtest
-                ok: false
-                synced: false
-                version: '0.1.2'
             application/octet-stream:
               schema:
                 type: string
@@ -1766,67 +1754,93 @@ components:
           description: This peer will relay transactions.
           example: true
 
-    HealthCheck:
+    BlockHealth:
       type: object
       required:
         - headers
         - blocks
-        - peers
-        - net
+        - diff
+        - max
         - ok
-        - synced
-        - version
       properties:
         headers:
-          type: object
-          description: Information about block chain headers.
-          required:
-            - hash
-            - height
-          properties:
-            hash:
-              type: string
-              nullable: true
-              example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
-            height:
-              type: integer
-              nullable: true
-              example: 1283393
-        blocks:
-          type: object
-          description: Information about indexed blocks.
-          required:
-            - hash
-            - height
-          properties:
-            hash:
-              type: string
-              nullable: true
-              example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
-            height:
-              type: integer
-              nullable: true
-              example: 1283393
-        peers:
           type: integer
-          description: Number of connected peers.
-          nullable: true
-          example: 20
-        net:
-          type: string
-          description: Network to which this node is connected.
-          example: bchtest
+          example: 500000
+        blocks:
+          type: integer
+          example: 500000
+        diff:
+          type: integer
+          example: 0
+        max:
+          type: integer
+          example: 2
         ok:
           type: boolean
-          description: Node is in good health.
           example: true
-        synced:
+
+    TimeHealth:
+      type: object
+      required:
+        - age
+        - max
+        - ok
+      properties:
+        age:
+          type: integer
+          example: 20
+        max:
+          type: integer
+          example: 600
+        ok:
           type: boolean
-          description: Block chain is fully indexed.
           example: true
+
+    CountHealth:
+      type: object
+      required:
+        - count
+        - min
+        - ok
+      properties:
+        count:
+          type: integer
+          example: 20
+        min:
+          type: integer
+          example: 5
+        ok:
+          type: boolean
+          example: true
+
+    HealthCheck:
+      type: object
+      required:
+        - blocks
+        - last-block
+        - last-tx
+        - peers
+        - net
+        - version
+        - ok
+      properties:
+        blocks:
+          $ref: '#/components/schemas/BlockHealth'
+        last-block:
+          $ref: '#/components/schemas/TimeHealth'
+        last-tx:
+          $ref: '#/components/schemas/TimeHealth'
+        peers:
+          $ref: '#/components/schemas/CountHealth'
+        net:
+          type: string
+          example: bchtest
         version:
           type: string
-          example: '0.1.2'
+          example: *version
+        ok:
+          type: boolean
+          example: true
 
     Error:
       type: object
