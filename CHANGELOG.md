@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.33.1
+### Changed
+- Upload with updated Cabal files.
+
 ## 0.33.0
 ### Fixed
 - Fix outputs showing up as both spent and unspent.
