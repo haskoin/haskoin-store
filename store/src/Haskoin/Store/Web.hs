@@ -54,10 +54,7 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 getPeers, sendMessage)
 import           Haskoin.Store.Cache           (CacheT, evictFromCache,
                                                 withCache)
-import           Haskoin.Store.Common          (Limits (..), PubExcept (..),
-                                                Start (..), StoreEvent (..),
-                                                StoreRead (..), blockAtOrBefore,
-                                                getTransaction)
+import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
@@ -127,20 +124,22 @@ instance Default WebTimeouts where
     def = WebTimeouts {txTimeout = 300, blockTimeout = 7200}
 
 instance (MonadUnliftIO m, MonadLoggerIO m) =>
-         StoreRead (ReaderT WebConfig m) where
-    getMaxGap = runInWebReader getMaxGap
-    getInitialGap = runInWebReader getInitialGap
+         StoreReadBase (ReaderT WebConfig m) where
     getNetwork = runInWebReader getNetwork
     getBestBlock = runInWebReader getBestBlock
     getBlocksAtHeight height = runInWebReader (getBlocksAtHeight height)
     getBlock bh = runInWebReader (getBlock bh)
     getTxData th = runInWebReader (getTxData th)
     getSpender op = runInWebReader (getSpender op)
-    getSpenders th = runInWebReader (getSpenders th)
     getUnspent op = runInWebReader (getUnspent op)
     getBalance a = runInWebReader (getBalance a)
-    getBalances as = runInWebReader (getBalances as)
     getMempool = runInWebReader getMempool
+
+instance (MonadUnliftIO m, MonadLoggerIO m) =>
+         StoreReadExtra (ReaderT WebConfig m) where
+    getMaxGap = runInWebReader getMaxGap
+    getInitialGap = runInWebReader getInitialGap
+    getBalances as = runInWebReader (getBalances as)
     getAddressesTxs as = runInWebReader . getAddressesTxs as
     getAddressesUnspents as = runInWebReader . getAddressesUnspents as
     xPubBals = runInWebReader . xPubBals
@@ -148,18 +147,19 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     xPubUnspents xpub = runInWebReader . xPubUnspents xpub
     xPubTxs xpub = runInWebReader . xPubTxs xpub
 
-instance (MonadUnliftIO m, MonadLoggerIO m) => StoreRead (WebT m) where
+instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadBase (WebT m) where
     getNetwork = lift getNetwork
     getBestBlock = lift getBestBlock
     getBlocksAtHeight = lift . getBlocksAtHeight
     getBlock = lift . getBlock
     getTxData = lift . getTxData
     getSpender = lift . getSpender
-    getSpenders = lift . getSpenders
     getUnspent = lift . getUnspent
     getBalance = lift . getBalance
-    getBalances = lift . getBalances
     getMempool = lift getMempool
+
+instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
+    getBalances = lift . getBalances
     getAddressesTxs as = lift . getAddressesTxs as
     getAddressesUnspents as = lift . getAddressesUnspents as
     xPubBals = lift . xPubBals
@@ -494,7 +494,7 @@ getRawBlock h = do
     refuseLargeBlock b
     toRawBlock b
 
-toRawBlock :: (Monad m, StoreRead m) => BlockData -> m H.Block
+toRawBlock :: (Monad m, StoreReadBase m) => BlockData -> m H.Block
 toRawBlock b = do
     let ths = blockDataTxs b
     txs <- map transactionData . catMaybes <$> mapM getTransaction ths
@@ -626,7 +626,7 @@ scottyTxAfter (GetTxAfter txid height) =
 -- specified height. Returns'Nothing' if answer cannot be computed before
 -- hitting limits.
 cbAfterHeight ::
-       (MonadIO m, StoreRead m)
+       (MonadIO m, StoreReadBase m)
     => H.BlockHeight
     -> TxHash
     -> m (Maybe Bool)
@@ -671,7 +671,7 @@ scottyPostTx (PostTx tx) = do
 
 -- | Publish a new transaction to the network.
 publishTx ::
-       (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
+       (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
     => Network
     -> Publisher StoreEvent
     -> PeerManager
@@ -766,15 +766,15 @@ scottyAddrTxsFull (GetAddrTxsFull addr pLimits) = do
     txs <- getAddressTxs addr =<< paramToLimits True pLimits
     catMaybes <$> mapM (getTransaction . txRefHash) txs
 
-scottyAddrsTxsFull ::
-       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxsFull -> WebT m [Transaction]
+scottyAddrsTxsFull :: (MonadUnliftIO m, MonadLoggerIO m)
+                   => GetAddrsTxsFull -> WebT m [Transaction]
 scottyAddrsTxsFull (GetAddrsTxsFull addrs pLimits) = do
     txs <- getAddressesTxs addrs =<< paramToLimits True pLimits
     catMaybes <$> mapM (getTransaction . txRefHash) txs
 
-scottyAddrBalance ::
-       (MonadUnliftIO m, MonadLoggerIO m) => GetAddrBalance -> WebT m Balance
-scottyAddrBalance (GetAddrBalance addr) = getBalance addr
+scottyAddrBalance :: (MonadUnliftIO m, MonadLoggerIO m)
+                  => GetAddrBalance -> WebT m Balance
+scottyAddrBalance (GetAddrBalance addr) = getDefaultBalance addr
 
 scottyAddrsBalance ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsBalance -> WebT m [Balance]
@@ -878,7 +878,7 @@ scottyHealth _ = do
     return h
 
 healthCheck ::
-       (MonadUnliftIO m, MonadLoggerIO m, StoreRead m)
+       (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
     => Network
     -> PeerManager
     -> Chain

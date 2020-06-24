@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.33.0
+### Fixed
+- Fix outputs showing up as both spent and unspent.
+
+### Changed
+- Simplify data structures used to hold uncommitted changes.
+- Split StoreRead class in two.
+- Improve pre-loading algorithms.
+
 ## 0.32.3
 ### Fixed
 - Fix command line argument mappings to env vars.

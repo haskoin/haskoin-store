@@ -5,15 +5,19 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TupleSections     #-}
 module Haskoin.Store.Common
     ( Limits(..)
     , Start(..)
-    , StoreRead(..)
+    , StoreReadBase(..)
+    , StoreReadExtra(..)
     , StoreWrite(..)
     , StoreEvent(..)
     , PubExcept(..)
     , getActiveBlock
     , getActiveTxData
+    , getDefaultBalance
+    , getSpenders
     , xPubBalsTxs
     , xPubBalsUnspents
     , getTransaction
@@ -37,8 +41,9 @@ import           Data.Function             (on)
 import           Data.Hashable             (Hashable)
 import qualified Data.HashSet              as H
 import           Data.IntMap.Strict        (IntMap)
+import qualified Data.IntMap.Strict        as I
 import           Data.List                 (sortBy)
-import           Data.Maybe                (listToMaybe)
+import           Data.Maybe                (catMaybes, listToMaybe)
 import           Data.Serialize            (Serialize (..))
 import           Data.Word                 (Word32, Word64)
 import           GHC.Generics              (Generic)
@@ -58,7 +63,8 @@ import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             TxRef (..), UnixTime, Unspent (..),
                                             XPubBal (..), XPubSpec (..),
                                             XPubSummary (..), XPubUnspent (..),
-                                            nullBalance, toTransaction)
+                                            nullBalance, toTransaction,
+                                            zeroBalance)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
@@ -86,28 +92,30 @@ defaultLimits = Limits { limit = 0, offset = 0, start = Nothing }
 instance Default Limits where
     def = defaultLimits
 
-class Monad m =>
-      StoreRead m
-    where
+class Monad m => StoreReadBase m where
     getNetwork :: m Network
     getBestBlock :: m (Maybe BlockHash)
     getBlocksAtHeight :: BlockHeight -> m [BlockHash]
     getBlock :: BlockHash -> m (Maybe BlockData)
     getTxData :: TxHash -> m (Maybe TxData)
-    getSpenders :: TxHash -> m (IntMap Spender)
     getSpender :: OutPoint -> m (Maybe Spender)
-    getBalance :: Address -> m Balance
-    getBalance a = head <$> getBalances [a]
+    getBalance :: Address -> m (Maybe Balance)
+    getUnspent :: OutPoint -> m (Maybe Unspent)
+    getMempool :: m [TxRef]
+
+class StoreReadBase m => StoreReadExtra m where
     getBalances :: [Address] -> m [Balance]
-    getBalances = mapM getBalance
+    getBalances as =
+        zipWith f as <$> mapM getBalance as
+      where
+        f a Nothing  = zeroBalance a
+        f _ (Just b) = b
     getAddressesTxs :: [Address] -> Limits -> m [TxRef]
     getAddressTxs :: Address -> Limits -> m [TxRef]
     getAddressTxs a = getAddressesTxs [a]
-    getUnspent :: OutPoint -> m (Maybe Unspent)
     getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
-    getMempool :: m [TxRef]
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
@@ -191,18 +199,38 @@ class StoreWrite m where
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
 
+getSpenders :: StoreReadBase m => TxHash -> m (IntMap Spender)
+getSpenders th =
+    getActiveTxData th >>= \case
+        Nothing -> return I.empty
+        Just td ->
+            I.fromList . catMaybes . zipWith f [0..]
+            <$> mapM getSpender (ops td)
 
-getActiveBlock :: StoreRead m => BlockHash -> m (Maybe BlockData)
+  where
+    f i m = (i, ) <$> m
+    ops td =
+        let tx = txData td
+            outs = txOut tx
+            op i _ = OutPoint th i
+         in zipWith op [0..] outs
+
+getActiveBlock :: StoreReadExtra m => BlockHash -> m (Maybe BlockData)
 getActiveBlock bh = getBlock bh >>= \case
     Just b | blockDataMainChain b -> return (Just b)
     _ -> return Nothing
 
-getActiveTxData :: StoreRead m => TxHash -> m (Maybe TxData)
+getActiveTxData :: StoreReadBase m => TxHash -> m (Maybe TxData)
 getActiveTxData th = getTxData th >>= \case
     Just td | not (txDataDeleted td) -> return (Just td)
     _ -> return Nothing
 
-xUns :: StoreRead f => Limits -> [XPubBal] -> f [XPubUnspent]
+getDefaultBalance :: StoreReadBase m => Address -> m Balance
+getDefaultBalance a = getBalance a >>= \case
+    Nothing -> return $ zeroBalance a
+    Just  b -> return b
+
+xUns :: StoreReadExtra f => Limits -> [XPubBal] -> f [XPubUnspent]
 xUns limits bs = concat <$> mapM g bs
   where
     f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
@@ -219,7 +247,7 @@ deriveFunction DeriveP2SH i   = fst . deriveCompatWitnessAddr i
 deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
 
 xPubBalsUnspents ::
-       StoreRead m
+       StoreReadExtra m
     => [XPubBal]
     -> Limits
     -> m [XPubUnspent]
@@ -230,7 +258,7 @@ xPubBalsUnspents bals limits = do
     positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
 
 xPubBalsTxs ::
-       StoreRead m
+       StoreReadExtra m
     => [XPubBal]
     -> Limits
     -> m [TxRef]
@@ -241,13 +269,15 @@ xPubBalsTxs bals limits = do
     return $ applyLimits limits ts'
 
 getTransaction ::
-       (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
+       (Monad m, StoreReadBase m) => TxHash -> m (Maybe Transaction)
 getTransaction h = runMaybeT $ do
     d <- MaybeT $ getTxData h
     sm <- lift $ getSpenders h
     return $ toTransaction d sm
 
-blockAtOrBefore :: (Monad m, StoreRead m) => UnixTime -> m (Maybe BlockData)
+blockAtOrBefore :: (Monad m, StoreReadExtra m)
+                => UnixTime
+                -> m (Maybe BlockData)
 blockAtOrBefore q = runMaybeT $ do
     a <- g 0
     b <- MaybeT getBestBlock >>= MaybeT . getBlock

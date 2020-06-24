@@ -13,8 +13,6 @@ import           Conduit                      (mapC, runConduit, runResourceT,
 import           Control.Monad.Except         (runExceptT, throwError)
 import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
 import           Data.Function                (on)
-import           Data.IntMap                  (IntMap)
-import qualified Data.IntMap.Strict           as I
 import           Data.List                    (sortBy)
 import           Data.Maybe                   (fromMaybe)
 import           Data.Word                    (Word32)
@@ -26,13 +24,11 @@ import           Database.RocksDB.Query       (insert, matching, matchingAsList,
                                                matchingSkip, retrieve)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
-import           Haskoin.Store.Common         (Limits (..), Start (..),
-                                               StoreRead (..), applyLimits,
-                                               applyLimitsC, deOffset, nub')
+import           Haskoin.Store.Common
 import           Haskoin.Store.Data           (Balance, BlockData,
-                                               BlockRef (..), TxRef (..),
-                                               Spender, TxData (..),
-                                               Unspent (..), zeroBalance)
+                                               BlockRef (..), Spender,
+                                               TxData (..), TxRef (..),
+                                               Unspent (..))
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),
@@ -130,19 +126,11 @@ getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
 getSpenderDB op DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
     retrieve db opts $ SpenderKey op
 
-getSpendersDB :: MonadIO m => TxHash -> DatabaseReader -> m (IntMap Spender)
-getSpendersDB th DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
-    I.fromList . map (uncurry f) <$>
-    liftIO (matchingAsList db opts (SpenderKeyS th))
-  where
-    f (SpenderKey op) s = (fromIntegral (outPointIndex op), s)
-    f _ _               = undefined
-
-getBalanceDB :: MonadIO m => Address -> DatabaseReader -> m Balance
+getBalanceDB :: MonadIO m => Address -> DatabaseReader -> m (Maybe Balance)
 getBalanceDB a DatabaseReader { databaseReadOptions = opts
                               , databaseHandle = db
                               } =
-    maybe (zeroBalance a) (valToBalance a) <$> retrieve db opts (BalKey a)
+    fmap (valToBalance a) <$> retrieve db opts (BalKey a)
 
 getMempoolDB :: MonadIO m => DatabaseReader -> m [TxRef]
 getMempoolDB DatabaseReader {databaseReadOptions = opts, databaseHandle = db} =
@@ -188,7 +176,7 @@ getAddressTxsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
                     (AddrTxKeyA a)
                     (AddrTxKeyB a (BlockRef bh maxBound))
     f AddrTxKey {addrTxKeyT = t} () = t
-    f _ _ = undefined
+    f _ _                           = undefined
 
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
 getUnspentDB p DatabaseReader { databaseReadOptions = opts
@@ -221,32 +209,32 @@ getAddressUnspentsDB a limits bdb@DatabaseReader { databaseReadOptions = opts
     liftIO . runResourceT . runConduit $
     x .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
   where
-    x =
-        case start limits of
-            Nothing -> matching db opts (AddrOutKeyA a)
-            Just (AtBlock h) ->
-                matchingSkip
-                    db
-                    opts
-                    (AddrOutKeyA a)
-                    (AddrOutKeyB a (BlockRef h maxBound))
-            Just (AtTx txh) ->
-                getTxDataDB txh bdb >>= \case
-                    Just TxData {txDataBlock = b@BlockRef {}} ->
-                        matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a b)
-                    _ -> matching db opts (AddrOutKeyA a)
+    x = case start limits of
+        Nothing -> matching db opts (AddrOutKeyA a)
+        Just (AtBlock h) ->
+            matchingSkip
+                db
+                opts
+                (AddrOutKeyA a)
+                (AddrOutKeyB a (BlockRef h maxBound))
+        Just (AtTx txh) ->
+            getTxDataDB txh bdb >>= \case
+                Just TxData {txDataBlock = b@BlockRef {}} ->
+                    matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a b)
+                _ -> matching db opts (AddrOutKeyA a)
 
-instance MonadIO m => StoreRead (DatabaseReaderT m) where
+instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
     getNetwork = asks databaseNetwork
-    getBestBlock = ask >>= getBestDatabaseReader
-    getBlocksAtHeight h = ask >>= getBlocksAtHeightDB h
-    getBlock b = ask >>= getDatabaseReader b
     getTxData t = ask >>= getTxDataDB t
     getSpender p = ask >>= getSpenderDB p
-    getSpenders t = ask >>= getSpendersDB t
     getUnspent a = ask >>= getUnspentDB a
     getBalance a = ask >>= getBalanceDB a
     getMempool = ask >>= getMempoolDB
+    getBestBlock = ask >>= getBestDatabaseReader
+    getBlocksAtHeight h = ask >>= getBlocksAtHeightDB h
+    getBlock b = ask >>= getDatabaseReader b
+
+instance MonadIO m => StoreReadExtra (DatabaseReaderT m) where
     getAddressesTxs as limits = ask >>= getAddressesTxsDB as limits
     getAddressesUnspents as limits = ask >>= getAddressesUnspentsDB as limits
     getAddressUnspents a limits = ask >>= getAddressUnspentsDB a limits

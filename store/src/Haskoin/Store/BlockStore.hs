@@ -171,11 +171,7 @@ runRocksDB :: ReaderT DatabaseReader m a -> BlockT m a
 runRocksDB f =
     ReaderT $ runReaderT f . blockConfDB . myConfig
 
-instance MonadIO m => StoreRead (BlockT m) where
-    getMaxGap =
-        runRocksDB getMaxGap
-    getInitialGap =
-        runRocksDB getInitialGap
+instance MonadIO m => StoreReadBase (BlockT m) where
     getNetwork =
         runRocksDB getNetwork
     getBestBlock =
@@ -188,14 +184,18 @@ instance MonadIO m => StoreRead (BlockT m) where
         runRocksDB . getTxData
     getSpender =
         runRocksDB . getSpender
-    getSpenders =
-        runRocksDB . getSpenders
     getUnspent =
         runRocksDB . getUnspent
     getBalance =
         runRocksDB . getBalance
     getMempool =
         runRocksDB getMempool
+
+instance MonadIO m => StoreReadExtra (BlockT m) where
+    getMaxGap =
+        runRocksDB getMaxGap
+    getInitialGap =
+        runRocksDB getInitialGap
     getAddressesTxs as =
         runRocksDB . getAddressesTxs as
     getAddressesUnspents as =
@@ -447,7 +447,7 @@ fulfillOrphans block_read th =
     fulfill p = p {pendingDeps = HashSet.delete th (pendingDeps p)}
 
 updateOrphans
-    :: ( StoreRead m
+    :: ( StoreReadBase m
        , MonadLoggerIO m
        , MonadReader BlockRead m
        )

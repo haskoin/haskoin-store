@@ -16,11 +16,15 @@ module Haskoin.Store
     , isInCache
     , evictFromCache
       -- * Store Reader
-    , StoreRead(..)
+    , StoreReadBase(..)
+    , StoreReadExtra(..)
     , Limits(..)
     , Start(..)
       -- * Useful Fuctions
     , getTransaction
+    , getDefaultBalance
+    , getSpenders
+    , getActiveTxData
     , blockAtOrBefore
       -- * Other Data
     , PubExcept(..)
