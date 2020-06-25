@@ -3,15 +3,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
 module Haskoin.Store.BlockStore
     ( -- * Block Store
       BlockStore
-    , BlockStoreMessage
-    , BlockStoreInbox
     , BlockStoreConfig(..)
-    , blockStore
+    , withBlockStore
     , blockStorePeerConnect
     , blockStorePeerConnectSTM
     , blockStorePeerDisconnect
@@ -26,6 +25,8 @@ module Haskoin.Store.BlockStore
     , blockStoreTxSTM
     , blockStoreTxHash
     , blockStoreTxHashSTM
+    , blockStorePendingTxs
+    , blockStorePendingTxsSTM
     ) where
 
 import           Control.Monad                 (forM, forM_, forever, mzero,
@@ -82,16 +83,16 @@ import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 getOldMempool, importBlock,
                                                 initBest, newMempoolTx,
                                                 revertBlock)
-import           NQE                           (Inbox, Listen, Mailbox,
-                                                Publisher, inboxToMailbox,
-                                                publish, query, receive, send,
-                                                sendSTM)
+import           NQE                           (Listen, Mailbox, Publisher,
+                                                newMailbox, publish, query,
+                                                receive, send, sendSTM)
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar, async,
-                                                atomically, liftIO, modifyTVar,
-                                                newTVarIO, readTVar, readTVarIO,
-                                                throwIO, withAsync, writeTVar)
+                                                atomically, liftIO, link,
+                                                modifyTVar, newTVarIO, readTVar,
+                                                readTVarIO, throwIO, withAsync,
+                                                writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 
 data BlockStoreMessage
@@ -103,9 +104,6 @@ data BlockStoreMessage
     | TxRefReceived !Peer !Tx
     | TxRefAvailable !Peer ![TxHash]
     | BlockPing !(Listen ())
-
-type BlockStoreInbox = Inbox BlockStoreMessage
-type BlockStore = Mailbox BlockStoreMessage
 
 data BlockException
     = BlockNotInChain !BlockHash
@@ -131,9 +129,9 @@ data PendingTx =
     deriving (Show, Eq, Ord)
 
 -- | Block store process state.
-data BlockRead =
-    BlockRead
-        { mySelf    :: !BlockStore
+data BlockStore =
+    BlockStore
+        { myMailbox :: !(Mailbox BlockStoreMessage)
         , myConfig  :: !BlockStoreConfig
         , myPeer    :: !(TVar (Maybe Syncing))
         , myTxs     :: !(TVar (HashMap TxHash PendingTx))
@@ -159,7 +157,7 @@ data BlockStoreConfig =
         -- ^ disconnect syncing peer if inactive for this long
         }
 
-type BlockT m = ReaderT BlockRead m
+type BlockT m = ReaderT BlockStore m
 
 runImport :: MonadLoggerIO m
           => WriterT (ExceptT ImportException m) a
@@ -206,24 +204,30 @@ instance MonadIO m => StoreReadExtra (BlockT m) where
         runRocksDB . getAddressTxs a
 
 -- | Run block store process.
-blockStore ::
+withBlockStore ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => BlockStoreConfig
-    -> BlockStoreInbox
-    -> m ()
-blockStore cfg inbox = do
+    -> (BlockStore -> m a)
+    -> m a
+withBlockStore cfg action = do
     pb <- newTVarIO Nothing
     ts <- newTVarIO HashMap.empty
     rq <- newTVarIO HashSet.empty
-    runReaderT
-        (ini >> wipe >> run)
-        BlockRead { mySelf = inboxToMailbox inbox
-                  , myConfig = cfg
-                  , myPeer = pb
-                  , myTxs = ts
-                  , requested = rq
-                  }
+    (inbox, mbox) <- newMailbox
+    let r = BlockStore { myMailbox = mbox
+                       , myConfig = cfg
+                       , myPeer = pb
+                       , myTxs = ts
+                       , requested = rq
+                       }
+    withAsync (runReaderT (go inbox mbox) r) $ \a -> do
+        link a
+        action r
   where
+    go inbox mbox = do
+        ini
+        wipe
+        run inbox mbox
     del txs = do
         $(logInfoS) "BlockStore" $
             "Deleting " <> cs (show (length txs)) <> " transactions"
@@ -249,7 +253,7 @@ blockStore cfg inbox = do
                       "Could not initialize: " <> cs (show e)
                   throwIO e
               Right () -> return ()
-    run = withAsync (pingMe (inboxToMailbox inbox))
+    run inbox mbox = withAsync (pingMe mbox)
           $ const
           $ forever
           $ receive inbox >>=
@@ -324,7 +328,7 @@ processBlock peer block = void . runMaybeT $ do
         listener <- asks (blockConfListener . myConfig)
         publish (StoreBestBlock blockhash) listener
 
-setSyncingBlocks :: (MonadReader BlockRead m, MonadIO m)
+setSyncingBlocks :: (MonadReader BlockStore m, MonadIO m)
                  => [BlockHash] -> m ()
 setSyncingBlocks hs =
     asks myPeer >>= \box ->
@@ -332,13 +336,13 @@ setSyncingBlocks hs =
         Nothing -> Nothing
         Just x  -> Just x { syncingBlocks = hs }
 
-getSyncingBlocks :: (MonadReader BlockRead m, MonadIO m) => m [BlockHash]
+getSyncingBlocks :: (MonadReader BlockStore m, MonadIO m) => m [BlockHash]
 getSyncingBlocks =
     asks myPeer >>= readTVarIO >>= \case
         Nothing -> return []
         Just x  -> return $ syncingBlocks x
 
-addSyncingBlocks :: (MonadReader BlockRead m, MonadIO m)
+addSyncingBlocks :: (MonadReader BlockStore m, MonadIO m)
                  => [BlockHash] -> m ()
 addSyncingBlocks hs =
     asks myPeer >>= \box ->
@@ -346,7 +350,7 @@ addSyncingBlocks hs =
         Nothing -> Nothing
         Just x  -> Just x { syncingBlocks = syncingBlocks x <> hs }
 
-removeSyncingBlock :: (MonadReader BlockRead m, MonadIO m)
+removeSyncingBlock :: (MonadReader BlockStore m, MonadIO m)
                    => BlockHash -> m ()
 removeSyncingBlock h = do
     box <- asks myPeer
@@ -354,13 +358,13 @@ removeSyncingBlock h = do
         Nothing -> Nothing
         Just x  -> Just x { syncingBlocks = delete h (syncingBlocks x) }
 
-checkPeer :: (MonadLoggerIO m, MonadReader BlockRead m) => Peer -> m Bool
+checkPeer :: (MonadLoggerIO m, MonadReader BlockStore m) => Peer -> m Bool
 checkPeer p =
     fmap syncingPeer <$> getSyncingState >>= \case
         Nothing -> return False
         Just p' -> return $ p == p'
 
-getBlockNode :: (MonadLoggerIO m, MonadReader BlockRead m)
+getBlockNode :: (MonadLoggerIO m, MonadReader BlockStore m)
              => BlockHash -> m (Maybe BlockNode)
 getBlockNode blockhash =
     chainGetBlock blockhash =<< asks (blockConfChain . myConfig)
@@ -399,7 +403,10 @@ pruneOrphans = do
 addPendingTx :: MonadIO m => PendingTx -> BlockT m ()
 addPendingTx p = do
     ts <- asks myTxs
-    atomically $ modifyTVar ts $ HashMap.insert th p
+    rq <- asks requested
+    atomically $ do
+        modifyTVar ts $ HashMap.insert th p
+        modifyTVar rq $ HashSet.delete th
   where
     th = txHash (pendingTx p)
 
@@ -439,7 +446,7 @@ pendingTxs i = asks myTxs >>= \box -> atomically $ do
             txids = map (txHash . snd) sorted
          in mapMaybe (`HashMap.lookup` m) txids
 
-fulfillOrphans :: MonadIO m => BlockRead -> TxHash -> m ()
+fulfillOrphans :: MonadIO m => BlockStore -> TxHash -> m ()
 fulfillOrphans block_read th =
     atomically $ modifyTVar box (HashMap.map fulfill)
   where
@@ -449,7 +456,7 @@ fulfillOrphans block_read th =
 updateOrphans
     :: ( StoreReadBase m
        , MonadLoggerIO m
-       , MonadReader BlockRead m
+       , MonadReader BlockStore m
        )
     => m ()
 updateOrphans = do
@@ -479,7 +486,7 @@ updateOrphans = do
         return $ foldl fulfill p unspents
 
 newOrphanTx :: MonadLoggerIO m
-            => BlockRead
+            => BlockStore
             -> UTCTime
             -> Tx
             -> WriterT m ()
@@ -506,7 +513,7 @@ newOrphanTx block_read time tx = do
 
 importMempoolTx
     :: (MonadLoggerIO m, MonadError ImportException m)
-    => BlockRead
+    => BlockStore
     -> UTCTime
     -> Tx
     -> WriterT m Bool
@@ -608,7 +615,7 @@ processTxs p hs = do
         msg `sendMessage` p
 
 touchPeer :: ( MonadIO m
-             , MonadReader BlockRead m
+             , MonadReader BlockStore m
              )
           => m ()
 touchPeer =
@@ -761,7 +768,7 @@ syncMe = do
         then return bh
         else findAncestor sh bh
 
-findAncestor :: (MonadLoggerIO m, MonadReader BlockRead m)
+findAncestor :: (MonadLoggerIO m, MonadReader BlockStore m)
              => BlockHeight -> BlockNode -> m BlockNode
 findAncestor height target = do
     ch <- asks (blockConfChain . myConfig)
@@ -775,7 +782,7 @@ findAncestor height target = do
                 <> cs (show (nodeHeight target))
             throwIO $ AncestorNotInChain height h
 
-finishPeer :: (MonadLoggerIO m, MonadReader BlockRead m)
+finishPeer :: (MonadLoggerIO m, MonadReader BlockStore m)
            => Peer -> m ()
 finishPeer p = do
     box <- asks myPeer
@@ -836,12 +843,12 @@ trySyncingPeer p =
             True -> syncMe
 
 getSyncingState
-    :: (MonadIO m, MonadReader BlockRead m) => m (Maybe Syncing)
+    :: (MonadIO m, MonadReader BlockStore m) => m (Maybe Syncing)
 getSyncingState =
     readTVarIO =<< asks myPeer
 
 clearSyncingState
-    :: (MonadLoggerIO m, MonadReader BlockRead m) => m ()
+    :: (MonadLoggerIO m, MonadReader BlockStore m) => m ()
 clearSyncingState =
     asks myPeer >>= readTVarIO >>= \case
         Nothing -> return ()
@@ -879,7 +886,7 @@ processBlockStoreMessage (BlockPing r) = do
     pruneMempool
     atomically (r ())
 
-pingMe :: MonadLoggerIO m => BlockStore -> m ()
+pingMe :: MonadLoggerIO m => Mailbox BlockStoreMessage -> m ()
 pingMe mbox =
     forever $ do
         delay <- liftIO $
@@ -890,72 +897,84 @@ pingMe mbox =
 
 blockStorePeerConnect :: MonadIO m => Peer -> BlockStore -> m ()
 blockStorePeerConnect peer store =
-    BlockPeerConnect peer `send` store
+    BlockPeerConnect peer `send` myMailbox store
 
 blockStorePeerDisconnect
     :: MonadIO m => Peer -> BlockStore -> m ()
 blockStorePeerDisconnect peer store =
-    BlockPeerDisconnect peer `send` store
+    BlockPeerDisconnect peer `send` myMailbox store
 
 blockStoreHead
     :: MonadIO m => BlockNode -> BlockStore -> m ()
 blockStoreHead node store =
-    BlockNewBest node `send` store
+    BlockNewBest node `send` myMailbox store
 
 blockStoreBlock
     :: MonadIO m => Peer -> Block -> BlockStore -> m ()
 blockStoreBlock peer block store =
-    BlockReceived peer block `send` store
+    BlockReceived peer block `send` myMailbox store
 
 blockStoreNotFound
     :: MonadIO m => Peer -> [BlockHash] -> BlockStore -> m ()
 blockStoreNotFound peer blocks store =
-    BlockNotFound peer blocks `send` store
+    BlockNotFound peer blocks `send` myMailbox store
 
 blockStoreTx
     :: MonadIO m => Peer -> Tx -> BlockStore -> m ()
 blockStoreTx peer tx store =
-    TxRefReceived peer tx `send` store
+    TxRefReceived peer tx `send` myMailbox store
 
 blockStoreTxHash
     :: MonadIO m => Peer -> [TxHash] -> BlockStore -> m ()
 blockStoreTxHash peer txhashes store =
-    TxRefAvailable peer txhashes `send` store
+    TxRefAvailable peer txhashes `send` myMailbox store
 
 blockStorePeerConnectSTM
     :: Peer -> BlockStore -> STM ()
 blockStorePeerConnectSTM peer store =
-    BlockPeerConnect peer `sendSTM` store
+    BlockPeerConnect peer `sendSTM` myMailbox store
 
 blockStorePeerDisconnectSTM
     :: Peer -> BlockStore -> STM ()
 blockStorePeerDisconnectSTM peer store =
-    BlockPeerDisconnect peer `sendSTM` store
+    BlockPeerDisconnect peer `sendSTM` myMailbox store
 
 blockStoreHeadSTM
     :: BlockNode -> BlockStore -> STM ()
 blockStoreHeadSTM node store =
-    BlockNewBest node `sendSTM` store
+    BlockNewBest node `sendSTM` myMailbox store
 
 blockStoreBlockSTM
     :: Peer -> Block -> BlockStore -> STM ()
 blockStoreBlockSTM peer block store =
-    BlockReceived peer block `sendSTM` store
+    BlockReceived peer block `sendSTM` myMailbox store
 
 blockStoreNotFoundSTM
     :: Peer -> [BlockHash] -> BlockStore -> STM ()
 blockStoreNotFoundSTM peer blocks store =
-    BlockNotFound peer blocks `sendSTM` store
+    BlockNotFound peer blocks `sendSTM` myMailbox store
 
 blockStoreTxSTM
     :: Peer -> Tx -> BlockStore -> STM ()
 blockStoreTxSTM peer tx store =
-    TxRefReceived peer tx `sendSTM` store
+    TxRefReceived peer tx `sendSTM` myMailbox store
 
 blockStoreTxHashSTM
     :: Peer -> [TxHash] -> BlockStore -> STM ()
 blockStoreTxHashSTM peer txhashes store =
-    TxRefAvailable peer txhashes `sendSTM` store
+    TxRefAvailable peer txhashes `sendSTM` myMailbox store
+
+blockStorePendingTxs
+    :: MonadIO m => BlockStore -> m Int
+blockStorePendingTxs =
+    atomically . blockStorePendingTxsSTM
+
+blockStorePendingTxsSTM
+    :: BlockStore -> STM Int
+blockStorePendingTxsSTM BlockStore {..} = do
+    x <- HashMap.keysSet <$> readTVar myTxs
+    y <- readTVar requested
+    return $ HashSet.size $ x `HashSet.union` y
 
 blockText :: BlockNode -> Maybe Block -> Text
 blockText bn mblock = case mblock of

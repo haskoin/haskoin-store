@@ -1,4 +1,4 @@
-openapi: '3.0.0'
+openapi: 3.0.0
 
 servers:
   - url: 'https://api.haskoin.com/bch/'
@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.34.0
+  version: &version 0.34.1
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
@@ -1813,12 +1813,30 @@ components:
           type: boolean
           example: true
 
+    MaxHealth:
+      type: object
+      required:
+        - count
+        - max
+        - ok
+      properties:
+        count:
+          type: integer
+          example: 20
+        max:
+          type: integer
+          example: 10
+        ok:
+          type: boolean
+          example: false
+
     HealthCheck:
       type: object
       required:
         - blocks
         - last-block
         - last-tx
+        - pending-txs
         - peers
         - net
         - version
@@ -1830,6 +1848,8 @@ components:
           $ref: '#/components/schemas/TimeHealth'
         last-tx:
           $ref: '#/components/schemas/TimeHealth'
+        pending-txs:
+          $ref: '#/components/schemas/MaxHealth'
         peers:
           $ref: '#/components/schemas/CountHealth'
         net:

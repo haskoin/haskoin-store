@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.34.1
+### Added
+- Pending mempool transactions health check.
+
+### Removed
+- No more upper limit for mempool call.
+
 ## 0.34.0
 ### Changed
 - New format for health check.

@@ -54,6 +54,7 @@ data Config = Config
     , configVersion     :: !Bool
     , configDebug       :: !Bool
     , configReqLog      :: !Bool
+    , configMaxPending  :: !Int
     , configWebLimits   :: !WebLimits
     , configWebTimeouts :: !WebTimeouts
     , configRedis       :: !Bool
@@ -76,6 +77,7 @@ instance Default Config where
                  , configVersion     = False
                  , configDebug       = defDebug
                  , configReqLog      = defReqLog
+                 , configMaxPending  = defMaxPending
                  , configWebLimits   = defWebLimits
                  , configWebTimeouts = defWebTimeouts
                  , configRedis       = defRedis
@@ -92,6 +94,11 @@ defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
 defEnv e d p = do
     ms <- lookupEnv e
     return $ fromMaybe d $ p =<< ms
+
+defMaxPending :: Int
+defMaxPending = unsafePerformIO $
+    defEnv "MAX_PENDING_TXS" 100 readMaybe
+{-# NOINLINE defMaxPending #-}
 
 defMaxPeers :: Int
 defMaxPeers = unsafePerformIO $
@@ -348,6 +355,13 @@ config = do
         <> help "Disconnect peers older than this"
         <> showDefault
         <> value (configPeerMaxLife def)
+    configMaxPending <-
+        option auto $
+        metavar "INT"
+        <> long "max-pending-txs"
+        <> help "Maximum pending txs to fail health check"
+        <> showDefault
+        <> value (configMaxPending def)
     configRedis <-
         flag (configRedis def) True $
         long "cache"
@@ -432,6 +446,7 @@ run Config { configHost = host
            , configPeers = peers
            , configDir = db_dir
            , configDebug = deb
+           , configMaxPending = pend
            , configWebLimits = limits
            , configReqLog = reqlog
            , configWebTimeouts = tos
@@ -477,7 +492,8 @@ run Config { configHost = host
                     , webStore = st
                     , webMaxLimits = limits
                     , webReqLog = reqlog
-                    , webWebTimeouts = tos
+                    , webTimeouts = tos
+                    , webMaxPending = pend
                     , webVersion = version
                     }
   where

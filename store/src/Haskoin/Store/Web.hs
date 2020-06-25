@@ -19,7 +19,7 @@ import           Conduit                       ()
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forever, unless, when, (<=<))
 import           Control.Monad.Logger          (MonadLoggerIO, logInfoS)
-import           Control.Monad.Reader          (ReaderT, asks, local,
+import           Control.Monad.Reader          (ReaderT, ask, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
 import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
@@ -53,14 +53,12 @@ import           Haskoin.Network
 import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
                                                 getPeers, sendMessage)
-import           Haskoin.Store.Cache           (CacheT, evictFromCache,
-                                                withCache)
+import           Haskoin.Store.BlockStore
+import           Haskoin.Store.Cache
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
-import           Haskoin.Store.Database.Reader (DatabaseReader (..),
-                                                DatabaseReaderT,
-                                                withDatabaseReader)
-import           Haskoin.Store.Manager         (Store (..))
+import           Haskoin.Store.Database.Reader
+import           Haskoin.Store.Manager
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
 import           Haskoin.Util
@@ -106,9 +104,10 @@ data WebConfig = WebConfig
     { webHost        :: !String
     , webPort        :: !Int
     , webStore       :: !Store
+    , webMaxPending  :: !Int
     , webMaxLimits   :: !WebLimits
     , webReqLog      :: !Bool
-    , webWebTimeouts :: !WebTimeouts
+    , webTimeouts    :: !WebTimeouts
     , webVersion     :: !String
     }
 
@@ -869,12 +868,7 @@ getPeersInformation mgr =
 scottyHealth ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetHealth -> WebT m HealthCheck
 scottyHealth _ = do
-    net <- lift $ asks (storeNetwork . webStore)
-    mgr <- lift $ asks (storeManager . webStore)
-    chn <- lift $ asks (storeChain . webStore)
-    tos <- lift $ asks webWebTimeouts
-    ver <- lift $ asks webVersion
-    h <- lift $ healthCheck net mgr chn tos ver
+    h <- lift $ ask >>= healthCheck
     unless (isOK h) $ S.status status503
     return h
 
@@ -911,6 +905,13 @@ lastTxHealthCheck ch tos = do
         timeHealthMax = fromIntegral $ txTimeout tos
     return TimeHealth {..}
 
+pendingTxsHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+                      => WebConfig -> m MaxHealth
+pendingTxsHealthCheck cfg = do
+    let maxHealthMax = webMaxPending cfg
+    maxHealthNum <- blockStorePendingTxs (storeBlock (webStore cfg))
+    return MaxHealth {..}
+
 peerHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                 => PeerManager -> m CountHealth
 peerHealthCheck mgr = do
@@ -919,19 +920,15 @@ peerHealthCheck mgr = do
     return CountHealth {..}
 
 healthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
-            => Network
-            -> PeerManager
-            -> Chain
-            -> WebTimeouts
-            -> String
-            -> m HealthCheck
-healthCheck net mgr ch tos ver = do
-    healthBlocks <- blockHealthCheck ch
-    healthLastBlock <- lastBlockHealthCheck ch tos
-    healthLastTx <- lastTxHealthCheck ch tos
-    healthPeers <- peerHealthCheck mgr
-    let healthNetwork = getNetworkName net
-        healthVersion = ver
+            => WebConfig -> m HealthCheck
+healthCheck cfg@WebConfig {..} = do
+    healthBlocks     <- blockHealthCheck (storeChain webStore)
+    healthLastBlock  <- lastBlockHealthCheck (storeChain webStore) webTimeouts
+    healthLastTx     <- lastTxHealthCheck (storeChain webStore) webTimeouts
+    healthPendingTxs <- pendingTxsHealthCheck cfg
+    healthPeers      <- peerHealthCheck (storeManager webStore)
+    let healthNetwork = getNetworkName (storeNetwork webStore)
+        healthVersion = webVersion
     return HealthCheck {..}
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()

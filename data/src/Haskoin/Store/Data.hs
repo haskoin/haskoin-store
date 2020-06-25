@@ -76,6 +76,7 @@ module Haskoin.Store.Data
     , BlockHealth(..)
     , TimeHealth(..)
     , CountHealth(..)
+    , MaxHealth(..)
     , HealthCheck(..)
     , Event(..)
     , Except(..)
@@ -1236,11 +1237,50 @@ instance FromJSON CountHealth where
             countHealthMin <- o .: "min"
             return CountHealth {..}
 
+data MaxHealth =
+    MaxHealth
+        { maxHealthNum :: !Int
+        , maxHealthMax :: !Int
+        }
+    deriving (Show, Eq, Generic, NFData)
+
+instance Serialize MaxHealth where
+    put h@MaxHealth {..} = do
+        put $ isOK h
+        put maxHealthNum
+        put maxHealthMax
+    get = do
+        k <- get
+        maxHealthNum <- get
+        maxHealthMax <- get
+        let h = MaxHealth {..}
+        guard (k == isOK h)
+        return h
+
+instance Healthy MaxHealth where
+    isOK MaxHealth {..} = maxHealthNum <= maxHealthMax
+
+instance ToJSON MaxHealth where
+    toJSON h@MaxHealth {..} =
+        object
+            [ "count" .= maxHealthNum
+            , "max"   .= maxHealthMax
+            , "ok"    .= isOK h
+            ]
+
+instance FromJSON MaxHealth where
+    parseJSON =
+        A.withObject "MaxHealth" $ \o -> do
+            maxHealthNum <- o .: "count"
+            maxHealthMax <- o .: "max"
+            return MaxHealth {..}
+
 data HealthCheck =
     HealthCheck
         { healthBlocks     :: !BlockHealth
         , healthLastBlock  :: !TimeHealth
         , healthLastTx     :: !TimeHealth
+        , healthPendingTxs :: !MaxHealth
         , healthPeers      :: !CountHealth
         , healthNetwork    :: !String
         , healthVersion    :: !String
@@ -1253,6 +1293,7 @@ instance Serialize HealthCheck where
         put healthBlocks
         put healthLastBlock
         put healthLastTx
+        put healthPendingTxs
         put healthPeers
         put healthNetwork
         put healthVersion
@@ -1261,6 +1302,7 @@ instance Serialize HealthCheck where
         healthBlocks        <- get
         healthLastBlock     <- get
         healthLastTx        <- get
+        healthPendingTxs    <- get
         healthPeers         <- get
         healthNetwork       <- get
         healthVersion       <- get
@@ -1273,6 +1315,7 @@ instance Healthy HealthCheck where
         isOK healthBlocks &&
         isOK healthLastBlock &&
         isOK healthLastTx &&
+        isOK healthPendingTxs &&
         isOK healthPeers
 
 instance ToJSON HealthCheck where
@@ -1281,6 +1324,7 @@ instance ToJSON HealthCheck where
             [ "blocks"      .= healthBlocks
             , "last-block"  .= healthLastBlock
             , "last-tx"     .= healthLastTx
+            , "pending-txs" .= healthPendingTxs
             , "peers"       .= healthPeers
             , "net"         .= healthNetwork
             , "version"     .= healthVersion
@@ -1290,12 +1334,13 @@ instance ToJSON HealthCheck where
 instance FromJSON HealthCheck where
     parseJSON =
         A.withObject "HealthCheck" $ \o -> do
-            healthBlocks    <- o .: "blocks"
-            healthLastBlock <- o .: "last-block"
-            healthLastTx    <- o .: "last-tx"
-            healthPeers     <- o .: "peers"
-            healthNetwork   <- o .: "net"
-            healthVersion   <- o .: "version"
+            healthBlocks     <- o .: "blocks"
+            healthLastBlock  <- o .: "last-block"
+            healthLastTx     <- o .: "last-tx"
+            healthPendingTxs <- o .: "pending-txs"
+            healthPeers      <- o .: "peers"
+            healthNetwork    <- o .: "net"
+            healthVersion    <- o .: "version"
             return HealthCheck {..}
 
 data Event

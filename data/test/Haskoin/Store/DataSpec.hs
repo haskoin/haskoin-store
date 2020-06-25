@@ -218,10 +218,17 @@ instance Arbitrary CountHealth where
             <$> arbitrary
             <*> arbitrary
 
+instance Arbitrary MaxHealth where
+    arbitrary =
+        MaxHealth
+            <$> arbitrary
+            <*> arbitrary
+
 instance Arbitrary HealthCheck where
     arbitrary =
         HealthCheck
             <$> arbitrary
+            <*> arbitrary
             <*> arbitrary
             <*> arbitrary
             <*> arbitrary

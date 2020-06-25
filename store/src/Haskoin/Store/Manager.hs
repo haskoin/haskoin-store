@@ -26,13 +26,13 @@ import           Haskoin.Node                  (Chain, ChainEvent (..),
                                                 WithConnection, withNode)
 import           Haskoin.Store.BlockStore      (BlockStore,
                                                 BlockStoreConfig (..),
-                                                blockStore, blockStoreBlockSTM,
+                                                blockStoreBlockSTM,
                                                 blockStoreHeadSTM,
                                                 blockStoreNotFoundSTM,
                                                 blockStorePeerConnectSTM,
                                                 blockStorePeerDisconnectSTM,
                                                 blockStoreTxHashSTM,
-                                                blockStoreTxSTM)
+                                                blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheNewTx,
                                                 cachePing, cacheWriter,
@@ -43,7 +43,7 @@ import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 withDatabaseReader)
 import           Network.Socket                (SockAddr (..))
 import           NQE                           (Inbox, Process (..), Publisher,
-                                                newMailbox, publishSTM, receive,
+                                                publishSTM, receive,
                                                 withProcess, withPublisher,
                                                 withSubscription)
 import           System.Random                 (randomRIO)
@@ -101,15 +101,13 @@ withStore :: (MonadLoggerIO m, MonadUnliftIO m)
           => StoreConfig -> (Store -> m a) -> m a
 withStore cfg action =
     connectDB cfg >>= \db ->
-    newMailbox >>= \(bi, b) ->
     withPublisher $ \pub ->
     withPublisher $ \node_pub ->
     withSubscription node_pub $ \node_sub ->
     withNode (nodeCfg cfg db node_pub) $ \node ->
     withCache cfg (nodeChain node) db pub $ \mcache ->
-    withAsync (nodeForwarder b pub node_sub) $ \a1 ->
-    withAsync (blockStore (blockStoreCfg cfg node pub db) bi) $ \a2 ->
-    link a1 >> link a2 >>
+    withBlockStore (blockStoreCfg cfg node pub db) $ \b ->
+    withAsync (nodeForwarder b pub node_sub) $ \a1 -> link a1 >>
     action Store { storeManager = nodeManager node
                  , storeChain = nodeChain node
                  , storeBlock = b
