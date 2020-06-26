@@ -718,7 +718,7 @@ scottyMempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetMempool -> WebT m [TxHash]
 scottyMempool (GetMempool limitM (OffsetParam o)) = do
     wl <- lift $ asks webMaxLimits
-    let l = validateLimit wl False limitM
+    let l = validateLimit wl { maxLimitCount = 0 } False limitM
     take (fromIntegral l) . drop (fromIntegral o) . map txRefHash <$> getMempool
 
 scottyEvents :: MonadLoggerIO m => WebT m ()
