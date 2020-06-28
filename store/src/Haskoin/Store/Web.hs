@@ -897,11 +897,11 @@ lastTxHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                   => Chain -> WebTimeouts -> m TimeHealth
 lastTxHealthCheck ch tos = do
     n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
+    b <- fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
     t <- listToMaybe <$> getMempool >>= \case
-        Just  t ->
-            return $ fromIntegral $ memRefTime $ txRefBlock t
-        Nothing ->
-            fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
+        Just t -> let x = fromIntegral $ memRefTime $ txRefBlock t
+                  in return $ max x b
+        Nothing -> return b
     let timeHealthAge = n - t
         timeHealthMax = fromIntegral $ txTimeout tos
     return TimeHealth {..}

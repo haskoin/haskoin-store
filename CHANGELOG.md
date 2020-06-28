@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Removed
 - No more upper limit for mempool call.
 
+### Fixed
+- Health check uses minimum between last block and mempool tx.
+
 ## 0.34.1
 ### Added
 - Pending mempool transactions health check.
