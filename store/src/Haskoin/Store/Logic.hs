@@ -35,9 +35,6 @@ import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
 import           Data.Serialize                (encode)
-import           Data.String                   (IsString (..))
-import           Data.String.Conversions       (ConvertibleStrings, cs)
-import           Data.Text                     (Text)
 import           Data.Word                     (Word32, Word64)
 import           Haskoin                       (Address, Block (..), BlockHash,
                                                 BlockHeader (..),
@@ -57,8 +54,7 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 TxRef (..), UnixTime,
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
-import           UnliftIO                      (Exception, MonadIO, async,
-                                                liftIO, wait)
+import           UnliftIO                      (Exception, MonadIO, liftIO)
 
 type MonadImport m =
     ( MonadError ImportException m
@@ -137,9 +133,8 @@ preLoadMemory txs = do
         liftIO (runLoggingT (runReaderT go r) l)
   where
     go = do
-        prev_asyncs <- mapM (async . mapM_ loadPrevOut . prevOuts) txs
-        out_asyncs <- mapM (async . loadOutputBalances) txs
-        mapM_ wait $ prev_asyncs <> out_asyncs
+        mapM_ loadPrevOut (concatMap prevOuts txs)
+        mapM_ loadOutputBalances txs
         runTx . setMempool =<< getMempool
 
 bestBlockData :: MonadImport m => WriterT m BlockData
@@ -749,12 +744,3 @@ prevOuts tx = filter (/= nullOutPoint) (map prevOutput (txIn tx))
 
 testPresent :: StoreReadBase m => Tx -> m Bool
 testPresent tx = isJust <$> getActiveTxData (txHash tx)
-
-logOutput :: ( ConvertibleStrings Text a
-             , ConvertibleStrings String a
-             , Semigroup a
-             , IsString a
-             )
-          => OutPoint
-          -> a
-logOutput (OutPoint h i) = cs (txHashToHex h) <> ":" <> cs (show i)
