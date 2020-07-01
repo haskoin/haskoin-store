@@ -119,8 +119,8 @@ newMempoolTx tx w =
     getActiveTxData (txHash tx) >>= \case
         Just _ -> return False
         Nothing -> do
-            freeOutputs True True [tx]
             preLoadMemory False [tx]
+            freeOutputs True True [tx]
             rbf <- isRBF (MemRef w) tx
             checkNewTx tx
             runMonadMemory $ importTx (MemRef w) w rbf tx
@@ -194,8 +194,8 @@ checkNewBlock b n =
 
 importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> WriterT m ()
 importOrConfirm bn txs = do
-    freeOutputs True False txs
     preLoadMemory True txs
+    freeOutputs True False txs
     mapM_ (uncurry action) (sortTxs txs)
   where
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
@@ -435,7 +435,6 @@ freeOutputs memonly rbfcheck txs =
     forM_ txs $ \tx ->
     forM_ (prevOuts tx) $ \op ->
     unless (outPointHash op `S.member` ths) $
-    loadPrevOut op >>
     getUnspent op >>= \case
         Just _ -> return ()
         Nothing -> getSpender op >>= \case

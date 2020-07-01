@@ -1,5 +1,5 @@
 name: haskoin-store
-version: &version 0.34.4
+version: &version 0.34.5
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
