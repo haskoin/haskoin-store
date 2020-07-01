@@ -54,7 +54,8 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 TxRef (..), UnixTime,
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
-import           UnliftIO                      (Exception, MonadIO, liftIO)
+import           UnliftIO                      (Exception, MonadIO, async,
+                                                liftIO, wait)
 
 type MonadImport m =
     ( MonadError ImportException m
@@ -119,23 +120,29 @@ newMempoolTx tx w =
         Just _ -> return False
         Nothing -> do
             freeOutputs True True [tx]
-            preLoadMemory [tx]
+            preLoadMemory False [tx]
             rbf <- isRBF (MemRef w) tx
             checkNewTx tx
             runMonadMemory $ importTx (MemRef w) w rbf tx
             return True
 
-preLoadMemory :: MonadLoggerIO m => [Tx] -> WriterT m ()
-preLoadMemory txs = do
+preLoadMemory :: MonadLoggerIO m => Bool -> [Tx] -> WriterT m ()
+preLoadMemory as txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
     ReaderT $ \r -> do
         l <- askLoggerIO
         liftIO (runLoggingT (runReaderT go r) l)
   where
-    go = do
-        mapM_ loadPrevOut (concatMap prevOuts txs)
-        mapM_ loadOutputBalances txs
-        runTx . setMempool =<< getMempool
+    go
+      | as = do
+            as1 <- mapM (async . loadPrevOut) (concatMap prevOuts txs)
+            as2 <- mapM (async . loadOutputBalances) txs
+            runTx . setMempool =<< getMempool
+            mapM_ wait $ as1 ++ as2
+      | otherwise = do
+            mapM_ loadPrevOut (concatMap prevOuts txs)
+            mapM_ loadOutputBalances txs
+            runTx . setMempool =<< getMempool
 
 bestBlockData :: MonadImport m => WriterT m BlockData
 bestBlockData = do
@@ -160,7 +167,7 @@ revertBlock bh = do
                 "Cannot revert non-head block: " <> blockHashToHex bh
             throwError BlockNotBest
     tds <- mapM getImportTxData (blockDataTxs bd)
-    preLoadMemory $ map txData tds
+    preLoadMemory True $ map txData tds
     runTx $ do
         setBest (prevBlock (blockDataHeader bd))
         insertBlock bd {blockDataMainChain = False}
@@ -188,7 +195,7 @@ checkNewBlock b n =
 importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> WriterT m ()
 importOrConfirm bn txs = do
     freeOutputs True False txs
-    preLoadMemory txs
+    preLoadMemory True txs
     mapM_ (uncurry action) (sortTxs txs)
   where
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
@@ -514,7 +521,7 @@ deleteSingleTx th =
                 "Deleting tx: " <> txHashToHex th
             getSpenders th >>= \case
                 m | I.null m -> do
-                        preLoadMemory [txData td]
+                        preLoadMemory False [txData td]
                         runTx $ commitDelTx td
                   | otherwise -> do
                         $(logErrorS) "BlockStore" $
