@@ -54,7 +54,7 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 TxRef (..), UnixTime,
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
-import           UnliftIO                      (Exception, MonadIO, async,
+import           UnliftIO                      (Exception, MonadIO, asyncBound,
                                                 liftIO, wait)
 
 type MonadImport m =
@@ -135,8 +135,8 @@ preLoadMemory as txs = do
   where
     go
       | as = do
-            as1 <- mapM (async . loadPrevOut) (concatMap prevOuts txs)
-            as2 <- mapM (async . loadOutputBalances) txs
+            as1 <- mapM (asyncBound . loadPrevOut) (concatMap prevOuts txs)
+            as2 <- mapM (asyncBound . loadOutputBalances) txs
             runTx . setMempool =<< getMempool
             mapM_ wait $ as1 ++ as2
       | otherwise = do
