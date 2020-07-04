@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.34.6
 ### Removed
-- Remove bounded threads as they didn't improve stability.
+- Remove asynchronous database retrieval permanently due to instability.
 
 ## 0.34.5
 ### Added

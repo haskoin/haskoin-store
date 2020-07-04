@@ -54,8 +54,7 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 TxRef (..), UnixTime,
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
-import           UnliftIO                      (Exception, MonadIO, async,
-                                                liftIO, wait)
+import           UnliftIO                      (Exception, MonadIO, liftIO)
 
 type MonadImport m =
     ( MonadError ImportException m
@@ -134,10 +133,9 @@ preLoadMemory txs = do
         liftIO (runLoggingT (runReaderT go r) l)
   where
     go = do
-        as1 <- mapM (async . loadPrevOut) (concatMap prevOuts txs)
-        as2 <- mapM (async . loadOutputBalances) txs
+        mapM_ loadPrevOut (concatMap prevOuts txs)
+        mapM_ loadOutputBalances txs
         runTx . setMempool =<< getMempool
-        mapM_ wait $ as1 ++ as2
 
 bestBlockData :: MonadImport m => WriterT m BlockData
 bestBlockData = do
