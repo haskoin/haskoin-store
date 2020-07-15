@@ -84,8 +84,9 @@ import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 initBest, newMempoolTx,
                                                 revertBlock)
 import           NQE                           (Listen, Mailbox, Publisher,
-                                                newMailbox, publish, query,
-                                                receive, send, sendSTM)
+                                                inboxToMailbox, newInbox,
+                                                publish, query, receive, send,
+                                                sendSTM)
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar, async,
@@ -213,21 +214,21 @@ withBlockStore cfg action = do
     pb <- newTVarIO Nothing
     ts <- newTVarIO HashMap.empty
     rq <- newTVarIO HashSet.empty
-    (inbox, mbox) <- newMailbox
-    let r = BlockStore { myMailbox = mbox
+    inbox <- newInbox
+    let r = BlockStore { myMailbox = inboxToMailbox inbox
                        , myConfig = cfg
                        , myPeer = pb
                        , myTxs = ts
                        , requested = rq
                        }
-    withAsync (runReaderT (go inbox mbox) r) $ \a -> do
+    withAsync (runReaderT (go inbox) r) $ \a -> do
         link a
         action r
   where
-    go inbox mbox = do
+    go inbox = do
         ini
         wipe
-        run inbox mbox
+        run inbox
     del txs = do
         $(logInfoS) "BlockStore" $
             "Deleting " <> cs (show (length txs)) <> " transactions"
@@ -253,7 +254,7 @@ withBlockStore cfg action = do
                       "Could not initialize: " <> cs (show e)
                   throwIO e
               Right () -> return ()
-    run inbox mbox = withAsync (pingMe mbox)
+    run inbox = withAsync (pingMe (inboxToMailbox inbox))
           $ const
           $ forever
           $ receive inbox >>=
