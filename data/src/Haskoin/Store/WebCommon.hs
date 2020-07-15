@@ -132,7 +132,7 @@ instance ApiResource GetBlockHeight [Store.BlockData] where
     captureParams _ = [ProxyBox (Proxy :: Proxy HeightParam)]
 
 instance ApiResource GetBlockHeights [Store.BlockData] where
-    resourcePath _ _ = "/block/height"
+    resourcePath _ _ = "/block/heights"
     queryParams (GetBlockHeights hs t) = ([], [ParamBox hs] <> noDefBox t)
 
 instance ApiResource GetBlockHeightRaw (Store.RawResultList Block) where
