@@ -137,6 +137,7 @@ data BlockStore =
         , myPeer    :: !(TVar (Maybe Syncing))
         , myTxs     :: !(TVar (HashMap TxHash PendingTx))
         , requested :: !(TVar (HashSet TxHash))
+        , mempooled :: !(TVar Bool)
         }
 
 -- | Configuration for a block store.
@@ -215,11 +216,13 @@ withBlockStore cfg action = do
     ts <- newTVarIO HashMap.empty
     rq <- newTVarIO HashSet.empty
     inbox <- newInbox
+    mem <- newTVarIO False
     let r = BlockStore { myMailbox = inboxToMailbox inbox
                        , myConfig = cfg
                        , myPeer = pb
                        , myTxs = ts
                        , requested = rq
+                       , mempooled = mem
                        }
     withAsync (runReaderT (go inbox) r) $ \a -> do
         link a
@@ -272,11 +275,16 @@ isInSync =
                 then clearSyncingState >> return True
                 else return False
 
-mempool :: MonadLoggerIO m => Peer -> m ()
+mempool :: MonadLoggerIO m => Peer -> BlockT m ()
 mempool p = do
-    $(logDebugS) "BlockStore" $
-        "Requesting mempool from peer: " <> peerText p
-    MMempool `sendMessage` p
+    mem <- readTVarIO =<< asks mempooled
+    if mem
+        then return ()
+        else do
+          $(logDebugS) "BlockStore" $
+              "Requesting mempool from peer: " <> peerText p
+          MMempool `sendMessage` p
+          atomically . (`writeTVar` True) =<< asks mempooled
 
 processBlock :: MonadLoggerIO m => Peer -> Block -> BlockT m ()
 processBlock peer block = void . runMaybeT $ do
