@@ -1,5 +1,5 @@
 name: haskoin-store
-version: &version 0.34.8
+version: &version 0.35.0
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
@@ -42,8 +42,8 @@ library:
     hedis: ">= 0.12.13"
     http-types: ">= 0.12.3"
     network: ">= 3.1.1.1"
-    rocksdb-haskell: ">= 1.0.1"
-    rocksdb-query: ">= 0.3.1"
+    rocksdb-haskell-jprupp: ">= 2.0.0"
+    rocksdb-query: ">= 0.4.0"
     scotty: ">= 0.11.5"
     wai: ">= 3.2.2.1"
     warp: ">= 3.3.10"

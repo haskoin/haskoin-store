@@ -13,8 +13,12 @@ extra-deps:
   - github: haskoin/haskoin-core
     commit: 88b68285e815ed658b49ab98be77b6834c6ecb97
   - github: haskoin/haskoin-node
-    commit: 315e1dca7f007071e5ee7c6a926b7032a15e00b7
+    commit: 3d37b6e0b995ec6fee187b68c40b364932d3b26c
   - github: haskoin/secp256k1-haskell
     commit: 239159122cc6f830957759a1d247ded7ffeba915
   - github: jprupp/nqe
     commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
+  - github: jprupp/rocksdb-haskell
+    commit: c7b6c452d5de7e0df4961e06642123c2374819ac
+  - github: jprupp/rocksdb-query
+    commit: f900f220d34263e004a059210c6899925f61bc39
