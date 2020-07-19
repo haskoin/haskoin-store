@@ -8,9 +8,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Use new RocksDB Haskell bindings.
 
-### Added
-- Asynchronous retrieval of transaction dependencies from database.
-
 ## 0.34.8
 ### Changed
 - Minor refactoring.

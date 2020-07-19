@@ -30,7 +30,7 @@ import qualified Data.ByteString.Short         as B.Short
 import           Data.Either                   (rights)
 import qualified Data.HashSet                  as S
 import qualified Data.IntMap.Strict            as I
-import           Data.List                     (delete, nub, sortOn)
+import           Data.List                     (nub, sortOn)
 import           Data.Maybe                    (catMaybes, fromMaybe, isJust,
                                                 isNothing, mapMaybe)
 import           Data.Ord                      (Down (Down))
@@ -54,9 +54,7 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 TxRef (..), UnixTime,
                                                 Unspent (..), confirmed)
 import           Haskoin.Store.Database.Writer (MemoryTx, WriterT, runTx)
-import           UnliftIO                      (Exception, MonadIO,
-                                                MonadUnliftIO, async, liftIO,
-                                                waitAny)
+import           UnliftIO                      (Exception, MonadIO, liftIO)
 
 type MonadImport m =
     ( MonadError ImportException m
@@ -127,21 +125,6 @@ newMempoolTx tx w =
             runMonadMemory $ importTx (MemRef w) w rbf tx
             return True
 
-multiAsync :: MonadUnliftIO m => Int -> [m a] -> m [a]
-multiAsync n = go []
-  where
-    go [] [] = return []
-    go acc xs
-       | length acc >= n || null xs = do
-             (a, x) <- waitAny acc
-             (x :) <$> go (delete a acc) xs
-       | otherwise =
-           case xs of
-               [] -> undefined
-               (x : xs') -> do
-                   a <- async x
-                   go (a : acc) xs'
-
 preLoadMemory :: MonadLoggerIO m => [Tx] -> WriterT m ()
 preLoadMemory txs = do
     $(logDebugS) "BlockStore" "Pre-loading memory"
@@ -150,8 +133,8 @@ preLoadMemory txs = do
         liftIO (runLoggingT (runReaderT go r) l)
   where
     go = do
-        _ <- multiAsync 10 $ map loadPrevOut (concatMap prevOuts txs)
-        _ <- multiAsync 10 $ map loadOutputBalances txs
+        mapM_ loadPrevOut (concatMap prevOuts txs)
+        mapM_ loadOutputBalances txs
         runTx . setMempool =<< getMempool
 
 bestBlockData :: MonadImport m => WriterT m BlockData
