@@ -49,16 +49,16 @@ packages:
   original:
     url: https://github.com/jprupp/nqe/archive/acbed8c6f39055b33e9c24de3ce634cfc2d8de88.tar.gz
 - completed:
-    size: 10893
-    url: https://github.com/jprupp/rocksdb-haskell/archive/c7b6c452d5de7e0df4961e06642123c2374819ac.tar.gz
+    size: 10890
+    url: https://github.com/jprupp/rocksdb-haskell/archive/803941d92eb56713f941094ca10d884b920de779.tar.gz
     name: rocksdb-haskell-jprupp
     version: 2.0.0
-    sha256: 1dc262e25d5863886629bd2bd5934367e0f00a81a655a5f221de85092132a73d
+    sha256: c31be7d2ce94a616b8632dec9342efd907cb6d49ca0cb9b2118eae1157ae0028
     pantry-tree:
       size: 867
-      sha256: cb9351d772e3ec7cec74c418d760283fc368a6986364a6803b59a153524fbf2f
+      sha256: 5506a4ed3839370ba0f9ab986121a8e6e6ede731013159a8bd4cb432c8c60254
   original:
-    url: https://github.com/jprupp/rocksdb-haskell/archive/c7b6c452d5de7e0df4961e06642123c2374819ac.tar.gz
+    url: https://github.com/jprupp/rocksdb-haskell/archive/803941d92eb56713f941094ca10d884b920de779.tar.gz
 - completed:
     size: 5597
     url: https://github.com/jprupp/rocksdb-query/archive/f900f220d34263e004a059210c6899925f61bc39.tar.gz

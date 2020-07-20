@@ -19,6 +19,6 @@ extra-deps:
   - github: jprupp/nqe
     commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
   - github: jprupp/rocksdb-haskell
-    commit: c7b6c452d5de7e0df4961e06642123c2374819ac
+    commit: 803941d92eb56713f941094ca10d884b920de779
   - github: jprupp/rocksdb-query
     commit: f900f220d34263e004a059210c6899925f61bc39
