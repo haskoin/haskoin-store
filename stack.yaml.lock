@@ -16,16 +16,16 @@ packages:
   original:
     url: https://github.com/haskoin/haskoin-core/archive/88b68285e815ed658b49ab98be77b6834c6ecb97.tar.gz
 - completed:
-    size: 25235
-    url: https://github.com/haskoin/haskoin-node/archive/3d37b6e0b995ec6fee187b68c40b364932d3b26c.tar.gz
+    size: 25202
+    url: https://github.com/haskoin/haskoin-node/archive/3c43a0bb67d6c3fc29e1ffd4e54acb6259a73cac.tar.gz
     name: haskoin-node
     version: 0.15.0
-    sha256: 2dcdd12f5b680fb56088fc77a355a1ef997537306a4a219cafb4bbc9f0415d7e
+    sha256: 6754776003cc759f0126cfb71dd09faa54b62951d623f5aa9aac7c68a8d94805
     pantry-tree:
       size: 897
-      sha256: e1c6ac0f8e78c07c6730bd0d682fc716d817b721ae30d8452f4e38742643dce3
+      sha256: 401f7a36d229159668e96276dd9d4401339cc6ecc17c7e7ab0b28bbbfbd3c531
   original:
-    url: https://github.com/haskoin/haskoin-node/archive/3d37b6e0b995ec6fee187b68c40b364932d3b26c.tar.gz
+    url: https://github.com/haskoin/haskoin-node/archive/3c43a0bb67d6c3fc29e1ffd4e54acb6259a73cac.tar.gz
 - completed:
     size: 13899
     url: https://github.com/haskoin/secp256k1-haskell/archive/239159122cc6f830957759a1d247ded7ffeba915.tar.gz
@@ -49,27 +49,27 @@ packages:
   original:
     url: https://github.com/jprupp/nqe/archive/acbed8c6f39055b33e9c24de3ce634cfc2d8de88.tar.gz
 - completed:
-    size: 10890
-    url: https://github.com/jprupp/rocksdb-haskell/archive/803941d92eb56713f941094ca10d884b920de779.tar.gz
+    size: 10225
+    url: https://github.com/jprupp/rocksdb-haskell/archive/e138bd26f6048c03f486da2f8a7e3d0e72f5adc0.tar.gz
     name: rocksdb-haskell-jprupp
     version: 2.0.0
-    sha256: c31be7d2ce94a616b8632dec9342efd907cb6d49ca0cb9b2118eae1157ae0028
+    sha256: 971d5bbaa218b20c31927012185b091eb599d0d1a6d2378197839391fdda2978
     pantry-tree:
-      size: 867
-      sha256: 5506a4ed3839370ba0f9ab986121a8e6e6ede731013159a8bd4cb432c8c60254
+      size: 916
+      sha256: 794eb03030572e60ed77bde2074a4d305880061c00a25336261ef65040460a3a
   original:
-    url: https://github.com/jprupp/rocksdb-haskell/archive/803941d92eb56713f941094ca10d884b920de779.tar.gz
+    url: https://github.com/jprupp/rocksdb-haskell/archive/e138bd26f6048c03f486da2f8a7e3d0e72f5adc0.tar.gz
 - completed:
-    size: 5597
-    url: https://github.com/jprupp/rocksdb-query/archive/f900f220d34263e004a059210c6899925f61bc39.tar.gz
+    size: 5558
+    url: https://github.com/jprupp/rocksdb-query/archive/ee49d29d502e137e2e5cbf9f71a26a71ce04ed8d.tar.gz
     name: rocksdb-query
     version: 0.4.0
-    sha256: 285de226c1f1a14b45741aa5fd3f71a6b38379d84b7ac794a1b0667d7e1626a1
+    sha256: e10ff29d8d17db7f019af2df51c52778de72dc50a2e98ae80e8f7041effd0677
     pantry-tree:
       size: 587
-      sha256: 4d2ac959be3931f67bbe370e7dfc5685a811d3bf04f8ec9cb01b6d2ed761730a
+      sha256: 4d988c1dff19c46866c32cbd1db9cccc6d17a6cdfc6f505deb381989bf502f97
   original:
-    url: https://github.com/jprupp/rocksdb-query/archive/f900f220d34263e004a059210c6899925f61bc39.tar.gz
+    url: https://github.com/jprupp/rocksdb-query/archive/ee49d29d502e137e2e5cbf9f71a26a71ce04ed8d.tar.gz
 snapshots:
 - completed:
     size: 531237

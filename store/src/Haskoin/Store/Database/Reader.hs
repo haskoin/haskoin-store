@@ -1,15 +1,14 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 module Haskoin.Store.Database.Reader
     ( -- * RocksDB Database Access
       DatabaseReader (..)
     , DatabaseReaderT
-    , connectRocksDB
     , withDatabaseReader
     ) where
 
-import           Conduit                      (mapC, runConduit, runResourceT,
-                                               sinkList, (.|))
+import           Conduit                      (mapC, runConduit, sinkList, (.|))
 import           Control.Monad.Except         (runExceptT, throwError)
 import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
 import           Data.Default                 (def)
@@ -17,8 +16,8 @@ import           Data.Function                (on)
 import           Data.List                    (sortBy)
 import           Data.Maybe                   (fromMaybe)
 import           Data.Word                    (Word32)
-import           Database.RocksDB             (Config (..), DB, ReadOpts,
-                                               newOptions, open)
+import           Database.RocksDB             (Config (..), DB, withDB,
+                                               withIter)
 import           Database.RocksDB.Query       (insert, matching, matchingAsList,
                                                matchingSkip, retrieve)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
@@ -36,14 +35,13 @@ import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                UnspentKey (..), VersionKey (..),
                                                toUnspent, valToBalance,
                                                valToUnspent)
-import           UnliftIO                     (MonadIO, liftIO)
+import           UnliftIO                     (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
 
 data DatabaseReader =
     DatabaseReader
-        { databaseReadOpts   :: !ReadOpts
-        , databaseHandle     :: !DB
+        { databaseHandle     :: !DB
         , databaseMaxGap     :: !Word32
         , databaseInitialGap :: !Word32
         , databaseNetwork    :: !Network
@@ -52,30 +50,30 @@ data DatabaseReader =
 dataVersion :: Word32
 dataVersion = 16
 
-connectRocksDB ::
-       MonadIO m => Network -> Word32 -> Word32 -> FilePath -> m DatabaseReader
-connectRocksDB net igap gap dir = do
-    opts <- newOptions def { createIfMissing = True, maxFiles = Just (-1) }
-    db <- open dir opts
+withDatabaseReader :: MonadUnliftIO m
+                   => Network
+                   -> Word32
+                   -> Word32
+                   -> FilePath
+                   -> DatabaseReaderT m a
+                   -> m a
+withDatabaseReader net igap gap dir f =
+    withDB dir def{createIfMissing = True, maxFiles = Just (-1)} $ \db -> do
     let bdb =
             DatabaseReader
-                { databaseReadOpts = def
-                , databaseHandle = db
+                { databaseHandle = db
                 , databaseMaxGap = gap
                 , databaseNetwork = net
                 , databaseInitialGap = igap
                 }
     initRocksDB bdb
-    return bdb
-
-withDatabaseReader :: MonadIO m => DatabaseReader -> DatabaseReaderT m a -> m a
-withDatabaseReader = flip runReaderT
+    runReaderT f bdb
 
 initRocksDB :: MonadIO m => DatabaseReader -> m ()
-initRocksDB bdb@DatabaseReader {databaseReadOpts = opts, databaseHandle = db} = do
+initRocksDB bdb@DatabaseReader{databaseHandle = db} = do
     e <-
         runExceptT $
-        retrieve db opts VersionKey >>= \case
+        retrieve db VersionKey >>= \case
             Just v
                 | v == dataVersion -> return ()
                 | v == 15 -> migrate15to16 bdb >> initRocksDB bdb
@@ -86,8 +84,8 @@ initRocksDB bdb@DatabaseReader {databaseReadOpts = opts, databaseHandle = db} = 
         Right () -> return ()
 
 migrate15to16 :: MonadIO m => DatabaseReader -> m ()
-migrate15to16 DatabaseReader {databaseReadOpts = opts, databaseHandle = db} = do
-    xs <- liftIO $ matchingAsList db opts OldMemKeyS
+migrate15to16 DatabaseReader{databaseHandle = db} = do
+    xs <- liftIO $ matchingAsList db OldMemKeyS
     let ys = map (\(OldMemKey t h, ()) -> (t, h)) xs
     insert db MemKey ys
     insert db VersionKey (16 :: Word32)
@@ -96,37 +94,35 @@ setInitRocksDB :: MonadIO m => DB -> m ()
 setInitRocksDB db = insert db VersionKey dataVersion
 
 getBestDatabaseReader :: MonadIO m => DatabaseReader -> m (Maybe BlockHash)
-getBestDatabaseReader DatabaseReader {databaseReadOpts = opts, databaseHandle = db} =
-    retrieve db opts BestKey
+getBestDatabaseReader DatabaseReader{databaseHandle = db} =
+    retrieve db BestKey
 
 getBlocksAtHeightDB :: MonadIO m => BlockHeight -> DatabaseReader -> m [BlockHash]
-getBlocksAtHeightDB h DatabaseReader {databaseReadOpts = opts, databaseHandle = db} =
-    retrieve db opts (HeightKey h) >>= \case
+getBlocksAtHeightDB h DatabaseReader{databaseHandle = db} =
+    retrieve db (HeightKey h) >>= \case
         Nothing -> return []
         Just ls -> return ls
 
 getDatabaseReader :: MonadIO m => BlockHash -> DatabaseReader -> m (Maybe BlockData)
-getDatabaseReader h DatabaseReader {databaseReadOpts = opts, databaseHandle = db} =
-    retrieve db opts (BlockKey h)
+getDatabaseReader h DatabaseReader{databaseHandle = db} =
+    retrieve db (BlockKey h)
 
 getTxDataDB ::
        MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
-getTxDataDB th DatabaseReader {databaseReadOpts = opts, databaseHandle = db} =
-    retrieve db opts (TxKey th)
+getTxDataDB th DatabaseReader{databaseHandle = db} =
+    retrieve db (TxKey th)
 
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
-getSpenderDB op DatabaseReader {databaseReadOpts = opts, databaseHandle = db} =
-    retrieve db opts $ SpenderKey op
+getSpenderDB op DatabaseReader{databaseHandle = db} =
+    retrieve db $ SpenderKey op
 
 getBalanceDB :: MonadIO m => Address -> DatabaseReader -> m (Maybe Balance)
-getBalanceDB a DatabaseReader { databaseReadOpts = opts
-                              , databaseHandle = db
-                              } =
-    fmap (valToBalance a) <$> retrieve db opts (BalKey a)
+getBalanceDB a DatabaseReader{databaseHandle = db} =
+    fmap (valToBalance a) <$> retrieve db (BalKey a)
 
 getMempoolDB :: MonadIO m => DatabaseReader -> m [TxRef]
-getMempoolDB DatabaseReader {databaseReadOpts = opts, databaseHandle = db} =
-    fmap f . fromMaybe [] <$> retrieve db opts MemKey
+getMempoolDB DatabaseReader{databaseHandle = db} =
+    fmap f . fromMaybe [] <$> retrieve db MemKey
   where
     f (t, h) = TxRef {txRefBlock = MemRef t, txRefHash = h}
 
@@ -147,34 +143,29 @@ getAddressTxsDB ::
     -> Limits
     -> DatabaseReader
     -> m [TxRef]
-getAddressTxsDB a limits bdb@DatabaseReader { databaseReadOpts = opts
-                                            , databaseHandle = db
-                                            } =
-    liftIO . runResourceT . runConduit $
-    x .| applyLimitsC limits .| mapC (uncurry f) .| sinkList
+getAddressTxsDB a limits bdb@DatabaseReader{databaseHandle = db} =
+    liftIO $ withIter db $ \it -> runConduit $
+    x it .| applyLimitsC limits .| mapC (uncurry f) .| sinkList
   where
-    x =
+    x it =
         case start limits of
-            Nothing -> matching db opts (AddrTxKeyA a)
+            Nothing -> matching it (AddrTxKeyA a)
             Just (AtTx txh) ->
                 getTxDataDB txh bdb >>= \case
                     Just TxData {txDataBlock = b@BlockRef {}} ->
-                        matchingSkip db opts (AddrTxKeyA a) (AddrTxKeyB a b)
-                    _ -> matching db opts (AddrTxKeyA a)
+                        matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
+                    _ -> matching it (AddrTxKeyA a)
             Just (AtBlock bh) ->
                 matchingSkip
-                    db
-                    opts
+                    it
                     (AddrTxKeyA a)
                     (AddrTxKeyB a (BlockRef bh maxBound))
     f AddrTxKey {addrTxKeyT = t} () = t
     f _ _                           = undefined
 
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
-getUnspentDB p DatabaseReader { databaseReadOpts = opts
-                              , databaseHandle = db
-                              } =
-    fmap (valToUnspent p) <$> retrieve db opts (UnspentKey p)
+getUnspentDB p DatabaseReader{databaseHandle = db} =
+    fmap (valToUnspent p) <$> retrieve db (UnspentKey p)
 
 getAddressesUnspentsDB ::
        MonadIO m
@@ -195,25 +186,22 @@ getAddressUnspentsDB ::
     -> Limits
     -> DatabaseReader
     -> m [Unspent]
-getAddressUnspentsDB a limits bdb@DatabaseReader { databaseReadOpts = opts
-                                                 , databaseHandle = db
-                                                 } =
-    liftIO . runResourceT . runConduit $
-    x .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
+getAddressUnspentsDB a limits bdb@DatabaseReader{databaseHandle = db} =
+    liftIO $ withIter db $ \it -> runConduit $
+    x it .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
   where
-    x = case start limits of
-        Nothing -> matching db opts (AddrOutKeyA a)
+    x it = case start limits of
+        Nothing -> matching it (AddrOutKeyA a)
         Just (AtBlock h) ->
             matchingSkip
-                db
-                opts
+                it
                 (AddrOutKeyA a)
                 (AddrOutKeyB a (BlockRef h maxBound))
         Just (AtTx txh) ->
             getTxDataDB txh bdb >>= \case
                 Just TxData {txDataBlock = b@BlockRef {}} ->
-                    matchingSkip db opts (AddrOutKeyA a) (AddrOutKeyB a b)
-                _ -> matching db opts (AddrOutKeyA a)
+                    matchingSkip it (AddrOutKeyA a) (AddrOutKeyB a b)
+                _ -> matching it (AddrOutKeyA a)
 
 instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
     getNetwork = asks databaseNetwork

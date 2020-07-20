@@ -7,6 +7,7 @@ module Haskoin.Store.Manager
 
 import           Control.Monad                 (forever, unless, when)
 import           Control.Monad.Logger          (MonadLoggerIO)
+import           Control.Monad.Reader          (ReaderT (ReaderT), runReaderT)
 import           Data.Serialize                (decode)
 import           Data.Time.Clock               (NominalDiffTime)
 import           Data.Word                     (Word32)
@@ -39,7 +40,7 @@ import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 connectRedis)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
-                                                connectRocksDB,
+                                                DatabaseReaderT,
                                                 withDatabaseReader)
 import           Network.Socket                (SockAddr (..))
 import           NQE                           (Inbox, Process (..), Publisher,
@@ -100,7 +101,7 @@ data StoreConfig =
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
           => StoreConfig -> (Store -> m a) -> m a
 withStore cfg action =
-    connectDB cfg >>= \db ->
+    connectDB cfg $ ReaderT $ \db ->
     withPublisher $ \pub ->
     withPublisher $ \node_pub ->
     withSubscription node_pub $ \node_sub ->
@@ -117,9 +118,9 @@ withStore cfg action =
                  , storeNetwork = storeConfNetwork cfg
                  }
 
-connectDB :: MonadIO m => StoreConfig -> m DatabaseReader
+connectDB :: MonadUnliftIO m => StoreConfig -> DatabaseReaderT m a -> m a
 connectDB cfg =
-    connectRocksDB
+    withDatabaseReader
           (storeConfNetwork cfg)
           (storeConfInitialGap cfg)
           (storeConfGap cfg)
@@ -181,8 +182,7 @@ withCache cfg chain db pub action =
             action (Just (c conn))
   where
     f conn cwinbox =
-        withDatabaseReader db $
-        cacheWriter (c conn) cwinbox
+        runReaderT (cacheWriter (c conn) cwinbox) db
     c conn = CacheConfig
                 { cacheConn = conn
                 , cacheMin = storeConfCacheMin cfg

@@ -285,7 +285,7 @@ getBestBlockI Writer {getState = hm, getReader = db} =
     runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = getBestBlockH <$> readTVarIO hm
-    g = withDatabaseReader db getBestBlock
+    g = runReaderT getBestBlock db
 
 getBlocksAtHeightI :: MonadIO m
                    => BlockHeight
@@ -294,7 +294,7 @@ getBlocksAtHeightI :: MonadIO m
 getBlocksAtHeightI bh Writer {getState = hm, getReader = db} =
     getBlocksAtHeightH bh <$> readTVarIO hm >>= \case
         Just bs -> return bs
-        Nothing -> withDatabaseReader db $ getBlocksAtHeight bh
+        Nothing -> runReaderT (getBlocksAtHeight bh) db
 
 getBlockI :: MonadIO m
           => BlockHash
@@ -304,7 +304,7 @@ getBlockI bh Writer {getReader = db, getState = hm} =
     runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = getBlockH bh <$> readTVarIO hm
-    g = withDatabaseReader db $ getBlock bh
+    g = runReaderT (getBlock bh) db
 
 getTxDataI :: MonadIO m
            => TxHash
@@ -314,20 +314,20 @@ getTxDataI th Writer {getReader = db, getState = hm} =
     runMaybeT $ MaybeT f <|> MaybeT g
   where
     f = getTxDataH th <$> readTVarIO hm
-    g = withDatabaseReader db $ getTxData th
+    g = runReaderT (getTxData th) db
 
 getSpenderI :: MonadIO m => OutPoint -> Writer -> m (Maybe Spender)
 getSpenderI op Writer {getReader = db, getState = hm} =
     getSpenderH op <$> readTVarIO hm >>= \case
         Just (Modified s) -> return (Just s)
         Just Deleted -> return Nothing
-        Nothing -> withDatabaseReader db (getSpender op)
+        Nothing -> runReaderT (getSpender op) db
 
 getBalanceI :: MonadIO m => Address -> Writer -> m (Maybe Balance)
 getBalanceI a Writer {getReader = db, getState = hm} =
     getBalanceH a <$> readTVarIO hm >>= \case
         Just b -> return $ Just (valToBalance a b)
-        Nothing -> withDatabaseReader db $ getBalance a
+        Nothing -> runReaderT (getBalance a) db
 
 getUnspentI :: MonadIO m
             => OutPoint
@@ -337,13 +337,13 @@ getUnspentI op Writer {getReader = db, getState = hm} =
     getUnspentH op <$> readTVarIO hm >>= \case
         Just (Modified u) -> return (Just (valToUnspent op u))
         Just Deleted -> return Nothing
-        Nothing -> withDatabaseReader db (getUnspent op)
+        Nothing -> runReaderT (getUnspent op) db
 
 getMempoolI :: MonadIO m => Writer -> m [TxRef]
 getMempoolI Writer {getState = hm, getReader = db} =
     getMempoolH <$> readTVarIO hm >>= \case
         Just xs -> return xs
-        Nothing -> withDatabaseReader db getMempool
+        Nothing -> runReaderT getMempool db
 
 runTx :: MonadIO m => MemoryTx a -> WriterT m a
 runTx f = ReaderT $ atomically . runReaderT f . getState

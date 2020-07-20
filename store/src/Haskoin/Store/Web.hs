@@ -1062,7 +1062,7 @@ runInWebReader ::
 runInWebReader f = do
     bdb <- asks (storeDB . webStore)
     mc <- asks (storeCache . webStore)
-    lift $ withDatabaseReader bdb (withCache mc f)
+    lift $ runReaderT (withCache mc f) bdb
 
 runNoCache :: MonadIO m => Bool -> ReaderT WebConfig m a -> ReaderT WebConfig m a
 runNoCache False f = f

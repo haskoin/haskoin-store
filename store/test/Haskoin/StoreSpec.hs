@@ -7,6 +7,7 @@ module Haskoin.StoreSpec (spec) where
 import           Conduit
 import           Control.Monad
 import           Control.Monad.Logger
+import           Control.Monad.Reader
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B
 import           Data.ByteString.Base64
@@ -47,7 +48,7 @@ spec = describe "Download" $ do
         bestHeight `shouldBe` 8
     it "get a block and its transactions" $
         withTestStore bchRegTest "get-block-txs" $ \TestStore {..} ->
-        withDatabaseReader testStoreDB $ do
+        flip runReaderT testStoreDB $ do
         let h1 = "5369ef2386c72acdf513ffd80aeba2a1774e2f004d120761e54a8bf614173f3e"
             get_the_block h =
                 receive testStoreEvents >>= \case
