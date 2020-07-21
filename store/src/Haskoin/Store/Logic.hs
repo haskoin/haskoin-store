@@ -150,10 +150,10 @@ preLoadMemory txs = do
         liftIO (runLoggingT (runReaderT go r) l)
   where
     go = do
-        _ <- multiAsync 32 $ map loadPrevOut (concatMap prevOuts txs)
-        _ <- multiAsync 32 $ map loadOutputBalances txs
-        -- mapM_ loadPrevOut (concatMap prevOuts txs)
-        -- mapM_ loadOutputBalances txs
+        -- _ <- multiAsync 32 $ map loadPrevOut (concatMap prevOuts txs)
+        -- _ <- multiAsync 32 $ map loadOutputBalances txs
+        mapM_ loadPrevOut (concatMap prevOuts txs)
+        mapM_ loadOutputBalances txs
         runTx . setMempool =<< getMempool
 
 bestBlockData :: MonadImport m => WriterT m BlockData
