@@ -11,11 +11,11 @@ packages:
   - data
 extra-deps:
   - github: haskoin/haskoin-core
-    commit: 88b68285e815ed658b49ab98be77b6834c6ecb97
+    commit: c90b178dd478e7f268dce0c8de9a49708f8a5774
   - github: haskoin/haskoin-node
-    commit: 535cbd4516d800899f77067988656a28e5af918d
+    commit: f6de51536d0638dab9021bc7e32e9259a847cc35
   - github: haskoin/secp256k1-haskell
-    commit: 239159122cc6f830957759a1d247ded7ffeba915
+    commit: 5430374aceca6726765fb80c3782b005482804ef
   - github: jprupp/nqe
     commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
   - github: jprupp/rocksdb-haskell

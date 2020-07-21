@@ -5,38 +5,38 @@
 
 packages:
 - completed:
-    size: 288608
-    url: https://github.com/haskoin/haskoin-core/archive/88b68285e815ed658b49ab98be77b6834c6ecb97.tar.gz
+    size: 288753
+    url: https://github.com/haskoin/haskoin-core/archive/c90b178dd478e7f268dce0c8de9a49708f8a5774.tar.gz
     name: haskoin-core
     version: 0.14.1
-    sha256: cb19e037303eb00f2313d0ecc139651a06ab2319d3e981f52ed8a7da7e7c6192
+    sha256: d35dac68486207406834b5d5d0691e69de6730c786857bb0521eaac0888b2cc8
     pantry-tree:
       size: 5370
-      sha256: c8a377f7050cd636fa211a813999a885249c17d64b25230099bf8a9d0c0cbc00
+      sha256: 1fa53ff630402239c70367eec71a06203acc4caa7a724ce93693dbab540fde11
   original:
-    url: https://github.com/haskoin/haskoin-core/archive/88b68285e815ed658b49ab98be77b6834c6ecb97.tar.gz
+    url: https://github.com/haskoin/haskoin-core/archive/c90b178dd478e7f268dce0c8de9a49708f8a5774.tar.gz
 - completed:
-    size: 25212
-    url: https://github.com/haskoin/haskoin-node/archive/535cbd4516d800899f77067988656a28e5af918d.tar.gz
+    size: 25201
+    url: https://github.com/haskoin/haskoin-node/archive/f6de51536d0638dab9021bc7e32e9259a847cc35.tar.gz
     name: haskoin-node
     version: 0.15.0
-    sha256: 0ce24626581a0ee2757c0ccc74d370488229a9727f6b2862d09d5518e88e46de
+    sha256: e9084478dc0ee7bf97b5e91c353900eafe8b115b39f1157d45f5d7eafcde2370
     pantry-tree:
       size: 897
-      sha256: af3394d7bcba21d87e7eec9f13e753ff59682cbdd177e1d9b0f6ccc4a5e5c732
+      sha256: ea3239d71963cfd4526c971a0b97bb6781444c3e66c01ac6f0b6b42f1aa0c5ea
   original:
-    url: https://github.com/haskoin/haskoin-node/archive/535cbd4516d800899f77067988656a28e5af918d.tar.gz
+    url: https://github.com/haskoin/haskoin-node/archive/f6de51536d0638dab9021bc7e32e9259a847cc35.tar.gz
 - completed:
-    size: 13899
-    url: https://github.com/haskoin/secp256k1-haskell/archive/239159122cc6f830957759a1d247ded7ffeba915.tar.gz
+    size: 12959
+    url: https://github.com/haskoin/secp256k1-haskell/archive/5430374aceca6726765fb80c3782b005482804ef.tar.gz
     name: secp256k1-haskell
-    version: 0.3.0
-    sha256: 748bdcc885ec1e0c1b5db4896651f963d8a29dee7237e7f604c828be0d1ed2b2
+    version: 0.4.0
+    sha256: e4f3838f50df224a93417c98d3dad5ad12710806607278e57f08e557792db727
     pantry-tree:
-      size: 859
-      sha256: 59325b14a11858dfbeb7b788018401e061c2a24ca4c1609d5a39932f4b478167
+      size: 858
+      sha256: 759710d0f76cba618c65b463ec43531a7f6f676a4e3c2a2f8a5737f3fe560ee9
   original:
-    url: https://github.com/haskoin/secp256k1-haskell/archive/239159122cc6f830957759a1d247ded7ffeba915.tar.gz
+    url: https://github.com/haskoin/secp256k1-haskell/archive/5430374aceca6726765fb80c3782b005482804ef.tar.gz
 - completed:
     size: 9640
     url: https://github.com/jprupp/nqe/archive/acbed8c6f39055b33e9c24de3ce634cfc2d8de88.tar.gz
