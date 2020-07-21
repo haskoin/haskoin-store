@@ -65,6 +65,7 @@ data Config = Config
     , configPeerTimeout :: !Int
     , configPeerMaxLife :: !Int
     , configMaxPeers    :: !Int
+    , configMaxDiff     :: !Int
     }
 
 instance Default Config where
@@ -88,6 +89,7 @@ instance Default Config where
                  , configPeerTimeout = defPeerTimeout
                  , configPeerMaxLife = defPeerMaxLife
                  , configMaxPeers    = defMaxPeers
+                 , configMaxDiff     = defMaxDiff
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -206,6 +208,11 @@ defPeerMaxLife :: Int
 defPeerMaxLife = unsafePerformIO $
     defEnv "PEER_MAX_LIFE" (48 * 3600) readMaybe
 {-# NOINLINE defPeerMaxLife #-}
+
+defMaxDiff :: Int
+defMaxDiff = unsafePerformIO $
+    defEnv "MAX_DIFF" 2 readMaybe
+{-# NOINLINE defMaxDiff #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -390,6 +397,12 @@ config = do
         flag (configWipeMempool def) True $
         long "wipe-mempool"
         <> help "Wipe mempool at start"
+    configMaxDiff <-
+        option auto $
+        metavar "INT"
+        <> long "max-diff"
+        <> help "Maximum difference between headers and blocks"
+        <> value (configMaxDiff def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -458,6 +471,7 @@ run Config { configHost = host
            , configPeerTimeout = peertimeout
            , configPeerMaxLife = peerlife
            , configMaxPeers = maxpeers
+           , configMaxDiff = maxdiff
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -495,6 +509,7 @@ run Config { configHost = host
                     , webTimeouts = tos
                     , webMaxPending = pend
                     , webVersion = version
+                    , webMaxDiff = maxdiff
                     }
   where
     l _ lvl

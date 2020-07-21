@@ -18,7 +18,8 @@ module Haskoin.Store.Web
 import           Conduit                       ()
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forever, unless, when, (<=<))
-import           Control.Monad.Logger          (MonadLoggerIO, logInfoS)
+import           Control.Monad.Logger          (MonadLoggerIO, logErrorS,
+                                                logInfoS)
 import           Control.Monad.Reader          (ReaderT, ask, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
@@ -27,6 +28,7 @@ import           Data.Aeson                    (Encoding, ToJSON (..), Value)
 import           Data.Aeson.Encode.Pretty      (Config (..), defConfig,
                                                 encodePretty')
 import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
+import           Data.Aeson.Text               (encodeToLazyText)
 import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
@@ -42,6 +44,7 @@ import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
 import qualified Data.Text.Encoding            as T
+import           Data.Text.Lazy                (toStrict)
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
@@ -101,14 +104,15 @@ instance Default WebLimits where
             }
 
 data WebConfig = WebConfig
-    { webHost        :: !String
-    , webPort        :: !Int
-    , webStore       :: !Store
-    , webMaxPending  :: !Int
-    , webMaxLimits   :: !WebLimits
-    , webReqLog      :: !Bool
-    , webTimeouts    :: !WebTimeouts
-    , webVersion     :: !String
+    { webHost       :: !String
+    , webPort       :: !Int
+    , webStore      :: !Store
+    , webMaxDiff    :: !Int
+    , webMaxPending :: !Int
+    , webMaxLimits  :: !WebLimits
+    , webReqLog     :: !Bool
+    , webTimeouts   :: !WebTimeouts
+    , webVersion    :: !String
     }
 
 data WebTimeouts = WebTimeouts
@@ -874,9 +878,10 @@ scottyHealth _ = do
     return h
 
 blockHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
-                 => Chain -> m BlockHealth
-blockHealthCheck ch = do
-    let blockHealthMaxDiff = 2
+                 => WebConfig -> m BlockHealth
+blockHealthCheck cfg = do
+    let ch = storeChain $ webStore cfg
+        blockHealthMaxDiff = webMaxDiff cfg
     blockHealthHeaders <-
         H.nodeHeight <$> chainGetBest ch
     blockHealthBlocks <-
@@ -923,14 +928,18 @@ peerHealthCheck mgr = do
 healthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
             => WebConfig -> m HealthCheck
 healthCheck cfg@WebConfig {..} = do
-    healthBlocks     <- blockHealthCheck (storeChain webStore)
+    healthBlocks     <- blockHealthCheck cfg
     healthLastBlock  <- lastBlockHealthCheck (storeChain webStore) webTimeouts
     healthLastTx     <- lastTxHealthCheck (storeChain webStore) webTimeouts
     healthPendingTxs <- pendingTxsHealthCheck cfg
     healthPeers      <- peerHealthCheck (storeManager webStore)
     let healthNetwork = getNetworkName (storeNetwork webStore)
         healthVersion = webVersion
-    return HealthCheck {..}
+        hc = HealthCheck {..}
+    unless (isOK hc) $ do
+        let t = toStrict $ encodeToLazyText hc
+        $(logErrorS) "Web" $ "Health check failed: " <> t
+    return hc
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do

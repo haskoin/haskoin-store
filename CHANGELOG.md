@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.35.0
 ### Changed
 - Use new RocksDB Haskell bindings.
+- Make headers - blocks diff configurable in health check.
+- Simplify locking in cache.
 
 ## 0.34.8
 ### Changed

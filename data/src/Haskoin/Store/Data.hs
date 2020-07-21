@@ -1116,7 +1116,7 @@ data BlockHealth =
     BlockHealth
         { blockHealthHeaders :: !BlockHeight
         , blockHealthBlocks  :: !BlockHeight
-        , blockHealthMaxDiff :: !BlockHeight
+        , blockHealthMaxDiff :: !Int
         }
     deriving (Show, Eq, Generic, NFData)
 
@@ -1137,7 +1137,10 @@ instance Serialize BlockHealth where
 
 instance Healthy BlockHealth where
     isOK BlockHealth {..} =
-        blockHealthHeaders - blockHealthBlocks <= blockHealthMaxDiff
+        h - b <= blockHealthMaxDiff
+      where
+        h = fromIntegral blockHealthHeaders
+        b = fromIntegral blockHealthBlocks
 
 instance ToJSON BlockHealth where
     toJSON h@BlockHealth {..} =
