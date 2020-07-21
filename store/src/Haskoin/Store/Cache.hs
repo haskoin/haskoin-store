@@ -79,10 +79,9 @@ import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             XPubSpec (..), XPubUnspent (..),
                                             nullBalance)
 import           NQE                       (Inbox, Mailbox, receive, send)
-import           System.Random             (randomIO, randomRIO)
+import           System.Random             (randomIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             bracket, liftIO, throwIO)
-import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheX m a
 runRedis action =
@@ -180,7 +179,7 @@ getXPubTxs xpub limits = do
             return txs
         False -> do
             $(logDebugS) "Cache" $ "Caching new xpub " <> xpubtxt
-            newXPubC xpub >>= \(bals, t) ->
+            newXPubC xpub >>= \(t, bals) ->
                 if t
                     then do
                         $(logDebugS) "Cache" $
@@ -202,7 +201,7 @@ getXPubUnspents xpub limits = do
             bals <- cacheGetXPubBalances xpub
             process bals
         False ->
-            newXPubC xpub >>= \(bals, t) ->
+            newXPubC xpub >>= \(t, bals) ->
                 if t
                     then do
                         $(logDebugS) "Cache" $
@@ -254,7 +253,7 @@ getXPubBalances xpub = do
             return bals
         False -> do
             $(logDebugS) "Cache" $ "Caching balances for xpub " <> xpubtxt
-            fst <$> newXPubC xpub
+            snd <$> newXPubC xpub
 
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
 isInCache xpub =
@@ -451,7 +450,6 @@ cacheWriter cfg inbox = runReaderT go cfg
     go = do
         newBlockC
         forever $ do
-            pruneDB
             x <- receive inbox
             cacheWriterReact x
 
@@ -518,29 +516,6 @@ withLock f =
         Just _ -> Just <$> f
         Nothing -> return Nothing
 
-withLockWait ::
-       (MonadLoggerIO m, MonadUnliftIO m)
-    => Integer
-    -> CacheX m a
-    -> CacheX m (Maybe a)
-withLockWait n f = do
-    $(logDebugS) "Cache" "Acquiring lock"
-    go n
-  where
-    go n'
-        | n' <= 0 = do
-              $(logDebugS) "Cache" "Failed to acquire lock"
-              return Nothing
-        | otherwise = withLock f >>= \case
-              Just x -> return $ Just x
-              Nothing -> do
-                  $(logDebugS) "Cache" $
-                      "Retrying acquisition of lock " <>
-                      cs (show n') <> " times"
-                  r <- liftIO $ randomRIO (5000, 10000)
-                  threadDelay r
-                  go (n' - 1)
-
 pruneDB :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
         => CacheX m Integer
 pruneDB =
@@ -557,7 +532,7 @@ pruneDB =
         case min 1000 (n `div` 64) of
             0 -> return 0
             x -> do
-                m <- withLockWait 20 $ do
+                m <- withLock $ do
                     ks <-
                         fmap (map fst) . runRedis $
                         getFromSortedSet maxKey Nothing 0 (fromIntegral x)
@@ -583,33 +558,29 @@ cacheWriterReact ::
     => CacheWriterMessage -> CacheX m ()
 cacheWriterReact CacheNewBlock   = newBlockC
 cacheWriterReact (CacheNewTx th) = newTxC th
-cacheWriterReact CachePing       = newBlockC >> syncMempoolC
+cacheWriterReact CachePing       = pruneDB >> newBlockC >> syncMempoolC
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
 
 newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> CacheX m ([XPubBal], Bool)
+    => XPubSpec -> CacheX m (Bool, [XPubBal])
 newXPubC xpub =
     cachePrime >>= \case
-        Nothing -> do
-            bals <- lift $ xPubBals xpub
-            return (bals, False)
+        Nothing -> (False,) <$> lift (xPubBals xpub)
         Just _ -> do
             bals <- lift $ xPubBals xpub
             x <- asks cacheMin
             t <- xpubText xpub
             let n = lenNotNull bals
             if x <= n
-                then go bals >>= \case
-                    Just _ -> return (bals, True)
-                    Nothing -> return (bals, False)
+                then go bals
                 else do
                     $(logDebugS) "Cache" $
                         "Not caching xpub with " <> cs (show n) <>
                         " used addresses: " <> t
-                    return (bals, False)
+                    return (False, bals)
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     go bals = do
@@ -629,21 +600,21 @@ newXPubC xpub =
             "Caching xpub with " <> cs (show (length xtxs)) <> " txs: " <>
             xpubtxt
         now <- systemSeconds <$> liftIO getSystemTime
-        withLockWait 20 $ do
-            $(logDebugS) "Cache" $
-                "Running Redis pipeline to cache xpub: " <> xpubtxt <> ""
-            runRedis $ do
-                b <- redisTouchKeys now [xpub]
-                c <- redisAddXPubBalances xpub bals
-                d <- redisAddXPubUnspents xpub (map op utxo)
-                e <- redisAddXPubTxs xpub xtxs
-                return $ b >> c >> d >> e >> return ()
-            $(logDebugS) "Cache" $ "Done caching xpub: " <> xpubtxt
+        $(logDebugS) "Cache" $
+            "Running Redis pipeline to cache xpub: " <> xpubtxt <> ""
+        runRedis $ do
+            b <- redisTouchKeys now [xpub]
+            c <- redisAddXPubBalances xpub bals
+            d <- redisAddXPubUnspents xpub (map op utxo)
+            e <- redisAddXPubTxs xpub xtxs
+            return $ b >> c >> d >> e >> return ()
+        $(logDebugS) "Cache" $ "Done caching xpub: " <> xpubtxt
+        return (True, bals)
 
 newTxC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
        => TxHash -> CacheX m ()
 newTxC th = do
-    m <- withLockWait 20 $ isAnythingCached >>= \case
+    m <- withLock $ isAnythingCached >>= \case
         False ->
             $(logDebugS) "Cache" $
             "Not importing tx " <> txHashToHex th <> " because cache is empty"
@@ -668,7 +639,7 @@ newTxC th = do
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
           => CacheX m ()
 newBlockC =
-    withLockWait 20 f >>= \m ->
+    withLock f >>= \m ->
     when (isNothing m) $
     $(logErrorS) "Cache" "Could not get lock to add add block to cache"
   where
@@ -1024,7 +995,7 @@ cachePrime = cacheGetHead >>= \case
                 chbest <- chainGetBest ch
                 if headerHash (nodeHeader chbest) == newhead
                     then do
-                        m <- withLockWait 20 $ do
+                        m <- withLock $ do
                             $(logInfoS) "Cache" "Priming cache"
                             mem <- lift getMempool
                             runRedis $ do
