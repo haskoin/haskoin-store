@@ -202,7 +202,7 @@ cacheWriterProcesses evts cwm action =
   where
     events = cacheWriterEvents evts cwm
     ping = forever $ do
-        time <- liftIO $ randomRIO (5 * second, 15 * second)
+        time <- liftIO $ randomRIO (300 * second, 600 * second)
         threadDelay time
         cachePing cwm
     second = 1000000

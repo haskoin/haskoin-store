@@ -652,10 +652,9 @@ newBlockC =
                 Nothing -> return ()
                 Just newhead -> go newhead cachehead
     go newhead cachehead
-        | cachehead == newhead = do
+        | cachehead == newhead =
             $(logDebugS) "Cache" $
-                "Blocks in sync: " <> blockHashToHex cachehead
-            syncMempoolC
+            "Blocks in sync: " <> blockHashToHex cachehead
         | otherwise = do
             ch <- asks cacheChain
             chainBlockMain newhead ch >>= \case
