@@ -26,9 +26,8 @@ import qualified Data.ByteString.Short as B.Short
 import           Data.Either           (rights)
 import qualified Data.HashSet          as S
 import qualified Data.IntMap.Strict    as I
-import           Data.List             (nub, sortOn)
+import           Data.List             (nub)
 import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing)
-import           Data.Ord              (Down (Down))
 import           Data.Serialize        (encode)
 import           Data.Word             (Word32, Word64)
 import           Haskoin               (Address, Block (..), BlockHash,
@@ -497,14 +496,12 @@ commitModTx add us td = do
                 | otherwise = delOutputs td
 
 updateMempool :: MonadImport m => TxData -> m ()
-updateMempool td = do
-    mp <- getMempool
-    setMempool (f mp)
-  where
-    f mp | txDataDeleted td || confirmed (txDataBlock td) =
-           filter ((/= txHash (txData td)) . txRefHash) mp
-         | otherwise =
-           sortOn Down $ TxRef (txDataBlock td) (txHash (txData td)) : mp
+updateMempool td@TxData{txDataDeleted = True} =
+    deleteFromMempool (txHash (txData td))
+updateMempool td@TxData{txDataDeleted = False, txDataBlock = MemRef t} =
+    addToMempool (txHash (txData td)) t
+updateMempool td@TxData{txDataBlock = BlockRef{}} =
+    deleteFromMempool (txHash (txData td))
 
 spendOutputs :: MonadImport m => [Unspent] -> TxData -> m ()
 spendOutputs us td =
