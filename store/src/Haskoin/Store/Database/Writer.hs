@@ -352,18 +352,19 @@ setBestH h db = db {hBest = Just h}
 
 insertBlockH :: BlockData -> Memory -> Memory
 insertBlockH bd db =
-    db { hBlock =
-             M.insert
+    db { hBlock = M.insert
                   (headerHash (blockDataHeader bd))
                   bd
                   (hBlock db)
        }
 
 setBlocksAtHeightH :: [BlockHash] -> BlockHeight -> Memory -> Memory
-setBlocksAtHeightH hs g db = db {hHeight = M.insert g hs (hHeight db)}
+setBlocksAtHeightH hs g db =
+    db {hHeight = M.insert g hs (hHeight db)}
 
 insertTxH :: TxData -> Memory -> Memory
-insertTxH tx db = db {hTx = M.insert (txHash (txData tx)) tx (hTx db)}
+insertTxH tx db =
+    db {hTx = M.insert (txHash (txData tx)) tx (hTx db)}
 
 insertSpenderH :: OutPoint -> Spender -> Memory -> Memory
 insertSpenderH op s db =

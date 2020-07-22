@@ -234,12 +234,16 @@ importBlock b n = do
 
 checkNewTx :: MonadImport m => Tx -> m ()
 checkNewTx tx = do
-    us <- getUnspentOutputs tx
     when (unique_inputs < length (txIn tx)) $ do
         $(logErrorS) "BlockStore" $
             "Transaction spends same output twice: "
             <> txHashToHex (txHash tx)
         throwError DuplicatePrevOutput
+    us <- getUnspentOutputs tx
+    when (any isNothing us) $ do
+        $(logErrorS) "BlockStore" $
+            "Orphan: " <> txHashToHex (txHash tx)
+        throwError Orphan
     when (isCoinbase tx) $ do
         $(logErrorS) "BlockStore" $
             "Coinbase cannot be imported into mempool: "
@@ -254,12 +258,12 @@ checkNewTx tx = do
             "Insufficient funds for tx: " <> txHashToHex (txHash tx)
         throwError InsufficientFunds
   where
-    unspents = sum . map unspentAmount
+    unspents = sum . map unspentAmount . catMaybes
     outputs = sum (map outValue (txOut tx))
     unique_inputs = length (nub' (map prevOutput (txIn tx)))
 
-getUnspentOutputs :: StoreReadBase m => Tx -> m [Unspent]
-getUnspentOutputs tx = catMaybes <$> mapM getUnspent (prevOuts tx)
+getUnspentOutputs :: StoreReadBase m => Tx -> m [Maybe Unspent]
+getUnspentOutputs tx = mapM getUnspent (prevOuts tx)
 
 prepareTxData :: Bool -> BlockRef -> Word64 -> [Unspent] -> Tx -> TxData
 prepareTxData rbf br tt us tx =
@@ -283,8 +287,14 @@ importTx
     -> m ()
 importTx br tt rbf tx = do
     us <- getUnspentOutputs tx
-    let td = prepareTxData rbf br tt us tx
-    commitAddTx us td
+    when (any isNothing us && not (isCoinbase tx)) $ do
+        $(logErrorS) "BlockStore" $
+            "Attempted to import a tx missing UTXO: "
+            <> txHashToHex (txHash tx)
+        throwError Orphan
+    let us' = catMaybes us
+        td = prepareTxData rbf br tt us' tx
+    commitAddTx us' td
 
 unConfirmTx :: MonadImport m => TxData -> m ()
 unConfirmTx t = confTx t Nothing
