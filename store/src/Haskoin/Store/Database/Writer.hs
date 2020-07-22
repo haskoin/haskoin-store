@@ -4,12 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Haskoin.Store.Database.Writer
-    ( WriterT
-    , MemoryTx
-    , runWriter
-    , runTx
-    ) where
+module Haskoin.Store.Database.Writer (WriterT , runWriter) where
 
 import           Control.Applicative           ((<|>))
 import           Control.DeepSeq               (NFData)
@@ -34,8 +29,8 @@ import           Haskoin.Store.Data            (Balance (..), BlockData (..),
                                                 Unspent (..))
 import           Haskoin.Store.Database.Reader
 import           Haskoin.Store.Database.Types
-import           UnliftIO                      (MonadIO, STM, TVar, atomically,
-                                                modifyTVar, newTVarIO, readTVar,
+import           UnliftIO                      (MonadIO, TVar, atomically,
+                                                liftIO, modifyTVar, newTVarIO,
                                                 readTVarIO)
 
 data Dirty a = Modified a | Deleted
@@ -48,7 +43,6 @@ instance Functor Dirty where
 data Writer = Writer { getReader :: !DatabaseReader
                      , getState  :: !(TVar Memory) }
 
-type MemoryTx = ReaderT (TVar Memory) STM
 type WriterT = ReaderT Writer
 
 instance MonadIO m => StoreReadBase (WriterT m) where
@@ -96,91 +90,63 @@ data Memory = Memory
       :: !(Maybe [TxRef])
     } deriving (Eq, Show)
 
-instance StoreWrite MemoryTx where
+instance MonadIO m => StoreWrite (WriterT m) where
     setBest h =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         setBestH h
     insertBlock b =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         insertBlockH b
     setBlocksAtHeight h g =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         setBlocksAtHeightH h g
     insertTx t =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         insertTxH t
-    insertSpender p s =
-        ReaderT $ \v -> modifyTVar v $
-        insertSpenderH p s
+    insertSpender p s' =
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
+        insertSpenderH p s'
     deleteSpender p =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         deleteSpenderH p
     insertAddrTx a t =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         insertAddrTxH a t
     deleteAddrTx a t =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         deleteAddrTxH a t
     insertAddrUnspent a u =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         insertAddrUnspentH a u
     deleteAddrUnspent a u =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         deleteAddrUnspentH a u
     setMempool xs =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         setMempoolH xs
     setBalance b =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         setBalanceH b
     insertUnspent h =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         insertUnspentH h
     deleteUnspent p =
-        ReaderT $ \v -> modifyTVar v $
+        ReaderT $ \Writer { getState = s } ->
+        liftIO . atomically . modifyTVar s $
         deleteUnspentH p
-
-instance StoreReadBase MemoryTx where
-    getNetwork =
-        ReaderT $ fmap hNet . readTVar
-    getBestBlock =
-        ReaderT $ \v -> getBestH <$> readTVar v >>= \case
-            Nothing -> error "Best block not set in STM"
-            Just b -> return (Just b)
-    getBlocksAtHeight h =
-        ReaderT $ \v -> getBlocksAtHeightH h <$> readTVar v >>= \case
-            Nothing -> error "Blocks at height not set in STM"
-            Just hs -> return hs
-    getBlock h =
-        ReaderT $ \v -> getBlockH h <$> readTVar v >>= \case
-            Nothing -> error "Block not set in STM"
-            Just b -> return (Just b)
-    getTxData t =
-        ReaderT $ \v -> getTxDataH t <$> readTVar v >>= \case
-            Nothing -> error "Tx data not set in STM"
-            Just d -> return (Just d)
-    getSpender op =
-        ReaderT $ \v -> do
-        m <- getSpenderH op <$> readTVar v
-        case m of
-            Just (Modified s) -> return (Just s)
-            Just Deleted      -> return Nothing
-            Nothing           -> return Nothing
-    getUnspent op =
-        ReaderT $ \v -> do
-        m <- getUnspentH op <$> readTVar v
-        case m of
-            Just (Modified u) -> return (Just (valToUnspent op u))
-            Just Deleted      -> return Nothing
-            Nothing           -> return Nothing
-    getBalance a =
-        ReaderT $ \v -> getBalanceH a <$> readTVar v >>= \case
-            Just b  -> return $ Just (valToBalance a b)
-            Nothing -> error "Balance not set in STM"
-    getMempool =
-        ReaderT $ \v -> getMempoolH <$> readTVar v >>= \case
-            Just mp -> return mp
-            Nothing -> error "Mempool not set in STM"
 
 runWriter
     :: MonadIO m
@@ -345,9 +311,6 @@ getMempoolI Writer {getState = hm, getReader = db} =
         Just xs -> return xs
         Nothing -> runReaderT getMempool db
 
-runTx :: MonadIO m => MemoryTx a -> WriterT m a
-runTx f = ReaderT $ atomically . runReaderT f . getState
-
 emptyMemory :: Network -> Memory
 emptyMemory net =
     Memory { hNet     = net
@@ -383,9 +346,6 @@ getBalanceH a = M.lookup a . hBalance
 
 getMempoolH :: Memory -> Maybe [TxRef]
 getMempoolH = hMempool
-
-getBestH :: Memory -> Maybe BlockHash
-getBestH = hBest
 
 setBestH :: BlockHash -> Memory -> Memory
 setBestH h db = db {hBest = Just h}
