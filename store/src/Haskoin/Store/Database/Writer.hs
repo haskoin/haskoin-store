@@ -15,7 +15,8 @@ import qualified Data.ByteString.Short         as B.Short
 import           Data.Hashable                 (Hashable)
 import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as M
-import           Data.List                     (sort)
+import           Data.List                     (sortOn)
+import           Data.Ord                      (Down (..))
 import           Database.RocksDB              (BatchOp)
 import           Database.RocksDB.Query        (deleteOp, insertOp, writeBatch)
 import           GHC.Generics                  (Generic)
@@ -340,7 +341,7 @@ getBalanceH :: Address -> Memory -> Maybe BalVal
 getBalanceH a = M.lookup a . hBalance
 
 getMempoolH :: Memory -> [TxRef]
-getMempoolH = sort . map (\(h, t) -> TxRef (MemRef t) h) . M.toList . hMempool
+getMempoolH = sortOn Down . map (\(h, t) -> TxRef (MemRef t) h) . M.toList . hMempool
 
 setBestH :: BlockHash -> Memory -> Memory
 setBestH h db = db {hBest = Just h}
