@@ -6,6 +6,14 @@ module Haskoin.Store.Database.Reader
       DatabaseReader (..)
     , DatabaseReaderT
     , withDatabaseReader
+    , addrTxCF
+    , addrOutCF
+    , txCF
+    , spenderCF
+    , unspentCF
+    , blockCF
+    , heightCF
+    , balanceCF
     ) where
 
 import           Conduit                      (mapC, runConduit, sinkList, (.|))
@@ -16,10 +24,10 @@ import           Data.Function                (on)
 import           Data.List                    (sortBy)
 import           Data.Maybe                   (fromMaybe)
 import           Data.Word                    (Word32)
-import           Database.RocksDB             (Config (..), DB, withDB,
-                                               withIter)
-import           Database.RocksDB.Query       (insert, matching, matchingAsList,
-                                               matchingSkip, retrieve)
+import           Database.RocksDB             (ColumnFamily, Config (..),
+                                               DB (..), withDBCF, withIterCF)
+import           Database.RocksDB.Query       (insert, matching, matchingSkip,
+                                               retrieve, retrieveCF)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common
@@ -30,11 +38,10 @@ import           Haskoin.Store.Data           (Balance, BlockData,
 import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
                                                BalKey (..), BestKey (..),
                                                BlockKey (..), HeightKey (..),
-                                               MemKey (..), OldMemKey (..),
-                                               SpenderKey (..), TxKey (..),
-                                               UnspentKey (..), VersionKey (..),
-                                               toUnspent, valToBalance,
-                                               valToUnspent)
+                                               MemKey (..), SpenderKey (..),
+                                               TxKey (..), UnspentKey (..),
+                                               VersionKey (..), toUnspent,
+                                               valToBalance, valToUnspent)
 import           UnliftIO                     (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -48,7 +55,7 @@ data DatabaseReader =
         }
 
 dataVersion :: Word32
-dataVersion = 16
+dataVersion = 17
 
 withDatabaseReader :: MonadUnliftIO m
                    => Network
@@ -58,7 +65,7 @@ withDatabaseReader :: MonadUnliftIO m
                    -> DatabaseReaderT m a
                    -> m a
 withDatabaseReader net igap gap dir f =
-    withDB dir def{createIfMissing = True, maxFiles = Just (-1)} $ \db -> do
+    withDBCF dir cfg columnFamilyConfig $ \db -> do
     let bdb =
             DatabaseReader
                 { databaseHandle = db
@@ -68,27 +75,57 @@ withDatabaseReader net igap gap dir f =
                 }
     initRocksDB bdb
     runReaderT f bdb
+  where
+    cfg = def{createIfMissing = True, maxFiles = Just (-1)}
+
+columnFamilyConfig :: [(String, Config)]
+columnFamilyConfig =
+          [ ("addr-tx",     def{prefixLength = Just 22})
+          , ("addr-out",    def{prefixLength = Just 22})
+          , ("tx",          def{prefixLength = Just 33})
+          , ("spender",     def{prefixLength = Just 33})
+          , ("unspent",     def{prefixLength = Just 37})
+          , ("block",       def{prefixLength = Just 33})
+          , ("height",      def)
+          , ("balance",     def{prefixLength = Just 22})
+          ]
+
+addrTxCF :: DB -> ColumnFamily
+addrTxCF = head . columnFamilies
+
+addrOutCF :: DB -> ColumnFamily
+addrOutCF db = columnFamilies db !! 1
+
+txCF :: DB -> ColumnFamily
+txCF db = columnFamilies db !! 2
+
+spenderCF :: DB -> ColumnFamily
+spenderCF db = columnFamilies db !! 3
+
+unspentCF :: DB -> ColumnFamily
+unspentCF db = columnFamilies db !! 4
+
+blockCF :: DB -> ColumnFamily
+blockCF db = columnFamilies db !! 5
+
+heightCF :: DB -> ColumnFamily
+heightCF db = columnFamilies db !! 6
+
+balanceCF :: DB -> ColumnFamily
+balanceCF db = columnFamilies db !! 7
 
 initRocksDB :: MonadIO m => DatabaseReader -> m ()
-initRocksDB bdb@DatabaseReader{databaseHandle = db} = do
+initRocksDB DatabaseReader{databaseHandle = db} = do
     e <-
         runExceptT $
         retrieve db VersionKey >>= \case
             Just v
                 | v == dataVersion -> return ()
-                | v == 15 -> migrate15to16 bdb >> initRocksDB bdb
                 | otherwise -> throwError "Incorrect RocksDB database version"
             Nothing -> setInitRocksDB db
     case e of
         Left s   -> error s
         Right () -> return ()
-
-migrate15to16 :: MonadIO m => DatabaseReader -> m ()
-migrate15to16 DatabaseReader{databaseHandle = db} = do
-    xs <- liftIO $ matchingAsList db OldMemKeyS
-    let ys = map (\(OldMemKey t h, ()) -> (t, h)) xs
-    insert db MemKey ys
-    insert db VersionKey (16 :: Word32)
 
 setInitRocksDB :: MonadIO m => DB -> m ()
 setInitRocksDB db = insert db VersionKey dataVersion
@@ -99,26 +136,26 @@ getBestDatabaseReader DatabaseReader{databaseHandle = db} =
 
 getBlocksAtHeightDB :: MonadIO m => BlockHeight -> DatabaseReader -> m [BlockHash]
 getBlocksAtHeightDB h DatabaseReader{databaseHandle = db} =
-    retrieve db (HeightKey h) >>= \case
+    retrieveCF db (heightCF db) (HeightKey h) >>= \case
         Nothing -> return []
         Just ls -> return ls
 
 getDatabaseReader :: MonadIO m => BlockHash -> DatabaseReader -> m (Maybe BlockData)
 getDatabaseReader h DatabaseReader{databaseHandle = db} =
-    retrieve db (BlockKey h)
+    retrieveCF db (blockCF db) (BlockKey h)
 
 getTxDataDB ::
        MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
 getTxDataDB th DatabaseReader{databaseHandle = db} =
-    retrieve db (TxKey th)
+    retrieveCF db (txCF db) (TxKey th)
 
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
 getSpenderDB op DatabaseReader{databaseHandle = db} =
-    retrieve db $ SpenderKey op
+    retrieveCF db (spenderCF db) $ SpenderKey op
 
 getBalanceDB :: MonadIO m => Address -> DatabaseReader -> m (Maybe Balance)
 getBalanceDB a DatabaseReader{databaseHandle = db} =
-    fmap (valToBalance a) <$> retrieve db (BalKey a)
+    fmap (valToBalance a) <$> retrieveCF db (balanceCF db) (BalKey a)
 
 getMempoolDB :: MonadIO m => DatabaseReader -> m [TxRef]
 getMempoolDB DatabaseReader{databaseHandle = db} =
@@ -144,7 +181,7 @@ getAddressTxsDB ::
     -> DatabaseReader
     -> m [TxRef]
 getAddressTxsDB a limits bdb@DatabaseReader{databaseHandle = db} =
-    liftIO $ withIter db $ \it -> runConduit $
+    liftIO $ withIterCF db (addrTxCF db) $ \it -> runConduit $
     x it .| applyLimitsC limits .| mapC (uncurry f) .| sinkList
   where
     x it =
@@ -165,7 +202,7 @@ getAddressTxsDB a limits bdb@DatabaseReader{databaseHandle = db} =
 
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
 getUnspentDB p DatabaseReader{databaseHandle = db} =
-    fmap (valToUnspent p) <$> retrieve db (UnspentKey p)
+    fmap (valToUnspent p) <$> retrieveCF db (unspentCF db) (UnspentKey p)
 
 getAddressesUnspentsDB ::
        MonadIO m
@@ -187,7 +224,7 @@ getAddressUnspentsDB ::
     -> DatabaseReader
     -> m [Unspent]
 getAddressUnspentsDB a limits bdb@DatabaseReader{databaseHandle = db} =
-    liftIO $ withIter db $ \it -> runConduit $
+    liftIO $ withIterCF db (unspentCF db) $ \it -> runConduit $
     x it .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
   where
     x it = case start limits of

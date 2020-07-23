@@ -10,15 +10,9 @@ packages:
   - store
   - data
 extra-deps:
-  - github: haskoin/haskoin-core
-    commit: c90b178dd478e7f268dce0c8de9a49708f8a5774
-  - github: haskoin/haskoin-node
-    commit: f6de51536d0638dab9021bc7e32e9259a847cc35
-  - github: haskoin/secp256k1-haskell
-    commit: 5430374aceca6726765fb80c3782b005482804ef
-  - github: jprupp/nqe
-    commit: acbed8c6f39055b33e9c24de3ce634cfc2d8de88
-  - github: jprupp/rocksdb-haskell
-    commit: 7bc824e8d07ed5a776735caae0b52fc1edf7286d
-  - github: jprupp/rocksdb-query
-    commit: b1a6f9a5e44f21d641f4b9343329e194ef6be6ba
+  - haskoin-core-0.15.0
+  - haskoin-node-0.16.0
+  - secp256k1-haskell-0.4.0
+  - nqe-0.6.3
+  - rocksdb-haskell-jprupp-2.1.2
+  - rocksdb-query-0.4.2

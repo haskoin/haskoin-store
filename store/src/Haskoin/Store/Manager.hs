@@ -150,6 +150,7 @@ nodeCfg cfg db pub =
     NodeConfig
         { nodeConfMaxPeers = storeConfMaxPeers cfg
         , nodeConfDB = databaseHandle db
+        , nodeConfColumnFamily = Nothing
         , nodeConfPeers = storeConfInitPeers cfg
         , nodeConfDiscover = storeConfDiscover cfg
         , nodeConfEvents = pub

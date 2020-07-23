@@ -17,8 +17,9 @@ import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as M
 import           Data.List                     (sortOn)
 import           Data.Ord                      (Down (..))
-import           Database.RocksDB              (BatchOp)
-import           Database.RocksDB.Query        (deleteOp, insertOp, writeBatch)
+import           Database.RocksDB              (BatchOp, DB)
+import           Database.RocksDB.Query        (deleteOp, deleteOpCF, insertOp,
+                                                insertOpCF, writeBatch)
 import           GHC.Generics                  (Generic)
 import           Haskoin                       (Address, BlockHash, BlockHeight,
                                                 Network, OutPoint (..), TxHash,
@@ -160,92 +161,94 @@ runWriter bdb@DatabaseReader{ databaseHandle = db
     (mem, best) <- runReaderT ((,) <$> getMempool <*> getBestBlock) bdb
     hm <- newTVarIO (emptyMemory net best mem)
     x <- R.runReaderT f Writer {getReader = bdb, getState = hm}
-    ops <- hashMapOps <$> readTVarIO hm
+    ops <- hashMapOps db <$> readTVarIO hm
     writeBatch db ops
     return x
 
-hashMapOps :: Memory -> [BatchOp]
-hashMapOps db =
-    bestBlockOp (hBest db) <>
-    blockHashOps (hBlock db) <>
-    blockHeightOps (hHeight db) <>
-    txOps (hTx db) <>
-    spenderOps (hSpender db) <>
-    balOps (hBalance db) <>
-    addrTxOps (hAddrTx db) <>
-    addrOutOps (hAddrOut db) <>
-    mempoolOp (hMempool db) <>
-    unspentOps (hUnspent db)
+hashMapOps :: DB -> Memory -> [BatchOp]
+hashMapOps db mem =
+    bestBlockOp db (hBest mem) <>
+    blockHashOps db (hBlock mem) <>
+    blockHeightOps db (hHeight mem) <>
+    txOps db (hTx mem) <>
+    spenderOps db (hSpender mem) <>
+    balOps db (hBalance mem) <>
+    addrTxOps db (hAddrTx mem) <>
+    addrOutOps db (hAddrOut mem) <>
+    mempoolOp db (hMempool mem) <>
+    unspentOps db (hUnspent mem)
 
-bestBlockOp :: Maybe BlockHash -> [BatchOp]
-bestBlockOp Nothing  = [deleteOp BestKey]
-bestBlockOp (Just b) = [insertOp BestKey b]
+bestBlockOp :: DB -> Maybe BlockHash -> [BatchOp]
+bestBlockOp _ Nothing  = [deleteOp BestKey]
+bestBlockOp _ (Just b) = [insertOp BestKey b]
 
-blockHashOps :: HashMap BlockHash BlockData -> [BatchOp]
-blockHashOps = map (uncurry f) . M.toList
+blockHashOps :: DB -> HashMap BlockHash BlockData -> [BatchOp]
+blockHashOps db = map (uncurry f) . M.toList
   where
-    f = insertOp . BlockKey
+    f = insertOpCF (blockCF db) . BlockKey
 
-blockHeightOps :: HashMap BlockHeight [BlockHash] -> [BatchOp]
-blockHeightOps = map (uncurry f) . M.toList
+blockHeightOps :: DB -> HashMap BlockHeight [BlockHash] -> [BatchOp]
+blockHeightOps db = map (uncurry f) . M.toList
   where
-    f = insertOp . HeightKey
+    f = insertOpCF (heightCF db) . HeightKey
 
-txOps :: HashMap TxHash TxData -> [BatchOp]
-txOps = map (uncurry f) . M.toList
+txOps :: DB -> HashMap TxHash TxData -> [BatchOp]
+txOps db = map (uncurry f) . M.toList
   where
-    f = insertOp . TxKey
+    f = insertOpCF (txCF db) . TxKey
 
-spenderOps :: HashMap OutPoint (Dirty Spender)
-           -> [BatchOp]
-spenderOps = map (uncurry f) . M.toList
+spenderOps :: DB -> HashMap OutPoint (Dirty Spender) -> [BatchOp]
+spenderOps db = map (uncurry f) . M.toList
   where
     f o (Modified s) =
-        insertOp (SpenderKey o) s
+        insertOpCF (spenderCF db) (SpenderKey o) s
     f o Deleted =
-        deleteOp (SpenderKey o)
+        deleteOpCF (spenderCF db) (SpenderKey o)
 
-balOps :: HashMap Address BalVal -> [BatchOp]
-balOps = map (uncurry f) . M.toList
+balOps :: DB -> HashMap Address BalVal -> [BatchOp]
+balOps db = map (uncurry f) . M.toList
   where
-    f = insertOp . BalKey
+    f = insertOpCF (balanceCF db) . BalKey
 
-addrTxOps :: HashMap (Address, TxRef) (Dirty ()) -> [BatchOp]
-addrTxOps = map (uncurry f) . M.toList
+addrTxOps :: DB -> HashMap (Address, TxRef) (Dirty ()) -> [BatchOp]
+addrTxOps db = map (uncurry f) . M.toList
   where
-    f (a, t) (Modified ()) = insertOp (AddrTxKey a t) ()
-    f (a, t) Deleted       = deleteOp (AddrTxKey a t)
+    f (a, t) (Modified ()) = insertOpCF (addrTxCF db) (AddrTxKey a t) ()
+    f (a, t) Deleted       = deleteOpCF (addrTxCF db) (AddrTxKey a t)
 
-addrOutOps
-    :: HashMap (Address, BlockRef, OutPoint) (Dirty OutVal) -> [BatchOp]
-addrOutOps = map (uncurry f) . M.toList
+addrOutOps :: DB
+           -> HashMap (Address, BlockRef, OutPoint) (Dirty OutVal)
+           -> [BatchOp]
+addrOutOps db = map (uncurry f) . M.toList
   where
     f (a, b, p) (Modified l) =
-        insertOp
-            (AddrOutKey { addrOutKeyA = a
-                        , addrOutKeyB = b
-                        , addrOutKeyP = p })
-            l
+        insertOpCF (addrOutCF db)
+            ( AddrOutKey { addrOutKeyA = a
+                         , addrOutKeyB = b
+                         , addrOutKeyP = p
+                         }
+            ) l
     f (a, b, p) Deleted =
-        deleteOp AddrOutKey { addrOutKeyA = a
-                            , addrOutKeyB = b
-                            , addrOutKeyP = p }
+        deleteOpCF (addrOutCF db)
+            AddrOutKey { addrOutKeyA = a
+                       , addrOutKeyB = b
+                       , addrOutKeyP = p
+                       }
 
-mempoolOp :: HashMap TxHash UnixTime -> [BatchOp]
-mempoolOp = (: [])
-          . insertOp MemKey
-          . sortOn Down
-          . map (\(h, t) -> (t, h))
-          . M.toList
+mempoolOp :: DB -> HashMap TxHash UnixTime -> [BatchOp]
+mempoolOp _ = (: [])
+            . insertOp MemKey
+            . sortOn Down
+            . map (\(h, t) -> (t, h))
+            . M.toList
 
-unspentOps :: HashMap OutPoint (Dirty UnspentVal)
-           -> [BatchOp]
-unspentOps = map (uncurry f) . M.toList
+unspentOps :: DB -> HashMap OutPoint (Dirty UnspentVal) -> [BatchOp]
+unspentOps db = map (uncurry f) . M.toList
   where
     f p (Modified u) =
-        insertOp (UnspentKey p) u
+        insertOpCF (unspentCF db) (UnspentKey p) u
     f p Deleted =
-        deleteOp (UnspentKey p)
+        deleteOpCF (unspentCF db) (UnspentKey p)
 
 getNetworkI :: MonadIO m => Writer -> m Network
 getNetworkI Writer {getState = hm} =

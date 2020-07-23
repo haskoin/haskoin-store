@@ -5,71 +5,47 @@
 
 packages:
 - completed:
-    size: 288753
-    url: https://github.com/haskoin/haskoin-core/archive/c90b178dd478e7f268dce0c8de9a49708f8a5774.tar.gz
-    name: haskoin-core
-    version: 0.14.1
-    sha256: d35dac68486207406834b5d5d0691e69de6730c786857bb0521eaac0888b2cc8
+    hackage: haskoin-core-0.15.0@sha256:f4fff61f850c48f4f3be368cdd65951a088724512e7fc56e504e9da9f97a3fa3,4791
     pantry-tree:
-      size: 5370
-      sha256: 1fa53ff630402239c70367eec71a06203acc4caa7a724ce93693dbab540fde11
+      size: 5110
+      sha256: f60304e2b2de3458ab2bd55d805f95e1796fce9f52f46f3425969277938fcdfe
   original:
-    url: https://github.com/haskoin/haskoin-core/archive/c90b178dd478e7f268dce0c8de9a49708f8a5774.tar.gz
+    hackage: haskoin-core-0.15.0
 - completed:
-    size: 25201
-    url: https://github.com/haskoin/haskoin-node/archive/f6de51536d0638dab9021bc7e32e9259a847cc35.tar.gz
-    name: haskoin-node
-    version: 0.15.0
-    sha256: e9084478dc0ee7bf97b5e91c353900eafe8b115b39f1157d45f5d7eafcde2370
+    hackage: haskoin-node-0.16.0@sha256:36ff20bbb8e5360794098ad8d49b5aced6f9c5997b1740004c21fbde6246b6d6,2279
     pantry-tree:
-      size: 897
-      sha256: ea3239d71963cfd4526c971a0b97bb6781444c3e66c01ac6f0b6b42f1aa0c5ea
+      size: 636
+      sha256: ab88b6c9e3f1295781e358a3148b4597559b1df6efd1874f279bb47454556d4c
   original:
-    url: https://github.com/haskoin/haskoin-node/archive/f6de51536d0638dab9021bc7e32e9259a847cc35.tar.gz
+    hackage: haskoin-node-0.16.0
 - completed:
-    size: 12959
-    url: https://github.com/haskoin/secp256k1-haskell/archive/5430374aceca6726765fb80c3782b005482804ef.tar.gz
-    name: secp256k1-haskell
-    version: 0.4.0
-    sha256: e4f3838f50df224a93417c98d3dad5ad12710806607278e57f08e557792db727
+    hackage: secp256k1-haskell-0.4.0@sha256:696dff6f5f84c83041c290b198e872d39241dbe62eb206627264ebdff6fe7958,1930
     pantry-tree:
-      size: 858
-      sha256: 759710d0f76cba618c65b463ec43531a7f6f676a4e3c2a2f8a5737f3fe560ee9
+      size: 599
+      sha256: e7cb3888501fc5d1084a107488be3a6de59799ba95666d055c4acbabb66fcd69
   original:
-    url: https://github.com/haskoin/secp256k1-haskell/archive/5430374aceca6726765fb80c3782b005482804ef.tar.gz
+    hackage: secp256k1-haskell-0.4.0
 - completed:
-    size: 9640
-    url: https://github.com/jprupp/nqe/archive/acbed8c6f39055b33e9c24de3ce634cfc2d8de88.tar.gz
-    name: nqe
-    version: 0.6.3
-    sha256: 451437cf8adf4cf3f9664d31dc7991c1a3f1fdb980c64bb136a8ba3c4779bf36
+    hackage: nqe-0.6.3@sha256:f22b16fc5723d5c8836dba19ff051dbbae0d3ebfdbeaa1ca2077ea4b3c5b6f32,1628
     pantry-tree:
-      size: 871
-      sha256: 46623027841003c77af78310d45ad1bd53f46f21b8563c720eb4fc5a26e0c77e
+      size: 665
+      sha256: ee2c74f9ee8163924d7a3ecf0dee65ed1b8dd16e03af3a7b10d3f2451e92afc4
   original:
-    url: https://github.com/jprupp/nqe/archive/acbed8c6f39055b33e9c24de3ce634cfc2d8de88.tar.gz
+    hackage: nqe-0.6.3
 - completed:
-    size: 10222
-    url: https://github.com/jprupp/rocksdb-haskell/archive/7bc824e8d07ed5a776735caae0b52fc1edf7286d.tar.gz
-    name: rocksdb-haskell-jprupp
-    version: 2.0.0
-    sha256: 5781abaf61832ea36c913db7d3a3aefa25d417199f269df574905caa2b392df8
+    hackage: rocksdb-haskell-jprupp-2.1.2@sha256:132f8e652111bdbdaadee5895bc4ce2e36cea6e093f75789ee77856fe76230bc,1703
     pantry-tree:
-      size: 916
-      sha256: 7b9c0e3887b31e0f3a8c7ac13d35c56f76c964fa9d1dffa342ccfe3b591d403a
+      size: 712
+      sha256: 7aafb1dea1cc810e29edef54be23e955c4854a0522a05dbddca1a7aecb72b700
   original:
-    url: https://github.com/jprupp/rocksdb-haskell/archive/7bc824e8d07ed5a776735caae0b52fc1edf7286d.tar.gz
+    hackage: rocksdb-haskell-jprupp-2.1.2
 - completed:
-    size: 5565
-    url: https://github.com/jprupp/rocksdb-query/archive/b1a6f9a5e44f21d641f4b9343329e194ef6be6ba.tar.gz
-    name: rocksdb-query
-    version: 0.4.0
-    sha256: 7eed2c70b141db1fbacc15d1897d5991079022f27b1f46f3af8c82d5db5246ca
+    hackage: rocksdb-query-0.4.2@sha256:70ff2e8b436835969d76ea906a0d133e2affab65fcd89bc7b3da2414ff82d3a2,1555
     pantry-tree:
-      size: 587
-      sha256: 763b2266f7144e1a49bc341313cae56a10cc2ece74ff863e76ebdda30be97ab1
+      size: 381
+      sha256: cf6831262227722c8291f0d2a31c2fdce389e7e91387b2afc6ae81fcfb5982e6
   original:
-    url: https://github.com/jprupp/rocksdb-query/archive/b1a6f9a5e44f21d641f4b9343329e194ef6be6ba.tar.gz
+    hackage: rocksdb-query-0.4.2
 snapshots:
 - completed:
     size: 531237
