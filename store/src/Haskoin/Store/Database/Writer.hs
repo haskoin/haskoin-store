@@ -232,7 +232,11 @@ addrOutOps = map (uncurry f) . M.toList
                             , addrOutKeyP = p }
 
 mempoolOp :: HashMap TxHash UnixTime -> [BatchOp]
-mempoolOp = (: []) . insertOp MemKey . map (\(h, t) -> (t, h)) . M.toList
+mempoolOp = (: [])
+          . insertOp MemKey
+          . sortOn Down
+          . map (\(h, t) -> (t, h))
+          . M.toList
 
 unspentOps :: HashMap OutPoint (Dirty UnspentVal)
            -> [BatchOp]
