@@ -290,7 +290,7 @@ importTx br tt rbf tx = do
         $(logErrorS) "BlockStore" $
             "Attempted to import a tx missing UTXO: "
             <> txHashToHex (txHash tx)
-        throwError Orphan
+        -- throwError Orphan
     let us' = catMaybes us
         td = prepareTxData rbf br tt us' tx
     commitAddTx us' td
