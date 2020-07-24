@@ -80,14 +80,14 @@ withDatabaseReader net igap gap dir f =
 
 columnFamilyConfig :: [(String, Config)]
 columnFamilyConfig =
-          [ ("addr-tx",     def{prefixLength = Just 22})
-          , ("addr-out",    def{prefixLength = Just 22})
-          , ("tx",          def{prefixLength = Just 33})
-          , ("spender",     def{prefixLength = Just 33})
-          , ("unspent",     def{prefixLength = Just 37})
-          , ("block",       def{prefixLength = Just 33})
-          , ("height",      def)
-          , ("balance",     def{prefixLength = Just 22})
+          [ ("addr-tx",     def{prefixLength = Just 22, bloomFilter = True})
+          , ("addr-out",    def{prefixLength = Just 22, bloomFilter = True})
+          , ("tx",          def{prefixLength = Just 33, bloomFilter = True})
+          , ("spender",     def{prefixLength = Just 33, bloomFilter = True})
+          , ("unspent",     def{prefixLength = Just 37, bloomFilter = True})
+          , ("block",       def{prefixLength = Just 33, bloomFilter = True})
+          , ("height",      def{prefixLength = Nothing, bloomFilter = True})
+          , ("balance",     def{prefixLength = Just 22, bloomFilter = True})
           ]
 
 addrTxCF :: DB -> ColumnFamily

@@ -33,19 +33,19 @@ packages:
   original:
     hackage: nqe-0.6.3
 - completed:
-    hackage: rocksdb-haskell-jprupp-2.1.2@sha256:132f8e652111bdbdaadee5895bc4ce2e36cea6e093f75789ee77856fe76230bc,1703
-    pantry-tree:
-      size: 712
-      sha256: 7aafb1dea1cc810e29edef54be23e955c4854a0522a05dbddca1a7aecb72b700
-  original:
-    hackage: rocksdb-haskell-jprupp-2.1.2
-- completed:
     hackage: rocksdb-query-0.4.2@sha256:70ff2e8b436835969d76ea906a0d133e2affab65fcd89bc7b3da2414ff82d3a2,1555
     pantry-tree:
       size: 381
       sha256: cf6831262227722c8291f0d2a31c2fdce389e7e91387b2afc6ae81fcfb5982e6
   original:
     hackage: rocksdb-query-0.4.2
+- completed:
+    hackage: rocksdb-haskell-jprupp-2.1.3@sha256:7b9576e092683157ff1f695d5702286008c997484262fbaa876fea2b926bd41f,1703
+    pantry-tree:
+      size: 712
+      sha256: adec5c4cbc934b6e06efc3c9085e0d8dfd15e4237b5746e2b6d749de7a9b7a83
+  original:
+    hackage: rocksdb-haskell-jprupp-2.1.3
 snapshots:
 - completed:
     size: 531237

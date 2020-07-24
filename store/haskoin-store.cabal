@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e05cdec3cabaf56eff8c7c9b464f2f205c9618cd7f59aaa7e9580c575474f4fc
+-- hash: 233badef6c274ea380714d9bc0492c96784d8cceb6012c6f476caaf9f45a8352
 
 name:           haskoin-store
 version:        0.37.0
@@ -61,7 +61,7 @@ library
     , network >=3.1.1.1
     , nqe >=0.6.1
     , random >=1.1
-    , rocksdb-haskell-jprupp >=2.0.0
+    , rocksdb-haskell-jprupp >=2.1.3
     , rocksdb-query >=0.4.0
     , scotty >=0.11.5
     , string-conversions >=0.4.0.1
@@ -145,7 +145,7 @@ test-suite haskoin-store-test
     , network >=3.1.1.1
     , nqe >=0.6.1
     , random >=1.1
-    , rocksdb-haskell-jprupp >=2.0.0
+    , rocksdb-haskell-jprupp >=2.1.3
     , rocksdb-query >=0.4.0
     , scotty >=0.11.5
     , string-conversions >=0.4.0.1
