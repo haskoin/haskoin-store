@@ -27,6 +27,7 @@ module Haskoin.Store.Common
     , applyLimitsC
     , sortTxs
     , nub'
+    , microseconds
     ) where
 
 import           Conduit                   (ConduitT, dropC, mapC, takeC)
@@ -45,6 +46,8 @@ import qualified Data.IntMap.Strict        as I
 import           Data.List                 (sortBy)
 import           Data.Maybe                (catMaybes, listToMaybe)
 import           Data.Serialize            (Serialize (..))
+import           Data.Time.Clock.System    (getSystemTime, systemNanoseconds,
+                                            systemSeconds)
 import           Data.Word                 (Word32, Word64)
 import           GHC.Generics              (Generic)
 import           Haskoin                   (Address, BlockHash,
@@ -65,6 +68,7 @@ import           Haskoin.Store.Data        (Balance (..), BlockData (..),
                                             XPubSummary (..), XPubUnspent (..),
                                             nullBalance, toTransaction,
                                             zeroBalance)
+import           UnliftIO                  (MonadIO, liftIO)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
@@ -370,3 +374,9 @@ sortTxs txs = go [] thset $ zip [0 ..] txs
 
 nub' :: (Eq a, Hashable a) => [a] -> [a]
 nub' = H.toList . H.fromList
+
+microseconds :: MonadIO m => m Integer
+microseconds =
+    let f t = toInteger (systemSeconds t) * 1000000
+            + toInteger (systemNanoseconds t) `div` 1000
+    in liftIO $ f <$> getSystemTime

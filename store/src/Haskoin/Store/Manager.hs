@@ -35,9 +35,8 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxHashSTM,
                                                 blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
-                                                cacheNewBlock, cacheNewTx,
-                                                cachePing, cacheWriter,
-                                                connectRedis)
+                                                cacheNewBlock, cachePing,
+                                                cacheWriter, connectRedis)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
@@ -184,12 +183,13 @@ withCache cfg chain db pub action =
   where
     f conn cwinbox =
         runReaderT (cacheWriter (c conn) cwinbox) db
-    c conn = CacheConfig
-                { cacheConn = conn
-                , cacheMin = storeConfCacheMin cfg
-                , cacheChain = chain
-                , cacheMax = storeConfMaxKeys cfg
-                }
+    c conn =
+        CacheConfig
+           { cacheConn = conn
+           , cacheMin = storeConfCacheMin cfg
+           , cacheChain = chain
+           , cacheMax = storeConfMaxKeys cfg
+           }
 
 cacheWriterProcesses :: MonadUnliftIO m
                      => Inbox StoreEvent
@@ -203,10 +203,9 @@ cacheWriterProcesses evts cwm action =
   where
     events = cacheWriterEvents evts cwm
     ping = forever $ do
-        time <- liftIO $ randomRIO (300 * second, 600 * second)
+        time <- liftIO $ randomRIO (600000, 1200000)
         threadDelay time
         cachePing cwm
-    second = 1000000
 
 cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents evts cwm =
@@ -215,9 +214,8 @@ cacheWriterEvents evts cwm =
     e `cacheWriterDispatch` cwm
 
 cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
-cacheWriterDispatch (StoreBestBlock _)   = cacheNewBlock
-cacheWriterDispatch (StoreMempoolNew th) = cacheNewTx th
-cacheWriterDispatch _                    = const (return ())
+cacheWriterDispatch (StoreBestBlock _) = cacheNewBlock
+cacheWriterDispatch _                  = const (return ())
 
 nodeForwarder :: MonadIO m
               => BlockStore
