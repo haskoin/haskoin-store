@@ -224,7 +224,7 @@ getAddressUnspentsDB ::
     -> DatabaseReader
     -> m [Unspent]
 getAddressUnspentsDB a limits bdb@DatabaseReader{databaseHandle = db} =
-    liftIO $ withIterCF db (unspentCF db) $ \it -> runConduit $
+    liftIO $ withIterCF db (addrOutCF db) $ \it -> runConduit $
     x it .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
   where
     x it = case start limits of

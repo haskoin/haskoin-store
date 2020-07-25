@@ -4,10 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.37.1
 ### Changed
 - Better locking around caching operations.
 - Have a global cooldown on cache mempool updates.
+
+### Fixed
+- Fix address unspent retrieval column family.
 
 ## 0.37.0
 ### Added
