@@ -724,7 +724,7 @@ scottyMempool (GetMempool limitM (OffsetParam o)) = do
     wl <- lift $ asks webMaxLimits
     let wl' = wl { maxLimitCount = 0 }
         l = Limits (validateLimit wl' False limitM) (fromIntegral o) Nothing
-    map txRefHash . applyLimits l <$> getMempool
+    map snd . applyLimits l <$> getMempool
 
 scottyEvents :: MonadLoggerIO m => WebT m ()
 scottyEvents = do
@@ -904,7 +904,7 @@ lastTxHealthCheck ch tos = do
     n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     b <- fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
     t <- listToMaybe <$> getMempool >>= \case
-        Just t -> let x = fromIntegral $ memRefTime $ txRefBlock t
+        Just t -> let x = fromIntegral $ fst t
                   in return $ max x b
         Nothing -> return b
     let timeHealthAge = n - t

@@ -31,17 +31,8 @@ import           Database.RocksDB.Query       (insert, matching, matchingSkip,
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common
-import           Haskoin.Store.Data           (Balance, BlockData,
-                                               BlockRef (..), Spender,
-                                               TxData (..), TxRef (..),
-                                               Unspent (..))
-import           Haskoin.Store.Database.Types (AddrOutKey (..), AddrTxKey (..),
-                                               BalKey (..), BestKey (..),
-                                               BlockKey (..), HeightKey (..),
-                                               MemKey (..), SpenderKey (..),
-                                               TxKey (..), UnspentKey (..),
-                                               VersionKey (..), toUnspent,
-                                               valToBalance, valToUnspent)
+import           Haskoin.Store.Data
+import           Haskoin.Store.Database.Types
 import           UnliftIO                     (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -157,11 +148,9 @@ getBalanceDB :: MonadIO m => Address -> DatabaseReader -> m (Maybe Balance)
 getBalanceDB a DatabaseReader{databaseHandle = db} =
     fmap (valToBalance a) <$> retrieveCF db (balanceCF db) (BalKey a)
 
-getMempoolDB :: MonadIO m => DatabaseReader -> m [TxRef]
+getMempoolDB :: MonadIO m => DatabaseReader -> m [(UnixTime, TxHash)]
 getMempoolDB DatabaseReader{databaseHandle = db} =
-    fmap f . fromMaybe [] <$> retrieve db MemKey
-  where
-    f (t, h) = TxRef {txRefBlock = MemRef t, txRefHash = h}
+    fromMaybe [] <$> retrieve db MemKey
 
 getAddressesTxsDB ::
        MonadIO m

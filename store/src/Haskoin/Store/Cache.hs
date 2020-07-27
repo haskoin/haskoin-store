@@ -71,12 +71,7 @@ import           Haskoin.Node              (Chain, chainBlockMain,
                                             chainGetAncestor, chainGetBest,
                                             chainGetBlock)
 import           Haskoin.Store.Common
-import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            BlockRef (..), DeriveType (..),
-                                            Prev (..), TxData (..), TxRef (..),
-                                            Unspent (..), XPubBal (..),
-                                            XPubSpec (..), XPubUnspent (..),
-                                            nullBalance)
+import           Haskoin.Store.Data
 import           NQE                       (Inbox, Mailbox, receive, send)
 import           System.Random             (randomIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
@@ -931,8 +926,8 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
     void . withLock $ isCool >>= \cool -> when cool $ do
-    nodepool <- HashSet.fromList . map txRefHash <$> lift getMempool
-    cachepool <- HashSet.fromList . map txRefHash <$> cacheGetMempool
+    nodepool <- HashSet.fromList . map snd <$> lift getMempool
+    cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
     txs <- mapM getit . HashSet.toList $
            mappend
                 (HashSet.difference nodepool cachepool)
@@ -947,7 +942,7 @@ syncMempoolC =
         Nothing -> return (Left th)
         Just tx -> return (Right tx)
 
-cacheGetMempool :: MonadLoggerIO m => CacheX m [TxRef]
+cacheGetMempool :: MonadLoggerIO m => CacheX m [(UnixTime, TxHash)]
 cacheGetMempool = runRedis redisGetMempool
 
 cacheGetHead :: MonadLoggerIO m => CacheX m (Maybe BlockHash)
@@ -1131,12 +1126,12 @@ redisGetHead = do
     x <- Redis.get bestBlockKey
     return $ (eitherToMaybe . decode =<<) <$> x
 
-redisGetMempool :: (Applicative f, RedisCtx m f) => m (f [TxRef])
+redisGetMempool :: (Applicative f, RedisCtx m f) => m (f [(UnixTime, TxHash)])
 redisGetMempool = do
     xs <- getFromSortedSet mempoolSetKey Nothing 0 0
     return $ map (uncurry f) <$> xs
   where
-    f t s = TxRef {txRefBlock = scoreBlockRef s, txRefHash = t}
+    f t s = (memRefTime (scoreBlockRef s), t)
 
 xpubText :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
          => XPubSpec -> CacheX m Text

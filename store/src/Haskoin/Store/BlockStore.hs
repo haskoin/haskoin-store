@@ -74,9 +74,8 @@ import           Haskoin.Node                  (Chain, OnlinePeer (..), Peer,
                                                 getPeers, killPeer, peerText,
                                                 sendMessage, setBusy, setFree)
 import           Haskoin.Store.Common
-import           Haskoin.Store.Data            (TxData (..), TxRef (..),
-                                                Unspent (..))
-import           Haskoin.Store.Database.Reader (DatabaseReader)
+import           Haskoin.Store.Data
+import           Haskoin.Store.Database.Reader
 import           Haskoin.Store.Database.Writer
 import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 deleteUnconfirmedTx,
@@ -235,9 +234,8 @@ withBlockStore cfg action = do
     del txs = do
         $(logInfoS) "BlockStore" $
             "Deleting " <> cs (show (length txs)) <> " transactions"
-        forM_ txs $ \tx ->
-            deleteUnconfirmedTx False (txRefHash tx)
-    wipeit txs = do
+        forM_ txs $ \(_, th) -> deleteUnconfirmedTx False th
+    wipe_it txs = do
         let (txs1, txs2) = splitAt 1000 txs
         unless (null txs1) $
             runImport (del txs1) >>= \case
@@ -245,10 +243,10 @@ withBlockStore cfg action = do
                     $(logErrorS) "BlockStore" $
                         "Could not wipe mempool: " <> cs (show e)
                     throwIO e
-                Right () -> wipeit txs2
+                Right () -> wipe_it txs2
     wipe
         | blockConfWipeMempool cfg =
-              getMempool >>= wipeit
+              getMempool >>= wipe_it
         | otherwise =
               return ()
     ini = runImport initBest >>= \case

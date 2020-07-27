@@ -105,7 +105,7 @@ class Monad m => StoreReadBase m where
     getSpender :: OutPoint -> m (Maybe Spender)
     getBalance :: Address -> m (Maybe Balance)
     getUnspent :: OutPoint -> m (Maybe Unspent)
-    getMempool :: m [TxRef]
+    getMempool :: m [(UnixTime, TxHash)]
 
 class StoreReadBase m => StoreReadExtra m where
     getBalances :: [Address] -> m [Balance]
@@ -208,17 +208,10 @@ getSpenders :: StoreReadBase m => TxHash -> m (IntMap Spender)
 getSpenders th =
     getActiveTxData th >>= \case
         Nothing -> return I.empty
-        Just td ->
-            I.fromList . catMaybes . zipWith f [0..]
-            <$> mapM getSpender (ops td)
-
+        Just td -> I.fromList . catMaybes <$>
+                   mapM get_spender [0 .. length (txOut (txData td)) - 1]
   where
-    f i m = (i, ) <$> m
-    ops td =
-        let tx = txData td
-            outs = txOut tx
-            op i _ = OutPoint th i
-         in zipWith op [0..] outs
+    get_spender i = fmap (i,) <$> getSpender (OutPoint th (fromIntegral i))
 
 getActiveBlock :: StoreReadExtra m => BlockHash -> m (Maybe BlockData)
 getActiveBlock bh = getBlock bh >>= \case
