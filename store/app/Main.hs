@@ -62,6 +62,7 @@ data Config = Config
     , configRedisMin    :: !Int
     , configRedisMax    :: !Integer
     , configWipeMempool :: !Bool
+    , configNoMempool   :: !Bool
     , configPeerTimeout :: !Int
     , configPeerMaxLife :: !Int
     , configMaxPeers    :: !Int
@@ -86,6 +87,7 @@ instance Default Config where
                  , configRedisMin    = defRedisMin
                  , configRedisMax    = defRedisMax
                  , configWipeMempool = defWipeMempool
+                 , configNoMempool   = defNoMempool
                  , configPeerTimeout = defPeerTimeout
                  , configPeerMaxLife = defPeerMaxLife
                  , configMaxPeers    = defMaxPeers
@@ -189,6 +191,11 @@ defWipeMempool = unsafePerformIO $
     defEnv "WIPE_MEMPOOL" False parseBool
 {-# NOINLINE defWipeMempool #-}
 
+defNoMempool :: Bool
+defNoMempool = unsafePerformIO $
+    defEnv "NO_MEMPOOL" False parseBool
+{-# NOINLINE defNoMempool #-}
+
 defRedisURL :: String
 defRedisURL = unsafePerformIO $
     defEnv "REDIS" "" pure
@@ -277,6 +284,7 @@ config = do
         option auto $
         metavar "INT"
         <> long "max-peers"
+        <> help "Do not connect to more than this many peers"
         <> showDefault
         <> value (configMaxPeers def)
     configVersion <-
@@ -393,6 +401,10 @@ config = do
         <> help "Maximum number of keys in Redis xpub cache"
         <> showDefault
         <> value (configRedisMax def)
+    configNoMempool <-
+        flag (configNoMempool def) True $
+        long "no-mempool"
+        <> help "Do not index new mempool transactions"
     configWipeMempool <-
         flag (configWipeMempool def) True $
         long "wipe-mempool"
@@ -472,6 +484,7 @@ run Config { configHost = host
            , configPeerMaxLife = peerlife
            , configMaxPeers = maxpeers
            , configMaxDiff = maxdiff
+           , configNoMempool = nomem
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -494,6 +507,7 @@ run Config { configHost = host
                     , storeConfCacheMin = cachemin
                     , storeConfMaxKeys = redismax
                     , storeConfWipeMempool = wipemempool
+                    , storeConfNoMempool = nomem
                     , storeConfPeerTimeout = fromIntegral peertimeout
                     , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
@@ -510,6 +524,7 @@ run Config { configHost = host
                     , webMaxPending = pend
                     , webVersion = version
                     , webMaxDiff = maxdiff
+                    , webNoMempool = nomem
                     }
   where
     l _ lvl

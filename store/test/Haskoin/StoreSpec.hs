@@ -87,6 +87,7 @@ withTestStore net t f =
               , storeConfInitialGap = 20
               , storeConfCacheMin = 100
               , storeConfMaxKeys = 100 * 1000 * 1000
+              , storeConfNoMempool = False
               , storeConfWipeMempool = False
               , storeConfPeerTimeout = 60
               , storeConfPeerMaxLife = 48 * 3600

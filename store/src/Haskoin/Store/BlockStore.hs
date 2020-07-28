@@ -152,6 +152,8 @@ data BlockStoreConfig =
         -- ^ RocksDB database handle
         , blockConfNet         :: !Network
         -- ^ network constants
+        , blockConfNoMempool   :: !Bool
+        -- ^ do not index new mempool transactions
         , blockConfWipeMempool :: !Bool
         -- ^ wipe mempool at start
         , blockConfPeerTimeout :: !NominalDiffTime
@@ -273,16 +275,22 @@ isInSync =
                 then clearSyncingState >> return True
                 else return False
 
+guardMempool :: Monad m => BlockT m () -> BlockT m ()
+guardMempool f = do
+    n <- asks (blockConfNoMempool . myConfig)
+    unless n f
+
+guardNotMempooled :: MonadIO m => BlockT m () -> BlockT m ()
+guardNotMempooled f = do
+    m <- readTVarIO =<< asks mempooled
+    unless m f
+
 mempool :: MonadLoggerIO m => Peer -> BlockT m ()
-mempool p = do
-    mem <- readTVarIO =<< asks mempooled
-    if mem
-        then return ()
-        else do
-          $(logDebugS) "BlockStore" $
-              "Requesting mempool from peer: " <> peerText p
-          MMempool `sendMessage` p
-          atomically . (`writeTVar` True) =<< asks mempooled
+mempool p = guardMempool $ guardNotMempooled $ do
+    $(logDebugS) "BlockStore" $
+        "Requesting mempool from peer: " <> peerText p
+    MMempool `sendMessage` p
+    atomically . (`writeTVar` True) =<< asks mempooled
 
 processBlock :: MonadLoggerIO m => Peer -> Block -> BlockT m ()
 processBlock peer block = void . runMaybeT $ do
@@ -393,7 +401,7 @@ processNoBlocks p hs = do
     killPeer (PeerMisbehaving "Did not find requested block(s)") p
 
 processTx :: MonadLoggerIO m => Peer -> Tx -> BlockT m ()
-processTx p tx = do
+processTx p tx = guardMempool $ do
     t <- liftIO getCurrentTime
     $(logDebugS) "BlockManager" $
         "Received tx " <> txHashToHex (txHash tx)
@@ -401,7 +409,7 @@ processTx p tx = do
     addPendingTx $ PendingTx t tx HashSet.empty
 
 pruneOrphans :: MonadIO m => BlockT m ()
-pruneOrphans = do
+pruneOrphans = guardMempool $ do
     ts <- asks myTxs
     now <- liftIO getCurrentTime
     atomically . modifyTVar ts . HashMap.filter $ \p ->
@@ -548,7 +556,7 @@ importMempoolTx block_read time tx =
                 return False
 
 processMempool :: MonadLoggerIO m => BlockT m ()
-processMempool = do
+processMempool = guardMempool $ do
     txs <- pendingTxs 2000
     block_read <- ask
     unless (null txs) (import_txs block_read txs >>= success)
@@ -579,7 +587,7 @@ processTxs ::
     => Peer
     -> [TxHash]
     -> BlockT m ()
-processTxs p hs = do
+processTxs p hs = guardMempool $ do
     s <- isInSync
     when s $ do
         $(logDebugS) "BlockStore" $
@@ -650,7 +658,7 @@ checkTime =
                 killPeer PeerTimeout p
 
 pruneMempool :: MonadLoggerIO m => BlockT m ()
-pruneMempool = do
+pruneMempool = guardMempool $ do
     s <- isInSync
     when s $ do
         now <- liftIO getCurrentTime

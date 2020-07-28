@@ -72,7 +72,7 @@ import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
-import           NQE                           (Inbox, Publisher, receive,
+import           NQE                           (Inbox, receive,
                                                 withSubscription)
 import           Text.Printf                   (printf)
 import           UnliftIO                      (MonadIO, MonadUnliftIO,
@@ -113,6 +113,7 @@ data WebConfig = WebConfig
     , webReqLog     :: !Bool
     , webTimeouts   :: !WebTimeouts
     , webVersion    :: !String
+    , webNoMempool  :: !Bool
     }
 
 data WebTimeouts = WebTimeouts
@@ -664,11 +665,8 @@ cbAfterHeight height begin =
 -- POST Transaction --
 
 scottyPostTx :: (MonadUnliftIO m, MonadLoggerIO m) => PostTx -> WebT m TxId
-scottyPostTx (PostTx tx) = do
-    net <- lift $ asks (storeNetwork . webStore)
-    pub <- lift $ asks (storePublisher . webStore)
-    mgr <- lift $ asks (storeManager . webStore)
-    lift (publishTx net pub mgr tx) >>= \case
+scottyPostTx (PostTx tx) =
+    lift ask >>= \cfg -> lift (publishTx cfg tx) >>= \case
         Right () -> return $ TxId (txHash tx)
         Left e@(PubReject _) -> S.raise $ UserError $ show e
         _ -> S.raise ServerError
@@ -676,17 +674,18 @@ scottyPostTx (PostTx tx) = do
 -- | Publish a new transaction to the network.
 publishTx ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
-    => Network
-    -> Publisher StoreEvent
-    -> PeerManager
+    => WebConfig
     -> Tx
     -> m (Either PubExcept ())
-publishTx net pub mgr tx =
+publishTx cfg tx =
     withSubscription pub $ \s ->
         getTransaction (txHash tx) >>= \case
             Just _ -> return $ Right ()
             Nothing -> go s
   where
+    pub = storePublisher (webStore cfg)
+    mgr = storeManager (webStore cfg)
+    net = storeNetwork (webStore cfg)
     go s =
         getPeers mgr >>= \case
             [] -> return $ Left PubNoPeers
@@ -701,7 +700,9 @@ publishTx net pub mgr tx =
                     p
                 f p s
     t = 5 * 1000 * 1000
-    f p s =
+    f p s
+      | webNoMempool cfg = return $ Right ()
+      | otherwise =
         liftIO (timeout t (g p s)) >>= \case
             Nothing -> return $ Left PubTimeout
             Just (Left e) -> return $ Left e
@@ -899,8 +900,8 @@ lastBlockHealthCheck ch tos = do
     return TimeHealth {..}
 
 lastTxHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
-                  => Chain -> WebTimeouts -> m TimeHealth
-lastTxHealthCheck ch tos = do
+                  => WebConfig -> m TimeHealth
+lastTxHealthCheck WebConfig {..} = do
     n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     b <- fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
     t <- listToMaybe <$> getMempool >>= \case
@@ -908,8 +909,11 @@ lastTxHealthCheck ch tos = do
                   in return $ max x b
         Nothing -> return b
     let timeHealthAge = n - t
-        timeHealthMax = fromIntegral $ txTimeout tos
+        timeHealthMax = fromIntegral to
     return TimeHealth {..}
+  where
+    ch = storeChain webStore
+    to = if webNoMempool then blockTimeout webTimeouts else txTimeout webTimeouts
 
 pendingTxsHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                       => WebConfig -> m MaxHealth
@@ -930,7 +934,7 @@ healthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
 healthCheck cfg@WebConfig {..} = do
     healthBlocks     <- blockHealthCheck cfg
     healthLastBlock  <- lastBlockHealthCheck (storeChain webStore) webTimeouts
-    healthLastTx     <- lastTxHealthCheck (storeChain webStore) webTimeouts
+    healthLastTx     <- lastTxHealthCheck cfg
     healthPendingTxs <- pendingTxsHealthCheck cfg
     healthPeers      <- peerHealthCheck (storeManager webStore)
     let healthNetwork = getNetworkName (storeNetwork webStore)

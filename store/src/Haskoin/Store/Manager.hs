@@ -87,6 +87,8 @@ data StoreConfig =
       -- ^ cache xpubs with more than this many used addresses
         , storeConfMaxKeys     :: !Integer
       -- ^ maximum number of keys in Redis cache
+        , storeConfNoMempool   :: !Bool
+      -- ^ do not index new mempool transactions
         , storeConfWipeMempool :: !Bool
       -- ^ wipe mempool when starting
         , storeConfPeerTimeout :: !NominalDiffTime
@@ -137,6 +139,7 @@ blockStoreCfg cfg node pub db =
         , blockConfListener = pub
         , blockConfDB = db
         , blockConfNet = storeConfNetwork cfg
+        , blockConfNoMempool = storeConfNoMempool cfg
         , blockConfWipeMempool = storeConfWipeMempool cfg
         , blockConfPeerTimeout = storeConfPeerTimeout cfg
         }

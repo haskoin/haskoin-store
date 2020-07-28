@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## 0.37.2
 ### Changed
 - Simplify multiple algorithms to hopefully solve corruption bug.
+- Allow to disable mempool transaction indexing via command line.
 
 ## 0.37.1
 ### Changed
