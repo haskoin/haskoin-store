@@ -24,7 +24,6 @@ import           Control.Monad.Logger  (MonadLoggerIO (..), logDebugS,
 import qualified Data.ByteString       as B
 import qualified Data.ByteString.Short as B.Short
 import           Data.Either           (rights)
-import qualified Data.HashSet          as S
 import qualified Data.IntMap.Strict    as I
 import           Data.List             (nub)
 import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing)
@@ -101,7 +100,7 @@ newMempoolTx tx w =
         Just _ ->
             return False
         Nothing -> do
-            freeOutputs True True [tx]
+            freeOutputs True True tx
             rbf <- isRBF (MemRef w) tx
             checkNewTx tx
             importTx (MemRef w) w rbf tx
@@ -154,10 +153,11 @@ checkNewBlock b n =
                 throwError PrevBlockNotBest
 
 importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> m ()
-importOrConfirm bn txs = do
-    freeOutputs True False txs
-    mapM_ (uncurry action) (sortTxs txs)
+importOrConfirm bn txns = do
+    mapM_ (freeOutputs True False . snd) (reverse txs)
+    mapM_ (uncurry action) txs
   where
+    txs = sortTxs txns
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
     bn_time = fromIntegral . blockTimestamp $ nodeHeader bn
     action i tx =
@@ -374,24 +374,14 @@ freeOutputs
     :: MonadImport m
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
-    -> [Tx]
+    -> Tx
     -> m ()
-freeOutputs memonly rbfcheck txs =
-    forM_ txs $ \tx ->
+freeOutputs memonly rbfcheck tx =
     forM_ (prevOuts tx) $ \op ->
-    unless (outPointHash op `S.member` ths) $
     getUnspent op >>= \u -> when (isNothing u) $
-        getSpender op >>= \case
-            Just Spender { spenderHash = h } ->
-                unless (h == txHash tx) $
-                deleteTx memonly rbfcheck h
-            Nothing -> do
-                $(logErrorS) "BlockStore" $
-                    "Missing unspent output for tx: "
-                    <> txHashToHex (txHash tx)
-                throwError Orphan
-  where
-    ths = S.fromList (map txHash txs)
+    getSpender op >>= \p -> forM_ p $ \s ->
+    unless (spenderHash s == txHash tx) $
+    deleteTx memonly rbfcheck (spenderHash s)
 
 deleteConfirmedTx :: MonadImport m => TxHash -> m ()
 deleteConfirmedTx = deleteTx False False
