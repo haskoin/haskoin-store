@@ -285,14 +285,17 @@ guardNotMempooled f = do
     m <- readTVarIO =<< asks mempooled
     unless m f
 
-mempool :: MonadLoggerIO m => Peer -> BlockT m ()
-mempool p = guardMempool $ guardNotMempooled $ do
-    $(logDebugS) "BlockStore" $
-        "Requesting mempool from peer: " <> peerText p
-    MMempool `sendMessage` p
-    atomically . (`writeTVar` True) =<< asks mempooled
+mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
+mempool p = void $ async $ do
+    threadDelay 23849118
+    guardMempool $ guardNotMempooled $ do
+        $(logDebugS) "BlockStore" $
+            "Requesting mempool from peer: " <> peerText p
+        MMempool `sendMessage` p
+        atomically . (`writeTVar` True) =<< asks mempooled
 
-processBlock :: MonadLoggerIO m => Peer -> Block -> BlockT m ()
+processBlock :: (MonadUnliftIO m, MonadLoggerIO m)
+             => Peer -> Block -> BlockT m ()
 processBlock peer block = void . runMaybeT $ do
     checkPeer peer >>= \case
         True -> return ()
@@ -734,13 +737,11 @@ shouldSync :: MonadLoggerIO m => BlockT m (Maybe Peer)
 shouldSync =
     isInSync >>= \case
         True -> return Nothing
-        False -> cont
-  where
-    cont = getSyncingState >>= \case
-        Nothing -> return Nothing
-        Just Syncing { syncingPeer = p, syncingBlocks = bs }
-            | 100 > length bs -> return (Just p)
-            | otherwise -> return Nothing
+        False -> getSyncingState >>= \case
+            Nothing -> return Nothing
+            Just Syncing { syncingPeer = p, syncingBlocks = bs }
+                | 100 > length bs -> return (Just p)
+                | otherwise -> return Nothing
 
 syncMe :: MonadLoggerIO m => BlockT m ()
 syncMe = do
@@ -849,10 +850,10 @@ trySyncing =
         let ps = map onlinePeerMailbox ops
         recurse ps
 
-trySyncingPeer :: MonadLoggerIO m => Peer -> BlockT m ()
+trySyncingPeer :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 trySyncingPeer p =
     isInSync >>= \case
-        True -> return ()
+        True -> mempool p
         False -> trySetPeer p >>= \case
             False -> return ()
             True -> syncMe
@@ -869,8 +870,8 @@ clearSyncingState =
         Nothing -> return ()
         Just Syncing { syncingPeer = p } -> finishPeer p
 
-processBlockStoreMessage
-    :: MonadLoggerIO m => BlockStoreMessage -> BlockT m ()
+processBlockStoreMessage :: (MonadUnliftIO m, MonadLoggerIO m)
+                         => BlockStoreMessage -> BlockT m ()
 
 processBlockStoreMessage (BlockNewBest _) =
     trySyncing
