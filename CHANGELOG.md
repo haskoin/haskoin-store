@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 - Add a delay to mempool sync to allow for block headers to catch up.
+- Attempt to sync mempool whenever syncing is done or a new peer connects.
 
 ## 0.37.3
 ### Changed

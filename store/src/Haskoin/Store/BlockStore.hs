@@ -136,7 +136,6 @@ data BlockStore =
         , myPeer    :: !(TVar (Maybe Syncing))
         , myTxs     :: !(TVar (HashMap TxHash PendingTx))
         , requested :: !(TVar (HashSet TxHash))
-        , mempooled :: !(TVar Bool)
         }
 
 -- | Configuration for a block store.
@@ -217,13 +216,11 @@ withBlockStore cfg action = do
     ts <- newTVarIO HashMap.empty
     rq <- newTVarIO HashSet.empty
     inbox <- newInbox
-    mem <- newTVarIO False
     let r = BlockStore { myMailbox = inboxToMailbox inbox
                        , myConfig = cfg
                        , myPeer = pb
                        , myTxs = ts
                        , requested = rq
-                       , mempooled = mem
                        }
     withAsync (runReaderT (go inbox) r) $ \a -> do
         link a
@@ -280,19 +277,13 @@ guardMempool f = do
     n <- asks (blockConfNoMempool . myConfig)
     unless n f
 
-guardNotMempooled :: MonadIO m => BlockT m () -> BlockT m ()
-guardNotMempooled f = do
-    m <- readTVarIO =<< asks mempooled
-    unless m f
-
 mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
-mempool p = void $ async $ do
+mempool p = guardMempool $ void $ async $ do
     threadDelay 23849118
-    guardMempool $ guardNotMempooled $ do
+    isInSync >>= \s -> when s $ do
         $(logDebugS) "BlockStore" $
             "Requesting mempool from peer: " <> peerText p
         MMempool `sendMessage` p
-        atomically . (`writeTVar` True) =<< asks mempooled
 
 processBlock :: (MonadUnliftIO m, MonadLoggerIO m)
              => Peer -> Block -> BlockT m ()
