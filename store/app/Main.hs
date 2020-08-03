@@ -45,59 +45,66 @@ version = "Unavailable"
 #endif
 
 data Config = Config
-    { configDir         :: !FilePath
-    , configHost        :: !String
-    , configPort        :: !Int
-    , configNetwork     :: !Network
-    , configDiscover    :: !Bool
-    , configPeers       :: ![(String, Maybe Int)]
-    , configVersion     :: !Bool
-    , configDebug       :: !Bool
-    , configReqLog      :: !Bool
-    , configMaxPending  :: !Int
-    , configWebLimits   :: !WebLimits
-    , configWebTimeouts :: !WebTimeouts
-    , configRedis       :: !Bool
-    , configRedisURL    :: !String
-    , configRedisMin    :: !Int
-    , configRedisMax    :: !Integer
-    , configWipeMempool :: !Bool
-    , configNoMempool   :: !Bool
-    , configPeerTimeout :: !Int
-    , configPeerMaxLife :: !Int
-    , configMaxPeers    :: !Int
-    , configMaxDiff     :: !Int
+    { configDir          :: !FilePath
+    , configHost         :: !String
+    , configPort         :: !Int
+    , configNetwork      :: !Network
+    , configDiscover     :: !Bool
+    , configPeers        :: ![(String, Maybe Int)]
+    , configVersion      :: !Bool
+    , configDebug        :: !Bool
+    , configReqLog       :: !Bool
+    , configMaxPending   :: !Int
+    , configWebLimits    :: !WebLimits
+    , configWebTimeouts  :: !WebTimeouts
+    , configRedis        :: !Bool
+    , configRedisURL     :: !String
+    , configRedisMin     :: !Int
+    , configRedisMax     :: !Integer
+    , configWipeMempool  :: !Bool
+    , configNoMempool    :: !Bool
+    , configPeerTimeout  :: !Int
+    , configPeerMaxLife  :: !Int
+    , configMaxPeers     :: !Int
+    , configMaxDiff      :: !Int
+    , configCacheRefresh :: !Int
     }
 
 instance Default Config where
-    def = Config { configDir         = defDirectory
-                 , configHost        = defHost
-                 , configPort        = defPort
-                 , configNetwork     = defNetwork
-                 , configDiscover    = defDiscover
-                 , configPeers       = defPeers
-                 , configVersion     = False
-                 , configDebug       = defDebug
-                 , configReqLog      = defReqLog
-                 , configMaxPending  = defMaxPending
-                 , configWebLimits   = defWebLimits
-                 , configWebTimeouts = defWebTimeouts
-                 , configRedis       = defRedis
-                 , configRedisURL    = defRedisURL
-                 , configRedisMin    = defRedisMin
-                 , configRedisMax    = defRedisMax
-                 , configWipeMempool = defWipeMempool
-                 , configNoMempool   = defNoMempool
-                 , configPeerTimeout = defPeerTimeout
-                 , configPeerMaxLife = defPeerMaxLife
-                 , configMaxPeers    = defMaxPeers
-                 , configMaxDiff     = defMaxDiff
+    def = Config { configDir          = defDirectory
+                 , configHost         = defHost
+                 , configPort         = defPort
+                 , configNetwork      = defNetwork
+                 , configDiscover     = defDiscover
+                 , configPeers        = defPeers
+                 , configVersion      = False
+                 , configDebug        = defDebug
+                 , configReqLog       = defReqLog
+                 , configMaxPending   = defMaxPending
+                 , configWebLimits    = defWebLimits
+                 , configWebTimeouts  = defWebTimeouts
+                 , configRedis        = defRedis
+                 , configRedisURL     = defRedisURL
+                 , configRedisMin     = defRedisMin
+                 , configRedisMax     = defRedisMax
+                 , configWipeMempool  = defWipeMempool
+                 , configNoMempool    = defNoMempool
+                 , configPeerTimeout  = defPeerTimeout
+                 , configPeerMaxLife  = defPeerMaxLife
+                 , configMaxPeers     = defMaxPeers
+                 , configMaxDiff      = defMaxDiff
+                 , configCacheRefresh = defCacheRefresh
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
 defEnv e d p = do
     ms <- lookupEnv e
     return $ fromMaybe d $ p =<< ms
+
+defCacheRefresh :: Int
+defCacheRefresh = unsafePerformIO $
+    defEnv "CACHE_REFRESH" 750 readMaybe
+{-# NOINLINE defCacheRefresh #-}
 
 defMaxPending :: Int
 defMaxPending = unsafePerformIO $
@@ -401,6 +408,13 @@ config = do
         <> help "Maximum number of keys in Redis xpub cache"
         <> showDefault
         <> value (configRedisMax def)
+    configCacheRefresh <-
+        option auto $
+        metavar "MILLISECONDS"
+        <> long "cache-refresh"
+        <> help "Refresh cache this frequently"
+        <> showDefault
+        <> value (configCacheRefresh def)
     configNoMempool <-
         flag (configNoMempool def) True $
         long "no-mempool"
@@ -485,6 +499,7 @@ run Config { configHost = host
            , configMaxPeers = maxpeers
            , configMaxDiff = maxdiff
            , configNoMempool = nomem
+           , configCacheRefresh = crefresh
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -511,6 +526,7 @@ run Config { configHost = host
                     , storeConfPeerTimeout = fromIntegral peertimeout
                     , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
+                    , storeConfCacheRefresh = crefresh
                     }
         withStore scfg $ \st ->
             runWeb

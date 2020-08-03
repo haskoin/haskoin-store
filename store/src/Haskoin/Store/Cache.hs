@@ -87,10 +87,11 @@ runRedis action =
         throwIO (RedisError e)
 
 data CacheConfig = CacheConfig
-    { cacheConn  :: !Connection
-    , cacheMin   :: !Int
-    , cacheMax   :: !Integer
-    , cacheChain :: !Chain
+    { cacheConn    :: !Connection
+    , cacheMin     :: !Int
+    , cacheMax     :: !Integer
+    , cacheChain   :: !Chain
+    , cacheRefresh :: !Int
     }
 
 type CacheT = ReaderT (Maybe CacheConfig)
@@ -912,10 +913,9 @@ isCool =
     Nothing -> return True
     Just bs -> do
         let t = read (cs bs)
+        cooldown <- toInteger . (* 500) <$> asks cacheRefresh
         now <- microseconds
         return (cooldown <= now - t)
-  where
-    cooldown = 250000
 
 startCooldown :: (MonadUnliftIO m, MonadLoggerIO m) => CacheX m ()
 startCooldown = do

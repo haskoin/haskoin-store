@@ -46,10 +46,8 @@ import           NQE                           (Inbox, Process (..), Publisher,
                                                 publishSTM, receive,
                                                 withProcess, withPublisher,
                                                 withSubscription)
-import           System.Random                 (randomRIO)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, STM,
-                                                atomically, liftIO, link,
-                                                withAsync)
+                                                atomically, link, withAsync)
 import           UnliftIO.Concurrent           (threadDelay)
 
 -- | Store mailboxes.
@@ -67,36 +65,38 @@ data Store =
 -- | Configuration for a 'Store'.
 data StoreConfig =
     StoreConfig
-        { storeConfMaxPeers    :: !Int
+        { storeConfMaxPeers     :: !Int
       -- ^ max peers to connect to
-        , storeConfInitPeers   :: ![HostPort]
+        , storeConfInitPeers    :: ![HostPort]
       -- ^ static set of peers to connect to
-        , storeConfDiscover    :: !Bool
+        , storeConfDiscover     :: !Bool
       -- ^ discover new peers
-        , storeConfDB          :: !FilePath
+        , storeConfDB           :: !FilePath
       -- ^ RocksDB database path
-        , storeConfNetwork     :: !Network
+        , storeConfNetwork      :: !Network
       -- ^ network constants
-        , storeConfCache       :: !(Maybe String)
+        , storeConfCache        :: !(Maybe String)
       -- ^ Redis cache configuration
-        , storeConfInitialGap  :: !Word32
+        , storeConfInitialGap   :: !Word32
       -- ^ gap on extended public key with no transactions
-        , storeConfGap         :: !Word32
+        , storeConfGap          :: !Word32
       -- ^ gap for extended public keys
-        , storeConfCacheMin    :: !Int
+        , storeConfCacheMin     :: !Int
       -- ^ cache xpubs with more than this many used addresses
-        , storeConfMaxKeys     :: !Integer
+        , storeConfMaxKeys      :: !Integer
       -- ^ maximum number of keys in Redis cache
-        , storeConfNoMempool   :: !Bool
+        , storeConfNoMempool    :: !Bool
       -- ^ do not index new mempool transactions
-        , storeConfWipeMempool :: !Bool
+        , storeConfWipeMempool  :: !Bool
       -- ^ wipe mempool when starting
-        , storeConfPeerTimeout :: !NominalDiffTime
+        , storeConfPeerTimeout  :: !NominalDiffTime
       -- ^ disconnect peer if message not received for this many seconds
-        , storeConfPeerMaxLife :: !NominalDiffTime
+        , storeConfPeerMaxLife  :: !NominalDiffTime
       -- ^ disconnect peer if it has been connected this long
-        , storeConfConnect     :: !(SockAddr -> WithConnection)
+        , storeConfConnect      :: !(SockAddr -> WithConnection)
       -- ^ connect to peers using the function 'withConnection'
+        , storeConfCacheRefresh :: !Int
+      -- ^ refresh the cache this often (milliseconds)
         }
 
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -181,9 +181,10 @@ withCache cfg chain db pub action =
             connectRedis redisurl >>= \conn ->
             withSubscription pub $ \evts ->
             withProcess (f conn) $ \p ->
-            cacheWriterProcesses evts (getProcessMailbox p) $
+            cacheWriterProcesses crefresh evts (getProcessMailbox p) $
             action (Just (c conn))
   where
+    crefresh = storeConfCacheRefresh cfg
     f conn cwinbox =
         runReaderT (cacheWriter (c conn) cwinbox) db
     c conn =
@@ -192,22 +193,23 @@ withCache cfg chain db pub action =
            , cacheMin = storeConfCacheMin cfg
            , cacheChain = chain
            , cacheMax = storeConfMaxKeys cfg
+           , cacheRefresh = storeConfCacheRefresh cfg
            }
 
 cacheWriterProcesses :: MonadUnliftIO m
-                     => Inbox StoreEvent
+                     => Int
+                     -> Inbox StoreEvent
                      -> CacheWriter
                      -> m a
                      -> m a
-cacheWriterProcesses evts cwm action =
+cacheWriterProcesses crefresh evts cwm action =
     withAsync events $ \a1 ->
     withAsync ping   $ \a2 ->
     link a1 >> link a2 >> action
   where
     events = cacheWriterEvents evts cwm
     ping = forever $ do
-        time <- liftIO $ randomRIO (600000, 1200000)
-        threadDelay time
+        threadDelay (crefresh * 1000)
         cachePing cwm
 
 cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
