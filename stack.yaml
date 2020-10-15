@@ -13,7 +13,7 @@ packages:
 extra-deps:
   - nqe-0.6.3
   - git: https://github.com/haskoin/haskoin-core.git
-    commit: 8b3421fbcbe024ddc25c00617e4c25240ae9485d
+    commit: 05b10a4e02f6ccd4cc5be9e6c7aeb1708f04be2a
   - git: https://github.com/haskoin/haskoin-node.git
     commit: 93d9e4eadf79089a0ab32dc27ab3f209c8994ed4
   - secp256k1-haskell-0.4.0

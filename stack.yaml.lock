@@ -17,11 +17,11 @@ packages:
     git: https://github.com/haskoin/haskoin-core.git
     pantry-tree:
       size: 6319
-      sha256: 4b8e0937f8d45d4f3e974f5bdfe1178c153f7ea26a1cd06ede21e7bcd6511804
-    commit: 8b3421fbcbe024ddc25c00617e4c25240ae9485d
+      sha256: 3338c9cc7ced4c06d220a41876990ec7e3bf9117b979fe4dd8e30b38361f7452
+    commit: 05b10a4e02f6ccd4cc5be9e6c7aeb1708f04be2a
   original:
     git: https://github.com/haskoin/haskoin-core.git
-    commit: 8b3421fbcbe024ddc25c00617e4c25240ae9485d
+    commit: 05b10a4e02f6ccd4cc5be9e6c7aeb1708f04be2a
 - completed:
     name: haskoin-node
     version: 0.17.0
