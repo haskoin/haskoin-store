@@ -66,6 +66,8 @@ data GetBlockHeights = GetBlockHeights !HeightsParam !NoTx
 newtype GetBlockHeightRaw = GetBlockHeightRaw HeightParam
 data GetBlockTime = GetBlockTime !TimeParam !NoTx
 newtype GetBlockTimeRaw = GetBlockTimeRaw TimeParam
+data GetBlockMTP = GetBlockMTP !TimeParam !NoTx
+newtype GetBlockMTPRaw = GetBlockMTPRaw TimeParam
 -- Transactions
 newtype GetTx = GetTx TxHash
 newtype GetTxs = GetTxs [TxHash]
@@ -148,6 +150,16 @@ instance ApiResource GetBlockTime Store.BlockData where
 instance ApiResource GetBlockTimeRaw (Store.RawResult Block) where
     resourcePath _ = "/block/time/" <+> "/raw"
     queryParams (GetBlockTimeRaw u) = ([ParamBox u], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy TimeParam)]
+
+instance ApiResource GetBlockMTP Store.BlockData where
+    resourcePath _ = ("/block/mtp/" <:>)
+    queryParams (GetBlockMTP u t) = ([ParamBox u], noDefBox t)
+    captureParams _ = [ProxyBox (Proxy :: Proxy TimeParam)]
+
+instance ApiResource GetBlockMTPRaw (Store.RawResult Block) where
+    resourcePath _ = "/block/mtp/" <+> "/raw"
+    queryParams (GetBlockMTPRaw u) = ([ParamBox u], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy TimeParam)]
 
 ------------------

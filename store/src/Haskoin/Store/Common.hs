@@ -22,6 +22,7 @@ module Haskoin.Store.Common
     , xPubBalsUnspents
     , getTransaction
     , blockAtOrBefore
+    , blockAtOrAfterMTP
     , deOffset
     , applyLimits
     , applyLimitsC
@@ -58,8 +59,9 @@ import           Haskoin                    (Address, BlockHash,
                                              TxHash (..), TxIn (..),
                                              XPubKey (..), deriveAddr,
                                              deriveCompatWitnessAddr,
-                                             deriveWitnessAddr, headerHash,
-                                             lastSmallerOrEqual, pubSubKey,
+                                             deriveWitnessAddr,
+                                             firstGreaterOrEqual, headerHash,
+                                             lastSmallerOrEqual, mtp, pubSubKey,
                                              txHash)
 import           Haskoin.Node               (Chain, Peer)
 import           Haskoin.Store.Data         (Balance (..), BlockData (..),
@@ -287,6 +289,19 @@ blockAtOrBefore ch q = runMaybeT $ do
     f x =
         let t = fromIntegral (blockTimestamp (nodeHeader x))
          in return $ t `compare` q
+
+blockAtOrAfterMTP :: (MonadIO m, StoreReadExtra m)
+                  => Chain
+                  -> UnixTime
+                  -> m (Maybe BlockData)
+blockAtOrAfterMTP ch q = runMaybeT $ do
+    net <- lift getNetwork
+    x <- MaybeT $ liftIO $ runReaderT (firstGreaterOrEqual net f) ch
+    MaybeT $ getBlock (headerHash (nodeHeader x))
+  where
+    f x = do
+        t <- fromIntegral <$> mtp x
+        return $ t `compare` q
 
 
 -- | Events that the store can generate.
