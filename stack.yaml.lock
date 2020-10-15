@@ -5,19 +5,34 @@
 
 packages:
 - completed:
-    hackage: haskoin-core-0.15.0@sha256:f4fff61f850c48f4f3be368cdd65951a088724512e7fc56e504e9da9f97a3fa3,4791
+    hackage: nqe-0.6.3@sha256:f22b16fc5723d5c8836dba19ff051dbbae0d3ebfdbeaa1ca2077ea4b3c5b6f32,1628
     pantry-tree:
-      size: 5110
-      sha256: f60304e2b2de3458ab2bd55d805f95e1796fce9f52f46f3425969277938fcdfe
+      size: 665
+      sha256: ee2c74f9ee8163924d7a3ecf0dee65ed1b8dd16e03af3a7b10d3f2451e92afc4
   original:
-    hackage: haskoin-core-0.15.0
+    hackage: nqe-0.6.3
 - completed:
-    hackage: haskoin-node-0.16.0@sha256:36ff20bbb8e5360794098ad8d49b5aced6f9c5997b1740004c21fbde6246b6d6,2279
+    name: haskoin-core
+    version: 0.17.0
+    git: https://github.com/haskoin/haskoin-core.git
     pantry-tree:
-      size: 636
-      sha256: ab88b6c9e3f1295781e358a3148b4597559b1df6efd1874f279bb47454556d4c
+      size: 6319
+      sha256: ea69667fc8333718aa0bd658f3113ad9feb3fe1f9ea859035392d8e0b873b432
+    commit: 64645381a305ec7d85adc9bbfb314273399a07f3
   original:
-    hackage: haskoin-node-0.16.0
+    git: https://github.com/haskoin/haskoin-core.git
+    commit: 64645381a305ec7d85adc9bbfb314273399a07f3
+- completed:
+    name: haskoin-node
+    version: 0.17.0
+    git: https://github.com/haskoin/haskoin-node.git
+    pantry-tree:
+      size: 897
+      sha256: 49d88398d3ebb8b8c8933397a86e6c1b36d37d9be1d3921d1e7866c24ce821ce
+    commit: 93d9e4eadf79089a0ab32dc27ab3f209c8994ed4
+  original:
+    git: https://github.com/haskoin/haskoin-node.git
+    commit: 93d9e4eadf79089a0ab32dc27ab3f209c8994ed4
 - completed:
     hackage: secp256k1-haskell-0.4.0@sha256:696dff6f5f84c83041c290b198e872d39241dbe62eb206627264ebdff6fe7958,1930
     pantry-tree:
@@ -25,13 +40,6 @@ packages:
       sha256: e7cb3888501fc5d1084a107488be3a6de59799ba95666d055c4acbabb66fcd69
   original:
     hackage: secp256k1-haskell-0.4.0
-- completed:
-    hackage: nqe-0.6.3@sha256:f22b16fc5723d5c8836dba19ff051dbbae0d3ebfdbeaa1ca2077ea4b3c5b6f32,1628
-    pantry-tree:
-      size: 665
-      sha256: ee2c74f9ee8163924d7a3ecf0dee65ed1b8dd16e03af3a7b10d3f2451e92afc4
-  original:
-    hackage: nqe-0.6.3
 - completed:
     hackage: rocksdb-query-0.4.2@sha256:70ff2e8b436835969d76ea906a0d133e2affab65fcd89bc7b3da2414ff82d3a2,1555
     pantry-tree:

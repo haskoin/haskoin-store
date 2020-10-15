@@ -568,15 +568,18 @@ scottyBlockHeightRaw (GetBlockHeightRaw h) =
 
 scottyBlockTime ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockTime -> WebT m BlockData
-scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) =
-    maybe (S.raise ThingNotFound) (return . pruneTx noTx) =<< blockAtOrBefore t
+scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) = do
+    ch <- lift $ asks (storeChain . webStore)
+    m <- blockAtOrBefore ch t
+    maybe (S.raise ThingNotFound) (return . pruneTx noTx) m
 
 scottyBlockTimeRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockTimeRaw
     -> WebT m (RawResult H.Block)
 scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) = do
-    b <- maybe (S.raise ThingNotFound) return =<< blockAtOrBefore t
+    ch <- lift $ asks (storeChain . webStore)
+    b <- maybe (S.raise ThingNotFound) return =<< blockAtOrBefore ch t
     refuseLargeBlock b
     RawResult <$> toRawBlock b
 
@@ -1037,7 +1040,8 @@ parseStart (Just s) =
         _ <- MaybeT $ getTxData (TxHash h)
         return $ AtTx (TxHash h)
     start_time q = do
-        b <- MaybeT $ blockAtOrBefore q
+        ch <- lift $ asks (storeChain . webStore)
+        b <- MaybeT $ blockAtOrBefore ch q
         let g = blockDataHeight b
         return $ AtBlock g
 
