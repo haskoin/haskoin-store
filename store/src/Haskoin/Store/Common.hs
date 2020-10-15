@@ -280,13 +280,13 @@ blockAtOrBefore :: (MonadIO m, StoreReadExtra m)
                 -> UnixTime
                 -> m (Maybe BlockData)
 blockAtOrBefore ch q = runMaybeT $ do
-    x <- MaybeT $ liftIO $ runReaderT (lastSmallerOrEqual f) ch
+    net <- lift getNetwork
+    x <- MaybeT $ liftIO $ runReaderT (lastSmallerOrEqual net f) ch
     MaybeT $ getBlock (headerHash (nodeHeader x))
   where
     f x =
-        let t' = blockTimestamp (nodeHeader x)
-         in return $ t' `compare` t
-    t = fromIntegral q
+        let t = fromIntegral (blockTimestamp (nodeHeader x))
+         in return $ t `compare` q
 
 
 -- | Events that the store can generate.
