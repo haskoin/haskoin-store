@@ -12,34 +12,26 @@ packages:
   original:
     hackage: nqe-0.6.3
 - completed:
-    name: haskoin-core
-    version: 0.17.0
-    git: https://github.com/haskoin/haskoin-core.git
+    hackage: haskoin-core-0.17.0@sha256:4f55fca642c925daeca9310949e28f8ec692b11ba101622306117bd9b6047192,4791
     pantry-tree:
-      size: 6319
-      sha256: 1c97698c82e79ee786845f79120006d9bb28214cfe3262951c76540fd8039cf9
-    commit: 166e4b8565b630c4103557a02a94d201eea6ae16
+      size: 5110
+      sha256: 3107cd81488cf64dcc041f1512dad437c39146e4059e75860aa966b53869a3b3
   original:
-    git: https://github.com/haskoin/haskoin-core.git
-    commit: 166e4b8565b630c4103557a02a94d201eea6ae16
+    hackage: haskoin-core-0.17.0
 - completed:
-    name: haskoin-node
-    version: 0.17.0
-    git: https://github.com/haskoin/haskoin-node.git
+    hackage: haskoin-node-0.17.0@sha256:34214fa5fbe42be79ba33093af8ed524d18a782e9847e6e575284957c72f670a,2279
     pantry-tree:
-      size: 897
-      sha256: 49d88398d3ebb8b8c8933397a86e6c1b36d37d9be1d3921d1e7866c24ce821ce
-    commit: 93d9e4eadf79089a0ab32dc27ab3f209c8994ed4
+      size: 636
+      sha256: 403eabec6cb275b20964eed7470204987dcf64f245556d6515bcd66f5c2aaaac
   original:
-    git: https://github.com/haskoin/haskoin-node.git
-    commit: 93d9e4eadf79089a0ab32dc27ab3f209c8994ed4
+    hackage: haskoin-node-0.17.0
 - completed:
-    hackage: secp256k1-haskell-0.4.0@sha256:696dff6f5f84c83041c290b198e872d39241dbe62eb206627264ebdff6fe7958,1930
+    hackage: secp256k1-haskell-0.5.0@sha256:26d8897b0b81a1ca46134e3b1cc7784c975880e2334936d92681b07ae9703c26,2158
     pantry-tree:
       size: 599
-      sha256: e7cb3888501fc5d1084a107488be3a6de59799ba95666d055c4acbabb66fcd69
+      sha256: e1e0b1d98213c7874a4260b946d1024571ac659e81822d51ea1df7d00f4c14b0
   original:
-    hackage: secp256k1-haskell-0.4.0
+    hackage: secp256k1-haskell-0.5.0
 - completed:
     hackage: rocksdb-query-0.4.2@sha256:70ff2e8b436835969d76ea906a0d133e2affab65fcd89bc7b3da2414ff82d3a2,1555
     pantry-tree:
@@ -56,7 +48,7 @@ packages:
     hackage: rocksdb-haskell-jprupp-2.1.3
 snapshots:
 - completed:
-    size: 531237
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/16/0.yaml
-    sha256: 210e15b7043e2783115afe16b0d54914b1611cdaa73f3ca3ca7f8e0847ff54e5
-  original: lts-16.0
+    size: 532172
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/16/18.yaml
+    sha256: 4f2a092c6f4869854e8d7435ab98ce5157c641022c3cbfc4c4614ff3db752e62
+  original: lts-16.18

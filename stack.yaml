@@ -1,4 +1,4 @@
-resolver: lts-16.0
+resolver: lts-16.18
 nix:
   packages:
     - perl
@@ -12,10 +12,8 @@ packages:
   - data
 extra-deps:
   - nqe-0.6.3
-  - git: https://github.com/haskoin/haskoin-core.git
-    commit: 166e4b8565b630c4103557a02a94d201eea6ae16
-  - git: https://github.com/haskoin/haskoin-node.git
-    commit: 93d9e4eadf79089a0ab32dc27ab3f209c8994ed4
-  - secp256k1-haskell-0.4.0
+  - haskoin-core-0.17.0
+  - haskoin-node-0.17.0
+  - secp256k1-haskell-0.5.0
   - rocksdb-query-0.4.2
   - rocksdb-haskell-jprupp-2.1.3
