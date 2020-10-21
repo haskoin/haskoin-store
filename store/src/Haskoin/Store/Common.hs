@@ -22,6 +22,7 @@ module Haskoin.Store.Common
     , xPubBalsUnspents
     , getTransaction
     , blockAtOrBefore
+    , blockAtOrAfterMTP
     , deOffset
     , applyLimits
     , applyLimitsC
@@ -30,45 +31,48 @@ module Haskoin.Store.Common
     , microseconds
     ) where
 
-import           Conduit                   (ConduitT, dropC, mapC, takeC)
-import           Control.DeepSeq           (NFData)
-import           Control.Exception         (Exception)
-import           Control.Monad             (mzero)
-import           Control.Monad.Trans       (lift)
-import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
-import           Data.ByteString           (ByteString)
-import           Data.Default              (Default (..))
-import           Data.Function             (on)
-import           Data.Hashable             (Hashable)
-import qualified Data.HashSet              as H
-import           Data.IntMap.Strict        (IntMap)
-import qualified Data.IntMap.Strict        as I
-import           Data.List                 (sortBy)
-import           Data.Maybe                (catMaybes, listToMaybe)
-import           Data.Serialize            (Serialize (..))
-import           Data.Time.Clock.System    (getSystemTime, systemNanoseconds,
-                                            systemSeconds)
-import           Data.Word                 (Word32, Word64)
-import           GHC.Generics              (Generic)
-import           Haskoin                   (Address, BlockHash,
-                                            BlockHeader (..), BlockHeight,
-                                            KeyIndex, Network (..),
-                                            OutPoint (..), RejectCode (..),
-                                            Tx (..), TxHash (..), TxIn (..),
-                                            XPubKey (..), deriveAddr,
-                                            deriveCompatWitnessAddr,
-                                            deriveWitnessAddr, pubSubKey,
-                                            txHash)
-import           Haskoin.Node              (Peer)
-import           Haskoin.Store.Data        (Balance (..), BlockData (..),
-                                            DeriveType (..), Spender,
-                                            Transaction, TxData (..),
-                                            TxRef (..), UnixTime, Unspent (..),
-                                            XPubBal (..), XPubSpec (..),
-                                            XPubSummary (..), XPubUnspent (..),
-                                            nullBalance, toTransaction,
-                                            zeroBalance)
-import           UnliftIO                  (MonadIO, liftIO)
+import           Conduit                    (ConduitT, dropC, mapC, takeC)
+import           Control.DeepSeq            (NFData)
+import           Control.Exception          (Exception)
+import           Control.Monad.Trans        (lift)
+import           Control.Monad.Trans.Maybe  (MaybeT (..), runMaybeT)
+import           Control.Monad.Trans.Reader (runReaderT)
+import           Data.ByteString            (ByteString)
+import           Data.Default               (Default (..))
+import           Data.Function              (on)
+import           Data.Hashable              (Hashable)
+import qualified Data.HashSet               as H
+import           Data.IntMap.Strict         (IntMap)
+import qualified Data.IntMap.Strict         as I
+import           Data.List                  (sortBy)
+import           Data.Maybe                 (catMaybes)
+import           Data.Serialize             (Serialize (..))
+import           Data.Time.Clock.System     (getSystemTime, systemNanoseconds,
+                                             systemSeconds)
+import           Data.Word                  (Word32, Word64)
+import           GHC.Generics               (Generic)
+import           Haskoin                    (Address, BlockHash,
+                                             BlockHeader (..), BlockHeight,
+                                             BlockNode (..), KeyIndex,
+                                             Network (..), OutPoint (..),
+                                             RejectCode (..), Tx (..),
+                                             TxHash (..), TxIn (..),
+                                             XPubKey (..), deriveAddr,
+                                             deriveCompatWitnessAddr,
+                                             deriveWitnessAddr,
+                                             firstGreaterOrEqual, headerHash,
+                                             lastSmallerOrEqual, mtp, pubSubKey,
+                                             txHash)
+import           Haskoin.Node               (Chain, Peer)
+import           Haskoin.Store.Data         (Balance (..), BlockData (..),
+                                             DeriveType (..), Spender,
+                                             Transaction, TxData (..),
+                                             TxRef (..), UnixTime, Unspent (..),
+                                             XPubBal (..), XPubSpec (..),
+                                             XPubSummary (..), XPubUnspent (..),
+                                             nullBalance, toTransaction,
+                                             zeroBalance)
+import           UnliftIO                   (MonadIO, liftIO)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
 
@@ -273,25 +277,31 @@ getTransaction h = runMaybeT $ do
     sm <- lift $ getSpenders h
     return $ toTransaction d sm
 
-blockAtOrBefore :: (Monad m, StoreReadExtra m)
-                => UnixTime
+blockAtOrBefore :: (MonadIO m, StoreReadExtra m)
+                => Chain
+                -> UnixTime
                 -> m (Maybe BlockData)
-blockAtOrBefore q = runMaybeT $ do
-    a <- g 0
-    b <- MaybeT getBestBlock >>= MaybeT . getBlock
-    f a b
+blockAtOrBefore ch q = runMaybeT $ do
+    net <- lift getNetwork
+    x <- MaybeT $ liftIO $ runReaderT (lastSmallerOrEqual net f) ch
+    MaybeT $ getBlock (headerHash (nodeHeader x))
   where
-    f a b
-        | t b <= q = return b
-        | t a > q = mzero
-        | h b - h a == 1 = return a
-        | otherwise = do
-              let x = h a + (h b - h a) `div` 2
-              m <- g x
-              if t m > q then f a m else f m b
-    g x = MaybeT (listToMaybe <$> getBlocksAtHeight x) >>= MaybeT . getBlock
-    h = blockDataHeight
-    t = fromIntegral . blockTimestamp . blockDataHeader
+    f x =
+        let t = fromIntegral (blockTimestamp (nodeHeader x))
+         in return $ t `compare` q
+
+blockAtOrAfterMTP :: (MonadIO m, StoreReadExtra m)
+                  => Chain
+                  -> UnixTime
+                  -> m (Maybe BlockData)
+blockAtOrAfterMTP ch q = runMaybeT $ do
+    net <- lift getNetwork
+    x <- MaybeT $ liftIO $ runReaderT (firstGreaterOrEqual net f) ch
+    MaybeT $ getBlock (headerHash (nodeHeader x))
+  where
+    f x = do
+        t <- fromIntegral <$> mtp x
+        return $ t `compare` q
 
 
 -- | Events that the store can generate.

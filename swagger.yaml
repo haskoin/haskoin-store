@@ -7,15 +7,15 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.37.5
+  version: &version 0.38.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
     url: https://github.com/haskoin/haskoin-store
     email: jprupp@protonmail.ch
   license:
-    name: Unlicense
-    url: http://unlicense.org/
+    name: MIT
+    url: https://github.com/haskoin/haskoin-store/blob/master/store/LICENSE
 
 tags:
   - name: Address
@@ -539,6 +539,16 @@ paths:
               schema:
                 type: string
                 format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
 
   '/block/height/{height}/raw':
     get:
@@ -564,12 +574,22 @@ paths:
               schema:
                 type: string
                 format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
 
   '/block/time/{time}':
     get:
       tags:
         - Block
-      operationId: getBlocksAtTime
+      operationId: getBlockAtTime
       summary: Block Mined at Time
       parameters:
         - $ref: '#/components/parameters/timeParam'
@@ -586,12 +606,22 @@ paths:
               schema:
                 type: string
                 format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
 
   '/block/time/{time}/raw':
     get:
       tags:
         - Block
-      operationId: getRawBlocksAtTime
+      operationId: getRawBlockAtTime
       summary: Raw Block Mined at Time
       parameters:
         - $ref: '#/components/parameters/timeParam'
@@ -610,6 +640,86 @@ paths:
                   result:
                     type: string
                     example: '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  '/block/mtp/{time}':
+    get:
+      tags:
+        - Block
+      operationId: getBlockMTP
+      summary: Block Mined at Time
+      parameters:
+        - $ref: '#/components/parameters/timeParam'
+        - $ref: '#/components/parameters/notxParam'
+        - $ref: '#/components/parameters/prettyParam'
+      responses:
+        '200':
+          description: Block at Median Time Past
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockData'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  '/block/mtp/{time}/raw':
+    get:
+      tags:
+        - Block
+      operationId: getRawBlockMTP
+      summary: Raw Block at Median Time Past
+      parameters:
+        - $ref: '#/components/parameters/timeParam'
+      responses:
+        '200':
+          description: >-
+            Bitcoin protocol block mined after specified median time past.
+            Hex string when using JSON.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - result
+                properties:
+                  result:
+                    type: string
+                    example: '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
             application/octet-stream:
               schema:
                 type: string
@@ -634,6 +744,16 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BlockData'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
             application/octet-stream:
               schema:
                 type: string
@@ -1964,7 +2084,7 @@ components:
 
     blocksParam:
       name: blocks
-      in: path
+      in: query
       explode: false
       required: true
       schema:

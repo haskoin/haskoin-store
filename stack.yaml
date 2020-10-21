@@ -1,4 +1,4 @@
-resolver: lts-16.0
+resolver: lts-16.18
 nix:
   packages:
     - perl
@@ -6,13 +6,14 @@ nix:
     - secp256k1
     - zlib
     - pkg-config
+    - cacert
 packages:
   - store
   - data
 extra-deps:
-  - haskoin-core-0.15.0
-  - haskoin-node-0.16.0
-  - secp256k1-haskell-0.4.0
   - nqe-0.6.3
+  - haskoin-core-0.17.0
+  - haskoin-node-0.17.0
+  - secp256k1-haskell-0.5.0
   - rocksdb-query-0.4.2
   - rocksdb-haskell-jprupp-2.1.3

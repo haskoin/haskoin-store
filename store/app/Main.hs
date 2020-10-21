@@ -16,6 +16,7 @@ import           Data.Default            (Default (..))
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
+import           Data.Word               (Word32)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
                                           btcTest, eitherToMaybe)
@@ -49,6 +50,7 @@ data Config = Config
     , configHost         :: !String
     , configPort         :: !Int
     , configNetwork      :: !Network
+    , configAsert        :: !Word32
     , configDiscover     :: !Bool
     , configPeers        :: ![(String, Maybe Int)]
     , configVersion      :: !Bool
@@ -75,6 +77,7 @@ instance Default Config where
                  , configHost         = defHost
                  , configPort         = defPort
                  , configNetwork      = defNetwork
+                 , configAsert        = defAsert
                  , configDiscover     = defDiscover
                  , configPeers        = defPeers
                  , configVersion      = False
@@ -136,6 +139,11 @@ defNetwork :: Network
 defNetwork = unsafePerformIO $
     defEnv "NET" bch (eitherToMaybe . networkReader)
 {-# NOINLINE defNetwork #-}
+
+defAsert :: Word32
+defAsert = unsafePerformIO $
+    defEnv "ASERT" 0 readMaybe
+{-# NOINLINE defAsert #-}
 
 defRedisMin :: Int
 defRedisMin = unsafePerformIO $
@@ -275,6 +283,12 @@ config = do
         <> help "Network to connect to"
         <> showDefault
         <> value (configNetwork def)
+    configAsert <-
+        option auto $
+        metavar "TIME"
+        <> long "asert"
+        <> help "ASERT (axon) activation time"
+        <> value (configAsert def)
     configDiscover <-
         flag (configDiscover def) True $
         long "discover"
@@ -481,6 +495,7 @@ run :: Config -> IO ()
 run Config { configHost = host
            , configPort = port
            , configNetwork = net
+           , configAsert = asert
            , configDiscover = disc
            , configPeers = peers
            , configDir = db_dir
@@ -512,7 +527,7 @@ run Config { configHost = host
                           map (second (fromMaybe (getDefaultPort net))) peers
                     , storeConfDiscover = disc
                     , storeConfDB = wd </> "db"
-                    , storeConfNetwork = net
+                    , storeConfNetwork = net'
                     , storeConfCache =
                           if redis
                               then Just redisurl
@@ -543,7 +558,9 @@ run Config { configHost = host
                     , webNoMempool = nomem
                     }
   where
+    net' | asert == 0 = net
+         | otherwise = net { getAsertActivationTime = Just asert }
     l _ lvl
         | deb = True
         | otherwise = LevelInfo <= lvl
-    wd = db_dir </> getNetworkName net
+    wd = db_dir </> getNetworkName net'
