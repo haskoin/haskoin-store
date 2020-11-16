@@ -4,10 +4,10 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: b1a8d34c8b0abb61f5882a9454a5c93e684db97d46d01e20eb7bc24cfc02c188
+-- hash: 2634f3871c33f6dba54c93ffab3a2f2f1f8ff5eb9bc8559216a0367cc2c421f6
 
 name:           haskoin-store
-version:        0.38.0
+version:        0.38.1
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -53,7 +53,7 @@ library
     , hashable >=1.3.0.0
     , haskoin-core >=0.13.6
     , haskoin-node >=0.14.1
-    , haskoin-store-data ==0.38.0
+    , haskoin-store-data ==0.38.1
     , hedis >=0.12.13
     , http-types >=0.12.3
     , monad-logger >=0.3.32
@@ -96,7 +96,7 @@ executable haskoin-store
     , haskoin-core >=0.13.6
     , haskoin-node >=0.14.1
     , haskoin-store
-    , haskoin-store-data ==0.38.0
+    , haskoin-store-data ==0.38.1
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , nqe >=0.6.1
@@ -135,8 +135,8 @@ test-suite haskoin-store-test
     , hashable >=1.3.0.0
     , haskoin-core >=0.13.6
     , haskoin-node >=0.14.1
-    , haskoin-store ==0.38.0
-    , haskoin-store-data ==0.38.0
+    , haskoin-store ==0.38.1
+    , haskoin-store-data ==0.38.1
     , hedis >=0.12.13
     , hspec >=2.7.1
     , http-types >=0.12.3

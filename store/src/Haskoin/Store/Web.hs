@@ -15,7 +15,8 @@ module Haskoin.Store.Web
     , runWeb
     ) where
 
-import           Conduit                       ()
+import           Conduit                       (await, runConduit, takeC, yield,
+                                                (.|))
 import           Control.Applicative           ((<|>))
 import           Control.Monad                 (forever, unless, when, (<=<))
 import           Control.Monad.Logger          (MonadLoggerIO, logErrorS,
@@ -35,6 +36,7 @@ import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
 import           Data.Function                 ((&))
+import qualified Data.HashSet                  as HashSet
 import           Data.List                     (nub)
 import           Data.Maybe                    (catMaybes, fromMaybe,
                                                 listToMaybe, mapMaybe)
@@ -656,39 +658,38 @@ scottyTxAfter (GetTxAfter txid height) =
     GenericResult <$> cbAfterHeight (fromIntegral height) txid
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
--- specified height. Returns'Nothing' if answer cannot be computed before
+-- specified height. Returns 'Nothing' if answer cannot be computed before
 -- hitting limits.
 cbAfterHeight ::
        (MonadIO m, StoreReadBase m)
     => H.BlockHeight
     -> TxHash
     -> m (Maybe Bool)
-cbAfterHeight height begin =
-    go (10000 :: Int) [begin] -- Depth first search
+cbAfterHeight height txid =
+    inputs 10000 HashSet.empty HashSet.empty [txid]
   where
-    go 0 _ = return Nothing -- We searched too far. Return Nothing.
-    go _ [] = return $ Just False -- Nothing left to search.
-    go i (txid:xs) =
-        getTransaction txid >>= \case
-            Nothing -> return Nothing -- Error. Bail out.
-            Just tx
-                | cbCheck tx -> return $ Just True -- Stop everything. Return.
-                | heightCheck tx -> go i xs -- Continue search sideways
-                | otherwise -> do
-                    let is = outPointHash . inputPoint <$> transactionInputs tx
-                    -- We have to search down and search sideways
-                    go (i - 1) is `returnOr` go i xs
-    cbCheck tx =
-        any isCoinbase (transactionInputs tx) &&
-        blockRefHeight (transactionBlock tx) > height
-    heightCheck tx =
+    inputs 0 _ _ [] = return Nothing
+    inputs i is ns [] =
+        let is' = HashSet.union is ns
+            ns' = HashSet.empty
+            ts = HashSet.toList (HashSet.difference ns is)
+        in case ts of
+               [] -> return (Just False)
+               _ -> inputs i is' ns' ts
+    inputs i is ns (t:ts) = getTransaction t >>= \case
+        Nothing -> return Nothing
+        Just tx | height_check tx ->
+                      if cb_check tx
+                      then return (Just True)
+                      else let ns' = HashSet.union (ins tx) ns
+                          in inputs (i - 1) is ns' ts
+                | otherwise -> inputs (i - 1) is ns ts
+    cb_check = any isCoinbase . transactionInputs
+    ins = HashSet.fromList . map (outPointHash . inputPoint) . transactionInputs
+    height_check tx =
         case transactionBlock tx of
-            BlockRef thisHeight _ -> thisHeight <= height
-            _                     -> False
-    returnOr a b =
-        a >>= \case
-            Just True -> return $ Just True -- Bubble up this result
-            _ -> b
+            BlockRef h _ -> h > height
+            _            -> True
 
 -- POST Transaction --
 
