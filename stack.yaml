@@ -1,4 +1,4 @@
-resolver: lts-16.22
+resolver: nightly-2020-11-17
 nix:
   packages:
     - perl
@@ -11,9 +11,5 @@ packages:
   - store
   - data
 extra-deps:
-  - nqe-0.6.3
-  - haskoin-core-0.17.2
-  - haskoin-node-0.17.0
-  - secp256k1-haskell-0.5.0
-  - rocksdb-query-0.4.2
-  - rocksdb-haskell-jprupp-2.1.3
+  - haskoin-core-0.17.3
+  - haskoin-node-0.17.1
