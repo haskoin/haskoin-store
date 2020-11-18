@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.38.2
+version: 0.38.3
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
@@ -54,7 +54,6 @@ executables:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
-      - -with-rtsopts=-xn
     dependencies:
       - haskoin-store
       - filepath
@@ -70,7 +69,6 @@ tests:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
-      - -with-rtsopts=-xn
     dependencies:
       - haskoin-store
       - hspec >= 2.7.1

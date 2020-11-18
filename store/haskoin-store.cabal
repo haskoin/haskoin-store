@@ -4,10 +4,10 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 96559d3b6f97de2f3dc167a77993d76c4cde043308f10c5c16073f7b294854da
+-- hash: 32d54f4aca340cf555f0dc65cb9167e208b987aa7abf5caa5bf98dffeb25ea04
 
 name:           haskoin-store
-version:        0.38.2
+version:        0.38.3
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -80,7 +80,7 @@ executable haskoin-store
       Paths_haskoin_store
   hs-source-dirs:
       app
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N -with-rtsopts=-xn
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       aeson >=1.4.7.1
     , aeson-pretty >=0.8.8
@@ -127,7 +127,7 @@ test-suite haskoin-store-test
       Paths_haskoin_store
   hs-source-dirs:
       test
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N -with-rtsopts=-xn
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck >=2.13.2
     , aeson >=1.4.7.1
