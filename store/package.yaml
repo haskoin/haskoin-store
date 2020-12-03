@@ -1,5 +1,5 @@
 name: haskoin-store
-version: 0.38.3
+version: 0.38.4
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
@@ -24,8 +24,8 @@ dependencies:
   - haskoin-store-data == 0.38.1
   - monad-logger >= 0.3.32
   - mtl >= 2.2.2
-  - haskoin-core >= 0.13.6
-  - haskoin-node >= 0.14.1
+  - haskoin-core >= 0.17.4
+  - haskoin-node >= 0.17.0
   - nqe >= 0.6.1
   - random >= 1.1
   - string-conversions >= 0.4.0.1
