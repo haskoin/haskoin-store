@@ -558,3 +558,39 @@ instance Param [TxHash] where
     encodeParam _ ts = Just $ txHashToHex <$> ts
     parseParam _ = mapM hexToTxHash
 
+
+--
+-- Blockchain API compatibility
+--
+
+data BcAddress
+    = BcAddress { getBcAddress :: !Address }
+    | BcXpub { getBcXpub :: !XPubKey }
+    deriving (Eq, Show)
+
+newtype BcActiveParam
+    = BcActiveParam { getBcActiveParam :: [BcAddress] }
+    deriving (Eq, Show)
+
+newtype BcActiveP2shParam
+    = BcActiveP2ShParam { getBcActiveP2shParam :: [BcAddress] }
+    deriving (Eq, Show)
+
+newtype BcOnlyShowParam
+    = BcOnlyShowParam { getBcOnlyShowParam :: [BcAddress] }
+    deriving (Eq, Show)
+
+newtype BcSimpleParam
+    = BcSimpleParam { getBcSimpleParam :: Bool }
+    deriving (Eq, Show)
+
+newtype BcCompactParam
+    = BcCompactParam { getBcCompactParam :: Bool }
+
+newtype BcCountParam
+    = BcCountParam { getBcCountParam :: Integer }
+    deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
+
+newtype BcOffsetParam
+    = BcOffsetParam { getBcOffsetParam :: Integer }
+    deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
