@@ -1497,3 +1497,138 @@ instance FromJSON Except where
                 String "string-error"    -> return $ StringError msg
                 String "block-too-large" -> return BlockTooLarge
                 _                        -> mzero
+
+
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
+
+data BinfoMultiAddr
+    = BinfoMultiAddr
+        { getBinfoMultiAddrAddresses :: ![BinfoAddress]
+        , getBinfoMultiAddrWallet    :: !BinfoWallet
+        , getBinfoMultiAddrTxs       :: ![BinfoTx]
+        , getBinfoMultiAddrInfo      :: !BinfoInfo
+        , getBinfoRecommendFee       :: !Bool
+        }
+    deriving (Eq, Show)
+
+data BinfoAddress
+    = BinfoAddress
+        { getBinfoAddress          :: !Address
+        , getBinfoAddrTxCount      :: !Word32
+        , getBinfoAddrReceived     :: !Word64
+        , getBinfoAddrSent         :: !Word64
+        , getBinfoAddrBalance      :: !Word64
+        }
+    | BinfoXPubKey
+        { getBinfoXPubKey          :: !XPubKey
+        , getBinfoAddrTxCount      :: !Word32
+        , getBinfoAddrReceived     :: !Word64
+        , getBinfoAddrSent         :: !Word64
+        , getBinfoAddrBalance      :: !Word64
+        , getBinfoXPubAccountIndex :: !Word32
+        , getBinfoXPubChangeIndex  :: !Word32
+        }
+    deriving (Eq, Show)
+
+data BinfoWallet
+    = BinfoWallet
+        { getBinfoWalletBalance       :: !Word64
+        , getBinfoWalletTxCount       :: !Word32
+        , getBinfoWalletFilteredCount :: !Word32
+        , getBinfoWalletTotalReceived :: !Word64
+        , getBinfoWalletTotalSent     :: !Word64
+        }
+    deriving (Eq, Show)
+
+data BinfoTx
+    = BinfoTx
+        { getBinfoTxHash          :: !TxHash
+        , getBinfoTxVer           :: !Word32
+        , getBinfoTxVinSz         :: !Word32
+        , getBinfoTxVoutSz        :: !Word32
+        , getBinfoTxSize          :: !Word32
+        , getBinfoTxWeight        :: !Word32
+        , getBinfoTxFee           :: !Word32
+        , getBinfoTxRelayedBy     :: !Text
+        , getBinfoTxLockTime      :: !Word32
+        , getBinfoTxIndex         :: !Word64
+        , getBinfoTxDoubleSpent   :: !Bool
+        , getBinfoTxResult        :: !Word64
+        , getBinfoTxBalance       :: !Word64
+        , getBinfoTxTime          :: !Word64
+        , getBinfoTxBlockIndex    :: !Word64
+        , getBinfoTxBlockHeight   :: !Word32
+        , getBinfoTxInputs        :: [BinfoTxInput]
+        , getBinfoTxOutputs       :: [BinfoTxOutput]
+        }
+    deriving (Eq, Show)
+
+data BinfoTxInput
+    = BinfoTxInput
+        { getBinfoTxInputSeq      :: !Word32
+        , getBinfoTxInputWitness  :: !Text
+        , getBinfoTxInputScript   :: !Text
+        , getBinfoTxInputIndex    :: !Word32
+        , getBinfoTxInputPrevOut  :: !(Maybe BinfoTxOutput)
+        }
+    deriving (Eq, Show)
+
+data BinfoTxOutput
+    = BinfoTxOutput
+        { getBinfoTxOutputType     :: !Int
+        , getBinfoTxOutputSpent    :: !Bool
+        , getBinfoTxOutputValue    :: !Word64
+        , getBinfoTxOutputIndex    :: !Word32
+        , getBinfoTxOutputTxIndex  :: !Word64
+        , getBinfoTxOutputScript   :: !Text
+        , getBinfoTxOutputSpenders :: ![BinfoSprender]
+        , getBinfoTxOutputAddress  :: !(Maybe Address)
+        , getBinfoTxOutputXPub     :: !(Maybe BinfoXPubPath)
+        }
+    deriving (Eq, Show)
+
+data BinfoSpender
+    = BinfoSpender
+        { getBinfoSpenderTxIndex :: !Word64
+        , getBinfoSpenderIndex   :: !Word32
+        }
+    deriving (Eq, Show)
+
+data BinfoXPubPath
+    = BinfoXPubPath
+        { getBinfoXPubPathKey     :: !XPubKey
+        , getBinfoXPubPathDeriv   :: !Text
+        }
+    deriving (Eq, Show)
+
+data BinfoInfo
+    = BinfoInfo
+        { getBinfoConnected       :: !Word32
+        , getBinfoConversion      :: !Double
+        , getBinfoSymbolLocal     :: !BinfoSymbol
+        , getBinfoSymbolBTC       :: !BinfoSymbol
+        , getBinfoLatestBlock     :: !BinfoBlockInfo
+        }
+    deriving (Eq, Show)
+
+data BinfoBlockInfo
+    = BinfoBlockInfo
+        { getBinfoBlockInfoHash   :: !BlockHash
+        , getBinfoBlockInfoHeight :: !BlockHeight
+        , getBinfoBlockInfoTime   :: !Word64
+        , getBinfoBlockInfoIndex  :: !Word64
+        }
+    deriving (Eq, Show)
+
+data BinfoSymbol
+    = BinfoSymbol
+        { getBinfoSymbolCode       :: !Text
+        , getBinfoSymbolString     :: !Text
+        , getBinfoSymbolName       :: !Text
+        , getBinfoSymbolConversion :: !Double
+        , getBinfoSymbolAfter      :: !Bool
+        , getBinfoSymbolLocal      :: !Bool
+        }
+    deriving (Eq, Show)

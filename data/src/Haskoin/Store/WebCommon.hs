@@ -559,38 +559,45 @@ instance Param [TxHash] where
     parseParam _ = mapM hexToTxHash
 
 
---
--- Blockchain API compatibility
---
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
 
-data BcAddress
-    = BcAddress { getBcAddress :: !Address }
-    | BcXpub { getBcXpub :: !XPubKey }
+data BinfoAddressParam
+    = BinfoAddressParam { getBinfoAddressParam :: !Address }
+    | BinfoXPubKeyParam { getBinfoXPubKeyParam :: !XPubKey }
     deriving (Eq, Show)
 
-newtype BcActiveParam
-    = BcActiveParam { getBcActiveParam :: [BcAddress] }
+-- active
+newtype BinfoActiveParam
+    = BinfoActiveParam { getBinfoActiveParam :: [BinfoAddress] }
     deriving (Eq, Show)
 
-newtype BcActiveP2shParam
-    = BcActiveP2ShParam { getBcActiveP2shParam :: [BcAddress] }
+-- activeP2SH
+newtype BinfoActiveP2SHparam
+    = BinfoActiveP2SHParam { getBinfoActiveP2SHParam :: [BinfoAddress] }
     deriving (Eq, Show)
 
-newtype BcOnlyShowParam
-    = BcOnlyShowParam { getBcOnlyShowParam :: [BcAddress] }
+-- onlyShow
+newtype BinfoOnlyShowParam
+    = BinfoOnlyShowParam { getBinfoOnlyShowParam :: [BinfoAddress] }
     deriving (Eq, Show)
 
-newtype BcSimpleParam
-    = BcSimpleParam { getBcSimpleParam :: Bool }
+-- simple
+newtype BinfoSimpleParam
+    = BinfoSimpleParam { getBinfoSimpleParam :: Bool }
     deriving (Eq, Show)
 
-newtype BcCompactParam
-    = BcCompactParam { getBcCompactParam :: Bool }
+-- no_compact
+newtype BinfoNoCompactParam
+    = BinfoNoCompactParam { getBinfoNoCompactParam :: Bool }
 
-newtype BcCountParam
-    = BcCountParam { getBcCountParam :: Integer }
+-- n
+newtype BinfoCountParam
+    = BinfoCountParam { getBinfoCountParam :: Integer }
     deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
-newtype BcOffsetParam
-    = BcOffsetParam { getBcOffsetParam :: Integer }
+-- offset
+newtype BinfoOffsetParam
+    = BinfoOffsetParam { getBinfoOffsetParam :: Integer }
     deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
