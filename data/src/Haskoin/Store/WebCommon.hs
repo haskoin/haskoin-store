@@ -570,17 +570,17 @@ data BinfoAddressParam
 
 -- active
 newtype BinfoActiveParam
-    = BinfoActiveParam { getBinfoActiveParam :: [BinfoAddress] }
+    = BinfoActiveParam { getBinfoActiveParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
 -- activeP2SH
 newtype BinfoActiveP2SHparam
-    = BinfoActiveP2SHParam { getBinfoActiveP2SHParam :: [BinfoAddress] }
+    = BinfoActiveP2SHParam { getBinfoActiveP2SHParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
 -- onlyShow
 newtype BinfoOnlyShowParam
-    = BinfoOnlyShowParam { getBinfoOnlyShowParam :: [BinfoAddress] }
+    = BinfoOnlyShowParam { getBinfoOnlyShowParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
 -- simple

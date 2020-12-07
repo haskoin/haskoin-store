@@ -1511,7 +1511,7 @@ data BinfoMultiAddr
         , getBinfoMultiAddrInfo      :: !BinfoInfo
         , getBinfoRecommendFee       :: !Bool
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoAddress
     = BinfoAddress
@@ -1530,7 +1530,7 @@ data BinfoAddress
         , getBinfoXPubAccountIndex :: !Word32
         , getBinfoXPubChangeIndex  :: !Word32
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoWallet
     = BinfoWallet
@@ -1540,7 +1540,7 @@ data BinfoWallet
         , getBinfoWalletTotalReceived :: !Word64
         , getBinfoWalletTotalSent     :: !Word64
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoTx
     = BinfoTx
@@ -1551,7 +1551,7 @@ data BinfoTx
         , getBinfoTxSize          :: !Word32
         , getBinfoTxWeight        :: !Word32
         , getBinfoTxFee           :: !Word32
-        , getBinfoTxRelayedBy     :: !Text
+        , getBinfoTxRelayedBy     :: !ByteString
         , getBinfoTxLockTime      :: !Word32
         , getBinfoTxIndex         :: !Word64
         , getBinfoTxDoubleSpent   :: !Bool
@@ -1563,17 +1563,17 @@ data BinfoTx
         , getBinfoTxInputs        :: [BinfoTxInput]
         , getBinfoTxOutputs       :: [BinfoTxOutput]
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoTxInput
     = BinfoTxInput
         { getBinfoTxInputSeq      :: !Word32
-        , getBinfoTxInputWitness  :: !Text
-        , getBinfoTxInputScript   :: !Text
+        , getBinfoTxInputWitness  :: !ByteString
+        , getBinfoTxInputScript   :: !ByteString
         , getBinfoTxInputIndex    :: !Word32
         , getBinfoTxInputPrevOut  :: !(Maybe BinfoTxOutput)
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoTxOutput
     = BinfoTxOutput
@@ -1582,36 +1582,36 @@ data BinfoTxOutput
         , getBinfoTxOutputValue    :: !Word64
         , getBinfoTxOutputIndex    :: !Word32
         , getBinfoTxOutputTxIndex  :: !Word64
-        , getBinfoTxOutputScript   :: !Text
-        , getBinfoTxOutputSpenders :: ![BinfoSprender]
+        , getBinfoTxOutputScript   :: !ByteString
+        , getBinfoTxOutputSpenders :: ![BinfoSpender]
         , getBinfoTxOutputAddress  :: !(Maybe Address)
         , getBinfoTxOutputXPub     :: !(Maybe BinfoXPubPath)
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoSpender
     = BinfoSpender
         { getBinfoSpenderTxIndex :: !Word64
         , getBinfoSpenderIndex   :: !Word32
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoXPubPath
     = BinfoXPubPath
         { getBinfoXPubPathKey     :: !XPubKey
-        , getBinfoXPubPathDeriv   :: !Text
+        , getBinfoXPubPathDeriv   :: !ByteString
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoInfo
     = BinfoInfo
         { getBinfoConnected       :: !Word32
         , getBinfoConversion      :: !Double
-        , getBinfoSymbolLocal     :: !BinfoSymbol
-        , getBinfoSymbolBTC       :: !BinfoSymbol
+        , getBinfoLocal           :: !BinfoSymbol
+        , getBinfoBTC             :: !BinfoSymbol
         , getBinfoLatestBlock     :: !BinfoBlockInfo
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoBlockInfo
     = BinfoBlockInfo
@@ -1620,15 +1620,15 @@ data BinfoBlockInfo
         , getBinfoBlockInfoTime   :: !Word64
         , getBinfoBlockInfoIndex  :: !Word64
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)
 
 data BinfoSymbol
     = BinfoSymbol
-        { getBinfoSymbolCode       :: !Text
-        , getBinfoSymbolString     :: !Text
-        , getBinfoSymbolName       :: !Text
+        { getBinfoSymbolCode       :: !ByteString
+        , getBinfoSymbolString     :: !ByteString
+        , getBinfoSymbolName       :: !ByteString
         , getBinfoSymbolConversion :: !Double
         , getBinfoSymbolAfter      :: !Bool
         , getBinfoSymbolLocal      :: !Bool
         }
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic, Serialize, NFData)

@@ -21,10 +21,10 @@ dependencies:
   - data-default >= 0.7.1.1
   - deepseq >= 1.4.4.0
   - hashable >= 1.3.0.0
-  - haskoin-store-data == 0.38.1
+  - haskoin-store-data == 0.38.5
   - monad-logger >= 0.3.32
   - mtl >= 2.2.2
-  - haskoin-core >= 0.17.5
+  - haskoin-core >= 0.17.6
   - haskoin-node >= 0.17.0
   - nqe >= 0.6.1
   - random >= 1.1

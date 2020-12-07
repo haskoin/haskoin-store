@@ -3,8 +3,6 @@ cabal-version: 2.0
 -- This file has been generated from package.yaml by hpack version 0.34.2.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 1ac7a6be927cf025cc64e6ab89e07165b9f66160e499e7e68deb1ff8d6bf1515
 
 name:           haskoin-store
 version:        0.39.0
@@ -51,9 +49,9 @@ library
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.5
+    , haskoin-core >=0.17.6
     , haskoin-node >=0.17.0
-    , haskoin-store-data ==0.38.1
+    , haskoin-store-data ==0.38.5
     , hedis >=0.12.13
     , http-types >=0.12.3
     , monad-logger >=0.3.32
@@ -93,10 +91,10 @@ executable haskoin-store
     , deepseq >=1.4.4.0
     , filepath
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.5
+    , haskoin-core >=0.17.6
     , haskoin-node >=0.17.0
     , haskoin-store
-    , haskoin-store-data ==0.38.1
+    , haskoin-store-data ==0.38.5
     , hedis >=0.12.13
     , http-types >=0.12.3
     , monad-logger >=0.3.32
@@ -141,10 +139,10 @@ test-suite haskoin-store-test
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.5
+    , haskoin-core >=0.17.6
     , haskoin-node >=0.17.0
     , haskoin-store
-    , haskoin-store-data ==0.38.1
+    , haskoin-store-data ==0.38.5
     , hedis >=0.12.13
     , hspec >=2.7.1
     , http-types >=0.12.3
