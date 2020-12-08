@@ -4,32 +4,34 @@
 {-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 module Haskoin.Store.WebCommon
 
 where
 
-import           Control.Applicative       ((<|>))
-import           Control.Monad             (guard)
-import           Data.Default              (Default, def)
-import           Data.Proxy                (Proxy(..))
-import qualified Data.Serialize            as S
-import           Data.String               (IsString (..))
-import           Data.String.Conversions   (cs)
-import           Data.Text                 (Text)
-import qualified Data.Text                 as Text
+import           Control.Applicative     ((<|>))
+import           Control.Monad           (guard)
+import           Data.Default            (Default, def)
+import           Data.Proxy              (Proxy (..))
+import qualified Data.Serialize          as S
+import           Data.String             (IsString (..))
+import           Data.String.Conversions (cs)
+import           Data.Text               (Text)
+import qualified Data.Text               as Text
 import           Haskoin.Address
-import           Haskoin.Block             (Block, BlockHash, blockHashToHex,
-                                            hexToBlockHash)
+import           Haskoin.Block           (Block, BlockHash, blockHashToHex,
+                                          hexToBlockHash)
 import           Haskoin.Constants
-import           Haskoin.Crypto            (Hash256)
+import           Haskoin.Crypto          (Hash256)
 import           Haskoin.Keys
-import qualified Haskoin.Store.Data        as Store
+import qualified Haskoin.Store.Data      as Store
 import           Haskoin.Transaction
-import           Network.HTTP.Types        (StdMethod (..))
-import           Numeric.Natural           (Natural)
-import           Text.Read                 (readMaybe)
-import qualified Web.Scotty.Trans          as Scotty
+import           Network.HTTP.Types      (StdMethod (..))
+import           Numeric.Natural         (Natural)
+import           Text.Read               (readMaybe)
+import qualified Web.Scotty.Trans        as Scotty
 
 -------------------
 -- API Resources --
@@ -336,7 +338,7 @@ noDefBox p = [ParamBox p | p /= def]
 
 noMaybeBox :: (Param p, Eq p) => Maybe p -> [ParamBox]
 noMaybeBox (Just p) = [ParamBox p]
-noMaybeBox _ = []
+noMaybeBox _        = []
 
 asProxy :: a -> Proxy a
 asProxy = const Proxy
@@ -619,19 +621,19 @@ newtype BinfoSimpleParam
     deriving (Eq, Show)
 
 encodeBoolParam :: Bool -> Text
-encodeBoolParam True = "true"
+encodeBoolParam True  = "true"
 encodeBoolParam False = "false"
 
 parseBoolParam :: [Text] -> Maybe Bool
 parseBoolParam [] = Just False
 parseBoolParam xs = case last xs of
-    "true" -> Just True
-    "True" -> Just True
-    "TRUE" -> Just True
-    "1"    -> Just True
-    "yes"  -> Just True
-    "y"    -> Just True
-    "on"   -> Just True
+    "true"  -> Just True
+    "True"  -> Just True
+    "TRUE"  -> Just True
+    "1"     -> Just True
+    "yes"   -> Just True
+    "y"     -> Just True
+    "on"    -> Just True
     "false" -> Just False
     "False" -> Just False
     "FALSE" -> Just False
@@ -677,3 +679,27 @@ instance Param BinfoOffsetParam where
     encodeParam _ (BinfoOffsetParam t) = Just [cs $ show t]
     parseParam _ [s] = BinfoOffsetParam <$> readMaybe (cs s)
     parseParam _ _   = Nothing
+
+data GetBinfoMultiAddr
+    = GetBinfoMultiAddr
+        { getBinfoMultiAddrActive      :: !BinfoActiveParam
+        , getBinfoMultiAddrActiveP2SH  :: !BinfoActiveP2SHparam
+        , getBinfoMultiAddrOnlyShow    :: !BinfoOnlyShowParam
+        , getBinfoMultiAddrSimple      :: !BinfoSimpleParam
+        , getBinfoMultiAddrNoCompact   :: !BinfoNoCompactParam
+        , getBinfoMultiAddrCountParam  :: !BinfoCountParam
+        , getBinfoMultiAddrOffsetParam :: !BinfoOffsetParam
+        }
+
+instance ApiResource GetBinfoMultiAddr Store.BinfoMultiAddr where
+    resourcePath _ _ = "/compat/multiaddr"
+    queryParams GetBinfoMultiAddr {..} =
+        (,) []
+        [ ParamBox getBinfoMultiAddrActive
+        , ParamBox getBinfoMultiAddrActiveP2SH
+        , ParamBox getBinfoMultiAddrOnlyShow
+        , ParamBox getBinfoMultiAddrSimple
+        , ParamBox getBinfoMultiAddrNoCompact
+        , ParamBox getBinfoMultiAddrCountParam
+        , ParamBox getBinfoMultiAddrOffsetParam
+        ]
