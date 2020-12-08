@@ -568,36 +568,112 @@ data BinfoAddressParam
     | BinfoXPubKeyParam { getBinfoXPubKeyParam :: !XPubKey }
     deriving (Eq, Show)
 
+binfoParseAddressParam :: Network -> [Text] -> Maybe [BinfoAddressParam]
+binfoParseAddressParam net xs =
+      mapM f xs'
+    where
+      f x = BinfoAddressParam <$> textToAddr net x
+        <|> BinfoXPubKeyParam <$> xPubImport net x
+      xs' = Text.splitOn "|" `concatMap` xs
+
+binfoEncodeAddressParam :: Network -> [BinfoAddressParam] -> Maybe [Text]
+binfoEncodeAddressParam net =
+    mapM f
+  where
+    f (BinfoAddressParam a) = addrToText net a
+    f (BinfoXPubKeyParam x) = Just (xPubExport net x)
+
 -- active
 newtype BinfoActiveParam
     = BinfoActiveParam { getBinfoActiveParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
+instance Param BinfoActiveParam where
+    proxyLabel = const "active"
+    encodeParam net (BinfoActiveParam xs) = binfoEncodeAddressParam net xs
+    parseParam net xs = BinfoActiveParam <$> binfoParseAddressParam net xs
+
 -- activeP2SH
 newtype BinfoActiveP2SHparam
-    = BinfoActiveP2SHParam { getBinfoActiveP2SHParam :: [BinfoAddressParam] }
+    = BinfoActiveP2SHparam { getBinfoActiveP2SHparam :: [BinfoAddressParam] }
     deriving (Eq, Show)
+
+instance Param BinfoActiveP2SHparam where
+    proxyLabel = const "activeP2SH"
+    encodeParam net (BinfoActiveP2SHparam xs) = binfoEncodeAddressParam net xs
+    parseParam net xs = BinfoActiveP2SHparam <$> binfoParseAddressParam net xs
 
 -- onlyShow
 newtype BinfoOnlyShowParam
     = BinfoOnlyShowParam { getBinfoOnlyShowParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
+instance Param BinfoOnlyShowParam where
+    proxyLabel = const "onlyShow"
+    encodeParam net (BinfoOnlyShowParam xs) = binfoEncodeAddressParam net xs
+    parseParam net xs = BinfoOnlyShowParam <$> binfoParseAddressParam net xs
+
 -- simple
 newtype BinfoSimpleParam
     = BinfoSimpleParam { getBinfoSimpleParam :: Bool }
     deriving (Eq, Show)
 
+encodeBoolParam :: Bool -> Text
+encodeBoolParam True = "true"
+encodeBoolParam False = "false"
+
+parseBoolParam :: [Text] -> Maybe Bool
+parseBoolParam [] = Just False
+parseBoolParam xs = case last xs of
+    "true" -> Just True
+    "True" -> Just True
+    "TRUE" -> Just True
+    "1"    -> Just True
+    "yes"  -> Just True
+    "y"    -> Just True
+    "on"   -> Just True
+    "false" -> Just False
+    "False" -> Just False
+    "FALSE" -> Just False
+    "0"     -> Just False
+    "no"    -> Just False
+    "n"     -> Just False
+    "off"   -> Just False
+    _       -> Nothing
+
+instance Param BinfoSimpleParam where
+    proxyLabel = const "simple"
+    encodeParam _ (BinfoSimpleParam b) = Just [encodeBoolParam b]
+    parseParam _ xs = BinfoSimpleParam <$> parseBoolParam xs
+
 -- no_compact
 newtype BinfoNoCompactParam
     = BinfoNoCompactParam { getBinfoNoCompactParam :: Bool }
+    deriving (Eq, Show)
+
+instance Param BinfoNoCompactParam where
+    proxyLabel = const "no_compact"
+    encodeParam _ (BinfoNoCompactParam b) = Just [encodeBoolParam b]
+    parseParam _ xs = BinfoNoCompactParam <$> parseBoolParam xs
 
 -- n
 newtype BinfoCountParam
     = BinfoCountParam { getBinfoCountParam :: Integer }
     deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
+instance Param BinfoCountParam where
+    proxyLabel = const "n"
+    encodeParam _ (BinfoCountParam t) = Just [cs $ show t]
+    parseParam _ [s] = BinfoCountParam <$> readMaybe (cs s)
+    parseParam _ _   = Nothing
+
 -- offset
 newtype BinfoOffsetParam
     = BinfoOffsetParam { getBinfoOffsetParam :: Integer }
     deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
+
+instance Param BinfoOffsetParam where
+    proxyLabel = const "offset"
+    encodeParam _ (BinfoOffsetParam t) = Just [cs $ show t]
+    parseParam _ [s] = BinfoOffsetParam <$> readMaybe (cs s)
+    parseParam _ _   = Nothing

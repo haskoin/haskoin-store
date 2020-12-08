@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RecordWildCards           #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Haskoin.Store.WebCommonSpec
     ( spec
@@ -40,6 +41,13 @@ params =
     , GenBox (listOf arbitraryBlockHash)
     , GenBox arbitraryTxHash
     , GenBox (listOf arbitraryTxHash)
+    , GenBox (arbitrary :: Gen BinfoActiveParam)
+    , GenBox (arbitrary :: Gen BinfoActiveP2SHparam)
+    , GenBox (arbitrary :: Gen BinfoOnlyShowParam)
+    , GenBox (arbitrary :: Gen BinfoSimpleParam)
+    , GenBox (arbitrary :: Gen BinfoNoCompactParam)
+    , GenBox (arbitrary :: Gen BinfoCountParam)
+    , GenBox (arbitrary :: Gen BinfoOffsetParam)
     ]
 
 spec :: Spec
@@ -53,7 +61,7 @@ testParam pGen =
     forAll pGen $ \p ->
         case encodeParam btc p of
             Just txts -> parseParam btc txts `shouldBe` Just p
-            _ -> expectationFailure "Param encoding failed"
+            _         -> expectationFailure "Param encoding failed"
   where
     name = cs $ proxyLabel $ proxy pGen
     proxy :: Gen a -> Proxy a
@@ -71,3 +79,44 @@ instance Arbitrary StartParam where
 
 instance Arbitrary HeightsParam where
     arbitrary = HeightsParam <$> listOf arbitrarySizedNatural
+
+---------------------------------------
+-- Blockchain.info API compatibility --
+---------------------------------------
+
+instance Arbitrary BinfoAddressParam where
+    arbitrary = oneof [a, x]
+      where
+        a = do
+            getBinfoAddressParam <- arbitraryAddress
+            return BinfoAddressParam {..}
+        x = do
+            getBinfoXPubKeyParam <- snd <$> arbitraryXPubKey
+            return BinfoXPubKeyParam {..}
+
+instance Arbitrary BinfoActiveParam where
+    arbitrary = do
+        getBinfoActiveParam <- arbitrary
+        return BinfoActiveParam {..}
+
+instance Arbitrary BinfoActiveP2SHparam where
+    arbitrary = do
+        getBinfoActiveP2SHparam <- arbitrary
+        return BinfoActiveP2SHparam {..}
+
+instance Arbitrary BinfoOnlyShowParam where
+    arbitrary = do
+        getBinfoOnlyShowParam <- arbitrary
+        return BinfoOnlyShowParam {..}
+
+instance Arbitrary BinfoSimpleParam where
+    arbitrary = BinfoSimpleParam <$> arbitrary
+
+instance Arbitrary BinfoNoCompactParam where
+    arbitrary = BinfoNoCompactParam <$> arbitrary
+
+instance Arbitrary BinfoCountParam where
+    arbitrary = BinfoCountParam <$> arbitrary
+
+instance Arbitrary BinfoOffsetParam where
+    arbitrary = BinfoOffsetParam <$> arbitrary
