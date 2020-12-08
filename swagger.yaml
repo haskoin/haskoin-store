@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.38.1
+  version: &version 0.39.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Jean-Pierre Rupp
@@ -1668,6 +1668,7 @@ components:
         - sigscript
         - sequence
         - pkscript
+        - witness
         - value
         - address
       properties:
@@ -1701,7 +1702,7 @@ components:
           nullable: true
           example: '76a9148836437a157981dfa0a885d8b89f1e7dbeb19f6a88ac'
         witness:
-          description: Witness Data. Only on segwit networks.
+          description: Witness Data if applies.
           type: array
           example: []
           items:
@@ -1761,6 +1762,8 @@ components:
         - block
         - deleted
         - time
+        - rbf
+        - weight
       properties:
         txid:
           type: string
@@ -1825,11 +1828,11 @@ components:
         rbf:
           type: boolean
           example: false
-          description: Unconfirmed transaction vulnerable to replace-by-fee attack.
+          description: Vulnerable to replace-by-fee.
         weight:
           type: integer
           example: 980
-          description: Segwit transaction weight. Only on segwit networks.
+          description: Segwit transaction weight.
 
     Event:
       type: object

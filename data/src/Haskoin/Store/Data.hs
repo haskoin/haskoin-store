@@ -80,6 +80,37 @@ module Haskoin.Store.Data
     , HealthCheck(..)
     , Event(..)
     , Except(..)
+
+     -- * Blockchain.info API
+    , BinfoMultiAddr(..)
+    , binfoMultiAddrToJSON
+    , binfoMultiAddrToEncoding
+    , binfoMultiAddrParseJSON
+    , BinfoAddress(..)
+    , binfoAddressToJSON
+    , binfoAddressToEncoding
+    , binfoAddressParseJSON
+    , BinfoWallet(..)
+    , BinfoTx(..)
+    , binfoTxToJSON
+    , binfoTxToEncoding
+    , binfoTxParseJSON
+    , BinfoTxInput(..)
+    , binfoTxInputToJSON
+    , binfoTxInputToEncoding
+    , binfoTxInputParseJSON
+    , BinfoTxOutput(..)
+    , binfoTxOutputToJSON
+    , binfoTxOutputToEncoding
+    , binfoTxOutputParseJSON
+    , BinfoSpender(..)
+    , BinfoXPubPath(..)
+    , binfoXPubPathToJSON
+    , binfoXPubPathToEncoding
+    , binfoXPubPathParseJSON
+    , BinfoInfo(..)
+    , BinfoBlockInfo(..)
+    , BinfoSymbol(..)
     )
 
 where
@@ -89,8 +120,8 @@ import           Control.DeepSeq         (NFData)
 import           Control.Exception       (Exception)
 import           Control.Monad           (guard, join, mzero, (<=<))
 import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
-                                          Value (..), object, pairs, (.!=),
-                                          (.:), (.:?), (.=))
+                                          Value (..), object, pairs, withObject,
+                                          (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson              as A
 import           Data.Aeson.Encoding     (list, null_, pair, text,
                                           unsafeToEncoding)
@@ -103,16 +134,18 @@ import qualified Data.ByteString.Short   as BSS
 import           Data.Default            (Default (..))
 import           Data.Foldable           (toList)
 import           Data.Hashable           (Hashable (..))
+import           Data.Int                (Int64)
 import qualified Data.IntMap             as I
 import           Data.IntMap.Strict      (IntMap)
 import           Data.Maybe              (catMaybes, fromMaybe, isJust,
-                                          mapMaybe)
+                                          mapMaybe, maybeToList)
 import           Data.Serialize          (Get, Put, Serialize (..), getWord32be,
                                           getWord64be, getWord8, putWord32be,
                                           putWord64be, putWord8)
 import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
 import           Data.Text               (Text)
+import           Data.Text.Encoding      (decodeUtf8, encodeUtf8)
 import qualified Data.Text.Lazy          as TL
 import           Data.Word               (Word32, Word64)
 import           GHC.Generics            (Generic)
@@ -126,7 +159,8 @@ import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           blockHashToHex, decodeHex,
                                           eitherToMaybe, encodeHex, headerHash,
                                           scriptToAddressBS, txHash,
-                                          txHashToHex, wrapPubKey)
+                                          txHashToHex, wrapPubKey, xPubFromJSON,
+                                          xPubToEncoding, xPubToJSON)
 import           Web.Scotty.Trans        (ScottyError (..))
 
 data DeriveType = DeriveNormal
@@ -518,7 +552,7 @@ data StoreInput
           { inputPoint     :: !OutPoint
           , inputSequence  :: !Word32
           , inputSigScript :: !ByteString
-          , inputWitness   :: !(Maybe WitnessStack)
+          , inputWitness   :: !WitnessStack
           }
     | StoreInput
           { inputPoint     :: !OutPoint
@@ -526,7 +560,7 @@ data StoreInput
           , inputSigScript :: !ByteString
           , inputPkScript  :: !ByteString
           , inputAmount    :: !Word64
-          , inputWitness   :: !(Maybe WitnessStack)
+          , inputWitness   :: !WitnessStack
           , inputAddress   :: !(Maybe Address)
           }
     deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
@@ -553,8 +587,8 @@ storeInputToJSON net StoreInput { inputPoint = OutPoint oph opi
     , "pkscript" .= String (encodeHex ps)
     , "value" .= val
     , "address" .= (addrToJSON net <$> a)
-    ] <>
-    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+    , "witness" .= map encodeHex wit
+    ]
 storeInputToJSON net StoreCoinbase { inputPoint = OutPoint oph opi
                                    , inputSequence = sq
                                    , inputSigScript = ss
@@ -569,8 +603,8 @@ storeInputToJSON net StoreCoinbase { inputPoint = OutPoint oph opi
     , "pkscript" .= Null
     , "value" .= Null
     , "address" .= Null
-    ] <>
-    ["witness" .= fmap (map encodeHex) wit | getSegWit net]
+    , "witness" .= map encodeHex wit
+    ]
 
 storeInputToEncoding :: Network -> StoreInput -> Encoding
 storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
@@ -590,9 +624,7 @@ storeInputToEncoding net StoreInput { inputPoint = OutPoint oph opi
         <> "pkscript" `pair` text (encodeHex ps)
         <> "value" .= val
         <> "address" `pair` maybe null_ (addrToEncoding net) a
-        <> (if getSegWit net
-           then "witness" .= fmap (map encodeHex) wit
-           else mempty)
+        <> "witness" .= map encodeHex wit
         )
 storeInputToEncoding net StoreCoinbase { inputPoint = OutPoint oph opi
                                      , inputSequence = sq
@@ -608,9 +640,7 @@ storeInputToEncoding net StoreCoinbase { inputPoint = OutPoint oph opi
         <> "pkscript" `pair` null_
         <> "value" `pair` null_
         <> "address" `pair` null_
-        <> (if getSegWit net
-           then "witness" .= fmap (map encodeHex) wit
-           else mempty)
+        <> "witness" .= map encodeHex wit
         )
 
 storeInputParseJSON :: Network -> Value -> Parser StoreInput
@@ -619,11 +649,7 @@ storeInputParseJSON net =
         coinbase <- o .: "coinbase"
         outpoint <- OutPoint <$> o .: "txid" <*> o .: "output"
         sequ <- o .: "sequence"
-        witness <-
-            o .:? "witness" >>= \mmxs ->
-                case join mmxs of
-                    Nothing -> return Nothing
-                    Just xs -> Just <$> mapM jsonHex xs
+        witness <- mapM jsonHex =<< o .:? "witness" .!= []
         sigscript <- o .: "sigscript" >>= jsonHex
         if coinbase
             then return
@@ -728,7 +754,7 @@ data Prev =
         }
     deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
-toInput :: TxIn -> Maybe Prev -> Maybe WitnessStack -> StoreInput
+toInput :: TxIn -> Maybe Prev -> WitnessStack -> StoreInput
 toInput i Nothing w =
     StoreCoinbase
         { inputPoint = prevOutput i
@@ -792,13 +818,8 @@ toTransaction t sm =
          in fromIntegral $ b * 3 + x
     inv = sum (map inputAmount ins)
     outv = sum (map outputAmount outs)
-    fees =
-      if any isCoinbase ins
-          then 0
-          else inv - outv
-    ws =
-        take (length (txIn (txData t))) $
-        map Just (txWitness (txData t)) <> repeat Nothing
+    fees = if any isCoinbase ins then 0 else inv - outv
+    ws = take (length (txIn (txData t))) $ txWitness (txData t) <> repeat []
     f n i = toInput i (I.lookup n (txDataPrevs t)) (ws !! n)
     ins = zipWith f [0 ..] (txIn (txData t))
     g n o = toOutput o (I.lookup n sm)
@@ -860,7 +881,7 @@ transactionData t =
         { txVersion = transactionVersion t
         , txIn = map i (transactionInputs t)
         , txOut = map o (transactionOutputs t)
-        , txWitness = mapMaybe inputWitness (transactionInputs t)
+        , txWitness = w $ map inputWitness (transactionInputs t)
         , txLockTime = transactionLockTime t
         }
   where
@@ -870,6 +891,8 @@ transactionData t =
         TxIn {prevOutput = p, scriptInput = s, txInSequence = q}
     o StoreOutput {outputAmount = v, outputScript = s} =
         TxOut {outValue = v, scriptOutput = s}
+    w xs | all null xs = []
+         | otherwise = xs
 
 transactionToJSON :: Network -> Transaction -> Value
 transactionToJSON net dtx =
@@ -884,9 +907,9 @@ transactionToJSON net dtx =
     , "block" .= transactionBlock dtx
     , "deleted" .= transactionDeleted dtx
     , "time" .= transactionTime dtx
-    ] <>
-    [ "rbf" .= transactionRBF dtx | getReplaceByFee net] <>
-    [ "weight" .= transactionWeight dtx | getSegWit net]
+    , "rbf" .= transactionRBF dtx
+    , "weight" .= transactionWeight dtx
+    ]
 
 transactionToEncoding :: Network -> Transaction -> Encoding
 transactionToEncoding net dtx =
@@ -901,12 +924,8 @@ transactionToEncoding net dtx =
         <> "block" .= transactionBlock dtx
         <> "deleted" .= transactionDeleted dtx
         <> "time" .= transactionTime dtx
-        <> (if getReplaceByFee net
-            then "rbf" .= transactionRBF dtx
-            else mempty)
-        <> (if getSegWit net
-           then "weight" .= transactionWeight dtx
-           else mempty)
+        <> "rbf" .= transactionRBF dtx
+        <> "weight" .= transactionWeight dtx
         )
 
 transactionParseJSON :: Network -> Value -> Parser Transaction
@@ -1513,13 +1532,46 @@ data BinfoMultiAddr
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+binfoMultiAddrToJSON :: Network -> BinfoMultiAddr -> Value
+binfoMultiAddrToJSON net BinfoMultiAddr {..} =
+    object
+        [ "addresses" .= map (binfoAddressToJSON net) getBinfoMultiAddrAddresses
+        , "wallet"    .= getBinfoMultiAddrWallet
+        , "txs"       .= map (binfoTxToJSON net) getBinfoMultiAddrTxs
+        , "info"      .= getBinfoMultiAddrInfo
+        , "recommend_include_fee" .= getBinfoRecommendFee
+        ]
+
+binfoMultiAddrParseJSON :: Network -> Value -> Parser BinfoMultiAddr
+binfoMultiAddrParseJSON net = withObject "multiaddr" $ \o -> do
+    getBinfoMultiAddrAddresses <-
+        mapM (binfoAddressParseJSON net) =<< o .: "addresses"
+    getBinfoMultiAddrWallet <- o .: "wallet"
+    getBinfoMultiAddrTxs <-
+        mapM (binfoTxParseJSON net) =<< o .: "txs"
+    getBinfoMultiAddrInfo <- o .: "info"
+    getBinfoRecommendFee <- o .: "recommend_include_fee"
+    return BinfoMultiAddr {..}
+
+binfoMultiAddrToEncoding :: Network -> BinfoMultiAddr -> Encoding
+binfoMultiAddrToEncoding net BinfoMultiAddr {..} =
+    pairs
+        (  "addresses" `pair`
+           list (binfoAddressToEncoding net) getBinfoMultiAddrAddresses
+        <> "wallet"    .= getBinfoMultiAddrWallet
+        <> "txs"       `pair`
+           list (binfoTxToEncoding net) getBinfoMultiAddrTxs
+        <> "info"      .= getBinfoMultiAddrInfo
+        <> "recommend_include_fee" .= getBinfoRecommendFee
+        )
+
 data BinfoAddress
     = BinfoAddress
-        { getBinfoAddress          :: !Address
-        , getBinfoAddrTxCount      :: !Word32
-        , getBinfoAddrReceived     :: !Word64
-        , getBinfoAddrSent         :: !Word64
-        , getBinfoAddrBalance      :: !Word64
+        { getBinfoAddress      :: !Address
+        , getBinfoAddrTxCount  :: !Word32
+        , getBinfoAddrReceived :: !Word64
+        , getBinfoAddrSent     :: !Word64
+        , getBinfoAddrBalance  :: !Word64
         }
     | BinfoXPubKey
         { getBinfoXPubKey          :: !XPubKey
@@ -1532,6 +1584,66 @@ data BinfoAddress
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+binfoAddressToJSON :: Network -> BinfoAddress -> Value
+binfoAddressToJSON net BinfoAddress {..} =
+    object
+        [ "address"        .= addrToJSON net getBinfoAddress
+        , "final_balance"  .= getBinfoAddrBalance
+        , "n_tx"           .= getBinfoAddrTxCount
+        , "total_received" .= getBinfoAddrReceived
+        , "total_sent"     .= getBinfoAddrSent
+        ]
+binfoAddressToJSON net BinfoXPubKey {..} =
+    object
+        [ "address"        .= xPubToJSON net getBinfoXPubKey
+        , "change_index"   .= getBinfoXPubChangeIndex
+        , "account_index"  .= getBinfoXPubAccountIndex
+        , "final_balance"  .= getBinfoAddrBalance
+        , "n_tx"           .= getBinfoAddrTxCount
+        , "total_received" .= getBinfoAddrReceived
+        , "total_sent"     .= getBinfoAddrSent
+        ]
+
+binfoAddressParseJSON :: Network -> Value -> Parser BinfoAddress
+binfoAddressParseJSON net = withObject "address" $ \o -> x o <|> a o
+  where
+    x o = do
+        getBinfoXPubKey <- xPubFromJSON net =<< o .: "address"
+        getBinfoXPubChangeIndex <- o .: "change_index"
+        getBinfoXPubAccountIndex <- o .: "account_index"
+        getBinfoAddrBalance <- o .: "final_balance"
+        getBinfoAddrTxCount <- o .: "n_tx"
+        getBinfoAddrReceived <- o .: "total_received"
+        getBinfoAddrSent <- o .: "total_sent"
+        return BinfoXPubKey {..}
+    a o = do
+        getBinfoAddress <- addrFromJSON net =<< o .: "address"
+        getBinfoAddrBalance <- o .: "final_balance"
+        getBinfoAddrTxCount <- o .: "n_tx"
+        getBinfoAddrReceived <- o .: "total_received"
+        getBinfoAddrSent <- o .: "total_sent"
+        return BinfoAddress {..}
+
+binfoAddressToEncoding :: Network -> BinfoAddress -> Encoding
+binfoAddressToEncoding net BinfoAddress {..} =
+    pairs
+        (  "address"         `pair` addrToEncoding net getBinfoAddress
+        <> "final_balance"   .= getBinfoAddrBalance
+        <> "n_tx"            .= getBinfoAddrTxCount
+        <> "total_received"  .= getBinfoAddrReceived
+        <> "total_sent"      .= getBinfoAddrSent
+        )
+binfoAddressToEncoding net BinfoXPubKey {..} =
+    pairs
+        (  "address"         `pair` xPubToEncoding net getBinfoXPubKey
+        <> "change_index"    .= getBinfoXPubChangeIndex
+        <> "account_index"   .= getBinfoXPubAccountIndex
+        <> "final_balance"   .= getBinfoAddrBalance
+        <> "n_tx"            .= getBinfoAddrTxCount
+        <> "total_received"  .= getBinfoAddrReceived
+        <> "total_sent"      .= getBinfoAddrSent
+        )
+
 data BinfoWallet
     = BinfoWallet
         { getBinfoWalletBalance       :: !Word64
@@ -1542,38 +1654,162 @@ data BinfoWallet
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+instance ToJSON BinfoWallet where
+    toJSON BinfoWallet {..} =
+        object
+            [ "final_balance"     .= getBinfoWalletBalance
+            , "n_tx"              .= getBinfoWalletTxCount
+            , "n_tx_filtered"     .= getBinfoWalletFilteredCount
+            , "total_received"    .= getBinfoWalletTotalReceived
+            , "total_sent"        .= getBinfoWalletTotalSent
+            ]
+    toEncoding BinfoWallet {..} =
+        pairs
+            (  "final_balance"    .= getBinfoWalletBalance
+            <> "n_tx"             .= getBinfoWalletTxCount
+            <> "n_tx_filtered"    .= getBinfoWalletFilteredCount
+            <> "total_received"   .= getBinfoWalletTotalReceived
+            <> "total_sent"       .= getBinfoWalletTotalSent
+            )
+
+instance FromJSON BinfoWallet where
+    parseJSON = withObject "wallet" $ \o -> do
+        getBinfoWalletBalance <- o .: "final_balance"
+        getBinfoWalletTxCount <- o .: "n_tx"
+        getBinfoWalletFilteredCount <- o .: "n_tx_filtered"
+        getBinfoWalletTotalReceived <- o .: "total_received"
+        getBinfoWalletTotalSent <- o .: "total_sent"
+        return BinfoWallet {..}
+
 data BinfoTx
     = BinfoTx
-        { getBinfoTxHash          :: !TxHash
-        , getBinfoTxVer           :: !Word32
-        , getBinfoTxVinSz         :: !Word32
-        , getBinfoTxVoutSz        :: !Word32
-        , getBinfoTxSize          :: !Word32
-        , getBinfoTxWeight        :: !Word32
-        , getBinfoTxFee           :: !Word32
-        , getBinfoTxRelayedBy     :: !ByteString
-        , getBinfoTxLockTime      :: !Word32
-        , getBinfoTxIndex         :: !Word64
-        , getBinfoTxDoubleSpent   :: !Bool
-        , getBinfoTxResult        :: !Word64
-        , getBinfoTxBalance       :: !Word64
-        , getBinfoTxTime          :: !Word64
-        , getBinfoTxBlockIndex    :: !Word64
-        , getBinfoTxBlockHeight   :: !Word32
-        , getBinfoTxInputs        :: [BinfoTxInput]
-        , getBinfoTxOutputs       :: [BinfoTxOutput]
+        { getBinfoTxHash        :: !TxHash
+        , getBinfoTxVer         :: !Word32
+        , getBinfoTxVinSz       :: !Word32
+        , getBinfoTxVoutSz      :: !Word32
+        , getBinfoTxSize        :: !Word32
+        , getBinfoTxWeight      :: !Word32
+        , getBinfoTxFee         :: !Word32
+        , getBinfoTxRelayedBy   :: !ByteString
+        , getBinfoTxLockTime    :: !Word32
+        , getBinfoTxIndex       :: !Word64
+        , getBinfoTxDoubleSpend :: !Bool
+        , getBinfoTxResult      :: !Int64
+        , getBinfoTxBalance     :: !Word64
+        , getBinfoTxTime        :: !Word64
+        , getBinfoTxBlockIndex  :: !Word64
+        , getBinfoTxBlockHeight :: !Word32
+        , getBinfoTxInputs      :: [BinfoTxInput]
+        , getBinfoTxOutputs     :: [BinfoTxOutput]
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+binfoTxToJSON :: Network -> BinfoTx -> Value
+binfoTxToJSON net BinfoTx {..} =
+    object
+        [ "hash" .= getBinfoTxHash
+        , "ver" .= getBinfoTxVer
+        , "vin_sz" .= getBinfoTxVinSz
+        , "vout_sz" .= getBinfoTxVoutSz
+        , "size" .= getBinfoTxSize
+        , "weight" .= getBinfoTxWeight
+        , "fee" .= getBinfoTxFee
+        , "relayed_by" .= decodeUtf8 getBinfoTxRelayedBy
+        , "lock_time" .= getBinfoTxLockTime
+        , "tx_index" .= getBinfoTxIndex
+        , "double_spend" .= getBinfoTxDoubleSpend
+        , "result" .= getBinfoTxResult
+        , "balance" .= getBinfoTxBalance
+        , "time" .= getBinfoTxTime
+        , "block_index" .= getBinfoTxBlockIndex
+        , "block_height" .= getBinfoTxBlockHeight
+        , "inputs" .= map (binfoTxInputToJSON net) getBinfoTxInputs
+        , "out" .= map (binfoTxOutputToJSON net) getBinfoTxOutputs
+        ]
+
+binfoTxToEncoding :: Network -> BinfoTx -> Encoding
+binfoTxToEncoding net BinfoTx {..} =
+    pairs
+        (  "hash" .= getBinfoTxHash
+        <> "ver" .= getBinfoTxVer
+        <> "vin_sz" .= getBinfoTxVinSz
+        <> "vout_sz" .= getBinfoTxVoutSz
+        <> "size" .= getBinfoTxSize
+        <> "weight" .= getBinfoTxWeight
+        <> "fee" .= getBinfoTxFee
+        <> "relayed_by" .= decodeUtf8 getBinfoTxRelayedBy
+        <> "lock_time" .= getBinfoTxLockTime
+        <> "tx_index" .= getBinfoTxIndex
+        <> "double_spend" .= getBinfoTxDoubleSpend
+        <> "result" .= getBinfoTxResult
+        <> "balance" .= getBinfoTxBalance
+        <> "time" .= getBinfoTxTime
+        <> "block_index" .= getBinfoTxBlockIndex
+        <> "block_height" .= getBinfoTxBlockHeight
+        <> "inputs" `pair` list (binfoTxInputToEncoding net) getBinfoTxInputs
+        <> "out" `pair` list (binfoTxOutputToEncoding net) getBinfoTxOutputs
+        )
+
+binfoTxParseJSON :: Network -> Value -> Parser BinfoTx
+binfoTxParseJSON net = withObject "tx" $ \o -> do
+    getBinfoTxHash <- o .: "hash"
+    getBinfoTxVer <- o .: "ver"
+    getBinfoTxVinSz <- o .: "vin_sz"
+    getBinfoTxVoutSz <- o .: "vout_sz"
+    getBinfoTxSize <- o .: "size"
+    getBinfoTxWeight <- o .: "weight"
+    getBinfoTxFee <- o .: "fee"
+    getBinfoTxRelayedBy <- encodeUtf8 <$> o .: "relayed_by"
+    getBinfoTxLockTime <- o .: "lock_time"
+    getBinfoTxIndex <- o .: "tx_index"
+    getBinfoTxDoubleSpend <- o .: "double_spend"
+    getBinfoTxResult <- o .: "result"
+    getBinfoTxBalance <- o .: "balance"
+    getBinfoTxTime <- o .: "time"
+    getBinfoTxBlockIndex <- o .: "block_index"
+    getBinfoTxBlockHeight <- o .: "block_height"
+    getBinfoTxInputs <- o .: "inputs" >>= mapM (binfoTxInputParseJSON net)
+    getBinfoTxOutputs <- o .: "out" >>= mapM (binfoTxOutputParseJSON net)
+    return BinfoTx {..}
+
 data BinfoTxInput
     = BinfoTxInput
-        { getBinfoTxInputSeq      :: !Word32
-        , getBinfoTxInputWitness  :: !ByteString
-        , getBinfoTxInputScript   :: !ByteString
-        , getBinfoTxInputIndex    :: !Word32
-        , getBinfoTxInputPrevOut  :: !(Maybe BinfoTxOutput)
+        { getBinfoTxInputSeq     :: !Word32
+        , getBinfoTxInputWitness :: !ByteString
+        , getBinfoTxInputScript  :: !ByteString
+        , getBinfoTxInputIndex   :: !Word32
+        , getBinfoTxInputPrevOut :: !(Maybe BinfoTxOutput)
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
+
+binfoTxInputToJSON :: Network -> BinfoTxInput -> Value
+binfoTxInputToJSON net BinfoTxInput {..} =
+    object
+        [ "sequence" .= getBinfoTxInputSeq
+        , "witness"  .= encodeHex getBinfoTxInputWitness
+        , "script"   .= encodeHex getBinfoTxInputScript
+        , "index"    .= getBinfoTxInputIndex
+        , "prev_out" .= (binfoTxOutputToJSON net <$> getBinfoTxInputPrevOut)
+        ]
+
+binfoTxInputToEncoding :: Network -> BinfoTxInput -> Encoding
+binfoTxInputToEncoding net BinfoTxInput {..} =
+    pairs
+        (  "sequence" .= getBinfoTxInputSeq
+        <> "witness"  .= encodeHex getBinfoTxInputWitness
+        <> "script"   .= encodeHex getBinfoTxInputScript
+        <> "index"    .= getBinfoTxInputIndex
+        <> "prev_out" .= (binfoTxOutputToJSON net <$> getBinfoTxInputPrevOut)
+        )
+
+binfoTxInputParseJSON :: Network -> Value -> Parser BinfoTxInput
+binfoTxInputParseJSON net = withObject "txin" $ \o -> do
+    getBinfoTxInputSeq <- o .: "sequence"
+    getBinfoTxInputWitness <- maybe mzero return . decodeHex =<< o .: "witness"
+    getBinfoTxInputScript <- maybe mzero return . decodeHex =<< o .: "script"
+    getBinfoTxInputIndex <- o .: "index"
+    getBinfoTxInputPrevOut <- o .:? "prev_out" >>= mapM (binfoTxOutputParseJSON net)
+    return BinfoTxInput {..}
 
 data BinfoTxOutput
     = BinfoTxOutput
@@ -1589,6 +1825,55 @@ data BinfoTxOutput
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+binfoTxOutputToJSON :: Network -> BinfoTxOutput -> Value
+binfoTxOutputToJSON net BinfoTxOutput {..} =
+    object $
+        [ "type" .= getBinfoTxOutputType
+        , "spent" .= getBinfoTxOutputSpent
+        , "value" .= getBinfoTxOutputValue
+        , "spending_outpoints" .= getBinfoTxOutputSpenders
+        , "n" .= getBinfoTxOutputIndex
+        , "tx_index" .= getBinfoTxOutputTxIndex
+        , "script" .= encodeHex getBinfoTxOutputScript
+        ] <>
+        [ "addr" .= addrToJSON net a
+        | a <- maybeToList getBinfoTxOutputAddress
+        ] <>
+        [ "xpub" .= binfoXPubPathToJSON net x
+        | x <- maybeToList getBinfoTxOutputXPub
+        ]
+
+binfoTxOutputToEncoding :: Network -> BinfoTxOutput -> Encoding
+binfoTxOutputToEncoding net BinfoTxOutput {..} =
+    pairs $ mconcat $
+        [ "type" .= getBinfoTxOutputType
+        , "spent" .= getBinfoTxOutputSpent
+        , "value" .= getBinfoTxOutputValue
+        , "spending_outpoints" .= getBinfoTxOutputSpenders
+        , "n" .= getBinfoTxOutputIndex
+        , "tx_index" .= getBinfoTxOutputTxIndex
+        , "script" .= encodeHex getBinfoTxOutputScript
+        ] <>
+        [ "addr" .= addrToJSON net a
+        | a <- maybeToList getBinfoTxOutputAddress
+        ] <>
+        [ "xpub" .= binfoXPubPathToJSON net x
+        | x <- maybeToList getBinfoTxOutputXPub
+        ]
+
+binfoTxOutputParseJSON :: Network -> Value -> Parser BinfoTxOutput
+binfoTxOutputParseJSON net = withObject "txout" $ \o -> do
+    getBinfoTxOutputType <- o .: "type"
+    getBinfoTxOutputSpent <- o .: "spent"
+    getBinfoTxOutputValue <- o .: "value"
+    getBinfoTxOutputSpenders <- o .: "spending_outpoints"
+    getBinfoTxOutputIndex <- o .: "n"
+    getBinfoTxOutputTxIndex <- o .: "tx_index"
+    getBinfoTxOutputScript <- maybe mzero return . decodeHex =<< o .: "script"
+    getBinfoTxOutputAddress <- o .:? "addr" >>= mapM (addrFromJSON net)
+    getBinfoTxOutputXPub <- o .:? "xpub" >>= mapM (binfoXPubPathParseJSON net)
+    return BinfoTxOutput {..}
+
 data BinfoSpender
     = BinfoSpender
         { getBinfoSpenderTxIndex :: !Word64
@@ -1596,22 +1881,86 @@ data BinfoSpender
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+instance ToJSON BinfoSpender where
+    toJSON BinfoSpender {..} =
+        object
+            [ "tx_index" .= getBinfoSpenderTxIndex
+            , "n" .= getBinfoSpenderIndex
+            ]
+    toEncoding BinfoSpender {..} =
+        pairs
+            (  "tx_index" .= getBinfoSpenderTxIndex
+            <> "n"        .= getBinfoSpenderIndex
+            )
+
+instance FromJSON BinfoSpender where
+    parseJSON = withObject "spender" $ \o -> do
+        getBinfoSpenderTxIndex <- o .: "tx_index"
+        getBinfoSpenderIndex <- o .: "n"
+        return BinfoSpender {..}
+
 data BinfoXPubPath
     = BinfoXPubPath
-        { getBinfoXPubPathKey     :: !XPubKey
-        , getBinfoXPubPathDeriv   :: !ByteString
+        { getBinfoXPubPathKey   :: !XPubKey
+        , getBinfoXPubPathDeriv :: !ByteString
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
+binfoXPubPathToJSON :: Network -> BinfoXPubPath -> Value
+binfoXPubPathToJSON net BinfoXPubPath {..} =
+    object
+        [ "m" .= xPubToJSON net getBinfoXPubPathKey
+        , "path" .= decodeUtf8 getBinfoXPubPathDeriv
+        ]
+
+binfoXPubPathToEncoding :: Network -> BinfoXPubPath -> Encoding
+binfoXPubPathToEncoding net BinfoXPubPath {..} =
+    pairs $
+        "m" `pair` xPubToEncoding net getBinfoXPubPathKey <>
+        "path" .= decodeUtf8 getBinfoXPubPathDeriv
+
+binfoXPubPathParseJSON :: Network -> Value -> Parser BinfoXPubPath
+binfoXPubPathParseJSON net = withObject "xpub" $ \o -> do
+    getBinfoXPubPathKey <- o .: "m" >>= xPubFromJSON net
+    getBinfoXPubPathDeriv <- encodeUtf8 <$> o .: "path"
+    return BinfoXPubPath {..}
+
 data BinfoInfo
     = BinfoInfo
-        { getBinfoConnected       :: !Word32
-        , getBinfoConversion      :: !Double
-        , getBinfoLocal           :: !BinfoSymbol
-        , getBinfoBTC             :: !BinfoSymbol
-        , getBinfoLatestBlock     :: !BinfoBlockInfo
+        { getBinfoConnected   :: !Word32
+        , getBinfoConversion  :: !Double
+        , getBinfoLocal       :: !BinfoSymbol
+        , getBinfoBTC         :: !BinfoSymbol
+        , getBinfoLatestBlock :: !BinfoBlockInfo
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoInfo where
+    toJSON BinfoInfo {..} =
+        object
+            [ "nconnected" .= getBinfoConnected
+            , "conversion" .= getBinfoConversion
+            , "symbol_local" .= getBinfoLocal
+            , "symbol_btc" .= getBinfoBTC
+            , "latest_block" .= getBinfoLatestBlock
+            ]
+    toEncoding BinfoInfo {..} =
+        pairs
+            (  "nconnected" .= getBinfoConnected
+            <> "conversion" .= getBinfoConversion
+            <> "symbol_local" .= getBinfoLocal
+            <> "symbol_btc" .= getBinfoBTC
+            <> "latest_block" .= getBinfoLatestBlock
+            )
+
+instance FromJSON BinfoInfo where
+    parseJSON = withObject "info" $ \o -> do
+        getBinfoConnected <- o .: "nconnected"
+        getBinfoConversion <- o .: "conversion"
+        getBinfoLocal <- o .: "symbol_local"
+        getBinfoBTC <- o .: "symbol_btc"
+        getBinfoLatestBlock <- o .: "latest_block"
+        return BinfoInfo {..}
 
 data BinfoBlockInfo
     = BinfoBlockInfo
@@ -1621,6 +1970,30 @@ data BinfoBlockInfo
         , getBinfoBlockInfoIndex  :: !Word64
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoBlockInfo where
+    toJSON BinfoBlockInfo {..} =
+        object
+            [ "hash" .= getBinfoBlockInfoHash
+            , "height" .= getBinfoBlockInfoHeight
+            , "time" .= getBinfoBlockInfoTime
+            , "block_index" .= getBinfoBlockInfoIndex
+            ]
+    toEncoding BinfoBlockInfo {..} =
+        pairs
+            (  "hash" .= getBinfoBlockInfoHash
+            <> "height" .= getBinfoBlockInfoHeight
+            <> "time" .= getBinfoBlockInfoTime
+            <> "block_index" .= getBinfoBlockInfoIndex
+            )
+
+instance FromJSON BinfoBlockInfo where
+    parseJSON = withObject "block_info" $ \o -> do
+        getBinfoBlockInfoHash <- o .: "hash"
+        getBinfoBlockInfoHeight <- o .: "height"
+        getBinfoBlockInfoTime <- o .: "time"
+        getBinfoBlockInfoIndex <- o .: "block_index"
+        return BinfoBlockInfo {..}
 
 data BinfoSymbol
     = BinfoSymbol
@@ -1632,3 +2005,33 @@ data BinfoSymbol
         , getBinfoSymbolLocal      :: !Bool
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoSymbol where
+    toJSON BinfoSymbol {..} =
+        object
+            [ "code" .= decodeUtf8 getBinfoSymbolCode
+            , "symbol" .= decodeUtf8 getBinfoSymbolString
+            , "name" .= decodeUtf8 getBinfoSymbolName
+            , "conversion" .= getBinfoSymbolConversion
+            , "symbolAppearsAfter" .= getBinfoSymbolAfter
+            , "local" .= getBinfoSymbolLocal
+            ]
+    toEncoding BinfoSymbol {..} =
+        pairs
+            (  "code" .= decodeUtf8 getBinfoSymbolCode
+            <> "symbol" .= decodeUtf8 getBinfoSymbolString
+            <> "name" .= decodeUtf8 getBinfoSymbolName
+            <> "conversion" .= getBinfoSymbolConversion
+            <> "symbolAppearsAfter" .= getBinfoSymbolAfter
+            <> "local" .= getBinfoSymbolLocal
+            )
+
+instance FromJSON BinfoSymbol where
+    parseJSON = withObject "symbol" $ \o -> do
+        getBinfoSymbolCode <- encodeUtf8 <$> o .: "code"
+        getBinfoSymbolString <- encodeUtf8 <$> o .: "symbol"
+        getBinfoSymbolName <- encodeUtf8 <$> o .: "name"
+        getBinfoSymbolConversion <- o .: "conversion"
+        getBinfoSymbolAfter <- o .: "symbolAppearsAfter"
+        getBinfoSymbolLocal <- o .: "local"
+        return BinfoSymbol {..}

@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RecordWildCards           #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Haskoin.Store.DataSpec
     ( spec
@@ -9,6 +10,7 @@ module Haskoin.Store.DataSpec
 
 import           Control.Monad           (forM_)
 import           Data.Aeson              (FromJSON (..))
+import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as BSS
 import           Data.String.Conversions (cs)
 import           Haskoin
@@ -43,6 +45,17 @@ serialVals =
     , SerialBox (arbitrary :: Gen (RawResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
     , SerialBox (arbitrary :: Gen Except)
+    , SerialBox (arbitrary :: Gen BinfoWallet)
+    , SerialBox (arbitrary :: Gen BinfoAddress)
+    , SerialBox (arbitrary :: Gen BinfoSymbol)
+    , SerialBox (arbitrary :: Gen BinfoBlockInfo)
+    , SerialBox (arbitrary :: Gen BinfoInfo)
+    , SerialBox (arbitrary :: Gen BinfoXPubPath)
+    , SerialBox (arbitrary :: Gen BinfoSpender)
+    , SerialBox (arbitrary :: Gen BinfoTxOutput)
+    , SerialBox (arbitrary :: Gen BinfoTxInput)
+    , SerialBox (arbitrary :: Gen BinfoTx)
+    , SerialBox (arbitrary :: Gen BinfoMultiAddr)
     ]
 
 jsonVals :: [JsonBox]
@@ -59,6 +72,11 @@ jsonVals =
     , JsonBox (arbitrary :: Gen (RawResult BlockData))
     , JsonBox (arbitrary :: Gen (RawResultList BlockData))
     , JsonBox (arbitrary :: Gen Except)
+    , JsonBox (arbitrary :: Gen BinfoWallet)
+    , JsonBox (arbitrary :: Gen BinfoSymbol)
+    , JsonBox (arbitrary :: Gen BinfoBlockInfo)
+    , JsonBox (arbitrary :: Gen BinfoInfo)
+    , JsonBox (arbitrary :: Gen BinfoSpender)
     ]
 
 netVals :: [NetBox]
@@ -94,7 +112,31 @@ netVals =
     , NetBox ( transactionToJSON
              , transactionToEncoding
              , transactionParseJSON
-             , arbitraryTransactionNet)
+             , arbitraryNetData)
+    , NetBox ( binfoMultiAddrToJSON
+             , binfoMultiAddrToEncoding
+             , binfoMultiAddrParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoAddressToJSON
+             , binfoAddressToEncoding
+             , binfoAddressParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoTxToJSON
+             , binfoTxToEncoding
+             , binfoTxParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoTxInputToJSON
+             , binfoTxInputToEncoding
+             , binfoTxInputParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoTxOutputToJSON
+             , binfoTxOutputToEncoding
+             , binfoTxOutputParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoXPubPathToJSON
+             , binfoXPubPathToEncoding
+             , binfoXPubPathParseJSON
+             , arbitraryNetData)
     ]
 
 spec :: Spec
@@ -130,14 +172,14 @@ instance Arbitrary StoreInput where
                 <$> arbitraryOutPoint
                 <*> arbitrary
                 <*> arbitraryBS1
-                <*> arbitraryMaybe (listOf arbitraryBS1)
+                <*> listOf arbitraryBS1
             , StoreInput
                 <$> arbitraryOutPoint
                 <*> arbitrary
                 <*> arbitraryBS1
                 <*> arbitraryBS1
                 <*> arbitrary
-                <*> arbitraryMaybe (listOf arbitraryBS1)
+                <*> listOf arbitraryBS1
                 <*> arbitraryMaybe arbitraryAddress
             ]
 
@@ -146,7 +188,7 @@ arbitraryStoreInputNet = do
     net <- arbitraryNetwork
     store <- arbitrary
     let res | getSegWit net = store
-            | otherwise = store{ inputWitness = Nothing }
+            | otherwise = store{ inputWitness = [] }
     return (net, res)
 
 instance Arbitrary Spender where
@@ -188,7 +230,7 @@ arbitraryTransactionNet = do
             | otherwise = val1{ transactionRBF = False }
     return (net, res)
   where
-    f i = i {inputWitness = Nothing}
+    f i = i {inputWitness = []}
 
 instance Arbitrary PeerInformation where
     arbitrary =
@@ -343,3 +385,121 @@ instance Arbitrary Except where
         , StringError <$> arbitrary
         , return BlockTooLarge
         ]
+
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
+
+instance Arbitrary BinfoMultiAddr where
+    arbitrary = do
+        getBinfoMultiAddrAddresses <- arbitrary
+        getBinfoMultiAddrWallet <- arbitrary
+        getBinfoMultiAddrTxs <- arbitrary
+        getBinfoMultiAddrInfo <- arbitrary
+        getBinfoRecommendFee <- arbitrary
+        return BinfoMultiAddr {..}
+
+instance Arbitrary BinfoAddress where
+    arbitrary = do
+        getBinfoAddress <- arbitraryAddress
+        getBinfoAddrTxCount <- arbitrary
+        getBinfoAddrReceived <- arbitrary
+        getBinfoAddrSent <- arbitrary
+        getBinfoAddrBalance <- arbitrary
+        getBinfoXPubKey <- snd <$> arbitraryXPubKey
+        getBinfoXPubAccountIndex <- arbitrary
+        getBinfoXPubChangeIndex <- arbitrary
+        elements [BinfoAddress {..}, BinfoXPubKey {..}]
+
+instance Arbitrary BinfoWallet where
+    arbitrary = do
+        getBinfoWalletBalance <- arbitrary
+        getBinfoWalletTxCount <- arbitrary
+        getBinfoWalletFilteredCount <- arbitrary
+        getBinfoWalletTotalReceived <- arbitrary
+        getBinfoWalletTotalSent <- arbitrary
+        return BinfoWallet {..}
+
+instance Arbitrary BinfoTx where
+    arbitrary = do
+        getBinfoTxHash <- arbitraryTxHash
+        getBinfoTxVer <- arbitrary
+        getBinfoTxInputs <- resize 10 $ listOf1 arbitrary
+        getBinfoTxOutputs <- resize 10 $ listOf1 arbitrary
+        let getBinfoTxVinSz = fromIntegral (length getBinfoTxInputs)
+            getBinfoTxVoutSz = fromIntegral (length getBinfoTxOutputs)
+        getBinfoTxSize <- arbitrary
+        getBinfoTxWeight <- arbitrary
+        getBinfoTxFee <- arbitrary
+        getBinfoTxRelayedBy <- cs <$> listOf arbitraryUnicodeChar
+        getBinfoTxLockTime <- arbitrary
+        getBinfoTxIndex <- arbitrary
+        getBinfoTxDoubleSpend <- arbitrary
+        getBinfoTxResult <- arbitrary
+        getBinfoTxBalance <- arbitrary
+        getBinfoTxTime <- arbitrary
+        getBinfoTxBlockIndex <- arbitrary
+        getBinfoTxBlockHeight <- arbitrary
+        return BinfoTx {..}
+
+instance Arbitrary BinfoTxInput where
+    arbitrary = do
+        getBinfoTxInputSeq <- arbitrary
+        getBinfoTxInputWitness <- B.pack <$> listOf arbitrary
+        getBinfoTxInputScript <- B.pack <$> listOf arbitrary
+        getBinfoTxInputIndex <- arbitrary
+        getBinfoTxInputPrevOut <- arbitrary
+        return BinfoTxInput {..}
+
+instance Arbitrary BinfoTxOutput where
+    arbitrary = do
+        getBinfoTxOutputType <- arbitrary
+        getBinfoTxOutputSpent <- arbitrary
+        getBinfoTxOutputValue <- arbitrary
+        getBinfoTxOutputIndex <- arbitrary
+        getBinfoTxOutputTxIndex <- arbitrary
+        getBinfoTxOutputScript <- B.pack <$> listOf arbitrary
+        getBinfoTxOutputSpenders <- arbitrary
+        getBinfoTxOutputAddress <-
+            oneof [return Nothing, Just <$> arbitraryAddress]
+        getBinfoTxOutputXPub <- arbitrary
+        return BinfoTxOutput {..}
+
+instance Arbitrary BinfoSpender where
+    arbitrary = do
+        getBinfoSpenderTxIndex <- arbitrary
+        getBinfoSpenderIndex <- arbitrary
+        return BinfoSpender {..}
+
+instance Arbitrary BinfoXPubPath where
+    arbitrary = do
+        getBinfoXPubPathKey <- snd <$> arbitraryXPubKey
+        getBinfoXPubPathDeriv <- cs <$> listOf1 arbitraryUnicodeChar
+        return BinfoXPubPath {..}
+
+instance Arbitrary BinfoInfo where
+    arbitrary = do
+        getBinfoConnected <- arbitrary
+        getBinfoConversion <- arbitrary
+        getBinfoLocal <- arbitrary
+        getBinfoBTC <- arbitrary
+        getBinfoLatestBlock <- arbitrary
+        return BinfoInfo {..}
+
+instance Arbitrary BinfoBlockInfo where
+    arbitrary = do
+        getBinfoBlockInfoHash <- arbitraryBlockHash
+        getBinfoBlockInfoHeight <- arbitrary
+        getBinfoBlockInfoTime <- arbitrary
+        getBinfoBlockInfoIndex <- arbitrary
+        return BinfoBlockInfo {..}
+
+instance Arbitrary BinfoSymbol where
+    arbitrary = do
+        getBinfoSymbolCode <- cs <$> listOf1 arbitraryUnicodeChar
+        getBinfoSymbolString <- cs <$> listOf1 arbitraryUnicodeChar
+        getBinfoSymbolName <- cs <$> listOf1 arbitraryUnicodeChar
+        getBinfoSymbolConversion <- arbitrary
+        getBinfoSymbolAfter <- arbitrary
+        getBinfoSymbolLocal <- arbitrary
+        return BinfoSymbol {..}
