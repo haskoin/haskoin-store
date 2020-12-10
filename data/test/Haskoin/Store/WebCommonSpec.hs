@@ -11,7 +11,7 @@ module Haskoin.Store.WebCommonSpec
 import           Control.Monad           (forM_)
 import           Data.Proxy
 import           Data.String.Conversions (cs)
-import           Data.Word               (Word64)
+import           Data.Word
 import           Haskoin
 import           Haskoin.Store.Data
 import           Haskoin.Store.DataSpec  ()
@@ -116,7 +116,11 @@ instance Arbitrary BinfoNoCompactParam where
     arbitrary = BinfoNoCompactParam <$> arbitrary
 
 instance Arbitrary BinfoCountParam where
-    arbitrary = BinfoCountParam <$> arbitrary
+    arbitrary = do
+        w32 <- arbitrary :: Gen Word32
+        return $ BinfoCountParam (fromIntegral w32)
 
 instance Arbitrary BinfoOffsetParam where
-    arbitrary = BinfoOffsetParam <$> arbitrary
+    arbitrary = do
+        w32 <- arbitrary :: Gen Word32
+        return $ BinfoOffsetParam (fromIntegral w32)

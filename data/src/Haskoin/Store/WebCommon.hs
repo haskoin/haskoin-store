@@ -600,6 +600,9 @@ newtype BinfoActiveP2SHparam
     = BinfoActiveP2SHparam { getBinfoActiveP2SHparam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
+instance Default BinfoActiveP2SHparam where
+    def = BinfoActiveP2SHparam []
+
 instance Param BinfoActiveP2SHparam where
     proxyLabel = const "activeP2SH"
     encodeParam net (BinfoActiveP2SHparam xs) = binfoEncodeAddressParam net xs
@@ -610,23 +613,20 @@ newtype BinfoOnlyShowParam
     = BinfoOnlyShowParam { getBinfoOnlyShowParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
+instance Default BinfoOnlyShowParam where
+    def = BinfoOnlyShowParam []
+
 instance Param BinfoOnlyShowParam where
     proxyLabel = const "onlyShow"
     encodeParam net (BinfoOnlyShowParam xs) = binfoEncodeAddressParam net xs
     parseParam net xs = BinfoOnlyShowParam <$> binfoParseAddressParam net xs
-
--- simple
-newtype BinfoSimpleParam
-    = BinfoSimpleParam { getBinfoSimpleParam :: Bool }
-    deriving (Eq, Show)
 
 encodeBoolParam :: Bool -> Text
 encodeBoolParam True  = "true"
 encodeBoolParam False = "false"
 
 parseBoolParam :: [Text] -> Maybe Bool
-parseBoolParam [] = Just False
-parseBoolParam xs = case last xs of
+parseBoolParam [x] = case x of
     "true"  -> Just True
     "True"  -> Just True
     "TRUE"  -> Just True
@@ -642,6 +642,15 @@ parseBoolParam xs = case last xs of
     "n"     -> Just False
     "off"   -> Just False
     _       -> Nothing
+parseBoolParam _ = Nothing
+
+-- simple
+newtype BinfoSimpleParam
+    = BinfoSimpleParam { getBinfoSimpleParam :: Bool }
+    deriving (Eq, Show)
+
+instance Default BinfoSimpleParam where
+    def = BinfoSimpleParam False
 
 instance Param BinfoSimpleParam where
     proxyLabel = const "simple"
@@ -653,6 +662,9 @@ newtype BinfoNoCompactParam
     = BinfoNoCompactParam { getBinfoNoCompactParam :: Bool }
     deriving (Eq, Show)
 
+instance Default BinfoNoCompactParam where
+    def = BinfoNoCompactParam False
+
 instance Param BinfoNoCompactParam where
     proxyLabel = const "no_compact"
     encodeParam _ (BinfoNoCompactParam b) = Just [encodeBoolParam b]
@@ -660,7 +672,7 @@ instance Param BinfoNoCompactParam where
 
 -- n
 newtype BinfoCountParam
-    = BinfoCountParam { getBinfoCountParam :: Integer }
+    = BinfoCountParam { getBinfoCountParam :: Natural }
     deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
 
 instance Param BinfoCountParam where
@@ -671,8 +683,11 @@ instance Param BinfoCountParam where
 
 -- offset
 newtype BinfoOffsetParam
-    = BinfoOffsetParam { getBinfoOffsetParam :: Integer }
+    = BinfoOffsetParam { getBinfoOffsetParam :: Natural }
     deriving (Eq, Show, Read, Enum, Ord, Num, Real, Integral)
+
+instance Default BinfoOffsetParam where
+    def = BinfoOffsetParam 0
 
 instance Param BinfoOffsetParam where
     proxyLabel = const "offset"
@@ -687,7 +702,7 @@ data GetBinfoMultiAddr
         , getBinfoMultiAddrOnlyShow    :: !BinfoOnlyShowParam
         , getBinfoMultiAddrSimple      :: !BinfoSimpleParam
         , getBinfoMultiAddrNoCompact   :: !BinfoNoCompactParam
-        , getBinfoMultiAddrCountParam  :: !BinfoCountParam
+        , getBinfoMultiAddrCountParam  :: !(Maybe BinfoCountParam)
         , getBinfoMultiAddrOffsetParam :: !BinfoOffsetParam
         }
 
@@ -695,11 +710,10 @@ instance ApiResource GetBinfoMultiAddr Store.BinfoMultiAddr where
     resourcePath _ _ = "/compat/multiaddr"
     queryParams GetBinfoMultiAddr {..} =
         (,) []
-        [ ParamBox getBinfoMultiAddrActive
-        , ParamBox getBinfoMultiAddrActiveP2SH
-        , ParamBox getBinfoMultiAddrOnlyShow
-        , ParamBox getBinfoMultiAddrSimple
-        , ParamBox getBinfoMultiAddrNoCompact
-        , ParamBox getBinfoMultiAddrCountParam
-        , ParamBox getBinfoMultiAddrOffsetParam
-        ]
+        $  [ParamBox getBinfoMultiAddrActive]
+        <> noDefBox getBinfoMultiAddrActiveP2SH
+        <> noDefBox getBinfoMultiAddrOnlyShow
+        <> noDefBox getBinfoMultiAddrSimple
+        <> noDefBox getBinfoMultiAddrNoCompact
+        <> noMaybeBox getBinfoMultiAddrCountParam
+        <> noDefBox getBinfoMultiAddrOffsetParam
