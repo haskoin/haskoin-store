@@ -590,6 +590,9 @@ newtype BinfoActiveParam
     = BinfoActiveParam { getBinfoActiveParam :: [BinfoAddressParam] }
     deriving (Eq, Show)
 
+instance Default BinfoActiveParam where
+    def = BinfoActiveParam []
+
 instance Param BinfoActiveParam where
     proxyLabel = const "active"
     encodeParam net (BinfoActiveParam xs) = binfoEncodeAddressParam net xs

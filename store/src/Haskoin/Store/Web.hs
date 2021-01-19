@@ -393,6 +393,19 @@ handlePaths = do
         scottyXPubEvict
         (const toEncoding)
         (const toJSON)
+    -- Blockchain.info
+    pathPretty
+        (GetBinfoMultiAddr <$> paramDef -- active
+                           <*> paramDef -- activP2SH
+                           <*> paramDef -- onlyShow
+                           <*> paramDef -- simple
+                           <*> paramDef -- no_compact
+                           <*> paramOptional -- n
+                           <*> paramDef -- offset
+        )
+        scottyMultiAddr
+        binfoMultiAddrToEncoding
+        binfoMultiAddrToJSON
     -- Network
     pathPretty
         (GetPeers & return)
@@ -871,6 +884,12 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
     cache <- lift $ asks (storeCache . webStore)
     lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
     return $ GenericResult True
+
+
+-- GET Blockchain.info API --
+
+scottyMultiAddr :: MonadLoggerIO m => GetBinfoMultiAddr -> WebT m BinfoMultiAddr
+scottyMultiAddr = undefined
 
 -- GET Network Information --
 
