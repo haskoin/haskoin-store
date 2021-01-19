@@ -474,7 +474,7 @@ instance Arbitrary BinfoSpender where
 instance Arbitrary BinfoXPubPath where
     arbitrary = do
         getBinfoXPubPathKey <- snd <$> arbitraryXPubKey
-        getBinfoXPubPathDeriv <- cs <$> listOf1 arbitraryUnicodeChar
+        getBinfoXPubPathDeriv <- arbitrarySoftPath
         return BinfoXPubPath {..}
 
 instance Arbitrary BinfoInfo where

@@ -152,12 +152,13 @@ import           GHC.Generics            (Generic)
 import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           BlockHeight, BlockWork, Coin (..),
                                           KeyIndex, Network (..), OutPoint (..),
-                                          PubKeyI (..), Tx (..), TxHash (..),
-                                          TxIn (..), TxOut (..), WitnessStack,
-                                          XPubKey (..), addrFromJSON,
-                                          addrToEncoding, addrToJSON,
-                                          blockHashToHex, decodeHex,
+                                          PubKeyI (..), SoftPath, Tx (..),
+                                          TxHash (..), TxIn (..), TxOut (..),
+                                          WitnessStack, XPubKey (..),
+                                          addrFromJSON, addrToEncoding,
+                                          addrToJSON, blockHashToHex, decodeHex,
                                           eitherToMaybe, encodeHex, headerHash,
+                                          parseSoft, pathToStr,
                                           scriptToAddressBS, txHash,
                                           txHashToHex, wrapPubKey, xPubFromJSON,
                                           xPubToEncoding, xPubToJSON)
@@ -1902,7 +1903,7 @@ instance FromJSON BinfoSpender where
 data BinfoXPubPath
     = BinfoXPubPath
         { getBinfoXPubPathKey   :: !XPubKey
-        , getBinfoXPubPathDeriv :: !ByteString
+        , getBinfoXPubPathDeriv :: !SoftPath
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
@@ -1910,19 +1911,20 @@ binfoXPubPathToJSON :: Network -> BinfoXPubPath -> Value
 binfoXPubPathToJSON net BinfoXPubPath {..} =
     object
         [ "m" .= xPubToJSON net getBinfoXPubPathKey
-        , "path" .= decodeUtf8 getBinfoXPubPathDeriv
+        , "path" .= ("M" ++ pathToStr getBinfoXPubPathDeriv)
         ]
 
 binfoXPubPathToEncoding :: Network -> BinfoXPubPath -> Encoding
 binfoXPubPathToEncoding net BinfoXPubPath {..} =
     pairs $
         "m" `pair` xPubToEncoding net getBinfoXPubPathKey <>
-        "path" .= decodeUtf8 getBinfoXPubPathDeriv
+        "path" .= ("M" ++ pathToStr getBinfoXPubPathDeriv)
 
 binfoXPubPathParseJSON :: Network -> Value -> Parser BinfoXPubPath
 binfoXPubPathParseJSON net = withObject "xpub" $ \o -> do
     getBinfoXPubPathKey <- o .: "m" >>= xPubFromJSON net
-    getBinfoXPubPathDeriv <- encodeUtf8 <$> o .: "path"
+    getBinfoXPubPathDeriv <-
+        fromMaybe "bad xpub path" . parseSoft <$> o .: "path"
     return BinfoXPubPath {..}
 
 data BinfoInfo
