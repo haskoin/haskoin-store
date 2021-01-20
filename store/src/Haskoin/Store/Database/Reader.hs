@@ -135,8 +135,7 @@ getDatabaseReader :: MonadIO m => BlockHash -> DatabaseReader -> m (Maybe BlockD
 getDatabaseReader h DatabaseReader{databaseHandle = db} =
     retrieveCF db (blockCF db) (BlockKey h)
 
-getTxDataDB ::
-       MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
+getTxDataDB :: MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
 getTxDataDB th DatabaseReader{databaseHandle = db} =
     retrieveCF db (txCF db) (TxKey th)
 

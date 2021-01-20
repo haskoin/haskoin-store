@@ -10,6 +10,7 @@ module Haskoin.Store.DataSpec
 
 import           Control.Monad           (forM_)
 import           Data.Aeson              (FromJSON (..))
+import           Data.Bits               ((.&.))
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as BSS
 import           Data.String.Conversions (cs)
@@ -17,7 +18,7 @@ import           Haskoin
 import           Haskoin.Store.Data
 import           Haskoin.Util.Arbitrary
 import           Test.Hspec              (Spec, describe)
-import           Test.QuickCheck
+import           Test.QuickCheck         hiding ((.&.))
 
 serialVals :: [SerialBox]
 serialVals =
@@ -45,6 +46,7 @@ serialVals =
     , SerialBox (arbitrary :: Gen (RawResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
     , SerialBox (arbitrary :: Gen Except)
+    , SerialBox (arbitrary :: Gen BinfoTxIndex)
     , SerialBox (arbitrary :: Gen BinfoWallet)
     , SerialBox (arbitrary :: Gen BinfoAddress)
     , SerialBox (arbitrary :: Gen BinfoSymbol)
@@ -72,6 +74,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen (RawResult BlockData))
     , JsonBox (arbitrary :: Gen (RawResultList BlockData))
     , JsonBox (arbitrary :: Gen Except)
+    , JsonBox (arbitrary :: Gen BinfoTxIndex)
     , JsonBox (arbitrary :: Gen BinfoWallet)
     , JsonBox (arbitrary :: Gen BinfoSymbol)
     , JsonBox (arbitrary :: Gen BinfoBlockInfo)
@@ -389,6 +392,12 @@ instance Arbitrary Except where
 ---------------------------------------
 -- Blockchain.info API Compatibility --
 ---------------------------------------
+
+instance Arbitrary BinfoTxIndex where
+    arbitrary = oneof
+        [ binfoTxIndexFromHash  <$> arbitraryTxHash
+        , binfoTxIndexFromBlock <$> arbitrary <*> arbitrary
+        ]
 
 instance Arbitrary BinfoMultiAddr where
     arbitrary = do

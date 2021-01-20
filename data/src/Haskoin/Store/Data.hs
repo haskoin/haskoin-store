@@ -82,6 +82,11 @@ module Haskoin.Store.Data
     , Except(..)
 
      -- * Blockchain.info API
+    , BinfoTxIndex(..)
+    , binfoTxIndexFromHash
+    , binfoTxIndexFromBlock
+    , binfoTxIndexHash
+    , binfoTxIndexBlock
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
@@ -126,12 +131,14 @@ import qualified Data.Aeson              as A
 import           Data.Aeson.Encoding     (list, null_, pair, text,
                                           unsafeToEncoding)
 import           Data.Aeson.Types        (Parser)
+import           Data.Bits               (shift, (.&.), (.|.))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
 import           Data.ByteString.Builder (char7, lazyByteStringHex)
 import           Data.ByteString.Short   (ShortByteString)
 import qualified Data.ByteString.Short   as BSS
 import           Data.Default            (Default (..))
+import           Data.Either             (fromRight)
 import           Data.Foldable           (toList)
 import           Data.Hashable           (Hashable (..))
 import           Data.Int                (Int64)
@@ -1523,6 +1530,44 @@ instance FromJSON Except where
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
+data BinfoTxIndex = BinfoTxHashIndex !Word64
+                  | BinfoTxBlockIndex !Word64
+    deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoTxIndex where
+    toJSON (BinfoTxHashIndex n)  = toJSON (n .|. (0x01 `shift` 48))
+    toJSON (BinfoTxBlockIndex n) = toJSON n
+
+instance FromJSON BinfoTxIndex where
+    parseJSON = A.withScientific "tx_index" $ \n ->
+        if n < 2 ^ 48
+        then return $ BinfoTxBlockIndex (floor n)
+        else return $ BinfoTxHashIndex (floor n .&. (2 ^ 48 - 1))
+
+binfoTxIndexFromHash :: TxHash -> BinfoTxIndex
+binfoTxIndexFromHash h =
+    BinfoTxHashIndex . fromRight (error "weird monkeys") .
+    S.decode $ 0x00 `B.cons` 0x00 `B.cons` B.take 6 (S.encode h)
+
+binfoTxIndexFromBlock :: BlockHeight -> Word32 -> BinfoTxIndex
+binfoTxIndexFromBlock h p =
+    let h' = (fromIntegral h .&. (2 ^ 24 - 1)) `shift` 24
+        p' = fromIntegral p .&. (2 ^ 24 - 1)
+     in BinfoTxBlockIndex $ h' .|. p'
+
+binfoTxIndexHash :: BinfoTxIndex -> Maybe TxHash
+binfoTxIndexHash (BinfoTxHashIndex n) =
+    either (const Nothing) Just .
+    S.decode $ B.drop 2 (S.encode n) `B.append` B.replicate 26 0x00
+binfoTxIndexHash _ = Nothing
+
+binfoTxIndexBlock :: BinfoTxIndex -> Maybe (BlockHeight, Word32)
+binfoTxIndexBlock (BinfoTxBlockIndex n) =
+    Just ( fromIntegral (n `shift` (-24) .&. (2 ^ 24 - 1))
+         , fromIntegral (n .&. (2 ^ 24 - 1))
+         )
+binfoTxIndexBlock _ = Nothing
+
 data BinfoMultiAddr
     = BinfoMultiAddr
         { getBinfoMultiAddrAddresses :: ![BinfoAddress]
@@ -1693,7 +1738,7 @@ data BinfoTx
         , getBinfoTxFee         :: !Word32
         , getBinfoTxRelayedBy   :: !ByteString
         , getBinfoTxLockTime    :: !Word32
-        , getBinfoTxIndex       :: !Word64
+        , getBinfoTxIndex       :: !BinfoTxIndex
         , getBinfoTxDoubleSpend :: !Bool
         , getBinfoTxResult      :: !Int64
         , getBinfoTxBalance     :: !Word64
@@ -1818,7 +1863,7 @@ data BinfoTxOutput
         , getBinfoTxOutputSpent    :: !Bool
         , getBinfoTxOutputValue    :: !Word64
         , getBinfoTxOutputIndex    :: !Word32
-        , getBinfoTxOutputTxIndex  :: !Word64
+        , getBinfoTxOutputTxIndex  :: !BinfoTxIndex
         , getBinfoTxOutputScript   :: !ByteString
         , getBinfoTxOutputSpenders :: ![BinfoSpender]
         , getBinfoTxOutputAddress  :: !(Maybe Address)
@@ -1877,7 +1922,7 @@ binfoTxOutputParseJSON net = withObject "txout" $ \o -> do
 
 data BinfoSpender
     = BinfoSpender
-        { getBinfoSpenderTxIndex :: !Word64
+        { getBinfoSpenderTxIndex :: !BinfoTxIndex
         , getBinfoSpenderIndex   :: !Word32
         }
     deriving (Eq, Show, Generic, Serialize, NFData)

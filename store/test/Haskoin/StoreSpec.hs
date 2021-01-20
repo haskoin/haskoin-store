@@ -71,12 +71,6 @@ spec = do
             head (blockDataTxs bd) `shouldBe` h1
             t1 `shouldSatisfy` isJust
             txHash (transactionData (fromJust t1)) `shouldBe` h1
-  describe "Data" $ do
-      it "shorten transaction hash identity" $
-          forAll arbitraryTxHash $ \h ->
-              let bs = B.take 6 (encode h)
-                  bs' = encode (toTxHash48 h)
-               in bs == bs'
 
 withTestStore ::
        MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
