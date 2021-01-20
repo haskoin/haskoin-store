@@ -11,6 +11,8 @@ module Haskoin.Store.Database.Types
     , HeightKey(..)
     , MemKey(..)
     , SpenderKey(..)
+    , TxHash48
+    , toTxHash48
     , TxKey(..)
     , UnspentKey(..)
     , VersionKey(..)
@@ -31,10 +33,11 @@ import qualified Data.ByteString        as BS
 import           Data.ByteString.Short  (ShortByteString)
 import qualified Data.ByteString.Short  as BSS
 import           Data.Default           (Default (..))
+import           Data.Either            (fromRight)
 import           Data.Hashable          (Hashable)
-import           Data.Serialize         (Serialize (..), getBytes, getWord8,
-                                         putWord8)
-import           Data.Word              (Word32, Word64)
+import           Data.Serialize         (Serialize (..), decode, encode,
+                                         getBytes, getWord8, putWord8)
+import           Data.Word              (Word16, Word32, Word64)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
@@ -133,14 +136,26 @@ data OutVal = OutVal
 
 instance KeyValue AddrOutKey OutVal
 
+type TxHash48 = (Word32, Word16)
+
+toTxHash48 :: TxHash -> TxHash48
+toTxHash48 h =
+    fromRight (error "weird monkeys") (decode bs)
+  where
+    bs = BS.take 6 (encode h)
+
 -- | Transaction database key.
-newtype TxKey = TxKey
-    { txKey :: TxHash
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable)
+data TxKey
+    = TxKey { txKey :: TxHash }
+    | ShortTxKey { txKeyS :: TxHash48 }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize TxKey where
     -- 0x02 · TxHash
     put (TxKey h) = do
+        putWord8 0x02
+        put h
+    put (ShortTxKey h) = do
         putWord8 0x02
         put h
     get = do
