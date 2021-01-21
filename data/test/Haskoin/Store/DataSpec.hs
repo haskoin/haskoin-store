@@ -10,15 +10,16 @@ module Haskoin.Store.DataSpec
 
 import           Control.Monad           (forM_)
 import           Data.Aeson              (FromJSON (..))
-import           Data.Bits               ((.&.))
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as BSS
+import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
 import           Haskoin
 import           Haskoin.Store.Data
 import           Haskoin.Util.Arbitrary
-import           Test.Hspec              (Spec, describe)
-import           Test.QuickCheck         hiding ((.&.))
+import           Test.Hspec              (Spec, describe, it)
+import           Test.Hspec.QuickCheck   (prop)
+import           Test.QuickCheck
 
 serialVals :: [SerialBox]
 serialVals =
@@ -150,6 +151,21 @@ spec = do
         forM_ jsonVals $ \(JsonBox g) -> testJson g
     describe "Data.Aeson Encoding with Network" $
         forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
+    describe "Blockchain.info API" $ do
+        it "compresses txids correctly" $
+            forAll arbitraryTxHash $ \h1 ->
+            let Just h2 = binfoTxIndexHash (binfoTxIndexFromHash h1)
+                h1' = B.take 6 (S.encode h1)
+                h2' = B.take 6 (S.encode h2)
+                h2t = B.drop 6 (S.encode h2)
+             in h1' == h2' && B.all (== 0x00) h2t
+        prop "compresses blockchain locations correctly" $
+            let x = choose (0, 2 ^ 24 - 1)
+             in forAll ((,) <$> x <*> x) $ \(b, p) ->
+                let i = binfoTxIndexFromBlock b p
+                    Just (b', p') = binfoTxIndexBlock i
+                 in b == b' && p == p'
+
 
 instance Arbitrary BlockRef where
     arbitrary =
