@@ -413,6 +413,7 @@ instance Arbitrary BinfoTxIndex where
     arbitrary = oneof
         [ binfoTxIndexFromHash  <$> arbitraryTxHash
         , binfoTxIndexFromBlock <$> arbitrary <*> arbitrary
+        , return BinfoTxNoIndex
         ]
 
 instance Arbitrary BinfoMultiAddr where
