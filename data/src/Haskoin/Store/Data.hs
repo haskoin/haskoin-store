@@ -145,6 +145,8 @@ import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
 import           Data.Int                (Int64)
 import qualified Data.IntMap             as I
+import qualified Data.HashSet            as HashSet
+import Data.HashSet (HashSet)
 import           Data.IntMap.Strict      (IntMap)
 import           Data.Maybe              (catMaybes, fromMaybe, isJust,
                                           mapMaybe, maybeToList)
@@ -2100,9 +2102,11 @@ instance FromJSON BinfoSymbol where
 
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address BinfoXPubPath
+          -> HashSet Address
+          -> Word64
           -> Transaction
           -> BinfoTx
-toBinfoTx tm am t@Transaction{..} =
+toBinfoTx tm am as bal t@Transaction{..} =
   let getBinfoTxHash = txHash (transactionData t)
       getBinfoTxVer = transactionVersion
       getBinfoTxVinSz = fromIntegral $ length transactionInputs
@@ -2141,11 +2145,40 @@ toBinfoTx tm am t@Transaction{..} =
                   S.putByteString bs
            in zipWith f [0..] transactionInputs
       getBinfoTxOutputs =
-          let f = undefined
-           in map f transactionOutputs
+          let f = toBinfoTxOutput tm am t
+           in zipWith f [0..] transactionOutputs
       getBinfoTxResult = undefined
       getBinfoTxBalance = undefined
    in BinfoTx{..}
+
+toBinfoTxOutput :: HashMap TxHash Transaction
+                -> HashMap Address BinfoXPubPath
+                -> Transaction
+                -> Word32
+                -> StoreOutput
+                -> BinfoTxOutput
+toBinfoTxOutput tm am t n StoreOutput{..} =
+    let getBinfoTxOutputType = 0
+        getBinfoTxOutputSpent = isJust outputSpender
+        getBinfoTxOutputValue = outputAmount
+        getBinfoTxOutputIndex = n
+        getBinfoTxOutputTxIndex = binfoTransactionIndex t
+        getBinfoTxOutputScript = outputScript
+        getBinfoTxOutputSpenders = maybeToList $ toBinfoSpender tm <$> outputSpender
+        getBinfoTxOutputAddress = outputAddress
+        getBinfoTxOutputXPub = outputAddress >>= (`H.lookup` am)
+     in BinfoTxOutput{..}
+
+toBinfoSpender :: HashMap TxHash Transaction
+               -> Spender
+               -> BinfoSpender
+toBinfoSpender tm Spender{..} =
+    let getBinfoSpenderTxIndex =
+            case H.lookup spenderHash tm of
+                Nothing -> error "no spender tx hash in map"
+                Just t -> binfoTransactionIndex t
+        getBinfoSpenderIndex = spenderIndex
+     in BinfoSpender{..}
 
 inputToBinfoTxOutput :: HashMap TxHash Transaction
                      -> HashMap Address BinfoXPubPath
@@ -2168,4 +2201,4 @@ inputToBinfoTxOutput tm am t n StoreInput{..} =
             [BinfoSpender (binfoTransactionIndex t) n]
         getBinfoTxOutputAddress = inputAddress
         getBinfoTxOutputXPub = inputAddress >>= (`H.lookup` am)
-    in Just BinfoTxOutput{..}
+     in Just BinfoTxOutput{..}
