@@ -2147,9 +2147,31 @@ toBinfoTx tm am as bal t@Transaction{..} =
       getBinfoTxOutputs =
           let f = toBinfoTxOutput tm am t
            in zipWith f [0..] transactionOutputs
-      getBinfoTxResult = undefined
-      getBinfoTxBalance = undefined
+      getBinfoTxResult = getTxResult as t
+      getBinfoTxBalance = bal
    in BinfoTx{..}
+
+getTxResult :: HashSet Address -> Transaction -> Int64
+getTxResult as Transaction{..} =
+    let input_sum = sum $ map input_value transactionInputs
+        input_value StoreCoinbase{} = 0
+        input_value StoreInput{..} =
+            case inputAddress of
+                Nothing -> 0
+                Just a ->
+                    if test_addr a
+                    then negate $ fromIntegral inputAmount
+                    else 0
+        test_addr a = HashSet.member a as
+        output_sum = sum $ map out_value transactionOutputs
+        out_value StoreOutput{..} =
+            case outputAddress of
+                Nothing -> 0
+                Just a ->
+                    if test_addr a
+                    then fromIntegral outputAmount
+                    else 0
+     in input_sum + output_sum
 
 toBinfoTxOutput :: HashMap TxHash Transaction
                 -> HashMap Address BinfoXPubPath
