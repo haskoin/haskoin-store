@@ -97,6 +97,8 @@ module Haskoin.Store.Data
     , binfoAddressParseJSON
     , BinfoWallet(..)
     , BinfoTx(..)
+    , relevantTxs
+    , toBinfoTx
     , binfoTxToJSON
     , binfoTxToEncoding
     , binfoTxParseJSON
@@ -143,13 +145,13 @@ import           Data.Foldable           (toList)
 import           Data.Hashable           (Hashable (..))
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as H
+import           Data.HashSet            (HashSet)
+import qualified Data.HashSet            as HashSet
 import           Data.Int                (Int64)
 import qualified Data.IntMap             as I
-import qualified Data.HashSet            as HashSet
-import Data.HashSet (HashSet)
 import           Data.IntMap.Strict      (IntMap)
 import           Data.Maybe              (catMaybes, fromMaybe, isJust,
-                                          mapMaybe, maybeToList)
+                                          isNothing, mapMaybe, maybeToList)
 import           Data.Serialize          (Get, Put, Serialize (..), getWord32be,
                                           getWord64be, getWord8, putWord32be,
                                           putWord64be, putWord8)
@@ -2100,13 +2102,34 @@ instance FromJSON BinfoSymbol where
         getBinfoSymbolLocal <- o .: "local"
         return BinfoSymbol {..}
 
+relevantTxs :: HashMap Address (Maybe BinfoXPubPath)
+            -> Bool
+            -> Transaction
+            -> HashSet TxHash
+relevantTxs book prune t@Transaction{..} =
+    let p a = prune && getTxResult book t > 0
+                    && not (H.member a book)
+        f StoreOutput{..} =
+            case outputSpender of
+                Nothing -> Nothing
+                Just Spender{..} ->
+                    case outputAddress of
+                        Nothing -> Nothing
+                        Just a | p a -> Nothing
+                               | otherwise -> Just spenderHash
+        outs = mapMaybe f transactionOutputs
+        g StoreCoinbase{}                       = Nothing
+        g StoreInput{inputPoint = OutPoint{..}} = Just outPointHash
+        ins = mapMaybe g transactionInputs
+      in HashSet.fromList $ ins <> outs
+
 toBinfoTx :: HashMap TxHash Transaction
-          -> HashMap Address BinfoXPubPath
-          -> HashSet Address
+          -> HashMap Address (Maybe BinfoXPubPath)
+          -> Bool
           -> Word64
           -> Transaction
           -> BinfoTx
-toBinfoTx tm am as bal t@Transaction{..} =
+toBinfoTx tm book prune bal t@Transaction{..} =
   let getBinfoTxHash = txHash (transactionData t)
       getBinfoTxVer = transactionVersion
       getBinfoTxVinSz = fromIntegral $ length transactionInputs
@@ -2135,7 +2158,7 @@ toBinfoTx tm am as bal t@Transaction{..} =
                               [] -> B.empty
                               ws -> S.runPut $ put_witness ws
                       getBinfoTxInputScript = inputSigScript i
-                      getBinfoTxInputPrevOut = inputToBinfoTxOutput tm am t n i
+                      getBinfoTxInputPrevOut = inputToBinfoTxOutput tm book t n i
                   in BinfoTxInput{..}
               put_witness ws = do
                   putVarInt $ length ws
@@ -2145,14 +2168,14 @@ toBinfoTx tm am as bal t@Transaction{..} =
                   S.putByteString bs
            in zipWith f [0..] transactionInputs
       getBinfoTxOutputs =
-          let f = toBinfoTxOutput tm am t
-           in zipWith f [0..] transactionOutputs
-      getBinfoTxResult = getTxResult as t
+          let f = toBinfoTxOutput tm book (prune && getBinfoTxResult > 0) t
+           in catMaybes $ zipWith f [0..] transactionOutputs
+      getBinfoTxResult = getTxResult book t
       getBinfoTxBalance = bal
    in BinfoTx{..}
 
-getTxResult :: HashSet Address -> Transaction -> Int64
-getTxResult as Transaction{..} =
+getTxResult :: HashMap Address (Maybe BinfoXPubPath) -> Transaction -> Int64
+getTxResult book Transaction{..} =
     let input_sum = sum $ map input_value transactionInputs
         input_value StoreCoinbase{} = 0
         input_value StoreInput{..} =
@@ -2162,7 +2185,7 @@ getTxResult as Transaction{..} =
                     if test_addr a
                     then negate $ fromIntegral inputAmount
                     else 0
-        test_addr a = HashSet.member a as
+        test_addr a = H.member a book
         output_sum = sum $ map out_value transactionOutputs
         out_value StoreOutput{..} =
             case outputAddress of
@@ -2174,12 +2197,13 @@ getTxResult as Transaction{..} =
      in input_sum + output_sum
 
 toBinfoTxOutput :: HashMap TxHash Transaction
-                -> HashMap Address BinfoXPubPath
+                -> HashMap Address (Maybe BinfoXPubPath)
+                -> Bool
                 -> Transaction
                 -> Word32
                 -> StoreOutput
-                -> BinfoTxOutput
-toBinfoTxOutput tm am t n StoreOutput{..} =
+                -> Maybe BinfoTxOutput
+toBinfoTxOutput tm book prune t n StoreOutput{..} =
     let getBinfoTxOutputType = 0
         getBinfoTxOutputSpent = isJust outputSpender
         getBinfoTxOutputValue = outputAmount
@@ -2188,28 +2212,28 @@ toBinfoTxOutput tm am t n StoreOutput{..} =
         getBinfoTxOutputScript = outputScript
         getBinfoTxOutputSpenders = maybeToList $ toBinfoSpender tm <$> outputSpender
         getBinfoTxOutputAddress = outputAddress
-        getBinfoTxOutputXPub = outputAddress >>= (`H.lookup` am)
-     in BinfoTxOutput{..}
+        getBinfoTxOutputXPub = outputAddress >>= join . (`H.lookup` book)
+     in if prune && isNothing (outputAddress >>= (`H.lookup` book))
+        then Nothing
+        else Just BinfoTxOutput{..}
 
-toBinfoSpender :: HashMap TxHash Transaction
-               -> Spender
-               -> BinfoSpender
+toBinfoSpender :: HashMap TxHash Transaction -> Spender -> BinfoSpender
 toBinfoSpender tm Spender{..} =
     let getBinfoSpenderTxIndex =
             case H.lookup spenderHash tm of
                 Nothing -> error "no spender tx hash in map"
-                Just t -> binfoTransactionIndex t
+                Just t  -> binfoTransactionIndex t
         getBinfoSpenderIndex = spenderIndex
      in BinfoSpender{..}
 
 inputToBinfoTxOutput :: HashMap TxHash Transaction
-                     -> HashMap Address BinfoXPubPath
+                     -> HashMap Address (Maybe BinfoXPubPath)
                      -> Transaction
                      -> Word32
                      -> StoreInput
                      -> Maybe BinfoTxOutput
-inputToBinfoTxOutput tm am t n StoreCoinbase{} = Nothing
-inputToBinfoTxOutput tm am t n StoreInput{..} =
+inputToBinfoTxOutput _ _ _ _ StoreCoinbase{} = Nothing
+inputToBinfoTxOutput tm book t n StoreInput{..} =
     let OutPoint out_hash getBinfoTxOutputIndex = inputPoint
         getBinfoTxOutputType = 0
         getBinfoTxOutputSpent = True
@@ -2222,5 +2246,5 @@ inputToBinfoTxOutput tm am t n StoreInput{..} =
         getBinfoTxOutputSpenders =
             [BinfoSpender (binfoTransactionIndex t) n]
         getBinfoTxOutputAddress = inputAddress
-        getBinfoTxOutputXPub = inputAddress >>= (`H.lookup` am)
+        getBinfoTxOutputXPub = inputAddress >>= join . (`H.lookup` book)
      in Just BinfoTxOutput{..}

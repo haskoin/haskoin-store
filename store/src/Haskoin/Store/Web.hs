@@ -6,6 +6,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TupleSections       #-}
 module Haskoin.Store.Web
     ( -- * Web
       WebConfig (..)
@@ -18,6 +19,7 @@ module Haskoin.Store.Web
 import           Conduit                       (await, runConduit, takeC, yield,
                                                 (.|))
 import           Control.Applicative           ((<|>))
+import           Control.Arrow                 (second)
 import           Control.Monad                 (forever, unless, when, (<=<))
 import           Control.Monad.Logger          (MonadLoggerIO, logErrorS,
                                                 logInfoS)
@@ -36,12 +38,14 @@ import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
 import           Data.Function                 ((&))
+import qualified Data.HashMap.Strict           as HashMap
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (nub)
 import           Data.Maybe                    (catMaybes, fromMaybe,
                                                 listToMaybe, mapMaybe)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
+import qualified Data.Set                      as Set
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
@@ -54,6 +58,7 @@ import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
 import qualified Haskoin.Block                 as H
 import           Haskoin.Constants
+import           Haskoin.Keys
 import           Haskoin.Network
 import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
@@ -396,7 +401,8 @@ handlePaths = do
     -- Blockchain.info
     pathPretty
         (GetBinfoMultiAddr <$> paramDef -- active
-                           <*> paramDef -- activP2SH
+                           <*> paramDef -- activeP2SH
+                           <*> paramDef -- activeBech32
                            <*> paramDef -- onlyShow
                            <*> paramDef -- simple
                            <*> paramDef -- no_compact
@@ -688,7 +694,7 @@ cbAfterHeight height txid =
             ts = HashSet.toList (HashSet.difference ns is)
         in case ts of
                [] -> return (Just False)
-               _ -> inputs i is' ns' ts
+               _  -> inputs i is' ns' ts
     inputs i is ns (t:ts) = getTransaction t >>= \case
         Nothing -> return Nothing
         Just tx | height_check tx ->
@@ -888,8 +894,167 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
 
 -- GET Blockchain.info API --
 
-scottyMultiAddr :: MonadLoggerIO m => GetBinfoMultiAddr -> WebT m BinfoMultiAddr
-scottyMultiAddr = undefined
+scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
+                => GetBinfoMultiAddr
+                -> WebT m BinfoMultiAddr
+scottyMultiAddr GetBinfoMultiAddr{..} = do
+    xpub_xbals_map <-
+        HashMap.fromList .
+        zip (map xPubSpecKey active_xspec_ls) <$>
+        mapM xPubBals active_xspec_ls
+    addr_bal_map <-
+        HashMap.fromList .
+        map (\b -> (balanceAddress b, b)) <$>
+        getBalances active_addr_ls
+    let xpub_addr_bal_map =
+            HashMap.fromList .
+            map (\b -> (balanceAddress (xPubBal b), xPubBal b)) .
+            concat $
+            HashMap.elems xpub_xbals_map
+        all_bal_map = addr_bal_map <> xpub_addr_bal_map
+        bal = sum .
+              map (\b -> balanceAmount b + balanceZero b) $
+              HashMap.elems all_bal_map
+        book =
+            HashMap.fromList .
+            (map (, Nothing) active_addr_ls <>) .
+            map (second Just) .
+            concatMap (uncurry map_xbals) $
+            HashMap.toList xpub_xbals_map
+        show_xpub_addrs =
+            HashSet.fromList .
+            map (balanceAddress . xPubBal) .
+            concat .
+            mapMaybe (`HashMap.lookup` xpub_xbals_map) $
+            HashSet.toList show_xpubs
+        all_show_addrs = show_xpub_addrs `HashSet.union` show_addrs
+    show_xpub_txs <-
+        Set.fromList . concat <$> mapM (`xPubTxs` def) show_xspec_ls
+    show_addr_txs <-
+        Set.fromList <$> getAddressesTxs show_addr_ls def
+    let all_txids = map txRefHash . Set.toDescList $
+                    show_xpub_txs <> show_addr_txs
+    all_txs <- catMaybes <$> mapM getTransaction all_txids
+    let tmids = HashSet.toList . foldl HashSet.union HashSet.empty $
+                map (relevantTxs book prune) all_txs
+    tm <- HashMap.fromList .
+          map (\t -> (txHash (transactionData t), t)) .
+          catMaybes <$>
+          mapM getTransaction tmids
+    let btxs = binfo_txs tm book prune bal all_txs
+        tx_count = 0 -- TODO
+        filtered_count = 0 -- TODO
+        total_received = 0 -- TODO
+        total_sent = 0 -- TODO
+    return
+        BinfoMultiAddr
+        { getBinfoMultiAddrAddresses = []
+        , getBinfoMultiAddrWallet =
+              BinfoWallet
+              { getBinfoWalletBalance = bal
+              , getBinfoWalletTxCount = tx_count
+              , getBinfoWalletFilteredCount = filtered_count
+              , getBinfoWalletTotalReceived = total_received
+              , getBinfoWalletTotalSent = total_sent
+              }
+        , getBinfoMultiAddrTxs = btxs
+        , getBinfoMultiAddrInfo =
+              BinfoInfo
+              { getBinfoConnected = 1 -- TODO
+              , getBinfoConversion = 1.0 -- TODO
+              , getBinfoLocal =
+                    BinfoSymbol -- TODO
+                    { getBinfoSymbolCode = "XXX"
+                    , getBinfoSymbolString = "$"
+                    , getBinfoSymbolName = "Placeholder"
+                    , getBinfoSymbolConversion = 1.0
+                    , getBinfoSymbolAfter = False
+                    , getBinfoSymbolLocal = True
+                    }
+              , getBinfoBTC =
+                    BinfoSymbol
+                    { getBinfoSymbolCode = "BTC"
+                    , getBinfoSymbolString = "BTC"
+                    , getBinfoSymbolName = "Bitcoin"
+                    , getBinfoSymbolConversion = 1.0
+                    , getBinfoSymbolAfter = False
+                    , getBinfoSymbolLocal = False
+                    }
+              , getBinfoLatestBlock =
+                    BinfoBlockInfo
+                    { getBinfoBlockInfoHash =
+                            "0000000000000000000000000000000000000000000000000000000000000000"
+                    , getBinfoBlockInfoHeight = 0 -- TODO
+                    , getBinfoBlockInfoTime = 0 -- TODO
+                    , getBinfoBlockInfoIndex = 0 -- TODO
+                    }
+              }
+        , getBinfoRecommendFee = True
+        }
+  where
+    BinfoActiveParam{..} = getBinfoMultiAddrActive
+    BinfoActiveP2SHparam{..} = getBinfoMultiAddrActiveP2SH
+    BinfoActiveBech32param{..} = getBinfoMultiAddrActiveBech32
+    BinfoOnlyShowParam{..} = getBinfoMultiAddrOnlyShow
+    BinfoSimpleParam{..} = getBinfoMultiAddrSimple
+    BinfoNoCompactParam{..} = getBinfoMultiAddrNoCompact
+    BinfoOffsetParam{..} = getBinfoMultiAddrOffsetParam
+    prune = not getBinfoNoCompactParam
+    count = case getBinfoMultiAddrCountParam of
+                Nothing -> 50
+                Just (BinfoCountParam n) | n > 10000 -> 10000
+                                         | otherwise -> fromIntegral n
+    get_addr (BinfoAddressParam a) = Just a
+    get_addr (BinfoXPubKeyParam _) = Nothing
+    get_xpub (BinfoXPubKeyParam x) = Just x
+    get_xpub (BinfoAddressParam _) = Nothing
+    binfo_txs _ _ _ _ [] = []
+    binfo_txs tm book prune bal (t:ts) =
+        let b = toBinfoTx tm book prune bal t
+            nbal = fromIntegral $ fromIntegral bal - getBinfoTxResult b
+         in binfo_txs tm book prune nbal ts
+    active_addrs =
+        HashSet.fromList (mapMaybe get_addr getBinfoActiveParam)
+    active_addr_ls = HashSet.toList active_addrs
+    active_bech32 =
+        HashSet.fromList (mapMaybe get_xpub getBinfoActiveBech32param)
+    active_p2sh =
+        HashSet.fromList (mapMaybe get_xpub getBinfoActiveP2SHparam)
+        `HashSet.difference`
+        active_bech32
+    active_normal =
+        HashSet.fromList (mapMaybe get_xpub getBinfoActiveParam)
+        `HashSet.difference`
+        (active_p2sh `HashSet.union` active_bech32)
+    active_xspecs =
+        HashSet.map (`XPubSpec` DeriveNormal) active_normal <>
+        HashSet.map (`XPubSpec` DeriveP2SH) active_p2sh <>
+        HashSet.map (`XPubSpec` DeriveP2WPKH) active_bech32
+    active_xspec_ls = HashSet.toList active_xspecs
+    active_xpubs = HashSet.map xPubSpecKey active_xspecs
+    show_addrs
+        | null getBinfoOnlyShowParam = active_addrs
+        | otherwise =
+              HashSet.fromList (mapMaybe get_addr getBinfoOnlyShowParam)
+              `HashSet.intersection`
+              active_addrs
+    show_addr_ls = HashSet.toList show_addrs
+    show_xpubs
+        | null getBinfoOnlyShowParam = active_xpubs
+        | otherwise =
+              HashSet.fromList (mapMaybe get_xpub getBinfoOnlyShowParam)
+              `HashSet.intersection`
+              active_xpubs
+    show_xspecs =
+        HashSet.filter
+        ((`HashSet.member` show_xpubs) . xPubSpecKey)
+        active_xspecs
+    show_xspec_ls = HashSet.toList show_xspecs
+    map_xbals key = map $ \XPubBal{..} ->
+        ( balanceAddress xPubBal
+        , BinfoXPubPath key .
+          fromMaybe (error "lions and tigers and bears") .
+          toSoft $ listToPath xPubBalPath )
 
 -- GET Network Information --
 

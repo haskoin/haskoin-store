@@ -611,6 +611,19 @@ instance Param BinfoActiveP2SHparam where
     encodeParam net (BinfoActiveP2SHparam xs) = binfoEncodeAddressParam net xs
     parseParam net xs = BinfoActiveP2SHparam <$> binfoParseAddressParam net xs
 
+-- activeBech32
+newtype BinfoActiveBech32param
+    = BinfoActiveBech32param { getBinfoActiveBech32param :: [BinfoAddressParam] }
+    deriving (Eq, Show)
+
+instance Default BinfoActiveBech32param where
+    def = BinfoActiveBech32param []
+
+instance Param BinfoActiveBech32param where
+    proxyLabel = const "activeBech32"
+    encodeParam net (BinfoActiveBech32param xs) = binfoEncodeAddressParam net xs
+    parseParam net xs = BinfoActiveBech32param <$> binfoParseAddressParam net xs
+
 -- onlyShow
 newtype BinfoOnlyShowParam
     = BinfoOnlyShowParam { getBinfoOnlyShowParam :: [BinfoAddressParam] }
@@ -700,21 +713,22 @@ instance Param BinfoOffsetParam where
 
 data GetBinfoMultiAddr
     = GetBinfoMultiAddr
-        { getBinfoMultiAddrActive      :: !BinfoActiveParam
-        , getBinfoMultiAddrActiveP2SH  :: !BinfoActiveP2SHparam
-        , getBinfoMultiAddrOnlyShow    :: !BinfoOnlyShowParam
-        , getBinfoMultiAddrSimple      :: !BinfoSimpleParam
-        , getBinfoMultiAddrNoCompact   :: !BinfoNoCompactParam
-        , getBinfoMultiAddrCountParam  :: !(Maybe BinfoCountParam)
-        , getBinfoMultiAddrOffsetParam :: !BinfoOffsetParam
+        { getBinfoMultiAddrActive       :: !BinfoActiveParam
+        , getBinfoMultiAddrActiveP2SH   :: !BinfoActiveP2SHparam
+        , getBinfoMultiAddrActiveBech32 :: !BinfoActiveBech32param
+        , getBinfoMultiAddrOnlyShow     :: !BinfoOnlyShowParam
+        , getBinfoMultiAddrSimple       :: !BinfoSimpleParam
+        , getBinfoMultiAddrNoCompact    :: !BinfoNoCompactParam
+        , getBinfoMultiAddrCountParam   :: !(Maybe BinfoCountParam)
+        , getBinfoMultiAddrOffsetParam  :: !BinfoOffsetParam
         }
 
 instance ApiResource GetBinfoMultiAddr Store.BinfoMultiAddr where
-    resourcePath _ _ = "/compat/multiaddr"
-    queryParams GetBinfoMultiAddr {..} =
-        (,) []
-        $  [ParamBox getBinfoMultiAddrActive]
+    resourcePath _ _ = "/blockchain/multiaddr"
+    queryParams GetBinfoMultiAddr {..} = (,) []
+        $  noDefBox getBinfoMultiAddrActive
         <> noDefBox getBinfoMultiAddrActiveP2SH
+        <> noDefBox getBinfoMultiAddrActiveBech32
         <> noDefBox getBinfoMultiAddrOnlyShow
         <> noDefBox getBinfoMultiAddrSimple
         <> noDefBox getBinfoMultiAddrNoCompact
