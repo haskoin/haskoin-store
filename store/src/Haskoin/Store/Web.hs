@@ -898,50 +898,22 @@ scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
                 => GetBinfoMultiAddr
                 -> WebT m BinfoMultiAddr
 scottyMultiAddr GetBinfoMultiAddr{..} = do
-    xpub_xbals_map <-
-        HashMap.fromList .
-        zip (map xPubSpecKey active_xspec_ls) <$>
-        mapM xPubBals active_xspec_ls
-    addr_bal_map <-
-        HashMap.fromList .
-        map (\b -> (balanceAddress b, b)) <$>
-        getBalances active_addr_ls
-    let xpub_addr_bal_map =
-            HashMap.fromList .
-            map (\b -> (balanceAddress (xPubBal b), xPubBal b)) .
-            concat $
-            HashMap.elems xpub_xbals_map
-        all_bal_map = addr_bal_map <> xpub_addr_bal_map
-        bal = sum .
-              map (\b -> balanceAmount b + balanceZero b) $
-              HashMap.elems all_bal_map
-        book =
-            HashMap.fromList .
-            (map (, Nothing) active_addr_ls <>) .
-            map (second Just) .
-            concatMap (uncurry map_xbals) $
-            HashMap.toList xpub_xbals_map
-        show_xpub_addrs =
-            HashSet.fromList .
-            map (balanceAddress . xPubBal) .
-            concat .
-            mapMaybe (`HashMap.lookup` xpub_xbals_map) $
-            HashSet.toList show_xpubs
-        all_show_addrs = show_xpub_addrs `HashSet.union` show_addrs
-    show_xpub_txs <-
-        Set.fromList . concat <$> mapM (`xPubTxs` def) show_xspec_ls
-    show_addr_txs <-
-        Set.fromList <$> getAddressesTxs show_addr_ls def
-    let all_txids = map txRefHash . Set.toDescList $
-                    show_xpub_txs <> show_addr_txs
-    all_txs <- catMaybes <$> mapM getTransaction all_txids
-    let tmids = HashSet.toList . foldl HashSet.union HashSet.empty $
-                map (relevantTxs book prune) all_txs
-    tm <- HashMap.fromList .
-          map (\t -> (txHash (transactionData t), t)) .
-          catMaybes <$>
-          mapM getTransaction tmids
-    let btxs = binfo_txs tm book prune bal all_txs
+    xpub_xbals_map <- get_xpub_xbals_map
+    addr_bal_map <- get_addr_bal_map
+    show_xpub_txs <- get_show_xpub_txs
+    show_addr_txs <- get_show_addr_txs
+    let xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
+        bal_map = addr_bal_map <> xpub_addr_bal_map
+        bal = compute_balance bal_map
+        book = compute_address_book xpub_xbals_map
+        show_xpub_addrs = compute_show_xpub_addrs xpub_xbals_map
+        all_show_addrs = show_xpub_addrs <> show_addrs
+        show_txrefs = show_xpub_txs <> show_addr_txs
+        show_txids = map txRefHash $ Set.toDescList show_txrefs
+    show_txs <- catMaybes <$> mapM getTransaction show_txids
+    let extra_txids = compute_extra_txids book show_txs
+    extra_txs <- get_extra_txs extra_txids
+    let btxs = binfo_txs extra_txs book prune bal show_txs
         tx_count = 0 -- TODO
         filtered_count = 0 -- TODO
         total_received = 0 -- TODO
@@ -972,7 +944,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
                     , getBinfoSymbolLocal = True
                     }
               , getBinfoBTC =
-                    BinfoSymbol
+                    BinfoSymbol -- TODO
                     { getBinfoSymbolCode = "BTC"
                     , getBinfoSymbolString = "BTC"
                     , getBinfoSymbolName = "Bitcoin"
@@ -981,12 +953,12 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
                     , getBinfoSymbolLocal = False
                     }
               , getBinfoLatestBlock =
-                    BinfoBlockInfo
+                    BinfoBlockInfo -- TODO
                     { getBinfoBlockInfoHash =
                             "0000000000000000000000000000000000000000000000000000000000000000"
-                    , getBinfoBlockInfoHeight = 0 -- TODO
-                    , getBinfoBlockInfoTime = 0 -- TODO
-                    , getBinfoBlockInfoIndex = 0 -- TODO
+                    , getBinfoBlockInfoHeight = 0
+                    , getBinfoBlockInfoTime = 0
+                    , getBinfoBlockInfoIndex = 0
                     }
               }
         , getBinfoRecommendFee = True
@@ -1012,7 +984,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     binfo_txs tm book prune bal (t:ts) =
         let b = toBinfoTx tm book prune bal t
             nbal = fromIntegral $ fromIntegral bal - getBinfoTxResult b
-         in binfo_txs tm book prune nbal ts
+         in b : binfo_txs tm book prune nbal ts
     active_addrs =
         HashSet.fromList (mapMaybe get_addr getBinfoActiveParam)
     active_addr_ls = HashSet.toList active_addrs
@@ -1055,6 +1027,47 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         , BinfoXPubPath key .
           fromMaybe (error "lions and tigers and bears") .
           toSoft $ listToPath xPubBalPath )
+    get_xpub_xbals_map =
+        HashMap.fromList .
+        zip (map xPubSpecKey active_xspec_ls) <$>
+        mapM xPubBals active_xspec_ls
+    get_addr_bal_map =
+        HashMap.fromList .
+        map (\b -> (balanceAddress b, b)) <$>
+        getBalances active_addr_ls
+    get_show_xpub_txs =
+        Set.fromList . concat <$> mapM (`xPubTxs` def) show_xspec_ls
+    get_show_addr_txs =
+        Set.fromList <$> getAddressesTxs show_addr_ls def
+    get_extra_txs extra_txids =
+        HashMap.fromList .
+        map (\t -> (txHash (transactionData t), t)) .
+        catMaybes <$>
+        mapM getTransaction extra_txids
+    compute_extra_txids book =
+        HashSet.toList . foldl HashSet.union HashSet.empty .
+        map (relevantTxs book prune)
+    compute_xpub_addr_bal_map =
+        HashMap.fromList .
+        map (\b -> (balanceAddress (xPubBal b), xPubBal b)) .
+        concat .
+        HashMap.elems
+    compute_balance =
+        sum .
+        map (\b -> balanceAmount b + balanceZero b) .
+        HashMap.elems
+    compute_address_book =
+        HashMap.fromList .
+        (map (, Nothing) active_addr_ls <>) .
+        map (second Just) .
+        concatMap (uncurry map_xbals) .
+        HashMap.toList
+    compute_show_xpub_addrs xpub_xbals_map =
+        HashSet.fromList .
+        map (balanceAddress . xPubBal) .
+        concat .
+        mapMaybe (`HashMap.lookup` xpub_xbals_map) $
+        HashSet.toList show_xpubs
 
 -- GET Network Information --
 
