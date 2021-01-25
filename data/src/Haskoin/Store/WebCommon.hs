@@ -725,12 +725,12 @@ data GetBinfoMultiAddr
 
 instance ApiResource GetBinfoMultiAddr Store.BinfoMultiAddr where
     resourcePath _ _ = "/blockchain/multiaddr"
-    queryParams GetBinfoMultiAddr {..} = (,) []
-        $  noDefBox getBinfoMultiAddrActive
-        <> noDefBox getBinfoMultiAddrActiveP2SH
-        <> noDefBox getBinfoMultiAddrActiveBech32
-        <> noDefBox getBinfoMultiAddrOnlyShow
-        <> noDefBox getBinfoMultiAddrSimple
-        <> noDefBox getBinfoMultiAddrNoCompact
-        <> noMaybeBox getBinfoMultiAddrCountParam
-        <> noDefBox getBinfoMultiAddrOffsetParam
+    queryParams GetBinfoMultiAddr {..} =
+        ([], noDefBox getBinfoMultiAddrActive <>
+             noDefBox getBinfoMultiAddrActiveP2SH <>
+             noDefBox getBinfoMultiAddrActiveBech32 <>
+             noDefBox getBinfoMultiAddrOnlyShow <>
+             noDefBox getBinfoMultiAddrSimple <>
+             noDefBox getBinfoMultiAddrNoCompact <>
+             noMaybeBox getBinfoMultiAddrCountParam <>
+             noDefBox getBinfoMultiAddrOffsetParam)
