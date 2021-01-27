@@ -141,7 +141,7 @@ import           Data.ByteString.Builder (char7, lazyByteStringHex)
 import           Data.ByteString.Short   (ShortByteString)
 import qualified Data.ByteString.Short   as BSS
 import           Data.Default            (Default (..))
-import           Data.Either             (fromRight)
+import           Data.Either             (fromRight, lefts, rights)
 import           Data.Foldable           (toList)
 import           Data.Hashable           (Hashable (..))
 import           Data.HashMap.Strict     (HashMap)
@@ -2126,49 +2126,60 @@ relevantTxs addrs prune t@Transaction{..} =
 toBinfoAddrs :: HashMap Address (Maybe BinfoXPubPath)
              -> [Transaction]
              -> [BinfoAddress]
-toBinfoAddrs addr_book txs =
-    go init_acc txs
+toBinfoAddrs addr_book =
+    go HashMap.empty HashMap.empty
   where
-    init_acc = (HashMap.empty, HashMap.empty)
-    go (xpubs, addrs) [] =
-        map fst (HashMap.elems xpubs) <> map fst (HashMap.elems addrs)
-    go acc (t:txs) =
+    go xpubs addrs [] = HashMap.elems xpubs <> HashMap.elems addrs
+    go xpubs addrs (t:ts) =
         let ins = transactionInputs t
             outs = transactionOutputs t
             txid = txHash (transactionData t)
-            new = foldl (output txid) (foldl (input txid) acc ins) outs
-        in go new txs
-    input txid acc StoreCoinbase{} = acc
-    input txid acc i@StoreInput{inputAddress = Nothing} = acc
-    input txid (xpubs, addrs) i@StoreInput{inputAddress = Just a} =
-        let v = negate (fromIntegral (inputAmount i))
-        in case a `HashMap.lookup` addr_book of
-               Just (Just x) ->
-                   (insert_xpub_value txid v x xpubs, addrs)
-               Just Nothing ->
-                   (xpubs, insert_addr_value txid v a addrs)
-               Nothing -> (xpubs, addrs)
-    output txid acc o@StoreOutput{outputAddress = Nothing} = acc
-    output txid (xpubs, addrs) o@StoreOutput{outputAddress = Just a} =
-        let v = fromIntegral (outputAmount o)
-        in case a `HashMap.lookup` addr_book of
-               Just (Just x) ->
-                   (insert_xpub_value txid v x xpubs, addrs)
-               Just Nothing ->
-                   (xpubs, insert_addr_value txid v a addrs)
-               Nothing -> (xpubs, addrs)
-    combine (ba1, txs1) (ba2, txs2) =
-        let txs = txs1 <> txs2
-            tx_count = fromIntegral $ HashSet.size txs
-            ba = combine_ba ba1 ba2
-            new_ba = ba{ getBinfoAddrTxCount = tx_count }
-        in (new_ba, txs)
+            xs = mapMaybe input ins <> mapMaybe output outs
+            ls = lefts xs
+            rs = rights xs
+            f (BinfoXPubPath k _, v) = HashMap.insertWith (+) k v
+            xm = foldr f HashMap.empty ls
+            g (a, v) = HashMap.insertWith (+) a v
+            am = foldr g HashMap.empty rs
+            h (BinfoXPubPath k d) = HashMap.insertWith (++) k [d]
+            is = HashMap.map indices . foldr h HashMap.empty $ map fst ls
+            xim = HashMap.intersectionWith (,) xm is
+            addrs' = HashMap.mapWithKey addr_value am
+            xpubs' = HashMap.mapWithKey xpub_value xim
+            new_addrs = HashMap.unionWith combine_ba addrs addrs'
+            new_xpubs = HashMap.unionWith combine_ba xpubs xpubs'
+        in go new_xpubs new_addrs ts
+    map_it a v Nothing  = Right (a, v)
+    map_it a v (Just x) = Left (x, v)
+    indices ds =
+        let f d =
+                case pathToList d of
+                    [0, n] -> Just (Right n)
+                    [1, n] -> Just (Left n)
+                    _      -> Nothing
+            xs = mapMaybe f ds
+            ax = foldl max 0 $ rights xs
+            cx = foldl max 0 $ lefts xs
+        in (ax, cx)
+    input StoreCoinbase{} = Nothing
+    input StoreInput{inputAddress = Nothing} = Nothing
+    input StoreInput{inputAddress = Just a, inputAmount = v} =
+        case a `HashMap.lookup` addr_book of
+            Just x  -> Just $ map_it a (negate (fromIntegral v)) x
+            Nothing -> Nothing
+    output StoreOutput{outputAddress = Nothing} = Nothing
+    output StoreOutput{outputAddress = Just a, outputAmount = v} =
+        case a `HashMap.lookup` addr_book of
+            Just x  -> Just $ map_it a v x
+            Nothing -> Nothing
     combine_ba ba1 ba2 =
         let new_recv = sum $ map getBinfoAddrReceived [ba1, ba2]
             new_sent = sum $ map getBinfoAddrSent [ba1, ba2]
+            new_count = sum $ map getBinfoAddrTxCount [ba1, ba2]
             new_bal = new_recv - new_sent
             new_ba =
-                ba1 { getBinfoAddrReceived = new_recv
+                ba1 { getBinfoAddrTxCount = new_count
+                    , getBinfoAddrReceived = new_recv
                     , getBinfoAddrSent = new_sent
                     , getBinfoAddrBalance = new_bal
                     }
@@ -2182,39 +2193,26 @@ toBinfoAddrs addr_book txs =
                    in new_ba { getBinfoXPubAccountIndex = new_acc_index
                              , getBinfoXPubChangeIndex = new_change_index
                              }
-    insert_addr_value txid value a =
-        let init_ba =
-                BinfoAddress
-                { getBinfoAddress = a
-                , getBinfoAddrTxCount = 1
-                , getBinfoAddrReceived = fromIntegral $ compute_received value
-                , getBinfoAddrSent = fromIntegral $ compute_sent value
-                , getBinfoAddrBalance = fromIntegral $ compute_received value
-                }
-        in HashMap.insertWith combine a (init_ba, HashSet.singleton txid)
     compute_received v | v <= 0 = 0 | v > 0 = v
     compute_sent v | v <= 0 = negate v | v > 0 = 0
-    insert_xpub_value txid value BinfoXPubPath{..} =
-        let k = getBinfoXPubPathKey
-            acc_index =
-                case pathToList getBinfoXPubPathDeriv of
-                    [0, n] -> n
-                    _      -> 0
-            change_index =
-                case pathToList getBinfoXPubPathDeriv of
-                    [1, n] -> n
-                    _      -> 0
-            init_ba =
-                BinfoXPubKey
-                { getBinfoXPubKey = k
-                , getBinfoXPubAccountIndex = acc_index
-                , getBinfoXPubChangeIndex = change_index
-                , getBinfoAddrTxCount = 1
-                , getBinfoAddrReceived = fromIntegral $ compute_received value
-                , getBinfoAddrSent = fromIntegral $ compute_sent value
-                , getBinfoAddrBalance = fromIntegral $ compute_received value
-                }
-        in HashMap.insertWith combine k (init_ba, HashSet.singleton txid)
+    addr_value a v =
+        BinfoAddress
+        { getBinfoAddress = a
+        , getBinfoAddrTxCount = 1
+        , getBinfoAddrReceived = fromIntegral $ compute_received v
+        , getBinfoAddrSent = fromIntegral $ compute_sent v
+        , getBinfoAddrBalance = fromIntegral $ compute_received v
+        }
+    xpub_value k (v, (ax, cx)) =
+        BinfoXPubKey
+        { getBinfoXPubKey = k
+        , getBinfoXPubAccountIndex = ax
+        , getBinfoXPubChangeIndex = cx
+        , getBinfoAddrTxCount = 1
+        , getBinfoAddrReceived = fromIntegral $ compute_received v
+        , getBinfoAddrSent = fromIntegral $ compute_sent v
+        , getBinfoAddrBalance = fromIntegral $ compute_received v
+        }
 
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address (Maybe BinfoXPubPath)
