@@ -2157,88 +2157,64 @@ toBinfoAddrs addr_book txs =
                Just Nothing ->
                    (xpubs, insert_addr_value txid v a addrs)
                Nothing -> (xpubs, addrs)
+    combine (ba1, txs1) (ba2, txs2) =
+        let txs = txs1 <> txs2
+            tx_count = fromIntegral $ HashSet.size txs
+            ba = combine_ba ba1 ba2
+            new_ba = ba{ getBinfoAddrTxCount = tx_count }
+        in (new_ba, txs)
+    combine_ba ba1 ba2 =
+        let new_recv = sum $ map getBinfoAddrReceived [ba1, ba2]
+            new_sent = sum $ map getBinfoAddrSent [ba1, ba2]
+            new_bal = new_recv - new_sent
+            new_ba =
+                ba1 { getBinfoAddrReceived = new_recv
+                    , getBinfoAddrSent = new_sent
+                    , getBinfoAddrBalance = new_bal
+                    }
+        in case new_ba of
+               BinfoAddress{} -> new_ba
+               BinfoXPubKey{} ->
+                   let new_acc_index =
+                           maximum $ map getBinfoXPubAccountIndex [ba1, ba2]
+                       new_change_index =
+                           maximum $ map getBinfoXPubChangeIndex [ba1, ba2]
+                   in new_ba { getBinfoXPubAccountIndex = new_acc_index
+                             , getBinfoXPubChangeIndex = new_change_index
+                             }
     insert_addr_value txid value a =
         let init_ba =
                 BinfoAddress
                 { getBinfoAddress = a
                 , getBinfoAddrTxCount = 1
-                , getBinfoAddrReceived =
-                  fromIntegral $ if value > 0 then value else 0
-                , getBinfoAddrSent =
-                  fromIntegral $ if value < 0 then value else 0
-                , getBinfoAddrBalance =
-                  fromIntegral $ if value > 0 then value else 0
+                , getBinfoAddrReceived = fromIntegral $ compute_received value
+                , getBinfoAddrSent = fromIntegral $ compute_sent value
+                , getBinfoAddrBalance = fromIntegral $ compute_received value
                 }
-            init_txs = HashSet.singleton txid
-            combine (ba, txs) (ba', txs') =
-                let new_txs = txs <> txs'
-                    tx_count = fromIntegral $ HashSet.size new_txs
-                    new_recv = getBinfoAddrReceived ba +
-                               getBinfoAddrReceived ba'
-                    new_sent = getBinfoAddrSent ba +
-                               getBinfoAddrSent ba'
-                    new_bal = new_recv - new_sent
-                    a = getBinfoAddress ba
-                    new_ba =
-                        BinfoAddress
-                        { getBinfoAddress = a
-                        , getBinfoAddrTxCount = tx_count
-                        , getBinfoAddrReceived = new_recv
-                        , getBinfoAddrSent = new_sent
-                        , getBinfoAddrBalance = new_bal
-                        }
-                in (new_ba, new_txs)
-        in HashMap.insertWith combine a (init_ba, init_txs)
+        in HashMap.insertWith combine a (init_ba, HashSet.singleton txid)
+    compute_received v | v <= 0 = 0 | v > 0 = v
+    compute_sent v | v <= 0 = negate v | v > 0 = 0
     insert_xpub_value txid value BinfoXPubPath{..} =
         let k = getBinfoXPubPathKey
+            acc_index =
+                case pathToList getBinfoXPubPathDeriv of
+                    [0, n] -> n
+                    _      -> 0
+            change_index =
+                case pathToList getBinfoXPubPathDeriv of
+                    [1, n] -> n
+                    _      -> 0
             init_ba =
                 BinfoXPubKey
                 { getBinfoXPubKey = k
-                , getBinfoXPubAccountIndex =
-                  case pathToList getBinfoXPubPathDeriv of
-                      [0, n] -> n
-                      _      -> 0
-                , getBinfoXPubChangeIndex =
-                  case pathToList getBinfoXPubPathDeriv of
-                      [1, n] -> n
-                      _      -> 0
+                , getBinfoXPubAccountIndex = acc_index
+                , getBinfoXPubChangeIndex = change_index
                 , getBinfoAddrTxCount = 1
-                , getBinfoAddrReceived =
-                  fromIntegral $ if value > 0 then value else 0
-                , getBinfoAddrSent =
-                  fromIntegral $ if value < 0 then value else 0
-                , getBinfoAddrBalance =
-                  fromIntegral $ if value > 0 then value else 0
+                , getBinfoAddrReceived = fromIntegral $ compute_received value
+                , getBinfoAddrSent = fromIntegral $ compute_sent value
+                , getBinfoAddrBalance = fromIntegral $ compute_received value
                 }
-            init_txs = HashSet.singleton txid
-            combine (ba, txs) (ba', txs') =
-                let new_txs = txs <> txs'
-                    tx_count = fromIntegral $ HashSet.size new_txs
-                    new_recv = getBinfoAddrReceived ba +
-                               getBinfoAddrReceived ba'
-                    new_sent = getBinfoAddrSent ba +
-                               getBinfoAddrSent ba'
-                    new_bal = new_recv - new_sent
-                    new_acc_index =
-                        max
-                        (getBinfoXPubAccountIndex ba)
-                        (getBinfoXPubAccountIndex ba')
-                    new_change_index =
-                        max
-                        (getBinfoXPubChangeIndex ba)
-                        (getBinfoXPubChangeIndex ba')
-                    new_ba =
-                        BinfoXPubKey
-                        { getBinfoXPubKey = k
-                        , getBinfoXPubAccountIndex = new_acc_index
-                        , getBinfoXPubChangeIndex = new_change_index
-                        , getBinfoAddrTxCount = tx_count
-                        , getBinfoAddrReceived = new_recv
-                        , getBinfoAddrSent = new_sent
-                        , getBinfoAddrBalance = new_bal
-                        }
-                in (new_ba, new_txs)
-        in HashMap.insertWith combine k (init_ba, init_txs)
+        in HashMap.insertWith combine k (init_ba, HashSet.singleton txid)
 
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address (Maybe BinfoXPubPath)
