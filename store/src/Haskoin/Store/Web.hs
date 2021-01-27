@@ -921,21 +921,18 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
                prune
                (fromIntegral bal)
                show_txs
-        tx_count = 0 -- TODO
-        filtered_count = 0 -- TODO
-        total_received = 0 -- TODO
-        total_sent = 0 -- TODO
+        wallet =
+            BinfoWallet
+            { getBinfoWalletBalance = bal
+            , getBinfoWalletTxCount = fromIntegral $ Set.size show_txrefs
+            , getBinfoWalletFilteredCount = fromIntegral $ length show_txs
+            , getBinfoWalletTotalReceived = sum $ map received btxs
+            , getBinfoWalletTotalSent = sum $ map sent btxs
+            }
     return
         BinfoMultiAddr
-        { getBinfoMultiAddrAddresses = []
-        , getBinfoMultiAddrWallet =
-              BinfoWallet
-              { getBinfoWalletBalance = bal
-              , getBinfoWalletTxCount = tx_count
-              , getBinfoWalletFilteredCount = filtered_count
-              , getBinfoWalletTotalReceived = total_received
-              , getBinfoWalletTotalSent = total_sent
-              }
+        { getBinfoMultiAddrAddresses = [] -- TODO
+        , getBinfoMultiAddrWallet = wallet
         , getBinfoMultiAddrTxs = btxs
         , getBinfoMultiAddrInfo =
               BinfoInfo
@@ -1080,6 +1077,12 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         map (balanceAddress . xPubBal) .
         concat $
         mapMaybe (`HashMap.lookup` xpub_xbals_map) show_xpub_ls
+    sent BinfoTx{..}
+      | getBinfoTxResult < 0 = fromIntegral (negate getBinfoTxResult)
+      | otherwise = 0
+    received BinfoTx{..}
+      | getBinfoTxResult > 0 = fromIntegral getBinfoTxResult
+      | otherwise = 0
 
 -- GET Network Information --
 
