@@ -1062,9 +1062,9 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     compute_show_xpub_txs =
         Set.fromList . concat . HashMap.elems
     get_show_addr_txs = do
-        -- lim <- lift $ asks webMaxLimits
-        -- let limits = def{ limit = count lim + off lim }
-        Set.fromList <$> getAddressesTxs show_addr_ls def
+        lim <- lift $ asks webMaxLimits
+        let l = def{ limit = maxLimitCount lim }
+        Set.fromList <$> getAddressesTxs show_addr_ls l
     get_extra_txs extra_txids =
         HashMap.fromList .
         map (\t -> (txHash (transactionData t), t)) .
