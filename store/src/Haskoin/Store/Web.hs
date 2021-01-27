@@ -908,10 +908,8 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         show_xpub_addrs = compute_show_xpub_addrs xpub_xbals_map
         only_show = show_xpub_addrs <> show_addrs
         bal = compute_balance only_show bal_map
-        show_txrefs = show_xpub_txs <> show_addr_txs
-        show_txids = drop off . take count . map txRefHash $
-                     Set.toDescList show_txrefs
-    show_txs <- catMaybes <$> mapM getTransaction show_txids
+        tx_refs = Set.toDescList $ show_xpub_txs <> show_addr_txs
+    show_txs <- catMaybes <$> mapM getTransaction (map txRefHash tx_refs)
     let extra_txids = compute_extra_txids addr_book show_txs
     extra_txs <- get_extra_txs extra_txids
     let btxs = binfo_txs
@@ -921,11 +919,12 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
                prune
                (fromIntegral bal)
                show_txs
+        filtered = take count $ drop off btxs
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
-            , getBinfoWalletTxCount = fromIntegral $ Set.size show_txrefs
-            , getBinfoWalletFilteredCount = fromIntegral $ length show_txs
+            , getBinfoWalletTxCount = fromIntegral $ length btxs
+            , getBinfoWalletFilteredCount = fromIntegral $ length filtered
             , getBinfoWalletTotalReceived = sum $ map received btxs
             , getBinfoWalletTotalSent = sum $ map sent btxs
             }
@@ -933,7 +932,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         BinfoMultiAddr
         { getBinfoMultiAddrAddresses = [] -- TODO
         , getBinfoMultiAddrWallet = wallet
-        , getBinfoMultiAddrTxs = btxs
+        , getBinfoMultiAddrTxs = filtered
         , getBinfoMultiAddrInfo =
               BinfoInfo
               { getBinfoConnected = 1 -- TODO
