@@ -458,25 +458,25 @@ unspentParseJSON net =
 data BlockData =
     BlockData
         { blockDataHeight    :: !BlockHeight
-    -- ^ height of the block in the chain
+        -- ^ height of the block in the chain
         , blockDataMainChain :: !Bool
-    -- ^ is this block in the main chain?
+        -- ^ is this block in the main chain?
         , blockDataWork      :: !BlockWork
-    -- ^ accumulated work in that block
+        -- ^ accumulated work in that block
         , blockDataHeader    :: !BlockHeader
-    -- ^ block header
+        -- ^ block header
         , blockDataSize      :: !Word32
-    -- ^ size of the block including witnesses
+        -- ^ size of the block including witnesses
         , blockDataWeight    :: !Word32
-    -- ^ weight of this block (for segwit networks)
+        -- ^ weight of this block (for segwit networks)
         , blockDataTxs       :: ![TxHash]
-    -- ^ block transactions
+        -- ^ block transactions
         , blockDataOutputs   :: !Word64
-    -- ^ sum of all transaction outputs
+        -- ^ sum of all transaction outputs
         , blockDataFees      :: !Word64
-    -- ^ sum of all transaction fees
+        -- ^ sum of all transaction fees
         , blockDataSubsidy   :: !Word64
-    -- ^ block subsidy
+        -- ^ block subsidy
         }
     deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
@@ -2033,8 +2033,8 @@ data BinfoBlockInfo
     = BinfoBlockInfo
         { getBinfoBlockInfoHash   :: !BlockHash
         , getBinfoBlockInfoHeight :: !BlockHeight
-        , getBinfoBlockInfoTime   :: !Word64
-        , getBinfoBlockInfoIndex  :: !Word64
+        , getBinfoBlockInfoTime   :: !Word32
+        , getBinfoBlockInfoIndex  :: !BlockHeight
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 

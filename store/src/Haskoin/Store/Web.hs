@@ -918,6 +918,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     txs <- catMaybes <$> mapM getTransaction show_txids
     let extra_txids = compute_extra_txids addr_book txs
     extra_txs <- get_extra_txs extra_txids
+    best <- scottyBlockBest (GetBlockBest (NoTx True))
     let btxs = binfo_txs
                extra_txs
                addr_book
@@ -957,12 +958,11 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
             , getBinfoSymbolLocal = True
             }
         block =
-            BinfoBlockInfo -- TODO
-            { getBinfoBlockInfoHash =
-                    "0000000000000000000000000000000000000000000000000000000000000000"
-            , getBinfoBlockInfoHeight = 0
-            , getBinfoBlockInfoTime = 0
-            , getBinfoBlockInfoIndex = 0
+            BinfoBlockInfo
+            { getBinfoBlockInfoHash = H.headerHash (blockDataHeader best)
+            , getBinfoBlockInfoHeight = blockDataHeight best
+            , getBinfoBlockInfoTime = H.blockTimestamp (blockDataHeader best)
+            , getBinfoBlockInfoIndex = blockDataHeight best
             }
         info =
             BinfoInfo
