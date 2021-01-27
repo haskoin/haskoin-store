@@ -929,7 +929,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         addrs = toBinfoAddrs only_addrs only_xpubs show_xpub_txn_map
         recv = sum $ map getBinfoAddrReceived addrs
         sent = sum $ map getBinfoAddrSent addrs
-        txn = fromIntegral $ Set.size show_xpub_txs + Set.size show_addr_txs
+        txn = sum $ map getBinfoAddrTxCount addrs
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
@@ -1063,7 +1063,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         Set.fromList . concat . HashMap.elems
     get_show_addr_txs = do
         lim <- lift $ asks webMaxLimits
-        let l = def{ limit = maxLimitCount lim }
+        let l = def{ limit = count lim + off lim }
         Set.fromList <$> getAddressesTxs show_addr_ls l
     get_extra_txs extra_txids =
         HashMap.fromList .

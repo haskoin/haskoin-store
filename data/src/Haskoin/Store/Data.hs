@@ -1713,8 +1713,8 @@ binfoAddressToEncoding net BinfoXPubKey {..} =
 data BinfoWallet
     = BinfoWallet
         { getBinfoWalletBalance       :: !Word64
-        , getBinfoWalletTxCount       :: !Word32
-        , getBinfoWalletFilteredCount :: !Word32
+        , getBinfoWalletTxCount       :: !Word64
+        , getBinfoWalletFilteredCount :: !Word64
         , getBinfoWalletTotalReceived :: !Word64
         , getBinfoWalletTotalSent     :: !Word64
         }
