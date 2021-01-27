@@ -904,10 +904,10 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     show_addr_txs <- get_show_addr_txs
     let xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
         bal_map = addr_bal_map <> xpub_addr_bal_map
-        bal = compute_balance bal_map
         addr_book = compute_address_book xpub_xbals_map
         show_xpub_addrs = compute_show_xpub_addrs xpub_xbals_map
         only_show = show_xpub_addrs <> show_addrs
+        bal = compute_balance only_show bal_map
         show_txrefs = show_xpub_txs <> show_addr_txs
         show_txids = drop off . take count . map txRefHash $
                      Set.toDescList show_txrefs
@@ -1062,9 +1062,10 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         map (\b -> (balanceAddress (xPubBal b), xPubBal b)) .
         concat .
         HashMap.elems
-    compute_balance =
+    compute_balance only_show =
         sum .
         map (\b -> balanceAmount b + balanceZero b) .
+        filter (\b -> balanceAddress b `HashSet.member` only_show) .
         HashMap.elems
     compute_address_book =
         HashMap.fromList .
