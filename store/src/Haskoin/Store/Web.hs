@@ -21,8 +21,8 @@ import           Conduit                       (await, runConduit, takeC, yield,
 import           Control.Applicative           ((<|>))
 import           Control.Arrow                 (second)
 import           Control.Monad                 (forever, unless, when, (<=<))
-import           Control.Monad.Logger          (MonadLoggerIO, logErrorS,
-                                                logInfoS)
+import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
+                                                logErrorS, logInfoS)
 import           Control.Monad.Reader          (ReaderT, ask, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
@@ -909,9 +909,17 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         only_show = show_xpub_addrs <> show_addrs
         bal = compute_balance only_show bal_map
         tx_refs = Set.toDescList $ show_xpub_txs <> show_addr_txs
+    lift . $(logDebugS) "multiaddr" $
+        "Selected show txs: " <> cs (show (length tx_refs))
     show_txs <- catMaybes <$> mapM getTransaction (map txRefHash tx_refs)
+    lift . $(logDebugS) "multiaddr" $
+        "Show txs: " <> cs (show (length show_txs))
     let extra_txids = compute_extra_txids addr_book show_txs
+    lift . $(logDebugS) "multiaddr" $
+        "Selected extra txs: " <> cs (show (length extra_txids))
     extra_txs <- get_extra_txs extra_txids
+    lift . $(logDebugS) "multiaddr" $
+        "Extra txs: " <> cs (show (length extra_txs))
     let btxs = binfo_txs
                extra_txs
                addr_book
