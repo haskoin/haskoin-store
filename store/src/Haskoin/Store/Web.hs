@@ -898,19 +898,24 @@ scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
                 => GetBinfoMultiAddr
                 -> WebT m BinfoMultiAddr
 scottyMultiAddr GetBinfoMultiAddr{..} = do
+    lim <- lift $ asks webMaxLimits
     xpub_xbals_map <- get_xpub_xbals_map
     addr_bal_map <- get_addr_bal_map
-    show_xpub_txs <- get_show_xpub_txs
+    show_xpub_tx_map <- get_show_xpub_tx_map
     show_addr_txs <- get_show_addr_txs
-    let xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
+    let show_xpub_txn_map = HashMap.map length show_xpub_tx_map
+        show_xpub_txs = compute_show_xpub_txs show_xpub_tx_map
+        xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
         bal_map = addr_bal_map <> xpub_addr_bal_map
         addr_book = compute_address_book xpub_xbals_map
         show_xpub_addrs = compute_show_xpub_addrs xpub_xbals_map
         only_show = show_xpub_addrs <> show_addrs
-        only_show_book = filter_non_show only_show addr_book
+        only_addrs = filter_show_addrs addr_bal_map
+        only_xpubs = filter_show_xpubs xpub_xbals_map
         bal = compute_balance only_show bal_map
         tx_refs = Set.toDescList $ show_xpub_txs <> show_addr_txs
-    txs <- catMaybes <$> mapM getTransaction (map txRefHash tx_refs)
+        show_txids = take (count lim + off lim) $ map txRefHash tx_refs
+    txs <- catMaybes <$> mapM getTransaction show_txids
     let extra_txids = compute_extra_txids addr_book txs
     extra_txs <- get_extra_txs extra_txids
     let btxs = binfo_txs
@@ -920,8 +925,8 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
                prune
                (fromIntegral bal)
                txs
-        filtered = take count $ drop off btxs
-        addrs = toBinfoAddrs only_show_book txs
+        filtered = take (count lim) $ drop (off lim) btxs
+        addrs = toBinfoAddrs only_addrs only_xpubs show_xpub_txn_map
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
@@ -981,8 +986,12 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     BinfoNoCompactParam{..} = getBinfoMultiAddrNoCompact
     BinfoOffsetParam{..} = getBinfoMultiAddrOffsetParam
     prune = not getBinfoNoCompactParam
-    off = fromIntegral getBinfoOffsetParam
-    count = maybe 50 fromIntegral getBinfoMultiAddrCountParam + off
+    off WebLimits{maxLimitOffset = o} =
+        fromIntegral $ min getBinfoOffsetParam (fromIntegral o)
+    count WebLimits{maxLimitDefault = d, maxLimitFull = f} =
+        case getBinfoMultiAddrCountParam of
+            Nothing -> fromIntegral d
+            Just (BinfoCountParam x) -> fromIntegral $ min x (fromIntegral f)
     get_addr (BinfoAddressParam a) = Just a
     get_addr (BinfoXPubKeyParam _) = Nothing
     get_xpub (BinfoXPubKeyParam x) = Just x
@@ -1034,7 +1043,8 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         ( balanceAddress xPubBal
         , BinfoXPubPath key .
           fromMaybe (error "lions and tigers and bears") .
-          toSoft $ listToPath xPubBalPath )
+          toSoft $ listToPath xPubBalPath
+        )
     get_xpub_xbals_map =
         HashMap.fromList .
         zip (map xPubSpecKey active_xspec_ls) <$>
@@ -1043,10 +1053,15 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         HashMap.fromList .
         map (\b -> (balanceAddress b, b)) <$>
         getBalances active_addr_ls
-    get_show_xpub_txs =
-        Set.fromList . concat <$> mapM (`xPubTxs` def) show_xspec_ls
-    get_show_addr_txs =
-        Set.fromList <$> getAddressesTxs show_addr_ls def
+    get_show_xpub_tx_map =
+        let f x = (xPubSpecKey x,) <$> xPubTxs x def
+        in HashMap.fromList <$> mapM f show_xspec_ls
+    compute_show_xpub_txs =
+        Set.fromList . concat . HashMap.elems
+    get_show_addr_txs = do
+        lim <- lift $ asks webMaxLimits
+        let limits = def{ limit = count lim + off lim }
+        Set.fromList <$> getAddressesTxs show_addr_ls limits
     get_extra_txs extra_txids =
         HashMap.fromList .
         map (\t -> (txHash (transactionData t), t)) .
@@ -1083,8 +1098,10 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     received BinfoTx{..}
       | getBinfoTxResult > 0 = fromIntegral getBinfoTxResult
       | otherwise = 0
-    filter_non_show only_show =
-        HashMap.filterWithKey (\k _ -> k `HashSet.member` only_show)
+    filter_show_addrs =
+        HashMap.filterWithKey $ \k _ -> k `HashSet.member` show_addrs
+    filter_show_xpubs =
+        HashMap.filterWithKey $ \k _ -> k `HashSet.member` show_xpubs
 
 -- GET Network Information --
 

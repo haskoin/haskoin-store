@@ -1634,14 +1634,14 @@ binfoMultiAddrToEncoding net BinfoMultiAddr {..} =
 data BinfoAddress
     = BinfoAddress
         { getBinfoAddress      :: !Address
-        , getBinfoAddrTxCount  :: !Word32
+        , getBinfoAddrTxCount  :: !Word64
         , getBinfoAddrReceived :: !Word64
         , getBinfoAddrSent     :: !Word64
         , getBinfoAddrBalance  :: !Word64
         }
     | BinfoXPubKey
         { getBinfoXPubKey          :: !XPubKey
-        , getBinfoAddrTxCount      :: !Word32
+        , getBinfoAddrTxCount      :: !Word64
         , getBinfoAddrReceived     :: !Word64
         , getBinfoAddrSent         :: !Word64
         , getBinfoAddrBalance      :: !Word64
@@ -2123,96 +2123,52 @@ relevantTxs addrs prune t@Transaction{..} =
         ins = mapMaybe g transactionInputs
       in HashSet.fromList $ ins <> outs
 
-toBinfoAddrs :: HashMap Address (Maybe BinfoXPubPath)
-             -> [Transaction]
+toBinfoAddrs :: HashMap Address Balance
+             -> HashMap XPubKey [XPubBal]
+             -> HashMap XPubKey Int
              -> [BinfoAddress]
-toBinfoAddrs addr_book =
-    go HashMap.empty HashMap.empty
+toBinfoAddrs only_addrs only_xpubs xpub_txs =
+    xpub_bals <> addr_bals
   where
-    go xpubs addrs [] = HashMap.elems xpubs <> HashMap.elems addrs
-    go xpubs addrs (t:ts) =
-        let ins = transactionInputs t
-            outs = transactionOutputs t
-            txid = txHash (transactionData t)
-            xs = mapMaybe input ins <> mapMaybe output outs
-            ls = lefts xs
-            rs = rights xs
-            f (BinfoXPubPath k _, v) = HashMap.insertWith (+) k v
-            xm = foldr f HashMap.empty ls
-            g (a, v) = HashMap.insertWith (+) a v
-            am = foldr g HashMap.empty rs
-            h (BinfoXPubPath k d) = HashMap.insertWith (++) k [d]
-            is = HashMap.map indices . foldr h HashMap.empty $ map fst ls
-            xim = HashMap.intersectionWith (,) xm is
-            addrs' = HashMap.mapWithKey addr_value am
-            xpubs' = HashMap.mapWithKey xpub_value xim
-            new_addrs = HashMap.unionWith combine_ba addrs addrs'
-            new_xpubs = HashMap.unionWith combine_ba xpubs xpubs'
-        in go new_xpubs new_addrs ts
-    map_it a v Nothing  = Right (a, v)
-    map_it a v (Just x) = Left (x, v)
-    indices ds =
-        let f d =
-                case pathToList d of
-                    [0, n] -> Just (Right n)
-                    [1, n] -> Just (Left n)
-                    _      -> Nothing
-            xs = mapMaybe f ds
-            ax = foldl max 0 $ rights xs
-            cx = foldl max 0 $ lefts xs
-        in (ax, cx)
-    input StoreCoinbase{} = Nothing
-    input StoreInput{inputAddress = Nothing} = Nothing
-    input StoreInput{inputAddress = Just a, inputAmount = v} =
-        case a `HashMap.lookup` addr_book of
-            Just x  -> Just $ map_it a (negate (fromIntegral v)) x
-            Nothing -> Nothing
-    output StoreOutput{outputAddress = Nothing} = Nothing
-    output StoreOutput{outputAddress = Just a, outputAmount = v} =
-        case a `HashMap.lookup` addr_book of
-            Just x  -> Just $ map_it a v x
-            Nothing -> Nothing
-    combine_ba ba1 ba2 =
-        let new_recv = sum $ map getBinfoAddrReceived [ba1, ba2]
-            new_sent = sum $ map getBinfoAddrSent [ba1, ba2]
-            new_count = sum $ map getBinfoAddrTxCount [ba1, ba2]
-            new_bal = new_recv - new_sent
-            new_ba =
-                ba1 { getBinfoAddrTxCount = new_count
-                    , getBinfoAddrReceived = new_recv
-                    , getBinfoAddrSent = new_sent
-                    , getBinfoAddrBalance = new_bal
-                    }
-        in case new_ba of
-               BinfoAddress{} -> new_ba
-               BinfoXPubKey{} ->
-                   let new_acc_index =
-                           maximum $ map getBinfoXPubAccountIndex [ba1, ba2]
-                       new_change_index =
-                           maximum $ map getBinfoXPubChangeIndex [ba1, ba2]
-                   in new_ba { getBinfoXPubAccountIndex = new_acc_index
-                             , getBinfoXPubChangeIndex = new_change_index
-                             }
-    compute_received v | v <= 0 = 0 | v > 0 = v
-    compute_sent v | v <= 0 = negate v | v > 0 = 0
-    addr_value a v =
-        BinfoAddress
-        { getBinfoAddress = a
-        , getBinfoAddrTxCount = 1
-        , getBinfoAddrReceived = fromIntegral $ compute_received v
-        , getBinfoAddrSent = fromIntegral $ compute_sent v
-        , getBinfoAddrBalance = fromIntegral $ compute_received v
-        }
-    xpub_value k (v, (ax, cx)) =
-        BinfoXPubKey
-        { getBinfoXPubKey = k
-        , getBinfoXPubAccountIndex = ax
-        , getBinfoXPubChangeIndex = cx
-        , getBinfoAddrTxCount = 1
-        , getBinfoAddrReceived = fromIntegral $ compute_received v
-        , getBinfoAddrSent = fromIntegral $ compute_sent v
-        , getBinfoAddrBalance = fromIntegral $ compute_received v
-        }
+    xpub_bal k xs =
+        let f x = case xPubBalPath x of
+                [0, _] -> balanceTotalReceived (xPubBal x)
+                _      -> 0
+            g x = balanceAmount (xPubBal x) + balanceZero (xPubBal x)
+            i m x = case xPubBalPath x of
+                [m', n] | m == m' -> n
+                _                 -> 0
+            received = sum (map f xs)
+            bal = fromIntegral (sum (map g xs))
+            sent = if bal <= received then received - bal else 0
+            count = case HashMap.lookup k xpub_txs of
+                Nothing -> 0
+                Just i  -> fromIntegral i
+            ax = foldl max 0 (map (i 0) xs)
+            cx = foldl max 0 (map (i 1) xs)
+        in BinfoXPubKey{ getBinfoXPubKey = k
+                       , getBinfoAddrTxCount = count
+                       , getBinfoAddrReceived = received
+                       , getBinfoAddrSent = sent
+                       , getBinfoAddrBalance = bal
+                       , getBinfoXPubAccountIndex = ax
+                       , getBinfoXPubChangeIndex = cx
+                       }
+    xpub_bals = map (uncurry xpub_bal) (HashMap.toList only_xpubs)
+    addr_bals =
+        let f Balance{..} =
+                let addr = balanceAddress
+                    sent = recv - bal
+                    recv = balanceTotalReceived
+                    tx_count = balanceTxCount
+                    bal = balanceAmount + balanceZero
+                in BinfoAddress{ getBinfoAddress = addr
+                               , getBinfoAddrTxCount = tx_count
+                               , getBinfoAddrReceived = recv
+                               , getBinfoAddrSent = sent
+                               , getBinfoAddrBalance = bal
+                               }
+         in map f $ HashMap.elems only_addrs
 
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address (Maybe BinfoXPubPath)
