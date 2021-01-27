@@ -907,27 +907,21 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
         addr_book = compute_address_book xpub_xbals_map
         show_xpub_addrs = compute_show_xpub_addrs xpub_xbals_map
         only_show = show_xpub_addrs <> show_addrs
+        only_show_book = filter_non_show only_show addr_book
         bal = compute_balance only_show bal_map
         tx_refs = Set.toDescList $ show_xpub_txs <> show_addr_txs
-    lift . $(logDebugS) "multiaddr" $
-        "Selected show txs: " <> cs (show (length tx_refs))
-    show_txs <- catMaybes <$> mapM getTransaction (map txRefHash tx_refs)
-    lift . $(logDebugS) "multiaddr" $
-        "Show txs: " <> cs (show (length show_txs))
-    let extra_txids = compute_extra_txids addr_book show_txs
-    lift . $(logDebugS) "multiaddr" $
-        "Selected extra txs: " <> cs (show (length extra_txids))
+    txs <- catMaybes <$> mapM getTransaction (map txRefHash tx_refs)
+    let extra_txids = compute_extra_txids addr_book txs
     extra_txs <- get_extra_txs extra_txids
-    lift . $(logDebugS) "multiaddr" $
-        "Extra txs: " <> cs (show (length extra_txs))
     let btxs = binfo_txs
                extra_txs
                addr_book
                only_show
                prune
                (fromIntegral bal)
-               show_txs
+               txs
         filtered = take count $ drop off btxs
+        addrs = toBinfoAddrs only_show_book txs
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
@@ -936,42 +930,46 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
             , getBinfoWalletTotalReceived = sum $ map received btxs
             , getBinfoWalletTotalSent = sum $ map sent btxs
             }
+        btc =
+            BinfoSymbol -- TODO
+            { getBinfoSymbolCode = "BTC"
+            , getBinfoSymbolString = "BTC"
+            , getBinfoSymbolName = "Bitcoin"
+            , getBinfoSymbolConversion = 1.0
+            , getBinfoSymbolAfter = False
+            , getBinfoSymbolLocal = False
+            }
+        local =
+            BinfoSymbol
+            { getBinfoSymbolCode = "USD"
+            , getBinfoSymbolString = "$"
+            , getBinfoSymbolName = "US Dollar"
+            , getBinfoSymbolConversion = 1.0 -- TODO
+            , getBinfoSymbolAfter = False
+            , getBinfoSymbolLocal = True
+            }
+        block =
+            BinfoBlockInfo -- TODO
+            { getBinfoBlockInfoHash =
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+            , getBinfoBlockInfoHeight = 0
+            , getBinfoBlockInfoTime = 0
+            , getBinfoBlockInfoIndex = 0
+            }
+        info =
+            BinfoInfo
+            { getBinfoConnected = 1 -- TODO
+            , getBinfoConversion = 1.0 -- TODO
+            , getBinfoLocal = local
+            , getBinfoBTC = btc
+            , getBinfoLatestBlock = block
+            }
     return
         BinfoMultiAddr
-        { getBinfoMultiAddrAddresses = [] -- TODO
+        { getBinfoMultiAddrAddresses = addrs
         , getBinfoMultiAddrWallet = wallet
         , getBinfoMultiAddrTxs = filtered
-        , getBinfoMultiAddrInfo =
-              BinfoInfo
-              { getBinfoConnected = 1 -- TODO
-              , getBinfoConversion = 1.0 -- TODO
-              , getBinfoLocal =
-                    BinfoSymbol -- TODO
-                    { getBinfoSymbolCode = "XXX"
-                    , getBinfoSymbolString = "$"
-                    , getBinfoSymbolName = "Placeholder"
-                    , getBinfoSymbolConversion = 1.0
-                    , getBinfoSymbolAfter = False
-                    , getBinfoSymbolLocal = True
-                    }
-              , getBinfoBTC =
-                    BinfoSymbol -- TODO
-                    { getBinfoSymbolCode = "BTC"
-                    , getBinfoSymbolString = "BTC"
-                    , getBinfoSymbolName = "Bitcoin"
-                    , getBinfoSymbolConversion = 1.0
-                    , getBinfoSymbolAfter = False
-                    , getBinfoSymbolLocal = False
-                    }
-              , getBinfoLatestBlock =
-                    BinfoBlockInfo -- TODO
-                    { getBinfoBlockInfoHash =
-                            "0000000000000000000000000000000000000000000000000000000000000000"
-                    , getBinfoBlockInfoHeight = 0
-                    , getBinfoBlockInfoTime = 0
-                    , getBinfoBlockInfoIndex = 0
-                    }
-              }
+        , getBinfoMultiAddrInfo = info
         , getBinfoRecommendFee = True
         }
   where
@@ -983,14 +981,8 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     BinfoNoCompactParam{..} = getBinfoMultiAddrNoCompact
     BinfoOffsetParam{..} = getBinfoMultiAddrOffsetParam
     prune = not getBinfoNoCompactParam
-    off = if getBinfoOffsetParam > 10000
-          then 10000
-          else fromIntegral getBinfoOffsetParam
-    count = case getBinfoMultiAddrCountParam of
-                Nothing -> 50 + off
-                Just (BinfoCountParam n)
-                    | n > 10000 -> 10000 + off
-                    | otherwise -> fromIntegral n + off
+    off = fromIntegral getBinfoOffsetParam
+    count = maybe 50 fromIntegral getBinfoMultiAddrCountParam + off
     get_addr (BinfoAddressParam a) = Just a
     get_addr (BinfoXPubKeyParam _) = Nothing
     get_xpub (BinfoXPubKeyParam x) = Just x
@@ -1091,6 +1083,8 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     received BinfoTx{..}
       | getBinfoTxResult > 0 = fromIntegral getBinfoTxResult
       | otherwise = 0
+    filter_non_show only_show =
+        HashMap.filterWithKey (\k _ -> k `HashSet.member` only_show)
 
 -- GET Network Information --
 
