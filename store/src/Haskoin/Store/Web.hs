@@ -919,6 +919,8 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
     let extra_txids = compute_extra_txids addr_book txs
     extra_txs <- get_extra_txs extra_txids
     best <- scottyBlockBest (GetBlockBest (NoTx True))
+    peers <- fmap (fromIntegral . length) . lift $
+             getPeersInformation =<< asks (storeManager . webStore)
     let btxs = binfo_txs
                extra_txs
                addr_book
@@ -966,7 +968,7 @@ scottyMultiAddr GetBinfoMultiAddr{..} = do
             }
         info =
             BinfoInfo
-            { getBinfoConnected = 1 -- TODO
+            { getBinfoConnected = peers
             , getBinfoConversion = 1.0 -- TODO
             , getBinfoLocal = local
             , getBinfoBTC = btc
