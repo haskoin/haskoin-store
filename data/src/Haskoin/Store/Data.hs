@@ -1760,7 +1760,7 @@ data BinfoTx
         , getBinfoTxIndex       :: !BinfoTxIndex
         , getBinfoTxDoubleSpend :: !Bool
         , getBinfoTxResult      :: !Int64
-        , getBinfoTxBalance     :: !Word64
+        , getBinfoTxBalance     :: !Int64
         , getBinfoTxTime        :: !Word64
         , getBinfoTxBlockIndex  :: !(Maybe Word32)
         , getBinfoTxBlockHeight :: !(Maybe Word32)
@@ -2102,13 +2102,12 @@ instance FromJSON BinfoSymbol where
         getBinfoSymbolLocal <- o .: "local"
         return BinfoSymbol {..}
 
-relevantTxs :: HashMap Address (Maybe BinfoXPubPath)
+relevantTxs :: HashSet Address
             -> Bool
             -> Transaction
             -> HashSet TxHash
-relevantTxs book prune t@Transaction{..} =
-    let p a = prune && getTxResult book t > 0
-                    && not (H.member a book)
+relevantTxs addrs prune t@Transaction{..} =
+    let p a = prune && getTxResult addrs t > 0 && not (HashSet.member a addrs)
         f StoreOutput{..} =
             case outputSpender of
                 Nothing -> Nothing
@@ -2125,11 +2124,12 @@ relevantTxs book prune t@Transaction{..} =
 
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address (Maybe BinfoXPubPath)
+          -> HashSet Address
           -> Bool
-          -> Word64
+          -> Int64
           -> Transaction
           -> BinfoTx
-toBinfoTx tm book prune bal t@Transaction{..} =
+toBinfoTx relevant_txs addr_book only_show prune bal t@Transaction{..} =
   let getBinfoTxHash = txHash (transactionData t)
       getBinfoTxVer = transactionVersion
       getBinfoTxVinSz = fromIntegral $ length transactionInputs
@@ -2158,7 +2158,8 @@ toBinfoTx tm book prune bal t@Transaction{..} =
                               [] -> B.empty
                               ws -> S.runPut $ put_witness ws
                       getBinfoTxInputScript = inputSigScript i
-                      getBinfoTxInputPrevOut = inputToBinfoTxOutput tm book t n i
+                      getBinfoTxInputPrevOut =
+                          inputToBinfoTxOutput relevant_txs addr_book t n i
                   in BinfoTxInput{..}
               put_witness ws = do
                   putVarInt $ length ws
@@ -2168,14 +2169,18 @@ toBinfoTx tm book prune bal t@Transaction{..} =
                   S.putByteString bs
            in zipWith f [0..] transactionInputs
       getBinfoTxOutputs =
-          let f = toBinfoTxOutput tm book (prune && getBinfoTxResult > 0) t
+          let f = toBinfoTxOutput
+                  relevant_txs
+                  addr_book
+                  (prune && getBinfoTxResult > 0)
+                  t
            in catMaybes $ zipWith f [0..] transactionOutputs
-      getBinfoTxResult = getTxResult book t
+      getBinfoTxResult = getTxResult only_show t
       getBinfoTxBalance = bal
    in BinfoTx{..}
 
-getTxResult :: HashMap Address (Maybe BinfoXPubPath) -> Transaction -> Int64
-getTxResult book Transaction{..} =
+getTxResult :: HashSet Address -> Transaction -> Int64
+getTxResult only_show Transaction{..} =
     let input_sum = sum $ map input_value transactionInputs
         input_value StoreCoinbase{} = 0
         input_value StoreInput{..} =
@@ -2185,7 +2190,7 @@ getTxResult book Transaction{..} =
                     if test_addr a
                     then negate $ fromIntegral inputAmount
                     else 0
-        test_addr a = H.member a book
+        test_addr a = HashSet.member a only_show
         output_sum = sum $ map out_value transactionOutputs
         out_value StoreOutput{..} =
             case outputAddress of
@@ -2203,24 +2208,26 @@ toBinfoTxOutput :: HashMap TxHash Transaction
                 -> Word32
                 -> StoreOutput
                 -> Maybe BinfoTxOutput
-toBinfoTxOutput tm book prune t n StoreOutput{..} =
+toBinfoTxOutput relevant_txs addr_book prune t n StoreOutput{..} =
     let getBinfoTxOutputType = 0
         getBinfoTxOutputSpent = isJust outputSpender
         getBinfoTxOutputValue = outputAmount
         getBinfoTxOutputIndex = n
         getBinfoTxOutputTxIndex = binfoTransactionIndex t
         getBinfoTxOutputScript = outputScript
-        getBinfoTxOutputSpenders = maybeToList $ toBinfoSpender tm <$> outputSpender
+        getBinfoTxOutputSpenders =
+            maybeToList $ toBinfoSpender relevant_txs <$> outputSpender
         getBinfoTxOutputAddress = outputAddress
-        getBinfoTxOutputXPub = outputAddress >>= join . (`H.lookup` book)
-     in if prune && isNothing (outputAddress >>= (`H.lookup` book))
+        getBinfoTxOutputXPub =
+            outputAddress >>= join . (`H.lookup` addr_book)
+     in if prune && isNothing (outputAddress >>= (`H.lookup` addr_book))
         then Nothing
         else Just BinfoTxOutput{..}
 
 toBinfoSpender :: HashMap TxHash Transaction -> Spender -> BinfoSpender
-toBinfoSpender tm Spender{..} =
+toBinfoSpender relevant_txs Spender{..} =
     let getBinfoSpenderTxIndex =
-            case H.lookup spenderHash tm of
+            case H.lookup spenderHash relevant_txs of
                 Nothing -> error "no spender tx hash in map"
                 Just t  -> binfoTransactionIndex t
         getBinfoSpenderIndex = spenderIndex
@@ -2233,18 +2240,19 @@ inputToBinfoTxOutput :: HashMap TxHash Transaction
                      -> StoreInput
                      -> Maybe BinfoTxOutput
 inputToBinfoTxOutput _ _ _ _ StoreCoinbase{} = Nothing
-inputToBinfoTxOutput tm book t n StoreInput{..} =
+inputToBinfoTxOutput relevant_txs addr_book t n StoreInput{..} =
     let OutPoint out_hash getBinfoTxOutputIndex = inputPoint
         getBinfoTxOutputType = 0
         getBinfoTxOutputSpent = True
         getBinfoTxOutputValue = inputAmount
         getBinfoTxOutputTxIndex =
-            case H.lookup (outPointHash inputPoint) tm of
+            case H.lookup out_hash relevant_txs of
                 Nothing -> error "no tx in hash map"
                 Just x  -> binfoTransactionIndex x
         getBinfoTxOutputScript = inputPkScript
         getBinfoTxOutputSpenders =
             [BinfoSpender (binfoTransactionIndex t) n]
         getBinfoTxOutputAddress = inputAddress
-        getBinfoTxOutputXPub = inputAddress >>= join . (`H.lookup` book)
+        getBinfoTxOutputXPub =
+            inputAddress >>= join . (`H.lookup` addr_book)
      in Just BinfoTxOutput{..}
