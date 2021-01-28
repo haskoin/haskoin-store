@@ -20,6 +20,7 @@ import           Conduit                       (await, runConduit, takeC, yield,
                                                 (.|))
 import           Control.Applicative           ((<|>))
 import           Control.Arrow                 (second)
+import           Control.Lens
 import           Control.Monad                 (forever, unless, when, (<=<))
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
                                                 logErrorS, logInfoS)
@@ -79,11 +80,16 @@ import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
+import qualified Network.Wreq                  as Wreq
 import           NQE                           (Inbox, receive,
                                                 withSubscription)
 import           Text.Printf                   (printf)
-import           UnliftIO                      (MonadIO, MonadUnliftIO,
-                                                askRunInIO, liftIO, timeout)
+import           UnliftIO                      (MonadIO, MonadUnliftIO, TVar,
+                                                askRunInIO, atomically,
+                                                handleAny, liftIO, newTVarIO,
+                                                readTVarIO, timeout, withAsync,
+                                                writeTVar)
+import           UnliftIO.Concurrent           (threadDelay)
 import           Web.Scotty.Internal.Types     (ActionT)
 import qualified Web.Scotty.Trans              as S
 
@@ -185,18 +191,33 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
 -- Path Handlers --
 -------------------
 
-runWeb :: (MonadUnliftIO m , MonadLoggerIO m) => WebConfig -> m ()
-runWeb cfg@WebConfig {webHost = host, webPort = port, webReqLog = reqlog} = do
-    reqLogger <- logIt
-    runner <- askRunInIO
-    S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
-        when reqlog $ S.middleware reqLogger
-        S.defaultHandler defHandler
-        handlePaths
-        S.notFound $ S.raise ThingNotFound
+runWeb :: (MonadUnliftIO m, MonadLoggerIO m) => WebConfig -> m ()
+runWeb cfg@WebConfig{ webHost = host
+                    , webPort = port
+                    , webReqLog = wl } = do
+    ticker <- newTVarIO $ BinfoTicker HashMap.empty
+    withAsync (price ticker) $ \_ -> do
+        reqLogger <- logIt
+        runner <- askRunInIO
+        S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
+            when wl $ S.middleware reqLogger
+            S.defaultHandler defHandler
+            handlePaths ticker
+            S.notFound $ S.raise ThingNotFound
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
+
+price :: (MonadUnliftIO m, MonadLoggerIO m) => TVar BinfoTicker -> m ()
+price v = forever $ do
+    handleAny h $ do
+        r <- liftIO $
+            Wreq.asJSON =<< Wreq.get "https://blockchain.info/ticker"
+        atomically $ writeTVar v (r ^. Wreq.responseBody)
+    threadDelay 5000000
+  where
+    h e = $(logErrorS) "Price" $ cs (show e)
+
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
@@ -212,8 +233,9 @@ defHandler e = do
 
 handlePaths ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => S.ScottyT Except (ReaderT WebConfig m) ()
-handlePaths = do
+    => TVar BinfoTicker
+    -> S.ScottyT Except (ReaderT WebConfig m) ()
+handlePaths ticker = do
     -- Block Paths
     pathPretty
         (GetBlock <$> paramLazy <*> paramDef)
@@ -410,7 +432,7 @@ handlePaths = do
             <*> paramOptional -- n
             <*> paramDef -- offset
         )
-        scottyMultiAddr
+        (scottyMultiAddr ticker)
         binfoMultiAddrToEncoding
         binfoMultiAddrToJSON
     -- Network
@@ -896,14 +918,16 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
 -- GET Blockchain.info API --
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
-                => PostBinfoMultiAddr
+                => TVar BinfoTicker
+                -> PostBinfoMultiAddr
                 -> WebT m BinfoMultiAddr
-scottyMultiAddr PostBinfoMultiAddr{..} = do
+scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
     lim <- lift $ asks webMaxLimits
     xpub_xbals_map <- get_xpub_xbals_map
     addr_bal_map <- get_addr_bal_map
     show_xpub_tx_map <- get_show_xpub_tx_map
     show_addr_txs <- get_show_addr_txs
+    BinfoTicker prices <- readTVarIO ticker
     let show_xpub_txn_map = HashMap.map length show_xpub_tx_map
         show_xpub_txs = compute_show_xpub_txs show_xpub_tx_map
         xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
@@ -934,6 +958,9 @@ scottyMultiAddr PostBinfoMultiAddr{..} = do
         recv = sum $ map getBinfoAddrReceived addrs
         sent = sum $ map getBinfoAddrSent addrs
         txn = sum $ map getBinfoAddrTxCount addrs
+        usd = case HashMap.lookup (BinfoTickerSymbol "USD") prices of
+            Nothing                  -> 0.0
+            Just BinfoTickerData{..} -> binfoTickerData15
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
@@ -943,20 +970,20 @@ scottyMultiAddr PostBinfoMultiAddr{..} = do
             , getBinfoWalletTotalSent = sent
             }
         btc =
-            BinfoSymbol -- TODO
+            BinfoSymbol
             { getBinfoSymbolCode = "BTC"
             , getBinfoSymbolString = "BTC"
             , getBinfoSymbolName = "Bitcoin"
-            , getBinfoSymbolConversion = 1.0
-            , getBinfoSymbolAfter = False
+            , getBinfoSymbolConversion = 100000000
+            , getBinfoSymbolAfter = True
             , getBinfoSymbolLocal = False
             }
         local =
             BinfoSymbol
             { getBinfoSymbolCode = "USD"
             , getBinfoSymbolString = "$"
-            , getBinfoSymbolName = "US Dollar"
-            , getBinfoSymbolConversion = 1.0 -- TODO
+            , getBinfoSymbolName = "U.S. dollar"
+            , getBinfoSymbolConversion = usd
             , getBinfoSymbolAfter = False
             , getBinfoSymbolLocal = True
             }
@@ -970,7 +997,7 @@ scottyMultiAddr PostBinfoMultiAddr{..} = do
         info =
             BinfoInfo
             { getBinfoConnected = peers
-            , getBinfoConversion = 1.0 -- TODO
+            , getBinfoConversion = 100000000
             , getBinfoLocal = local
             , getBinfoBTC = btc
             , getBinfoLatestBlock = block
@@ -996,7 +1023,7 @@ scottyMultiAddr PostBinfoMultiAddr{..} = do
         fromIntegral $ min getBinfoOffsetParam (fromIntegral o)
     count WebLimits{maxLimitDefault = d, maxLimitFull = f} =
         case getBinfoMultiAddrCountParam of
-            Nothing -> fromIntegral d
+            Nothing                  -> fromIntegral d
             Just (BinfoCountParam x) -> fromIntegral $ min x (fromIntegral f)
     get_addr (BinfoAddressParam a) = Just a
     get_addr (BinfoXPubKeyParam _) = Nothing

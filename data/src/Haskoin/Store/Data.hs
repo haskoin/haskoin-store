@@ -119,6 +119,9 @@ module Haskoin.Store.Data
     , BinfoInfo(..)
     , BinfoBlockInfo(..)
     , BinfoSymbol(..)
+    , BinfoTicker(..)
+    , BinfoTickerSymbol(..)
+    , BinfoTickerData(..)
     )
 
 where
@@ -127,9 +130,11 @@ import           Control.Applicative     ((<|>))
 import           Control.DeepSeq         (NFData)
 import           Control.Exception       (Exception)
 import           Control.Monad           (guard, join, mzero, (<=<))
-import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
-                                          Value (..), object, pairs, withObject,
-                                          (.!=), (.:), (.:?), (.=))
+import           Data.Aeson              (Encoding, FromJSON (..),
+                                          FromJSONKey (..), ToJSON (..),
+                                          ToJSONKey (..), Value (..), object,
+                                          pairs, withObject, (.!=), (.:), (.:?),
+                                          (.=))
 import qualified Data.Aeson              as A
 import           Data.Aeson.Encoding     (list, null_, pair, text,
                                           unsafeToEncoding)
@@ -2061,6 +2066,70 @@ instance FromJSON BinfoBlockInfo where
         getBinfoBlockInfoTime <- o .: "time"
         getBinfoBlockInfoIndex <- o .: "block_index"
         return BinfoBlockInfo {..}
+
+newtype BinfoTickerSymbol
+    = BinfoTickerSymbol{binfoTickerSymbol :: ByteString}
+    deriving (Eq, Show, Generic, Hashable, Serialize, NFData)
+
+instance ToJSONKey BinfoTickerSymbol
+instance FromJSONKey BinfoTickerSymbol
+
+instance ToJSON BinfoTickerSymbol where
+    toJSON (BinfoTickerSymbol s) = toJSON (decodeUtf8 s)
+    toEncoding (BinfoTickerSymbol s) = toEncoding (decodeUtf8 s)
+
+instance FromJSON BinfoTickerSymbol where
+    parseJSON = A.withText "ticker_symbol" $
+        return . BinfoTickerSymbol . encodeUtf8
+
+newtype BinfoTicker
+    = BinfoTicker (HashMap BinfoTickerSymbol BinfoTickerData)
+    deriving (Eq, Show, Generic, NFData)
+
+instance ToJSON BinfoTicker
+
+instance FromJSON BinfoTicker
+
+instance Serialize BinfoTicker where
+    get = BinfoTicker . HashMap.fromList <$> get
+    put (BinfoTicker h) = put $ HashMap.toList h
+
+data BinfoTickerData
+    = BinfoTickerData
+        { binfoTickerData15     :: !Double
+        , binfoTickerDataLast   :: !Double
+        , binfoTickerDataBuy    :: !Double
+        , binfoTickerDataSell   :: !Double
+        , binfoTickerDataSymbol :: !ByteString
+        }
+    deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoTickerData where
+    toJSON BinfoTickerData{..} =
+        object
+        [ "15m" .= binfoTickerData15
+        , "last" .= binfoTickerDataLast
+        , "buy" .= binfoTickerDataBuy
+        , "sell" .= binfoTickerDataSell
+        , "symbol" .=  decodeUtf8 binfoTickerDataSymbol
+        ]
+    toEncoding BinfoTickerData{..} =
+        pairs
+        (  "15m" .= binfoTickerData15
+        <> "last" .= binfoTickerDataLast
+        <> "buy" .= binfoTickerDataBuy
+        <> "sell" .= binfoTickerDataSell
+        <> "symbol" .=  decodeUtf8 binfoTickerDataSymbol
+        )
+
+instance FromJSON BinfoTickerData where
+    parseJSON = withObject "ticker_data" $ \o -> do
+        binfoTickerData15 <- o .: "15m"
+        binfoTickerDataLast <- o .: "last"
+        binfoTickerDataBuy <- o .: "buy"
+        binfoTickerDataSell <- o .: "sell"
+        binfoTickerDataSymbol <- encodeUtf8 <$> o .: "symbol"
+        return BinfoTickerData{..}
 
 data BinfoSymbol
     = BinfoSymbol

@@ -8,10 +8,11 @@ module Haskoin.Store.DataSpec
     ( spec
     ) where
 
-import           Control.Monad           (forM_)
+import           Control.Monad           (forM_, replicateM)
 import           Data.Aeson              (FromJSON (..))
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Short   as BSS
+import qualified Data.HashMap.Strict     as HashMap
 import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
 import           Haskoin
@@ -59,6 +60,7 @@ serialVals =
     , SerialBox (arbitrary :: Gen BinfoTxInput)
     , SerialBox (arbitrary :: Gen BinfoTx)
     , SerialBox (arbitrary :: Gen BinfoMultiAddr)
+    , SerialBox (arbitrary :: Gen BinfoTicker)
     ]
 
 jsonVals :: [JsonBox]
@@ -81,6 +83,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoBlockInfo)
     , JsonBox (arbitrary :: Gen BinfoInfo)
     , JsonBox (arbitrary :: Gen BinfoSpender)
+    , JsonBox (arbitrary :: Gen BinfoTicker)
     ]
 
 netVals :: [NetBox]
@@ -409,6 +412,7 @@ instance Arbitrary Except where
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
+
 instance Arbitrary BinfoTxIndex where
     arbitrary = oneof
         [ binfoTxIndexFromHash  <$> arbitraryTxHash
@@ -529,3 +533,20 @@ instance Arbitrary BinfoSymbol where
         getBinfoSymbolAfter <- arbitrary
         getBinfoSymbolLocal <- arbitrary
         return BinfoSymbol {..}
+
+instance Arbitrary BinfoTickerData where
+    arbitrary = do
+        binfoTickerData15 <- arbitrary
+        binfoTickerDataLast <- arbitrary
+        binfoTickerDataBuy <- arbitrary
+        binfoTickerDataSell <- arbitrary
+        binfoTickerDataSymbol <- cs <$> listOf1 arbitraryUnicodeChar
+        return BinfoTickerData{..}
+
+instance Arbitrary BinfoTickerSymbol where
+    arbitrary = BinfoTickerSymbol . cs <$> replicateM 3 (choose ('A', 'Z'))
+
+instance Arbitrary BinfoTicker where
+    arbitrary = BinfoTicker . HashMap.fromList <$> listOf g
+      where
+        g = (,) <$> arbitrary <*> arbitrary
