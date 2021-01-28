@@ -735,9 +735,3 @@ instance ApiResource PostBinfoMultiAddr Store.BinfoMultiAddr where
              noDefBox getBinfoMultiAddrNoCompact <>
              noMaybeBox getBinfoMultiAddrCountParam <>
              noDefBox getBinfoMultiAddrOffsetParam)
-
-data GetBinfoTicker = GetBinfoTicker
-
-instance ApiResource GetBinfoTicker Store.BinfoTicker where
-    resourcePath _ _ = "/blockchain/ticker"
-    queryParams GetBinfoTicker = ([], [])

@@ -119,8 +119,8 @@ module Haskoin.Store.Data
     , BinfoInfo(..)
     , BinfoBlockInfo(..)
     , BinfoSymbol(..)
-    , BinfoTicker(..)
-    , BinfoTickerSymbol(..)
+    , BinfoTicker
+    , BinfoTickerSymbol
     , BinfoTickerData(..)
     )
 
@@ -156,6 +156,7 @@ import qualified Data.HashSet            as HashSet
 import           Data.Int                (Int64)
 import qualified Data.IntMap             as IntMap
 import           Data.IntMap.Strict      (IntMap)
+import           Data.Map.Strict         (Map)
 import           Data.Maybe              (catMaybes, fromMaybe, isJust,
                                           isNothing, mapMaybe, maybeToList)
 import           Data.Serialize          (Get, Put, Serialize (..), getWord32be,
@@ -2067,32 +2068,8 @@ instance FromJSON BinfoBlockInfo where
         getBinfoBlockInfoIndex <- o .: "block_index"
         return BinfoBlockInfo {..}
 
-newtype BinfoTickerSymbol
-    = BinfoTickerSymbol{binfoTickerSymbol :: ByteString}
-    deriving (Eq, Show, Generic, Hashable, Serialize, NFData)
-
-instance ToJSONKey BinfoTickerSymbol
-instance FromJSONKey BinfoTickerSymbol
-
-instance ToJSON BinfoTickerSymbol where
-    toJSON (BinfoTickerSymbol s) = toJSON (decodeUtf8 s)
-    toEncoding (BinfoTickerSymbol s) = toEncoding (decodeUtf8 s)
-
-instance FromJSON BinfoTickerSymbol where
-    parseJSON = A.withText "ticker_symbol" $
-        return . BinfoTickerSymbol . encodeUtf8
-
-newtype BinfoTicker
-    = BinfoTicker (HashMap BinfoTickerSymbol BinfoTickerData)
-    deriving (Eq, Show, Generic, NFData)
-
-instance ToJSON BinfoTicker
-
-instance FromJSON BinfoTicker
-
-instance Serialize BinfoTicker where
-    get = BinfoTicker . HashMap.fromList <$> get
-    put (BinfoTicker h) = put $ HashMap.toList h
+type BinfoTickerSymbol = Text
+type BinfoTicker = Map BinfoTickerSymbol BinfoTickerData
 
 data BinfoTickerData
     = BinfoTickerData

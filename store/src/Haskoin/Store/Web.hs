@@ -42,6 +42,7 @@ import           Data.Function                 ((&))
 import qualified Data.HashMap.Strict           as HashMap
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (nub)
+import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (catMaybes, fromMaybe,
                                                 listToMaybe, mapMaybe)
 import           Data.Proxy                    (Proxy (..))
@@ -195,7 +196,7 @@ runWeb :: (MonadUnliftIO m, MonadLoggerIO m) => WebConfig -> m ()
 runWeb cfg@WebConfig{ webHost = host
                     , webPort = port
                     , webReqLog = wl } = do
-    ticker <- newTVarIO $ BinfoTicker HashMap.empty
+    ticker <- newTVarIO Map.empty
     withAsync (price ticker) $ \_ -> do
         reqLogger <- logIt
         runner <- askRunInIO
@@ -927,7 +928,7 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
     addr_bal_map <- get_addr_bal_map
     show_xpub_tx_map <- get_show_xpub_tx_map
     show_addr_txs <- get_show_addr_txs
-    BinfoTicker prices <- readTVarIO ticker
+    prices <- readTVarIO ticker
     let show_xpub_txn_map = HashMap.map length show_xpub_tx_map
         show_xpub_txs = compute_show_xpub_txs show_xpub_tx_map
         xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
@@ -958,7 +959,7 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
         recv = sum $ map getBinfoAddrReceived addrs
         sent = sum $ map getBinfoAddrSent addrs
         txn = sum $ map getBinfoAddrTxCount addrs
-        usd = case HashMap.lookup (BinfoTickerSymbol "USD") prices of
+        usd = case Map.lookup "USD" prices of
             Nothing                  -> 0.0
             Just BinfoTickerData{..} -> binfoTickerData15
         wallet =
