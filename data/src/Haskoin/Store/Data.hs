@@ -2136,7 +2136,7 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
                 _      -> 0
             g x = balanceAmount (xPubBal x) + balanceZero (xPubBal x)
             i m x = case xPubBalPath x of
-                [m', n] | m == m' -> n
+                [m', n] | m == m' -> n + 1
                 _                 -> 0
             received = sum (map f xs)
             bal = fromIntegral (sum (map g xs))
