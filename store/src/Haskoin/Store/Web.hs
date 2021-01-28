@@ -960,7 +960,7 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
         sent = sum $ map getBinfoAddrSent addrs
         txn = sum $ map getBinfoAddrTxCount addrs
         usd = case Map.lookup "USD" prices of
-            Nothing                  -> 0.0
+            Nothing                  -> (-1)
             Just BinfoTickerData{..} -> binfoTickerData15
         wallet =
             BinfoWallet
@@ -975,7 +975,7 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
             { getBinfoSymbolCode = "BTC"
             , getBinfoSymbolString = "BTC"
             , getBinfoSymbolName = "Bitcoin"
-            , getBinfoSymbolConversion = 100000000
+            , getBinfoSymbolConversion = 100 * 1000 * 1000
             , getBinfoSymbolAfter = True
             , getBinfoSymbolLocal = False
             }
@@ -998,7 +998,7 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
         info =
             BinfoInfo
             { getBinfoConnected = peers
-            , getBinfoConversion = 100000000
+            , getBinfoConversion = 100 * 1000 * 1000
             , getBinfoLocal = local
             , getBinfoBTC = btc
             , getBinfoLatestBlock = block
