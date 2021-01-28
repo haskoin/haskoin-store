@@ -1053,7 +1053,8 @@ scottyMultiAddr PostBinfoMultiAddr{..} = do
         )
     get_xpub_xbals_map =
         HashMap.fromList .
-        zip (map xPubSpecKey active_xspec_ls) <$>
+        zip (map xPubSpecKey active_xspec_ls) .
+        map (filter (not . nullBalance . xPubBal)) <$>
         mapM xPubBals active_xspec_ls
     get_addr_bal_map =
         HashMap.fromList .
