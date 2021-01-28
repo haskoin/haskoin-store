@@ -215,7 +215,7 @@ price v = forever $ do
         r <- liftIO $
             Wreq.asJSON =<< Wreq.get "https://blockchain.info/ticker"
         atomically $ writeTVar v (r ^. Wreq.responseBody)
-    threadDelay 5000000
+    threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
   where
     h e = $(logErrorS) "Price" $ cs (show e)
 
