@@ -711,8 +711,8 @@ instance Param BinfoOffsetParam where
     parseParam _ [s] = BinfoOffsetParam <$> readMaybe (cs s)
     parseParam _ _   = Nothing
 
-data GetBinfoMultiAddr
-    = GetBinfoMultiAddr
+data PostBinfoMultiAddr
+    = PostBinfoMultiAddr
         { getBinfoMultiAddrActive       :: !BinfoActiveParam
         , getBinfoMultiAddrActiveP2SH   :: !BinfoActiveP2SHparam
         , getBinfoMultiAddrActiveBech32 :: !BinfoActiveBech32param
@@ -723,9 +723,10 @@ data GetBinfoMultiAddr
         , getBinfoMultiAddrOffsetParam  :: !BinfoOffsetParam
         }
 
-instance ApiResource GetBinfoMultiAddr Store.BinfoMultiAddr where
+instance ApiResource PostBinfoMultiAddr Store.BinfoMultiAddr where
     resourcePath _ _ = "/blockchain/multiaddr"
-    queryParams GetBinfoMultiAddr {..} =
+    resourceMethod _ = POST
+    queryParams PostBinfoMultiAddr {..} =
         ([], noDefBox getBinfoMultiAddrActive <>
              noDefBox getBinfoMultiAddrActiveP2SH <>
              noDefBox getBinfoMultiAddrActiveBech32 <>

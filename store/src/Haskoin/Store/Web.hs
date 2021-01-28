@@ -400,14 +400,15 @@ handlePaths = do
         (const toJSON)
     -- Blockchain.info
     pathPretty
-        (GetBinfoMultiAddr <$> paramDef -- active
-                           <*> paramDef -- activeP2SH
-                           <*> paramDef -- activeBech32
-                           <*> paramDef -- onlyShow
-                           <*> paramDef -- simple
-                           <*> paramDef -- no_compact
-                           <*> paramOptional -- n
-                           <*> paramDef -- offset
+        (PostBinfoMultiAddr
+            <$> paramDef -- active
+            <*> paramDef -- activeP2SH
+            <*> paramDef -- activeBech32
+            <*> paramDef -- onlyShow
+            <*> paramDef -- simple
+            <*> paramDef -- no_compact
+            <*> paramOptional -- n
+            <*> paramDef -- offset
         )
         scottyMultiAddr
         binfoMultiAddrToEncoding
@@ -895,9 +896,9 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
 -- GET Blockchain.info API --
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
-                => GetBinfoMultiAddr
+                => PostBinfoMultiAddr
                 -> WebT m BinfoMultiAddr
-scottyMultiAddr GetBinfoMultiAddr{..} = do
+scottyMultiAddr PostBinfoMultiAddr{..} = do
     lim <- lift $ asks webMaxLimits
     xpub_xbals_map <- get_xpub_xbals_map
     addr_bal_map <- get_addr_bal_map
