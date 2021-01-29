@@ -1607,7 +1607,7 @@ data BinfoMultiAddr
     deriving (Eq, Show, Generic, Serialize, NFData)
 
 binfoMultiAddrToJSON :: Network -> BinfoMultiAddr -> Value
-binfoMultiAddrToJSON net BinfoMultiAddr {..} =
+binfoMultiAddrToJSON net' BinfoMultiAddr {..} =
     object $
         [ "addresses" .= map (binfoAddressToJSON net) getBinfoMultiAddrAddresses
         , "wallet"    .= getBinfoMultiAddrWallet
@@ -1616,6 +1616,8 @@ binfoMultiAddrToJSON net BinfoMultiAddr {..} =
         , "recommend_include_fee" .= getBinfoMultiAddrRecommendFee
         ] ++
         [ "cash_addr" .= True | getBinfoMultiAddrCashAddr ]
+  where
+    net = if not getBinfoMultiAddrCashAddr && net' == bch then btc else net'
 
 binfoMultiAddrParseJSON :: Network -> Value -> Parser BinfoMultiAddr
 binfoMultiAddrParseJSON net = withObject "multiaddr" $ \o -> do
