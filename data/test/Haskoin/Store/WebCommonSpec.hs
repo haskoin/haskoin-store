@@ -48,6 +48,7 @@ params =
     , GenBox (arbitrary :: Gen BinfoNoCompactParam)
     , GenBox (arbitrary :: Gen BinfoCountParam)
     , GenBox (arbitrary :: Gen BinfoOffsetParam)
+    , GenBox (arbitrary :: Gen BinfoTxParam)
     ]
 
 spec :: Spec
@@ -124,3 +125,10 @@ instance Arbitrary BinfoOffsetParam where
     arbitrary = do
         w32 <- arbitrary :: Gen Word32
         return $ BinfoOffsetParam (fromIntegral w32)
+
+instance Arbitrary BinfoTxParam where
+    arbitrary =
+        oneof
+        [ BinfoTxParamHash <$> arbitraryTxHash
+        , BinfoTxParamIndex <$> arbitrary
+        ]

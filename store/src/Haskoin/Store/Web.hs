@@ -436,6 +436,11 @@ handlePaths ticker = do
         (scottyMultiAddr ticker)
         binfoMultiAddrToEncoding
         binfoMultiAddrToJSON
+    pathPretty
+        (GetBinfoTx <$> param)
+        scottyBinfoTx
+        binfoTxToEncoding
+        binfoTxToJSON
     -- Network
     pathPretty
         (GetPeers & return)
@@ -1138,6 +1143,42 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
         HashMap.filterWithKey $ \k _ -> k `HashSet.member` show_addrs
     filter_show_xpubs =
         HashMap.filterWithKey $ \k _ -> k `HashSet.member` show_xpubs
+
+scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m)
+              => GetBinfoTx
+              -> WebT m BinfoTx
+scottyBinfoTx (GetBinfoTx p) =
+    case p of
+        BinfoTxParamHash h -> go h
+        BinfoTxParamIndex i ->
+            case binfoTxIndexBlock i of
+                Nothing -> case binfoTxIndexHash i of
+                    Nothing -> S.raise ThingNotFound
+                    Just h  -> mem h
+                Just b -> block b
+  where
+    go h = getTransaction h >>= \case
+        Nothing -> S.raise ThingNotFound
+        Just t -> do
+            let rs = HashSet.toList $ relevantTxs HashSet.empty False t
+            ts <- catMaybes <$> mapM getTransaction rs
+            let f t = (txHash (transactionData t), t)
+                r = HashMap.fromList $ map f ts
+            return $ toBinfoTxSimple r t
+    block (height, pos) =
+        getBlocksAtHeight height >>= \case
+            [] -> S.raise ThingNotFound
+            h:_ -> getBlock h >>= \case
+                Nothing -> S.raise ThingNotFound
+                Just BlockData{..} ->
+                    if length blockDataTxs > fromIntegral pos
+                    then go (blockDataTxs !! fromIntegral pos)
+                    else S.raise ThingNotFound
+    mem h = do
+        m <- map snd <$> getMempool
+        case filter (matchBinfoTxHash h) m of
+            [] -> S.raise ThingNotFound
+            h':_ -> go h'
 
 -- GET Network Information --
 

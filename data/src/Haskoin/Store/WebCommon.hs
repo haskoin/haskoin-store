@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TupleSections              #-}
 module Haskoin.Store.WebCommon
 
 where
@@ -19,7 +20,7 @@ import qualified Data.Serialize          as S
 import           Data.String             (IsString (..))
 import           Data.String.Conversions (cs)
 import           Data.Text               (Text)
-import qualified Data.Text               as Text
+import qualified Data.Text               as T
 import           Haskoin.Address
 import           Haskoin.Block           (Block, BlockHash, blockHashToHex,
                                           hexToBlockHash)
@@ -407,7 +408,7 @@ instance Param StartParam where
     parseParam _ [s] = parseHash <|> parseHeight <|> parseUnix
       where
         parseHash = do
-            guard (Text.length s == 32 * 2)
+            guard (T.length s == 32 * 2)
             TxHash x <- hexToTxHash s
             return $ StartParamHash x
         parseHeight = do
@@ -576,7 +577,7 @@ binfoParseAddressParam net xs =
     where
       f x = BinfoAddressParam <$> textToAddr net x
         <|> BinfoXPubKeyParam <$> xPubImport net x
-      xs' = Text.splitOn "|" `concatMap` xs
+      xs' = T.splitOn "|" `concatMap` xs
 
 binfoEncodeAddressParam :: Network -> [BinfoAddressParam] -> Maybe [Text]
 binfoEncodeAddressParam net =
@@ -727,11 +728,36 @@ instance ApiResource PostBinfoMultiAddr Store.BinfoMultiAddr where
     resourcePath _ _ = "/blockchain/multiaddr"
     resourceMethod _ = POST
     queryParams PostBinfoMultiAddr {..} =
-        ([], noDefBox getBinfoMultiAddrActive <>
-             noDefBox getBinfoMultiAddrActiveP2SH <>
-             noDefBox getBinfoMultiAddrActiveBech32 <>
-             noDefBox getBinfoMultiAddrOnlyShow <>
-             noDefBox getBinfoMultiAddrCashAddr <>
-             noDefBox getBinfoMultiAddrNoCompact <>
-             noMaybeBox getBinfoMultiAddrCountParam <>
-             noDefBox getBinfoMultiAddrOffsetParam)
+        ([],) $
+        noDefBox getBinfoMultiAddrActive <>
+        noDefBox getBinfoMultiAddrActiveP2SH <>
+        noDefBox getBinfoMultiAddrActiveBech32 <>
+        noDefBox getBinfoMultiAddrOnlyShow <>
+        noDefBox getBinfoMultiAddrCashAddr <>
+        noDefBox getBinfoMultiAddrNoCompact <>
+        noMaybeBox getBinfoMultiAddrCountParam <>
+        noDefBox getBinfoMultiAddrOffsetParam
+
+data BinfoTxParam
+    = BinfoTxParamHash { getBinfoTxParamHash :: !TxHash }
+    | BinfoTxParamIndex { getBinfoTxParamIndex :: !Store.BinfoTxIndex }
+    deriving (Eq, Show)
+
+instance Param BinfoTxParam where
+    proxyLabel = const "txid"
+    encodeParam _ (BinfoTxParamHash h) = Just [txHashToHex h]
+    encodeParam _ (BinfoTxParamIndex i) =
+        Just [T.pack . show $ Store.binfoTxIndexToInt64 i]
+    parseParam _ [s] = h <|> i
+      where
+        h = BinfoTxParamHash <$> hexToTxHash s
+        i = BinfoTxParamIndex . Store.binfoTxIndexFromInt64 <$>
+            readMaybe (T.unpack s)
+
+newtype GetBinfoTx = GetBinfoTx { getBinfoTx :: BinfoTxParam }
+
+instance ApiResource GetBinfoTx Store.BinfoTx where
+    resourcePath _ = ("/blockchain/rawtx/" <:>)
+    resourceMethod _ = GET
+    queryParams (GetBinfoTx h) = ([ParamBox h], [])
+    captureParams _ = [ProxyBox (Proxy :: Proxy TxHash)]

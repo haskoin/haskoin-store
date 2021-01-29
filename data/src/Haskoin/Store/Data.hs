@@ -83,8 +83,11 @@ module Haskoin.Store.Data
 
      -- * Blockchain.info API
     , BinfoTxIndex(..)
+    , binfoTxIndexFromInt64
+    , binfoTxIndexToInt64
     , binfoTxIndexFromHash
     , binfoTxIndexFromBlock
+    , matchBinfoTxHash
     , binfoTxIndexHash
     , binfoTxIndexBlock
     , BinfoMultiAddr(..)
@@ -100,6 +103,7 @@ module Haskoin.Store.Data
     , BinfoTx(..)
     , relevantTxs
     , toBinfoTx
+    , toBinfoTxSimple
     , binfoTxToJSON
     , binfoTxToEncoding
     , binfoTxParseJSON
@@ -148,6 +152,7 @@ import qualified Data.ByteString.Short   as BSS
 import           Data.Default            (Default (..))
 import           Data.Either             (fromRight, lefts, rights)
 import           Data.Foldable           (toList)
+import           Data.Function           (on)
 import           Data.Hashable           (Hashable (..))
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HashMap
@@ -708,15 +713,22 @@ jsonHex s =
 data Spender =
     Spender
         { spenderHash  :: !TxHash
-      -- ^ input transaction hash
+        -- ^ input transaction hash
         , spenderIndex :: !Word32
-      -- ^ input position in transaction
+        -- ^ input position in transaction
         }
     deriving (Show, Read, Eq, Ord, Generic, Serialize, Hashable, NFData)
 
 instance ToJSON Spender where
-    toJSON n = object ["txid" .= txHashToHex (spenderHash n), "input" .= spenderIndex n]
-    toEncoding n = pairs ("txid" .= txHashToHex (spenderHash n) <> "input" .= spenderIndex n)
+    toJSON n =
+        object
+        [ "txid" .= txHashToHex (spenderHash n)
+        , "input" .= spenderIndex n
+        ]
+    toEncoding n =
+        pairs $
+          "txid" .= txHashToHex (spenderHash n) <>
+          "input" .= spenderIndex n
 
 instance FromJSON Spender where
     parseJSON =
@@ -871,29 +883,29 @@ fromTransaction t = (d, sm)
 data Transaction =
     Transaction
         { transactionBlock    :: !BlockRef
-      -- ^ block information for this transaction
+        -- ^ block information for this transaction
         , transactionVersion  :: !Word32
-      -- ^ transaction version
+        -- ^ transaction version
         , transactionLockTime :: !Word32
-      -- ^ lock time
+        -- ^ lock time
         , transactionInputs   :: ![StoreInput]
-      -- ^ transaction inputs
+        -- ^ transaction inputs
         , transactionOutputs  :: ![StoreOutput]
-      -- ^ transaction outputs
+        -- ^ transaction outputs
         , transactionDeleted  :: !Bool
-      -- ^ this transaction has been deleted and is no longer valid
+        -- ^ this transaction has been deleted and is no longer valid
         , transactionRBF      :: !Bool
-      -- ^ this transaction can be replaced in the mempool
+        -- ^ this transaction can be replaced in the mempool
         , transactionTime     :: !Word64
-      -- ^ time the transaction was first seen or time of block
+        -- ^ time the transaction was first seen or time of block
         , transactionId       :: !TxHash
-      -- ^ transaction id
+        -- ^ transaction id
         , transactionSize     :: !Word32
-      -- ^ serialized transaction size (includes witness data)
+        -- ^ serialized transaction size (includes witness data)
         , transactionWeight   :: !Word32
-      -- ^ transaction weight
+        -- ^ transaction weight
         , transactionFees     :: !Word64
-      -- ^ fees that this transaction pays (0 for coinbase)
+        -- ^ fees that this transaction pays (0 for coinbase)
         }
     deriving (Show, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
@@ -1551,17 +1563,27 @@ data BinfoTxIndex
     deriving (Eq, Show, Generic, Serialize, NFData)
 
 instance ToJSON BinfoTxIndex where
-    toJSON (BinfoTxHashIndex n)  = toJSON (n .|. (0x01 `shift` 48))
-    toJSON (BinfoTxBlockIndex n) = toJSON n
-    toJSON BinfoTxNoIndex        = A.Number (-1)
+    toJSON = toJSON . binfoTxIndexToInt64
 
 instance FromJSON BinfoTxIndex where
-    parseJSON = A.withScientific "tx_index" $ \n ->
-        if n == (-1)
-        then return BinfoTxNoIndex
-        else if n < 2 ^ 48
-             then return $ BinfoTxBlockIndex (floor n)
-             else return $ BinfoTxHashIndex (floor n .&. (2 ^ 48 - 1))
+    parseJSON = A.withScientific "tx_index" $
+        return . binfoTxIndexFromInt64 . floor
+
+binfoTxIndexToInt64 :: BinfoTxIndex -> Int64
+binfoTxIndexToInt64 (BinfoTxHashIndex n) =
+    fromIntegral $ n .|. (0x01 `shift` 48)
+binfoTxIndexToInt64 (BinfoTxBlockIndex n) =
+    fromIntegral n
+binfoTxIndexToInt64 BinfoTxNoIndex =
+    (-1)
+
+binfoTxIndexFromInt64 :: Int64 -> BinfoTxIndex
+binfoTxIndexFromInt64 n =
+    if n == (-1)
+    then BinfoTxNoIndex
+    else if n < 2 ^ 48
+          then BinfoTxBlockIndex $ fromIntegral n
+          else BinfoTxHashIndex (fromIntegral n .&. (2 ^ 48 - 1))
 
 binfoTxIndexFromHash :: TxHash -> BinfoTxIndex
 binfoTxIndexFromHash h =
@@ -1573,6 +1595,9 @@ binfoTxIndexFromBlock h p =
     let h' = (fromIntegral h .&. (2 ^ 24 - 1)) `shift` 24
         p' = fromIntegral p .&. (2 ^ 24 - 1)
      in BinfoTxBlockIndex $ h' .|. p'
+
+matchBinfoTxHash :: TxHash -> TxHash -> Bool
+matchBinfoTxHash = (==) `on` B.take 6 . S.encode
 
 binfoTxIndexHash :: BinfoTxIndex -> Maybe TxHash
 binfoTxIndexHash (BinfoTxHashIndex n) =
@@ -2224,6 +2249,9 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
                                , getBinfoAddrBalance = bal
                                }
          in map f $ HashMap.elems only_addrs
+
+toBinfoTxSimple :: HashMap TxHash Transaction -> Transaction -> BinfoTx
+toBinfoTxSimple r = toBinfoTx r HashMap.empty HashSet.empty False 0
 
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address (Maybe BinfoXPubPath)
