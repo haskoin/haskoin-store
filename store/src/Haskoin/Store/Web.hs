@@ -1009,14 +1009,15 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
         , getBinfoMultiAddrWallet = wallet
         , getBinfoMultiAddrTxs = filtered
         , getBinfoMultiAddrInfo = info
-        , getBinfoRecommendFee = True
+        , getBinfoMultiAddrRecommendFee = True
+        , getBinfoMultiAddrCashAddr = getBinfoCashAddrParam
         }
   where
     BinfoActiveParam{..} = getBinfoMultiAddrActive
     BinfoActiveP2SHparam{..} = getBinfoMultiAddrActiveP2SH
     BinfoActiveBech32param{..} = getBinfoMultiAddrActiveBech32
     BinfoOnlyShowParam{..} = getBinfoMultiAddrOnlyShow
-    BinfoSimpleParam{..} = getBinfoMultiAddrSimple
+    BinfoCashAddrParam{..} = getBinfoMultiAddrCashAddr
     BinfoNoCompactParam{..} = getBinfoMultiAddrNoCompact
     BinfoOffsetParam{..} = getBinfoMultiAddrOffsetParam
     prune = not getBinfoNoCompactParam

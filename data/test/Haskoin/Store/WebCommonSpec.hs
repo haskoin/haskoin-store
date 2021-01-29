@@ -44,7 +44,7 @@ params =
     , GenBox (arbitrary :: Gen BinfoActiveParam)
     , GenBox (arbitrary :: Gen BinfoActiveP2SHparam)
     , GenBox (arbitrary :: Gen BinfoOnlyShowParam)
-    , GenBox (arbitrary :: Gen BinfoSimpleParam)
+    , GenBox (arbitrary :: Gen BinfoCashAddrParam)
     , GenBox (arbitrary :: Gen BinfoNoCompactParam)
     , GenBox (arbitrary :: Gen BinfoCountParam)
     , GenBox (arbitrary :: Gen BinfoOffsetParam)
@@ -109,8 +109,8 @@ instance Arbitrary BinfoOnlyShowParam where
         getBinfoOnlyShowParam <- arbitrary
         return BinfoOnlyShowParam {..}
 
-instance Arbitrary BinfoSimpleParam where
-    arbitrary = BinfoSimpleParam <$> arbitrary
+instance Arbitrary BinfoCashAddrParam where
+    arbitrary = BinfoCashAddrParam <$> arbitrary
 
 instance Arbitrary BinfoNoCompactParam where
     arbitrary = BinfoNoCompactParam <$> arbitrary

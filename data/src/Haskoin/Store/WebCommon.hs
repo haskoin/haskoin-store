@@ -661,17 +661,17 @@ parseBoolParam [x] = case x of
 parseBoolParam _ = Nothing
 
 -- simple
-newtype BinfoSimpleParam
-    = BinfoSimpleParam { getBinfoSimpleParam :: Bool }
+newtype BinfoCashAddrParam
+    = BinfoCashAddrParam { getBinfoCashAddrParam :: Bool }
     deriving (Eq, Show)
 
-instance Default BinfoSimpleParam where
-    def = BinfoSimpleParam False
+instance Default BinfoCashAddrParam where
+    def = BinfoCashAddrParam False
 
-instance Param BinfoSimpleParam where
-    proxyLabel = const "simple"
-    encodeParam _ (BinfoSimpleParam b) = Just [encodeBoolParam b]
-    parseParam _ xs = BinfoSimpleParam <$> parseBoolParam xs
+instance Param BinfoCashAddrParam where
+    proxyLabel = const "cashaddr"
+    encodeParam _ (BinfoCashAddrParam b) = Just [encodeBoolParam b]
+    parseParam _ xs = BinfoCashAddrParam <$> parseBoolParam xs
 
 -- no_compact
 newtype BinfoNoCompactParam
@@ -717,7 +717,7 @@ data PostBinfoMultiAddr
         , getBinfoMultiAddrActiveP2SH   :: !BinfoActiveP2SHparam
         , getBinfoMultiAddrActiveBech32 :: !BinfoActiveBech32param
         , getBinfoMultiAddrOnlyShow     :: !BinfoOnlyShowParam
-        , getBinfoMultiAddrSimple       :: !BinfoSimpleParam
+        , getBinfoMultiAddrCashAddr     :: !BinfoCashAddrParam
         , getBinfoMultiAddrNoCompact    :: !BinfoNoCompactParam
         , getBinfoMultiAddrCountParam   :: !(Maybe BinfoCountParam)
         , getBinfoMultiAddrOffsetParam  :: !BinfoOffsetParam
@@ -731,7 +731,7 @@ instance ApiResource PostBinfoMultiAddr Store.BinfoMultiAddr where
              noDefBox getBinfoMultiAddrActiveP2SH <>
              noDefBox getBinfoMultiAddrActiveBech32 <>
              noDefBox getBinfoMultiAddrOnlyShow <>
-             noDefBox getBinfoMultiAddrSimple <>
+             noDefBox getBinfoMultiAddrCashAddr <>
              noDefBox getBinfoMultiAddrNoCompact <>
              noMaybeBox getBinfoMultiAddrCountParam <>
              noDefBox getBinfoMultiAddrOffsetParam)

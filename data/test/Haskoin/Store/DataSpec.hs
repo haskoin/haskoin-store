@@ -425,7 +425,8 @@ instance Arbitrary BinfoMultiAddr where
         getBinfoMultiAddrWallet <- arbitrary
         getBinfoMultiAddrTxs <- arbitrary
         getBinfoMultiAddrInfo <- arbitrary
-        getBinfoRecommendFee <- arbitrary
+        getBinfoMultiAddrRecommendFee <- arbitrary
+        getBinfoMultiAddrCashAddr <- arbitrary
         return BinfoMultiAddr {..}
 
 instance Arbitrary BinfoAddress where

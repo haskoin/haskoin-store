@@ -176,10 +176,11 @@ import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           TxHash (..), TxIn (..), TxOut (..),
                                           WitnessStack, XPubKey (..),
                                           addrFromJSON, addrToEncoding,
-                                          addrToJSON, blockHashToHex, decodeHex,
-                                          eitherToMaybe, encodeHex, headerHash,
-                                          parseSoft, pathToList, pathToStr,
-                                          putVarInt, scriptToAddressBS, txHash,
+                                          addrToJSON, bch, blockHashToHex, btc,
+                                          decodeHex, eitherToMaybe, encodeHex,
+                                          headerHash, parseSoft, pathToList,
+                                          pathToStr, putVarInt,
+                                          scriptToAddressBS, txHash,
                                           txHashToHex, wrapPubKey, xPubFromJSON,
                                           xPubToEncoding, xPubToJSON)
 import           Web.Scotty.Trans        (ScottyError (..))
@@ -289,10 +290,10 @@ instance FromJSON BlockRef where
         b o = do
             height <- o .: "height"
             position <- o .: "position"
-            return BlockRef {blockRefHeight = height, blockRefPos = position}
+            return BlockRef{blockRefHeight = height, blockRefPos = position}
         m o = do
             mempool <- o .: "mempool"
-            return MemRef {memRefTime = mempool}
+            return MemRef{memRefTime = mempool}
 
 -- | Transaction in relation to an address.
 data TxRef =
@@ -1596,23 +1597,25 @@ binfoTransactionIndex Transaction{transactionBlock = BlockRef h p} =
 
 data BinfoMultiAddr
     = BinfoMultiAddr
-        { getBinfoMultiAddrAddresses :: ![BinfoAddress]
-        , getBinfoMultiAddrWallet    :: !BinfoWallet
-        , getBinfoMultiAddrTxs       :: ![BinfoTx]
-        , getBinfoMultiAddrInfo      :: !BinfoInfo
-        , getBinfoRecommendFee       :: !Bool
+        { getBinfoMultiAddrAddresses    :: ![BinfoAddress]
+        , getBinfoMultiAddrWallet       :: !BinfoWallet
+        , getBinfoMultiAddrTxs          :: ![BinfoTx]
+        , getBinfoMultiAddrInfo         :: !BinfoInfo
+        , getBinfoMultiAddrRecommendFee :: !Bool
+        , getBinfoMultiAddrCashAddr     :: !Bool
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
 binfoMultiAddrToJSON :: Network -> BinfoMultiAddr -> Value
 binfoMultiAddrToJSON net BinfoMultiAddr {..} =
-    object
+    object $
         [ "addresses" .= map (binfoAddressToJSON net) getBinfoMultiAddrAddresses
         , "wallet"    .= getBinfoMultiAddrWallet
         , "txs"       .= map (binfoTxToJSON net) getBinfoMultiAddrTxs
         , "info"      .= getBinfoMultiAddrInfo
-        , "recommend_include_fee" .= getBinfoRecommendFee
-        ]
+        , "recommend_include_fee" .= getBinfoMultiAddrRecommendFee
+        ] ++
+        [ "cash_addr" .= True | getBinfoMultiAddrCashAddr ]
 
 binfoMultiAddrParseJSON :: Network -> Value -> Parser BinfoMultiAddr
 binfoMultiAddrParseJSON net = withObject "multiaddr" $ \o -> do
@@ -1622,20 +1625,24 @@ binfoMultiAddrParseJSON net = withObject "multiaddr" $ \o -> do
     getBinfoMultiAddrTxs <-
         mapM (binfoTxParseJSON net) =<< o .: "txs"
     getBinfoMultiAddrInfo <- o .: "info"
-    getBinfoRecommendFee <- o .: "recommend_include_fee"
+    getBinfoMultiAddrRecommendFee <- o .: "recommend_include_fee"
+    getBinfoMultiAddrCashAddr <- o .:? "cash_addr" .!= False
     return BinfoMultiAddr {..}
 
 binfoMultiAddrToEncoding :: Network -> BinfoMultiAddr -> Encoding
-binfoMultiAddrToEncoding net BinfoMultiAddr {..} =
+binfoMultiAddrToEncoding net' BinfoMultiAddr {..} =
     pairs
-        (  "addresses" `pair`
-           list (binfoAddressToEncoding net) getBinfoMultiAddrAddresses
+        (  "addresses" `pair` as
         <> "wallet"    .= getBinfoMultiAddrWallet
-        <> "txs"       `pair`
-           list (binfoTxToEncoding net) getBinfoMultiAddrTxs
+        <> "txs"       `pair` ts
         <> "info"      .= getBinfoMultiAddrInfo
-        <> "recommend_include_fee" .= getBinfoRecommendFee
+        <> "recommend_include_fee" .= getBinfoMultiAddrRecommendFee
+        <> if getBinfoMultiAddrCashAddr then "cash_addr" .= True else mempty
         )
+  where
+    as = list (binfoAddressToEncoding net) getBinfoMultiAddrAddresses
+    ts = list (binfoTxToEncoding net) getBinfoMultiAddrTxs
+    net = if not getBinfoMultiAddrCashAddr && net' == bch then btc else net'
 
 data BinfoAddress
     = BinfoAddress
