@@ -90,6 +90,7 @@ module Haskoin.Store.Data
     , matchBinfoTxHash
     , binfoTxIndexHash
     , binfoTxIndexBlock
+    , BinfoTxId(..)
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
@@ -99,6 +100,8 @@ module Haskoin.Store.Data
     , binfoAddressToJSON
     , binfoAddressToEncoding
     , binfoAddressParseJSON
+    , BinfoAddr(..)
+    , parseBinfoAddr
     , BinfoWallet(..)
     , BinfoTx(..)
     , relevantTxs
@@ -170,6 +173,7 @@ import           Data.Serialize          (Get, Put, Serialize (..), getWord32be,
 import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
 import           Data.Text               (Text)
+import qualified Data.Text               as T
 import           Data.Text.Encoding      (decodeUtf8, encodeUtf8)
 import qualified Data.Text.Lazy          as TL
 import           Data.Word               (Word32, Word64)
@@ -183,12 +187,15 @@ import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           addrFromJSON, addrToEncoding,
                                           addrToJSON, bch, blockHashToHex, btc,
                                           decodeHex, eitherToMaybe, encodeHex,
-                                          headerHash, parseSoft, pathToList,
+                                          headerHash, hexToTxHash,
+                                          maybeToEither, parseSoft, pathToList,
                                           pathToStr, putVarInt,
-                                          scriptToAddressBS, txHash,
+                                          scriptToAddressBS, textToAddr, txHash,
                                           txHashToHex, wrapPubKey, xPubFromJSON,
-                                          xPubToEncoding, xPubToJSON)
-import           Web.Scotty.Trans        (ScottyError (..))
+                                          xPubImport, xPubToEncoding,
+                                          xPubToJSON)
+import           Text.Read               (readMaybe)
+import           Web.Scotty.Trans        (Parsable (..), ScottyError (..))
 
 data DeriveType = DeriveNormal
     | DeriveP2SH
@@ -2387,3 +2394,26 @@ inputToBinfoTxOutput relevant_txs addr_book t n StoreInput{..} =
         getBinfoTxOutputXPub =
             inputAddress >>= join . (`HashMap.lookup` addr_book)
      in Just BinfoTxOutput{..}
+
+data BinfoAddr
+    = BinfoAddr !Address
+    | BinfoXpub !XPubKey
+    deriving (Eq, Show, Generic, Serialize, Hashable, NFData)
+
+parseBinfoAddr :: Network -> Text -> Maybe [BinfoAddr]
+parseBinfoAddr net =
+    mapM f . T.splitOn "|"
+  where
+    f x = BinfoAddr <$> textToAddr net x
+      <|> BinfoXpub <$> xPubImport net x
+
+data BinfoTxId
+    = BinfoTxIdHash !TxHash
+    | BinfoTxIdIndex !BinfoTxIndex
+    deriving (Eq, Show)
+
+instance Parsable BinfoTxId where
+    parseParam t = maybeToEither "could not parse txid" $ h <|> i
+      where
+        h = BinfoTxIdHash <$> hexToTxHash (TL.toStrict t)
+        i = BinfoTxIdIndex . binfoTxIndexFromInt64 <$> readMaybe (TL.unpack t)

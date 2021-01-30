@@ -51,6 +51,7 @@ import qualified Data.Set                      as Set
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
+import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
 import           Data.Text.Lazy                (toStrict)
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
@@ -58,6 +59,7 @@ import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
+import           Haskoin.Address
 import qualified Haskoin.Block                 as H
 import           Haskoin.Constants
 import           Haskoin.Keys
@@ -92,6 +94,7 @@ import           UnliftIO                      (MonadIO, MonadUnliftIO, TVar,
                                                 writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 import           Web.Scotty.Internal.Types     (ActionT)
+import           Web.Scotty.Trans              (Parsable)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
@@ -421,26 +424,6 @@ handlePaths ticker = do
         scottyXPubEvict
         (const toEncoding)
         (const toJSON)
-    -- Blockchain.info
-    pathPretty
-        (PostBinfoMultiAddr
-            <$> paramDef -- active
-            <*> paramDef -- activeP2SH
-            <*> paramDef -- activeBech32
-            <*> paramDef -- onlyShow
-            <*> paramDef -- simple
-            <*> paramDef -- no_compact
-            <*> paramOptional -- n
-            <*> paramDef -- offset
-        )
-        (scottyMultiAddr ticker)
-        binfoMultiAddrToEncoding
-        binfoMultiAddrToJSON
-    pathPretty
-        (GetBinfoTx <$> param)
-        scottyBinfoTx
-        binfoTxToEncoding
-        binfoTxToJSON
     -- Network
     pathPretty
         (GetPeers & return)
@@ -454,6 +437,9 @@ handlePaths ticker = do
          (const toJSON)
     S.get "/events" scottyEvents
     S.get "/dbstats" scottyDbStats
+    -- Blockchain.info
+    S.post "/blockchain/multiaddr" (scottyMultiAddr ticker)
+    S.get "/blockchain/rawtx/:txid" scottyBinfoTx
   where
     json_list f net = toJSONList . map (f net)
 
@@ -920,47 +906,45 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
     lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
     return $ GenericResult True
 
-
--- GET Blockchain.info API --
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
                 => TVar BinfoTicker
-                -> PostBinfoMultiAddr
-                -> WebT m BinfoMultiAddr
-scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
-    lim <- lift $ asks webMaxLimits
-    xpub_xbals_map <- get_xpub_xbals_map
-    addr_bal_map <- get_addr_bal_map
-    show_xpub_tx_map <- get_show_xpub_tx_map
-    show_addr_txs <- get_show_addr_txs
+                -> WebT m ()
+scottyMultiAddr ticker = do
+    prune <- get_prune
+    n <- get_count
+    offset <- get_offset
+    cashaddr <- get_cashaddr
+    (addrs, xpubs, saddrs, sxpubs, xspecs) <- get_addrs
+    xbals <- get_xbals xspecs
+    let sxbals = compute_sxbals sxpubs xbals
+    sxtrs <- get_sxtrs sxpubs xspecs
+    sabals <- get_abals saddrs
+    satrs <- get_atrs n offset saddrs
     prices <- readTVarIO ticker
-    let show_xpub_txn_map = HashMap.map length show_xpub_tx_map
-        show_xpub_txs = compute_show_xpub_txs show_xpub_tx_map
-        xpub_addr_bal_map = compute_xpub_addr_bal_map xpub_xbals_map
-        bal_map = addr_bal_map <> xpub_addr_bal_map
-        addr_book = compute_address_book xpub_xbals_map
-        show_xpub_addrs = compute_show_xpub_addrs xpub_xbals_map
-        only_show = show_xpub_addrs <> show_addrs
-        only_addrs = filter_show_addrs addr_bal_map
-        only_xpubs = filter_show_xpubs xpub_xbals_map
-        bal = compute_balance only_show bal_map
-        tx_refs = Set.toDescList $ show_xpub_txs <> show_addr_txs
-        show_txids = take (count lim + off lim) $ map txRefHash tx_refs
-    txs <- catMaybes <$> mapM getTransaction show_txids
-    let extra_txids = compute_extra_txids addr_book txs
-    extra_txs <- get_extra_txs extra_txids
+    let sxtns = HashMap.map length sxtrs
+        sxtrset = Set.fromList . concat $ HashMap.elems sxtrs
+        sxabals = compute_xabals sxbals
+        sallbals = sabals <> sxabals
+        abook = compute_abook addrs xbals
+        sxaddrs = compute_xaddrs sxbals
+        salladdrs = sxaddrs <> saddrs
+        bal = compute_bal sallbals
+        salltrs = sxtrset <> satrs
+        stxids = compute_txids n offset salltrs
+    stxs <- get_txs stxids
+    let etxids = compute_etxids prune abook stxs
+    etxs <- get_etxs etxids
     best <- scottyBlockBest (GetBlockBest (NoTx True))
-    peers <- fmap (fromIntegral . length) . lift $
-             getPeersInformation =<< asks (storeManager . webStore)
-    let btxs = binfo_txs
-               extra_txs
-               addr_book
-               only_show
-               prune
-               (fromIntegral bal)
-               txs
-        filtered = take (count lim) $ drop (off lim) btxs
-        addrs = toBinfoAddrs only_addrs only_xpubs show_xpub_txn_map
+    peers <- get_peers
+    net <- lift $ asks (storeNetwork . webStore)
+    let ibal = fromIntegral bal
+        btxs = binfo_txs etxs abook salladdrs prune ibal stxs
+        ftxs = take n $ drop offset btxs
+        addrs = toBinfoAddrs sabals sxbals sxtns
         recv = sum $ map getBinfoAddrReceived addrs
         sent = sum $ map getBinfoAddrSent addrs
         txn = sum $ map getBinfoAddrTxCount addrs
@@ -971,7 +955,7 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
             BinfoWallet
             { getBinfoWalletBalance = bal
             , getBinfoWalletTxCount = txn
-            , getBinfoWalletFilteredCount = fromIntegral $ length filtered
+            , getBinfoWalletFilteredCount = fromIntegral (length ftxs)
             , getBinfoWalletTotalReceived = recv
             , getBinfoWalletTotalSent = sent
             }
@@ -1008,149 +992,131 @@ scottyMultiAddr ticker PostBinfoMultiAddr{..} = do
             , getBinfoBTC = btc
             , getBinfoLatestBlock = block
             }
-    return
+    S.json $ binfoMultiAddrToJSON net
         BinfoMultiAddr
         { getBinfoMultiAddrAddresses = addrs
         , getBinfoMultiAddrWallet = wallet
-        , getBinfoMultiAddrTxs = filtered
+        , getBinfoMultiAddrTxs = ftxs
         , getBinfoMultiAddrInfo = info
         , getBinfoMultiAddrRecommendFee = True
-        , getBinfoMultiAddrCashAddr = getBinfoCashAddrParam
+        , getBinfoMultiAddrCashAddr = cashaddr
         }
   where
-    BinfoActiveParam{..} = getBinfoMultiAddrActive
-    BinfoActiveP2SHparam{..} = getBinfoMultiAddrActiveP2SH
-    BinfoActiveBech32param{..} = getBinfoMultiAddrActiveBech32
-    BinfoOnlyShowParam{..} = getBinfoMultiAddrOnlyShow
-    BinfoCashAddrParam{..} = getBinfoMultiAddrCashAddr
-    BinfoNoCompactParam{..} = getBinfoMultiAddrNoCompact
-    BinfoOffsetParam{..} = getBinfoMultiAddrOffsetParam
-    prune = not getBinfoNoCompactParam
-    off WebLimits{maxLimitOffset = o} =
-        fromIntegral $ min getBinfoOffsetParam (fromIntegral o)
-    count WebLimits{maxLimitDefault = d, maxLimitFull = f} =
-        case getBinfoMultiAddrCountParam of
-            Nothing                  -> fromIntegral d
-            Just (BinfoCountParam x) -> fromIntegral $ min x (fromIntegral f)
-    get_addr (BinfoAddressParam a) = Just a
-    get_addr (BinfoXPubKeyParam _) = Nothing
-    get_xpub (BinfoXPubKeyParam x) = Just x
-    get_xpub (BinfoAddressParam _) = Nothing
+    get_prune = fmap not $ S.param "no_compact"
+        `S.rescue` const (return False)
+    get_cashaddr = S.param "cashaddr"
+        `S.rescue` const (return False)
+    get_count = do
+        d <- lift (asks (maxLimitDefault . webMaxLimits))
+        x <- lift (asks (maxLimitFull . webMaxLimits))
+        i <- min x <$> (S.param "n" `S.rescue` const (return d))
+        return (fromIntegral i :: Int)
+    get_offset = do
+        x <- lift (asks (maxLimitOffset . webMaxLimits))
+        o <- min x <$> (S.param "offset" `S.rescue` const (return 0))
+        return (fromIntegral o :: Int)
+    get_addrs_param name = do
+        net <- lift (asks (storeNetwork . webStore))
+        p <- S.param name `S.rescue` const (return "")
+        case parseBinfoAddr net p of
+            Nothing -> S.raise (UserError "invalid active address")
+            Just xs -> return $ HashSet.fromList xs
+    addr (BinfoAddr a) = Just a
+    addr (BinfoXpub x) = Nothing
+    xpub (BinfoXpub x) = Just x
+    xpub (BinfoAddr _) = Nothing
     binfo_txs _ _ _ _ _ [] = []
-    binfo_txs relevant_txs addr_book only_show prune bal (t:ts) =
-        let b = toBinfoTx relevant_txs addr_book only_show prune bal t
-            nbal = bal - getBinfoTxResult b
-         in b : binfo_txs relevant_txs addr_book only_show prune nbal ts
-    active_addrs =
-        HashSet.fromList (mapMaybe get_addr getBinfoActiveParam)
-    active_addr_ls = HashSet.toList active_addrs
-    active_bech32 =
-        HashSet.fromList (mapMaybe get_xpub getBinfoActiveBech32param)
-    active_p2sh =
-        HashSet.fromList (mapMaybe get_xpub getBinfoActiveP2SHparam)
-        `HashSet.difference`
-        active_bech32
-    active_normal =
-        HashSet.fromList (mapMaybe get_xpub getBinfoActiveParam)
-        `HashSet.difference`
-        (active_p2sh `HashSet.union` active_bech32)
-    active_xspecs =
-        HashSet.map (`XPubSpec` DeriveNormal) active_normal <>
-        HashSet.map (`XPubSpec` DeriveP2SH) active_p2sh <>
-        HashSet.map (`XPubSpec` DeriveP2WPKH) active_bech32
-    active_xspec_ls = HashSet.toList active_xspecs
-    active_xpubs = HashSet.map xPubSpecKey active_xspecs
-    show_addrs
-        | null getBinfoOnlyShowParam = active_addrs
-        | otherwise =
-              HashSet.fromList (mapMaybe get_addr getBinfoOnlyShowParam)
-              `HashSet.intersection`
-              active_addrs
-    show_addr_ls = HashSet.toList show_addrs
-    show_xpubs
-        | null getBinfoOnlyShowParam = active_xpubs
-        | otherwise =
-              HashSet.fromList (mapMaybe get_xpub getBinfoOnlyShowParam)
-              `HashSet.intersection`
-              active_xpubs
-    show_xpub_ls = HashSet.toList show_xpubs
-    show_xspecs =
-        HashSet.filter
-        ((`HashSet.member` show_xpubs) . xPubSpecKey)
-        active_xspecs
-    show_xspec_ls = HashSet.toList show_xspecs
-    map_xbals key = map $ \XPubBal{..} ->
-        ( balanceAddress xPubBal
-        , BinfoXPubPath key .
-          fromMaybe (error "lions and tigers and bears") .
-          toSoft $ listToPath xPubBalPath
-        )
-    get_xpub_xbals_map =
-        HashMap.fromList .
-        zip (map xPubSpecKey active_xspec_ls) .
-        map (filter (not . nullBalance . xPubBal)) <$>
-        mapM xPubBals active_xspec_ls
-    get_addr_bal_map =
-        HashMap.fromList .
-        map (\b -> (balanceAddress b, b)) <$>
-        getBalances active_addr_ls
-    get_show_xpub_tx_map =
-        let f x = (xPubSpecKey x,) <$> xPubTxs x def
-        in HashMap.fromList <$> mapM f show_xspec_ls
-    compute_show_xpub_txs =
-        Set.fromList . concat . HashMap.elems
-    get_show_addr_txs = do
-        lim <- lift $ asks webMaxLimits
-        let l = def{ limit = count lim + off lim }
-        Set.fromList <$> getAddressesTxs show_addr_ls l
-    get_extra_txs extra_txids =
-        HashMap.fromList .
-        map (\t -> (txHash (transactionData t), t)) .
-        catMaybes <$>
-        mapM getTransaction extra_txids
-    compute_extra_txids addr_book =
-        HashSet.toList .
-        foldl HashSet.union HashSet.empty .
-        map (relevantTxs (HashMap.keysSet addr_book) prune)
-    compute_xpub_addr_bal_map =
-        HashMap.fromList .
-        map (\b -> (balanceAddress (xPubBal b), xPubBal b)) .
-        concat .
-        HashMap.elems
-    compute_balance only_show =
-        sum .
-        map (\b -> balanceAmount b + balanceZero b) .
-        filter (\b -> balanceAddress b `HashSet.member` only_show) .
-        HashMap.elems
-    compute_address_book =
-        HashMap.fromList .
-        (map (, Nothing) active_addr_ls <>) .
-        map (second Just) .
-        concatMap (uncurry map_xbals) .
-        HashMap.toList
-    compute_show_xpub_addrs xpub_xbals_map =
-        HashSet.fromList .
-        map (balanceAddress . xPubBal) .
-        concat $
-        mapMaybe (`HashMap.lookup` xpub_xbals_map) show_xpub_ls
+    binfo_txs etxs abook salladdrs prune ibal (t:ts) =
+        let b = toBinfoTx etxs abook salladdrs prune ibal t
+            nbal = ibal - getBinfoTxResult b
+         in b : binfo_txs etxs abook salladdrs prune nbal ts
+    get_addrs = do
+        active <- get_addrs_param "active"
+        p2sh <- get_addrs_param "activeP2SH"
+        bech32 <- get_addrs_param "activeBech32"
+        sh <- get_addrs_param "onlyShow"
+        let xspec d b = (\x -> (x, XPubSpec x d)) <$> xpub b
+            xspecs = HashMap.fromList $ concat
+                     [ mapMaybe (xspec DeriveNormal) (HashSet.toList active)
+                     , mapMaybe (xspec DeriveP2SH) (HashSet.toList p2sh)
+                     , mapMaybe (xspec DeriveP2WPKH) (HashSet.toList bech32)
+                     ]
+            actives = active <> p2sh <> bech32
+            addrs = HashSet.fromList . mapMaybe addr $ HashSet.toList actives
+            xpubs = HashSet.fromList . mapMaybe xpub $ HashSet.toList actives
+            sh' = if HashSet.null sh
+                  then actives
+                  else sh `HashSet.intersection` actives
+            saddrs = HashSet.fromList . mapMaybe addr $ HashSet.toList sh'
+            sxpubs = HashSet.fromList . mapMaybe xpub $ HashSet.toList sh'
+        return (addrs, xpubs, saddrs, sxpubs, xspecs)
+    get_xbals =
+        let f = not . nullBalance . xPubBal
+            g = HashMap.fromList . map (second (filter f))
+            h (k, s) = (,) k <$> xPubBals s
+        in fmap g . mapM h . HashMap.toList
+    get_abals =
+        let f b = (balanceAddress b, b)
+            g = HashMap.fromList . map f
+        in fmap g . getBalances . HashSet.toList
+    get_sxtrs sxpubs =
+        let f (k, s) = (,) k <$> xPubTxs s def
+            g = ((`HashSet.member` sxpubs) . fst)
+        in fmap HashMap.fromList . mapM f . filter g . HashMap.toList
+    get_atrs n offset =
+        let i = fromIntegral (n + offset)
+            f x = getAddressesTxs x def{limit = i}
+        in fmap Set.fromList . f . HashSet.toList
+    get_txs = fmap catMaybes . mapM getTransaction
+    get_etxs =
+        let f t = (txHash (transactionData t), t)
+            g = HashMap.fromList . map f . catMaybes
+        in fmap g . mapM getTransaction
+    get_peers = do
+        ps <- lift $ getPeersInformation =<< asks (storeManager . webStore)
+        return (fromIntegral (length ps))
+    compute_txids n offset = map txRefHash . take (n + offset) . Set.toDescList
+    compute_etxids prune abook =
+        let f = relevantTxs (HashMap.keysSet abook) prune
+        in HashSet.toList . foldl HashSet.union HashSet.empty . map f
+    compute_sxbals sxpubs =
+        let f k _ = k `HashSet.member` sxpubs
+        in HashMap.filterWithKey f
+    compute_xabals =
+        let f b = (balanceAddress (xPubBal b), xPubBal b)
+        in HashMap.fromList . concatMap (map f) . HashMap.elems
+    compute_bal =
+        let f b = balanceAmount b + balanceZero b
+        in sum . map f . HashMap.elems
+    compute_abook addrs xbals =
+        let f k XPubBal{..} =
+                let a = balanceAddress xPubBal
+                    e = error "lions and tigers and bears"
+                    s = toSoft (listToPath xPubBalPath)
+                    m = fromMaybe e s
+                in (a, Just (BinfoXPubPath k m))
+            g k = map (f k)
+            amap = HashMap.map (const Nothing) $
+                   HashSet.toMap addrs
+            xmap = HashMap.fromList .
+                   concatMap (uncurry g) $
+                   HashMap.toList xbals
+        in amap <> xmap
+    compute_xaddrs =
+        let f = map (balanceAddress . xPubBal)
+        in HashSet.fromList . concatMap f . HashMap.elems
     sent BinfoTx{..}
       | getBinfoTxResult < 0 = fromIntegral (negate getBinfoTxResult)
       | otherwise = 0
     received BinfoTx{..}
       | getBinfoTxResult > 0 = fromIntegral getBinfoTxResult
       | otherwise = 0
-    filter_show_addrs =
-        HashMap.filterWithKey $ \k _ -> k `HashSet.member` show_addrs
-    filter_show_xpubs =
-        HashMap.filterWithKey $ \k _ -> k `HashSet.member` show_xpubs
 
-scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m)
-              => GetBinfoTx
-              -> WebT m BinfoTx
-scottyBinfoTx (GetBinfoTx p) =
-    case p of
-        BinfoTxParamHash h -> go h
-        BinfoTxParamIndex i ->
+scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTx =
+    S.param "txid" >>= \case
+        BinfoTxIdHash h -> go h
+        BinfoTxIdIndex i ->
             case binfoTxIndexBlock i of
                 Nothing -> case binfoTxIndexHash i of
                     Nothing -> S.raise ThingNotFound
@@ -1164,7 +1130,8 @@ scottyBinfoTx (GetBinfoTx p) =
             ts <- catMaybes <$> mapM getTransaction rs
             let f t = (txHash (transactionData t), t)
                 r = HashMap.fromList $ map f ts
-            return $ toBinfoTxSimple r t
+            net <- lift $ asks (storeNetwork . webStore)
+            S.json . binfoTxToJSON net $ toBinfoTxSimple r t
     block (height, pos) =
         getBlocksAtHeight height >>= \case
             [] -> S.raise ThingNotFound
@@ -1177,7 +1144,7 @@ scottyBinfoTx (GetBinfoTx p) =
     mem h = do
         m <- map snd <$> getMempool
         case filter (matchBinfoTxHash h) m of
-            [] -> S.raise ThingNotFound
+            []   -> S.raise ThingNotFound
             h':_ -> go h'
 
 -- GET Network Information --

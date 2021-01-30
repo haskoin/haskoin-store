@@ -41,14 +41,6 @@ params =
     , GenBox (listOf arbitraryBlockHash)
     , GenBox arbitraryTxHash
     , GenBox (listOf arbitraryTxHash)
-    , GenBox (arbitrary :: Gen BinfoActiveParam)
-    , GenBox (arbitrary :: Gen BinfoActiveP2SHparam)
-    , GenBox (arbitrary :: Gen BinfoOnlyShowParam)
-    , GenBox (arbitrary :: Gen BinfoCashAddrParam)
-    , GenBox (arbitrary :: Gen BinfoNoCompactParam)
-    , GenBox (arbitrary :: Gen BinfoCountParam)
-    , GenBox (arbitrary :: Gen BinfoOffsetParam)
-    , GenBox (arbitrary :: Gen BinfoTxParam)
     ]
 
 spec :: Spec
@@ -80,55 +72,3 @@ instance Arbitrary StartParam where
 
 instance Arbitrary HeightsParam where
     arbitrary = HeightsParam <$> listOf arbitrarySizedNatural
-
----------------------------------------
--- Blockchain.info API compatibility --
----------------------------------------
-
-instance Arbitrary BinfoAddressParam where
-    arbitrary = oneof [a, x]
-      where
-        a = do
-            getBinfoAddressParam <- arbitraryAddress
-            return BinfoAddressParam {..}
-        x = do
-            getBinfoXPubKeyParam <- snd <$> arbitraryXPubKey
-            return BinfoXPubKeyParam {..}
-
-instance Arbitrary BinfoActiveParam where
-    arbitrary = do
-        getBinfoActiveParam <- arbitrary
-        return BinfoActiveParam {..}
-
-instance Arbitrary BinfoActiveP2SHparam where
-    arbitrary = do
-        getBinfoActiveP2SHparam <- arbitrary
-        return BinfoActiveP2SHparam {..}
-
-instance Arbitrary BinfoOnlyShowParam where
-    arbitrary = do
-        getBinfoOnlyShowParam <- arbitrary
-        return BinfoOnlyShowParam {..}
-
-instance Arbitrary BinfoCashAddrParam where
-    arbitrary = BinfoCashAddrParam <$> arbitrary
-
-instance Arbitrary BinfoNoCompactParam where
-    arbitrary = BinfoNoCompactParam <$> arbitrary
-
-instance Arbitrary BinfoCountParam where
-    arbitrary = do
-        w32 <- arbitrary :: Gen Word32
-        return $ BinfoCountParam (fromIntegral w32)
-
-instance Arbitrary BinfoOffsetParam where
-    arbitrary = do
-        w32 <- arbitrary :: Gen Word32
-        return $ BinfoOffsetParam (fromIntegral w32)
-
-instance Arbitrary BinfoTxParam where
-    arbitrary =
-        oneof
-        [ BinfoTxParamHash <$> arbitraryTxHash
-        , BinfoTxParamIndex <$> arbitrary
-        ]
