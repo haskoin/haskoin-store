@@ -2401,8 +2401,9 @@ data BinfoAddr
     deriving (Eq, Show, Generic, Serialize, Hashable, NFData)
 
 parseBinfoAddr :: Network -> Text -> Maybe [BinfoAddr]
-parseBinfoAddr net =
-    mapM f . T.splitOn "|"
+parseBinfoAddr _ "" = Just []
+parseBinfoAddr net s =
+    mapM f $ T.splitOn "|" s
   where
     f x = BinfoAddr <$> textToAddr net x
       <|> BinfoXpub <$> xPubImport net x
