@@ -1135,8 +1135,8 @@ scottyBinfoTx =
     go h = getTransaction h >>= \case
         Nothing -> S.raise ThingNotFound
         Just t -> get_format >>= \case
-            "json" -> js t
             "hex" -> hex t
+            _ -> js t
     block i =
         let Just (height, pos) = binfoTxIndexBlock i
         in getBlocksAtHeight height >>= \case
