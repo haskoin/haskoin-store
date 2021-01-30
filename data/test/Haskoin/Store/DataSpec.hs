@@ -48,7 +48,6 @@ serialVals =
     , SerialBox (arbitrary :: Gen (RawResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
     , SerialBox (arbitrary :: Gen Except)
-    , SerialBox (arbitrary :: Gen BinfoTxIndex)
     , SerialBox (arbitrary :: Gen BinfoWallet)
     , SerialBox (arbitrary :: Gen BinfoAddress)
     , SerialBox (arbitrary :: Gen BinfoSymbol)
@@ -76,7 +75,6 @@ jsonVals =
     , JsonBox (arbitrary :: Gen (RawResult BlockData))
     , JsonBox (arbitrary :: Gen (RawResultList BlockData))
     , JsonBox (arbitrary :: Gen Except)
-    , JsonBox (arbitrary :: Gen BinfoTxIndex)
     , JsonBox (arbitrary :: Gen BinfoWallet)
     , JsonBox (arbitrary :: Gen BinfoSymbol)
     , JsonBox (arbitrary :: Gen BinfoBlockInfo)
@@ -155,16 +153,12 @@ spec = do
         forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
     describe "Blockchain.info API" $ do
         it "compresses txids correctly" $
-            forAll arbitraryTxHash $ \h1 ->
-            let Just h2 = binfoTxIndexHash (binfoTxIndexFromHash h1)
-                h1' = B.take 6 (S.encode h1)
-                h2' = B.take 6 (S.encode h2)
-                h2t = B.drop 6 (S.encode h2)
-             in h1' == h2' && B.all (== 0x00) h2t
+            forAll arbitraryTxHash $ \h ->
+            matchBinfoTxHash (hashToBinfoTxIndex h) h
         prop "compresses blockchain locations correctly" $
             let x = choose (0, 2 ^ 24 - 1)
              in forAll ((,) <$> x <*> x) $ \(b, p) ->
-                let i = binfoTxIndexFromBlock b p
+                let i = blockToBinfoTxIndex b p
                     Just (b', p') = binfoTxIndexBlock i
                  in b == b' && p == p'
 
@@ -410,14 +404,6 @@ instance Arbitrary Except where
 ---------------------------------------
 -- Blockchain.info API Compatibility --
 ---------------------------------------
-
-
-instance Arbitrary BinfoTxIndex where
-    arbitrary = oneof
-        [ binfoTxIndexFromHash  <$> arbitraryTxHash
-        , binfoTxIndexFromBlock <$> arbitrary <*> arbitrary
-        , return BinfoTxNoIndex
-        ]
 
 instance Arbitrary BinfoMultiAddr where
     arbitrary = do

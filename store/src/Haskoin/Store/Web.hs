@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -54,6 +55,7 @@ import           Data.Text                     (Text)
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
 import           Data.Text.Lazy                (toStrict)
+import qualified Data.Text.Lazy                as TL
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
@@ -1117,23 +1119,27 @@ scottyBinfoTx =
     S.param "txid" >>= \case
         BinfoTxIdHash h -> go h
         BinfoTxIdIndex i ->
-            case binfoTxIndexBlock i of
-                Nothing -> case binfoTxIndexHash i of
-                    Nothing -> S.raise ThingNotFound
-                    Just h  -> mem h
-                Just b -> block b
+            if | isBinfoTxIndexNull i -> S.raise ThingNotFound
+               | isBinfoTxIndexBlock i -> block i
+               | isBinfoTxIndexHash i -> hash i
   where
+    get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
+    js t = do
+        let rs = HashSet.toList $ relevantTxs HashSet.empty False t
+        ts <- catMaybes <$> mapM getTransaction rs
+        let f t = (txHash (transactionData t), t)
+            r = HashMap.fromList $ map f ts
+        net <- lift $ asks (storeNetwork . webStore)
+        S.json . binfoTxToJSON net $ toBinfoTxSimple r t
+    hex = S.text . TL.fromStrict . encodeHex . encode . transactionData
     go h = getTransaction h >>= \case
         Nothing -> S.raise ThingNotFound
-        Just t -> do
-            let rs = HashSet.toList $ relevantTxs HashSet.empty False t
-            ts <- catMaybes <$> mapM getTransaction rs
-            let f t = (txHash (transactionData t), t)
-                r = HashMap.fromList $ map f ts
-            net <- lift $ asks (storeNetwork . webStore)
-            S.json . binfoTxToJSON net $ toBinfoTxSimple r t
-    block (height, pos) =
-        getBlocksAtHeight height >>= \case
+        Just t -> get_format >>= \case
+            "json" -> js t
+            "hex" -> hex t
+    block i =
+        let Just (height, pos) = binfoTxIndexBlock i
+        in getBlocksAtHeight height >>= \case
             [] -> S.raise ThingNotFound
             h:_ -> getBlock h >>= \case
                 Nothing -> S.raise ThingNotFound
@@ -1141,11 +1147,25 @@ scottyBinfoTx =
                     if length blockDataTxs > fromIntegral pos
                     then go (blockDataTxs !! fromIntegral pos)
                     else S.raise ThingNotFound
-    mem h = do
-        m <- map snd <$> getMempool
-        case filter (matchBinfoTxHash h) m of
-            []   -> S.raise ThingNotFound
-            h':_ -> go h'
+    hmatch h = listToMaybe . filter (matchBinfoTxHash h)
+    hmem h = hmatch h . map snd <$> getMempool
+    hblock h =
+        let g 0 _ = return Nothing
+            g i k =
+                getBlock k >>= \case
+                Nothing -> return Nothing
+                Just BlockData{..} ->
+                    case hmatch h blockDataTxs of
+                        Nothing -> g (i - 1) (H.prevBlock blockDataHeader)
+                        Just x  -> return (Just x)
+        in getBestBlock >>= \case
+            Nothing -> return Nothing
+            Just k -> g 10 k
+    hash h = hmem h >>= \case
+        Nothing -> hblock h >>= \case
+            Nothing -> S.raise ThingNotFound
+            Just x -> go x
+        Just x -> go x
 
 -- GET Network Information --
 

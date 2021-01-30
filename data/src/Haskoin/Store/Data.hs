@@ -82,14 +82,16 @@ module Haskoin.Store.Data
     , Except(..)
 
      -- * Blockchain.info API
-    , BinfoTxIndex(..)
-    , binfoTxIndexFromInt64
-    , binfoTxIndexToInt64
-    , binfoTxIndexFromHash
-    , binfoTxIndexFromBlock
+    , BinfoTxIndex
+    , isBinfoTxIndexNull
+    , isBinfoTxIndexBlock
+    , isBinfoTxIndexHash
+    , encodeBinfoTxIndexHash
+    , hashToBinfoTxIndex
+    , blockToBinfoTxIndex
     , matchBinfoTxHash
-    , binfoTxIndexHash
     , binfoTxIndexBlock
+    , binfoTransactionIndex
     , BinfoTxId(..)
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
@@ -146,7 +148,7 @@ import qualified Data.Aeson              as A
 import           Data.Aeson.Encoding     (list, null_, pair, text,
                                           unsafeToEncoding)
 import           Data.Aeson.Types        (Parser)
-import           Data.Bits               (shift, (.&.), (.|.))
+import           Data.Bits               (shift, (.&.), (.|.), testBit, setBit)
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
 import           Data.ByteString.Builder (char7, lazyByteStringHex)
@@ -1563,69 +1565,55 @@ instance FromJSON Except where
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
-data BinfoTxIndex
-    = BinfoTxNoIndex
-    | BinfoTxBlockIndex !Word64
-    | BinfoTxHashIndex !Word64
-    deriving (Eq, Show, Generic, Serialize, NFData)
+type BinfoTxIndex = Int64
 
-instance ToJSON BinfoTxIndex where
-    toJSON = toJSON . binfoTxIndexToInt64
+isBinfoTxIndexNull :: BinfoTxIndex -> Bool
+isBinfoTxIndexNull = (0 >)
 
-instance FromJSON BinfoTxIndex where
-    parseJSON = A.withScientific "tx_index" $
-        return . binfoTxIndexFromInt64 . floor
+isBinfoTxIndexBlock :: BinfoTxIndex -> Bool
+isBinfoTxIndexBlock n = 0 <= n && not (testBit n 48)
 
-binfoTxIndexToInt64 :: BinfoTxIndex -> Int64
-binfoTxIndexToInt64 (BinfoTxHashIndex n) =
-    fromIntegral $ n .|. (0x01 `shift` 48)
-binfoTxIndexToInt64 (BinfoTxBlockIndex n) =
-    fromIntegral n
-binfoTxIndexToInt64 BinfoTxNoIndex =
-    (-1)
+isBinfoTxIndexHash :: BinfoTxIndex -> Bool
+isBinfoTxIndexHash n = 0 <= n && testBit n 48
 
-binfoTxIndexFromInt64 :: Int64 -> BinfoTxIndex
-binfoTxIndexFromInt64 n =
-    if n == (-1)
-    then BinfoTxNoIndex
-    else if n < 2 ^ 48
-          then BinfoTxBlockIndex $ fromIntegral n
-          else BinfoTxHashIndex (fromIntegral n .&. (2 ^ 48 - 1))
+encodeBinfoTxIndexHash :: BinfoTxIndex -> Maybe ByteString
+encodeBinfoTxIndexHash n =
+    if isBinfoTxIndexHash n
+    then Just . B.drop 2 $ S.encode n
+    else Nothing
 
-binfoTxIndexFromHash :: TxHash -> BinfoTxIndex
-binfoTxIndexFromHash h =
-    BinfoTxHashIndex . fromRight (error "weird monkeys") .
-    S.decode $ 0x00 `B.cons` 0x00 `B.cons` B.take 6 (S.encode h)
+hashToBinfoTxIndex :: TxHash -> BinfoTxIndex
+hashToBinfoTxIndex h =
+    fromRight (error "weird monkeys dancing") . S.decode $
+    0x00 `B.cons` 0x01 `B.cons` B.take 6 (S.encode h)
 
-binfoTxIndexFromBlock :: BlockHeight -> Word32 -> BinfoTxIndex
-binfoTxIndexFromBlock h p =
-    let h' = (fromIntegral h .&. (2 ^ 24 - 1)) `shift` 24
-        p' = fromIntegral p .&. (2 ^ 24 - 1)
-     in BinfoTxBlockIndex $ h' .|. p'
+blockToBinfoTxIndex :: BlockHeight -> Word32 -> BinfoTxIndex
+blockToBinfoTxIndex h p =
+    let norm = (.&.) (2 ^ 24 - 1) . fromIntegral
+     in norm h `shift` 24 .|. norm p
 
-matchBinfoTxHash :: TxHash -> TxHash -> Bool
-matchBinfoTxHash = (==) `on` B.take 6 . S.encode
-
-binfoTxIndexHash :: BinfoTxIndex -> Maybe TxHash
-binfoTxIndexHash (BinfoTxHashIndex n) =
-    either (const Nothing) Just .
-    S.decode $ B.drop 2 (S.encode n) `B.append` B.replicate 26 0x00
-binfoTxIndexHash _ = Nothing
+matchBinfoTxHash :: Int64 -> TxHash -> Bool
+matchBinfoTxHash n h =
+    let bn = B.drop 2 $ S.encode n
+        bh = B.take 6 $ S.encode h
+    in isBinfoTxIndexHash n && bn == bh
 
 binfoTxIndexBlock :: BinfoTxIndex -> Maybe (BlockHeight, Word32)
-binfoTxIndexBlock (BinfoTxBlockIndex n) =
-    Just ( fromIntegral (n `shift` (-24) .&. (2 ^ 24 - 1))
-         , fromIntegral (n .&. (2 ^ 24 - 1))
-         )
-binfoTxIndexBlock _ = Nothing
+binfoTxIndexBlock n =
+    let norm = (.&.) (2 ^ 24 - 1) . fromIntegral
+        height = norm $ n `shift` (-24)
+        pos = norm n
+    in if isBinfoTxIndexBlock n
+       then Just (height, pos)
+       else Nothing
 
 binfoTransactionIndex :: Transaction -> BinfoTxIndex
 binfoTransactionIndex Transaction{transactionDeleted = True} =
-    BinfoTxNoIndex
+    (-1)
 binfoTransactionIndex t@Transaction{transactionBlock = MemRef _} =
-    binfoTxIndexFromHash (txHash (transactionData t))
+    hashToBinfoTxIndex (txHash (transactionData t))
 binfoTransactionIndex Transaction{transactionBlock = BlockRef h p} =
-    binfoTxIndexFromBlock h p
+    blockToBinfoTxIndex h p
 
 data BinfoMultiAddr
     = BinfoMultiAddr
@@ -2366,7 +2354,7 @@ toBinfoSpender :: HashMap TxHash Transaction -> Spender -> BinfoSpender
 toBinfoSpender relevant_txs Spender{..} =
     let getBinfoSpenderTxIndex =
             case HashMap.lookup spenderHash relevant_txs of
-                Nothing -> BinfoTxNoIndex
+                Nothing -> (-1)
                 Just t  -> binfoTransactionIndex t
         getBinfoSpenderIndex = spenderIndex
      in BinfoSpender{..}
@@ -2385,7 +2373,7 @@ inputToBinfoTxOutput relevant_txs addr_book t n StoreInput{..} =
         getBinfoTxOutputValue = inputAmount
         getBinfoTxOutputTxIndex =
             case HashMap.lookup out_hash relevant_txs of
-                Nothing -> BinfoTxNoIndex
+                Nothing -> (-1)
                 Just x  -> binfoTransactionIndex x
         getBinfoTxOutputScript = inputPkScript
         getBinfoTxOutputSpenders =
@@ -2414,7 +2402,7 @@ data BinfoTxId
     deriving (Eq, Show)
 
 instance Parsable BinfoTxId where
-    parseParam t = maybeToEither "could not parse txid" $ h <|> i
-      where
-        h = BinfoTxIdHash <$> hexToTxHash (TL.toStrict t)
-        i = BinfoTxIdIndex . binfoTxIndexFromInt64 <$> readMaybe (TL.unpack t)
+    parseParam t =
+        case hexToTxHash (TL.toStrict t) of
+            Nothing -> BinfoTxIdIndex <$> parseParam t
+            Just h -> Right (BinfoTxIdHash h)
