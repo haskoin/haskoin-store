@@ -957,7 +957,8 @@ binfoTickerToSymbol BinfoTicker{..} =
     BinfoSymbol{ getBinfoSymbolCode = code
                 , getBinfoSymbolString = symbol
                 , getBinfoSymbolName = name
-                , getBinfoSymbolConversion = binfoTickerPrice24h
+                , getBinfoSymbolConversion =
+                        100 * 1000 * 1000 / binfoTickerPrice24h
                 , getBinfoSymbolAfter = after
                 , getBinfoSymbolLocal = True
                 }
