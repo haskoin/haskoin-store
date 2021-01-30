@@ -50,15 +50,12 @@ serialVals =
     , SerialBox (arbitrary :: Gen Except)
     , SerialBox (arbitrary :: Gen BinfoWallet)
     , SerialBox (arbitrary :: Gen BinfoAddress)
-    , SerialBox (arbitrary :: Gen BinfoSymbol)
     , SerialBox (arbitrary :: Gen BinfoBlockInfo)
-    , SerialBox (arbitrary :: Gen BinfoInfo)
     , SerialBox (arbitrary :: Gen BinfoXPubPath)
     , SerialBox (arbitrary :: Gen BinfoSpender)
     , SerialBox (arbitrary :: Gen BinfoTxOutput)
     , SerialBox (arbitrary :: Gen BinfoTxInput)
     , SerialBox (arbitrary :: Gen BinfoTx)
-    , SerialBox (arbitrary :: Gen BinfoMultiAddr)
     ]
 
 jsonVals :: [JsonBox]
@@ -80,7 +77,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoBlockInfo)
     , JsonBox (arbitrary :: Gen BinfoInfo)
     , JsonBox (arbitrary :: Gen BinfoSpender)
-    , JsonBox arbitraryBinfoTicker
+    , JsonBox (arbitrary :: Gen BinfoTicker)
     ]
 
 netVals :: [NetBox]
@@ -520,19 +517,10 @@ instance Arbitrary BinfoSymbol where
         getBinfoSymbolLocal <- arbitrary
         return BinfoSymbol {..}
 
-instance Arbitrary BinfoTickerData where
+instance Arbitrary BinfoTicker where
     arbitrary = do
-        binfoTickerData15 <- arbitrary
-        binfoTickerDataLast <- arbitrary
-        binfoTickerDataBuy <- arbitrary
-        binfoTickerDataSell <- arbitrary
-        binfoTickerDataSymbol <- cs <$> listOf1 arbitraryUnicodeChar
-        return BinfoTickerData{..}
-
-arbitraryBinfoTickerSymbol :: Gen BinfoTickerSymbol
-arbitraryBinfoTickerSymbol = cs <$> replicateM 3 (choose ('A', 'Z'))
-
-arbitraryBinfoTicker :: Gen BinfoTicker
-arbitraryBinfoTicker = Map.fromList <$> listOf g
-  where
-    g = (,) <$> arbitraryBinfoTickerSymbol <*> arbitrary
+        binfoTickerSymbol <- cs <$> listOf1 arbitraryUnicodeChar
+        binfoTickerPrice24h <- arbitrary
+        binfoTickerVol24h <- arbitrary
+        binfoTickerLastPrice <- arbitrary
+        return BinfoTicker{..}

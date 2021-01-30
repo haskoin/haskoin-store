@@ -128,9 +128,7 @@ module Haskoin.Store.Data
     , BinfoInfo(..)
     , BinfoBlockInfo(..)
     , BinfoSymbol(..)
-    , BinfoTicker
-    , BinfoTickerSymbol
-    , BinfoTickerData(..)
+    , BinfoTicker(..)
     )
 
 where
@@ -148,7 +146,7 @@ import qualified Data.Aeson              as A
 import           Data.Aeson.Encoding     (list, null_, pair, text,
                                           unsafeToEncoding)
 import           Data.Aeson.Types        (Parser)
-import           Data.Bits               (shift, (.&.), (.|.), testBit, setBit)
+import           Data.Bits               (setBit, shift, testBit, (.&.), (.|.))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as B
 import           Data.ByteString.Builder (char7, lazyByteStringHex)
@@ -1624,7 +1622,7 @@ data BinfoMultiAddr
         , getBinfoMultiAddrRecommendFee :: !Bool
         , getBinfoMultiAddrCashAddr     :: !Bool
         }
-    deriving (Eq, Show, Generic, Serialize, NFData)
+    deriving (Eq, Show, Generic, NFData)
 
 binfoMultiAddrToJSON :: Network -> BinfoMultiAddr -> Value
 binfoMultiAddrToJSON net' BinfoMultiAddr {..} =
@@ -2035,7 +2033,7 @@ data BinfoInfo
         , getBinfoBTC         :: !BinfoSymbol
         , getBinfoLatestBlock :: !BinfoBlockInfo
         }
-    deriving (Eq, Show, Generic, Serialize, NFData)
+    deriving (Eq, Show, Generic, NFData)
 
 instance ToJSON BinfoInfo where
     toJSON BinfoInfo {..} =
@@ -2097,72 +2095,65 @@ instance FromJSON BinfoBlockInfo where
         getBinfoBlockInfoIndex <- o .: "block_index"
         return BinfoBlockInfo {..}
 
-type BinfoTickerSymbol = Text
-type BinfoTicker = Map BinfoTickerSymbol BinfoTickerData
-
-data BinfoTickerData
-    = BinfoTickerData
-        { binfoTickerData15     :: !Double
-        , binfoTickerDataLast   :: !Double
-        , binfoTickerDataBuy    :: !Double
-        , binfoTickerDataSell   :: !Double
-        , binfoTickerDataSymbol :: !ByteString
+data BinfoTicker
+    = BinfoTicker
+        { binfoTickerSymbol    :: !Text
+        , binfoTickerPrice24h  :: !Double
+        , binfoTickerVol24h    :: !Double
+        , binfoTickerLastPrice :: !Double
         }
-    deriving (Eq, Show, Generic, Serialize, NFData)
+    deriving (Eq, Show, Generic, NFData)
 
-instance ToJSON BinfoTickerData where
-    toJSON BinfoTickerData{..} =
+instance Default BinfoTicker where
+    def = BinfoTicker{ binfoTickerSymbol = "XXX"
+                     , binfoTickerPrice24h = 0.0
+                     , binfoTickerVol24h = 0.0
+                     , binfoTickerLastPrice = 0.0
+                     }
+
+instance ToJSON BinfoTicker where
+    toJSON BinfoTicker{..} =
         object
-        [ "15m" .= binfoTickerData15
-        , "last" .= binfoTickerDataLast
-        , "buy" .= binfoTickerDataBuy
-        , "sell" .= binfoTickerDataSell
-        , "symbol" .=  decodeUtf8 binfoTickerDataSymbol
-        ]
-    toEncoding BinfoTickerData{..} =
-        pairs
-        (  "15m" .= binfoTickerData15
-        <> "last" .= binfoTickerDataLast
-        <> "buy" .= binfoTickerDataBuy
-        <> "sell" .= binfoTickerDataSell
-        <> "symbol" .=  decodeUtf8 binfoTickerDataSymbol
-        )
+            [ "symbol" .= binfoTickerSymbol
+            , "price_24h" .= binfoTickerPrice24h
+            , "volume_24h" .= binfoTickerVol24h
+            , "last_trade_price" .= binfoTickerLastPrice
+            ]
 
-instance FromJSON BinfoTickerData where
-    parseJSON = withObject "ticker_data" $ \o -> do
-        binfoTickerData15 <- o .: "15m"
-        binfoTickerDataLast <- o .: "last"
-        binfoTickerDataBuy <- o .: "buy"
-        binfoTickerDataSell <- o .: "sell"
-        binfoTickerDataSymbol <- encodeUtf8 <$> o .: "symbol"
-        return BinfoTickerData{..}
+instance FromJSON BinfoTicker where
+    parseJSON = withObject "ticker" $ \o -> do
+        binfoTickerSymbol <- o .: "symbol"
+        binfoTickerPrice24h <- o .: "price_24h"
+        binfoTickerVol24h <- o .: "volume_24h"
+        binfoTickerLastPrice <- o .: "last_trade_price"
+        return BinfoTicker{..}
 
 data BinfoSymbol
     = BinfoSymbol
-        { getBinfoSymbolCode       :: !ByteString
-        , getBinfoSymbolString     :: !ByteString
-        , getBinfoSymbolName       :: !ByteString
+        { getBinfoSymbolCode       :: !Text
+        , getBinfoSymbolString     :: !Text
+        , getBinfoSymbolName       :: !Text
         , getBinfoSymbolConversion :: !Double
         , getBinfoSymbolAfter      :: !Bool
         , getBinfoSymbolLocal      :: !Bool
         }
-    deriving (Eq, Show, Generic, Serialize, NFData)
+    deriving (Eq, Show, Generic, NFData)
 
 instance ToJSON BinfoSymbol where
     toJSON BinfoSymbol {..} =
         object
-            [ "code" .= decodeUtf8 getBinfoSymbolCode
-            , "symbol" .= decodeUtf8 getBinfoSymbolString
-            , "name" .= decodeUtf8 getBinfoSymbolName
+            [ "code" .= getBinfoSymbolCode
+            , "symbol" .= getBinfoSymbolString
+            , "name" .= getBinfoSymbolName
             , "conversion" .= getBinfoSymbolConversion
             , "symbolAppearsAfter" .= getBinfoSymbolAfter
             , "local" .= getBinfoSymbolLocal
             ]
     toEncoding BinfoSymbol {..} =
         pairs
-            (  "code" .= decodeUtf8 getBinfoSymbolCode
-            <> "symbol" .= decodeUtf8 getBinfoSymbolString
-            <> "name" .= decodeUtf8 getBinfoSymbolName
+            (  "code" .= getBinfoSymbolCode
+            <> "symbol" .= getBinfoSymbolString
+            <> "name" .= getBinfoSymbolName
             <> "conversion" .= getBinfoSymbolConversion
             <> "symbolAppearsAfter" .= getBinfoSymbolAfter
             <> "local" .= getBinfoSymbolLocal
@@ -2170,9 +2161,9 @@ instance ToJSON BinfoSymbol where
 
 instance FromJSON BinfoSymbol where
     parseJSON = withObject "symbol" $ \o -> do
-        getBinfoSymbolCode <- encodeUtf8 <$> o .: "code"
-        getBinfoSymbolString <- encodeUtf8 <$> o .: "symbol"
-        getBinfoSymbolName <- encodeUtf8 <$> o .: "name"
+        getBinfoSymbolCode <- o .: "code"
+        getBinfoSymbolString <- o .: "symbol"
+        getBinfoSymbolName <- o .: "name"
         getBinfoSymbolConversion <- o .: "conversion"
         getBinfoSymbolAfter <- o .: "symbolAppearsAfter"
         getBinfoSymbolLocal <- o .: "local"
@@ -2405,4 +2396,4 @@ instance Parsable BinfoTxId where
     parseParam t =
         case hexToTxHash (TL.toStrict t) of
             Nothing -> BinfoTxIdIndex <$> parseParam t
-            Just h -> Right (BinfoTxIdHash h)
+            Just h  -> Right (BinfoTxIdHash h)

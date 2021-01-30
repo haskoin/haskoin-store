@@ -200,9 +200,10 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
 runWeb :: (MonadUnliftIO m, MonadLoggerIO m) => WebConfig -> m ()
 runWeb cfg@WebConfig{ webHost = host
                     , webPort = port
-                    , webReqLog = wl } = do
-    ticker <- newTVarIO Map.empty
-    withAsync (price ticker) $ \_ -> do
+                    , webReqLog = wl
+                    , webStore = store } = do
+    ticker <- newTVarIO def
+    withAsync (price (storeNetwork store) ticker) $ \_ -> do
         reqLogger <- logIt
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
@@ -214,15 +215,27 @@ runWeb cfg@WebConfig{ webHost = host
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
 
-price :: (MonadUnliftIO m, MonadLoggerIO m) => TVar BinfoTicker -> m ()
-price v = forever $ do
-    handleAny h $ do
-        r <- liftIO $
-            Wreq.asJSON =<< Wreq.get "https://blockchain.info/ticker"
-        atomically $ writeTVar v (r ^. Wreq.responseBody)
-    threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
+price :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> TVar BinfoTicker -> m ()
+price net v =
+    case sym of
+        Nothing -> return ()
+        Just s -> go s
   where
-    h e = $(logErrorS) "Price" $ cs (show e)
+    sym | net == btc = Just "BTC-USD"
+        | net == bch = Just "BCH-USD"
+        | otherwise = Nothing
+    go s = forever $ do
+        let err e = $(logErrorS) "Price" $ cs (show e)
+        handleAny err $ do
+            r <- liftIO $
+                 Wreq.asJSON =<<
+                 Wreq.get "https://api.blockchain.info/v3/exchange/tickers"
+            let ts = r ^. Wreq.responseBody
+            case listToMaybe $ filter ((== s) . binfoTickerSymbol) ts of
+                Nothing -> $(logErrorS) "Price" $
+                           "No price information for symbol: " <> s
+                Just t -> atomically $ writeTVar v t
+        threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
 
 
 defHandler :: Monad m => Except -> WebT m ()
@@ -912,6 +925,60 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
+netBinfoSymbol :: Network -> BinfoSymbol
+netBinfoSymbol net
+  | net == btc =
+        BinfoSymbol{ getBinfoSymbolCode = "BTC"
+                   , getBinfoSymbolString = "BTC"
+                   , getBinfoSymbolName = "Bitcoin"
+                   , getBinfoSymbolConversion = 100 * 1000 * 1000
+                   , getBinfoSymbolAfter = True
+                   , getBinfoSymbolLocal = False
+                   }
+  | net == bch =
+        BinfoSymbol{ getBinfoSymbolCode = "BCH"
+                   , getBinfoSymbolString = "BCH"
+                   , getBinfoSymbolName = "Bitcoin Cash"
+                   , getBinfoSymbolConversion = 100 * 1000 * 1000
+                   , getBinfoSymbolAfter = True
+                   , getBinfoSymbolLocal = False
+                   }
+  | otherwise =
+        BinfoSymbol{ getBinfoSymbolCode = "XTS"
+                   , getBinfoSymbolString = "¤"
+                   , getBinfoSymbolName = "Test"
+                   , getBinfoSymbolConversion = 100 * 1000 * 1000
+                   , getBinfoSymbolAfter = False
+                   , getBinfoSymbolLocal = False
+                   }
+
+binfoTickerToSymbol :: BinfoTicker -> BinfoSymbol
+binfoTickerToSymbol BinfoTicker{..} =
+    BinfoSymbol{ getBinfoSymbolCode = code
+                , getBinfoSymbolString = symbol
+                , getBinfoSymbolName = name
+                , getBinfoSymbolConversion = binfoTickerPrice24h
+                , getBinfoSymbolAfter = after
+                , getBinfoSymbolLocal = True
+                }
+  where
+    name = case code of
+        "EUR" -> "Euro"
+        "USD" -> "U.S. dollar"
+        "GBP" -> "British pound"
+        _ -> code
+    symbol = case code of
+        "EUR" -> "€"
+        "USD" -> "$"
+        "GBP" -> "£"
+        _ -> code
+    after = case code of
+        "EUR" -> False
+        "USD" -> False
+        "GBP" -> False
+        _ -> True
+    code = T.takeEnd 3 binfoTickerSymbol
+
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
                 => TVar BinfoTicker
                 -> WebT m ()
@@ -926,7 +993,7 @@ scottyMultiAddr ticker = do
     sxtrs <- get_sxtrs sxpubs xspecs
     sabals <- get_abals saddrs
     satrs <- get_atrs n offset saddrs
-    prices <- readTVarIO ticker
+    price <- readTVarIO ticker
     let sxtns = HashMap.map length sxtrs
         sxtrset = Set.fromList . concat $ HashMap.elems sxtrs
         sxabals = compute_xabals sxbals
@@ -950,9 +1017,6 @@ scottyMultiAddr ticker = do
         recv = sum $ map getBinfoAddrReceived addrs
         sent = sum $ map getBinfoAddrSent addrs
         txn = sum $ map getBinfoAddrTxCount addrs
-        usd = case Map.lookup "USD" prices of
-            Nothing                  -> (-1)
-            Just BinfoTickerData{..} -> binfoTickerData15
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
@@ -961,24 +1025,8 @@ scottyMultiAddr ticker = do
             , getBinfoWalletTotalReceived = recv
             , getBinfoWalletTotalSent = sent
             }
-        btc =
-            BinfoSymbol
-            { getBinfoSymbolCode = "BTC"
-            , getBinfoSymbolString = "BTC"
-            , getBinfoSymbolName = "Bitcoin"
-            , getBinfoSymbolConversion = 100 * 1000 * 1000
-            , getBinfoSymbolAfter = True
-            , getBinfoSymbolLocal = False
-            }
-        local =
-            BinfoSymbol
-            { getBinfoSymbolCode = "USD"
-            , getBinfoSymbolString = "$"
-            , getBinfoSymbolName = "U.S. dollar"
-            , getBinfoSymbolConversion = usd
-            , getBinfoSymbolAfter = False
-            , getBinfoSymbolLocal = True
-            }
+        coin = netBinfoSymbol net
+        local = binfoTickerToSymbol price
         block =
             BinfoBlockInfo
             { getBinfoBlockInfoHash = H.headerHash (blockDataHeader best)
@@ -991,7 +1039,7 @@ scottyMultiAddr ticker = do
             { getBinfoConnected = peers
             , getBinfoConversion = 100 * 1000 * 1000
             , getBinfoLocal = local
-            , getBinfoBTC = btc
+            , getBinfoBTC = coin
             , getBinfoLatestBlock = block
             }
     S.json $ binfoMultiAddrToJSON net
