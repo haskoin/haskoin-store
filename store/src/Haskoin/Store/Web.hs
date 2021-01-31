@@ -133,6 +133,7 @@ data WebConfig = WebConfig
     , webTimeouts   :: !WebTimeouts
     , webVersion    :: !String
     , webNoMempool  :: !Bool
+    , webNumTxId    :: !Bool
     }
 
 data WebTimeouts = WebTimeouts
@@ -988,6 +989,7 @@ scottyMultiAddr ticker = do
     n <- get_count
     offset <- get_offset
     cashaddr <- get_cashaddr
+    numtxid <- lift $ asks webNumTxId
     (addrs, xpubs, saddrs, sxpubs, xspecs) <- get_addrs
     xbals <- get_xbals xspecs
     let sxbals = compute_sxbals sxpubs xbals
@@ -1006,8 +1008,12 @@ scottyMultiAddr ticker = do
         salltrs = sxtrset <> satrs
         stxids = compute_txids n offset salltrs
     stxs <- get_txs stxids
-    let etxids = compute_etxids prune abook stxs
-    etxs <- get_etxs etxids
+    let etxids = if numtxid
+                 then compute_etxids prune abook stxs
+                 else []
+    etxs <- if numtxid
+            then Just <$> get_etxs etxids
+            else return Nothing
     best <- scottyBlockBest (GetBlockBest (NoTx True))
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore)
@@ -1169,27 +1175,31 @@ scottyMultiAddr ticker = do
 
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
-    S.param "txid" >>= \case
-        BinfoTxIdHash h -> go h
+    lift (asks webNumTxId) >>= \num -> S.param "txid" >>= \case
+        BinfoTxIdHash h -> go num h
         BinfoTxIdIndex i ->
-            if | isBinfoTxIndexNull i -> S.raise ThingNotFound
+            if | not num || isBinfoTxIndexNull i -> S.raise ThingNotFound
                | isBinfoTxIndexBlock i -> block i
                | isBinfoTxIndexHash i -> hash i
   where
     get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
-    js t = do
-        let rs = HashSet.toList $ relevantTxs HashSet.empty False t
-        ts <- catMaybes <$> mapM getTransaction rs
+    js num t = do
+        let etxids = if num
+                     then HashSet.toList $ relevantTxs HashSet.empty False t
+                     else []
+        etxs' <- if num
+                 then Just . catMaybes <$> mapM getTransaction etxids
+                 else return Nothing
         let f t = (txHash (transactionData t), t)
-            r = HashMap.fromList $ map f ts
+            etxs = HashMap.fromList . map f <$> etxs'
         net <- lift $ asks (storeNetwork . webStore)
-        S.json . binfoTxToJSON net $ toBinfoTxSimple r t
+        S.json . binfoTxToJSON net $ toBinfoTxSimple etxs t
     hex = S.text . TL.fromStrict . encodeHex . encode . transactionData
-    go h = getTransaction h >>= \case
+    go num h = getTransaction h >>= \case
         Nothing -> S.raise ThingNotFound
         Just t -> get_format >>= \case
             "hex" -> hex t
-            _ -> js t
+            _ -> js num t
     block i =
         let Just (height, pos) = binfoTxIndexBlock i
         in getBlocksAtHeight height >>= \case
@@ -1198,7 +1208,7 @@ scottyBinfoTx =
                 Nothing -> S.raise ThingNotFound
                 Just BlockData{..} ->
                     if length blockDataTxs > fromIntegral pos
-                    then go (blockDataTxs !! fromIntegral pos)
+                    then go True (blockDataTxs !! fromIntegral pos)
                     else S.raise ThingNotFound
     hmatch h = listToMaybe . filter (matchBinfoTxHash h)
     hmem h = hmatch h . map snd <$> getMempool
@@ -1217,8 +1227,8 @@ scottyBinfoTx =
     hash h = hmem h >>= \case
         Nothing -> hblock h >>= \case
             Nothing -> S.raise ThingNotFound
-            Just x -> go x
-        Just x -> go x
+            Just x -> go True x
+        Just x -> go True x
 
 -- GET Network Information --
 

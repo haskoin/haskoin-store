@@ -56,6 +56,7 @@ serialVals =
     , SerialBox (arbitrary :: Gen BinfoTxOutput)
     , SerialBox (arbitrary :: Gen BinfoTxInput)
     , SerialBox (arbitrary :: Gen BinfoTx)
+    , SerialBox (arbitrary :: Gen BinfoTxId)
     ]
 
 jsonVals :: [JsonBox]
@@ -78,6 +79,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoInfo)
     , JsonBox (arbitrary :: Gen BinfoSpender)
     , JsonBox (arbitrary :: Gen BinfoTicker)
+    , JsonBox (arbitrary :: Gen BinfoTxId)
     ]
 
 netVals :: [NetBox]
@@ -401,6 +403,12 @@ instance Arbitrary Except where
 ---------------------------------------
 -- Blockchain.info API Compatibility --
 ---------------------------------------
+
+instance Arbitrary BinfoTxId where
+    arbitrary = oneof
+        [ BinfoTxIdHash <$> arbitraryTxHash
+        , BinfoTxIdIndex <$> arbitrary
+        ]
 
 instance Arbitrary BinfoMultiAddr where
     arbitrary = do
