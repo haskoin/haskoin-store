@@ -179,7 +179,7 @@ defReqLog = unsafePerformIO $
 
 defNumTxId :: Bool
 defNumTxId = unsafePerformIO $
-    defEnv "NUM_TXID" False parseBool
+    defEnv "NUMTXID" False parseBool
 {-# NOINLINE defNumTxId #-}
 
 defWebLimits :: WebLimits
