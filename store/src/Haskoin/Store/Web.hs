@@ -44,7 +44,7 @@ import qualified Data.HashMap.Strict           as HashMap
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (nub)
 import qualified Data.Map.Strict               as Map
-import           Data.Maybe                    (catMaybes, fromMaybe,
+import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
                                                 listToMaybe, mapMaybe)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
@@ -219,7 +219,7 @@ price :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> TVar BinfoTicker -> m 
 price net v =
     case sym of
         Nothing -> return ()
-        Just s -> go s
+        Just s  -> go s
   where
     sym | net == btc = Just "BTC-USD"
         | net == bch = Just "BCH-USD"
@@ -967,17 +967,17 @@ binfoTickerToSymbol BinfoTicker{..} =
         "EUR" -> "Euro"
         "USD" -> "U.S. dollar"
         "GBP" -> "British pound"
-        _ -> code
+        _     -> code
     symbol = case code of
         "EUR" -> "€"
         "USD" -> "$"
         "GBP" -> "£"
-        _ -> code
+        _     -> code
     after = case code of
         "EUR" -> False
         "USD" -> False
         "GBP" -> False
-        _ -> True
+        _     -> True
     code = T.takeEnd 3 binfoTickerSymbol
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
@@ -1079,7 +1079,9 @@ scottyMultiAddr ticker = do
     binfo_txs _ _ _ _ _ [] = []
     binfo_txs etxs abook salladdrs prune ibal (t:ts) =
         let b = toBinfoTx etxs abook salladdrs prune ibal t
-            nbal = ibal - getBinfoTxResult b
+            nbal = case getBinfoTxResultBal b of
+                Nothing -> ibal
+                Just (_, x) -> ibal - x
          in b : binfo_txs etxs abook salladdrs prune nbal ts
     get_addrs = do
         active <- get_addrs_param "active"
@@ -1156,12 +1158,14 @@ scottyMultiAddr ticker = do
     compute_xaddrs =
         let f = map (balanceAddress . xPubBal)
         in HashSet.fromList . concatMap f . HashMap.elems
-    sent BinfoTx{..}
-      | getBinfoTxResult < 0 = fromIntegral (negate getBinfoTxResult)
+    sent BinfoTx{getBinfoTxResultBal = Just (r, _)}
+      | r < 0 = fromIntegral (negate r)
       | otherwise = 0
-    received BinfoTx{..}
-      | getBinfoTxResult > 0 = fromIntegral getBinfoTxResult
+    sent _ = 0
+    received BinfoTx{getBinfoTxResultBal = Just (r, _)}
+      | r > 0 = fromIntegral r
       | otherwise = 0
+    received _ = 0
 
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
