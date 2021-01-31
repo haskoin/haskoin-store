@@ -1793,8 +1793,7 @@ data BinfoTx
         , getBinfoTxLockTime    :: !Word32
         , getBinfoTxIndex       :: !BinfoTxIndex
         , getBinfoTxDoubleSpend :: !Bool
-        , getBinfoTxResult      :: !Int64
-        , getBinfoTxBalance     :: !Int64
+        , getBinfoTxResultBal   :: !(Maybe (Int64, Int64))
         , getBinfoTxTime        :: !Word64
         , getBinfoTxBlockIndex  :: !(Maybe Word32)
         , getBinfoTxBlockHeight :: !(Maybe Word32)
@@ -1805,7 +1804,7 @@ data BinfoTx
 
 binfoTxToJSON :: Network -> BinfoTx -> Value
 binfoTxToJSON net BinfoTx {..} =
-    object
+    object $
         [ "hash" .= getBinfoTxHash
         , "ver" .= getBinfoTxVer
         , "vin_sz" .= getBinfoTxVinSz
@@ -1817,37 +1816,38 @@ binfoTxToJSON net BinfoTx {..} =
         , "lock_time" .= getBinfoTxLockTime
         , "tx_index" .= getBinfoTxIndex
         , "double_spend" .= getBinfoTxDoubleSpend
-        , "result" .= getBinfoTxResult
-        , "balance" .= getBinfoTxBalance
         , "time" .= getBinfoTxTime
         , "block_index" .= getBinfoTxBlockIndex
         , "block_height" .= getBinfoTxBlockHeight
         , "inputs" .= map (binfoTxInputToJSON net) getBinfoTxInputs
         , "out" .= map (binfoTxOutputToJSON net) getBinfoTxOutputs
-        ]
+        ] ++
+        case getBinfoTxResultBal of
+            Nothing -> []
+            Just (res, bal) -> ["result" .= res, "balance" .= bal]
 
 binfoTxToEncoding :: Network -> BinfoTx -> Encoding
 binfoTxToEncoding net BinfoTx {..} =
-    pairs
-        (  "hash" .= getBinfoTxHash
-        <> "ver" .= getBinfoTxVer
-        <> "vin_sz" .= getBinfoTxVinSz
-        <> "vout_sz" .= getBinfoTxVoutSz
-        <> "size" .= getBinfoTxSize
-        <> "weight" .= getBinfoTxWeight
-        <> "fee" .= getBinfoTxFee
-        <> "relayed_by" .= decodeUtf8 getBinfoTxRelayedBy
-        <> "lock_time" .= getBinfoTxLockTime
-        <> "tx_index" .= getBinfoTxIndex
-        <> "double_spend" .= getBinfoTxDoubleSpend
-        <> "result" .= getBinfoTxResult
-        <> "balance" .= getBinfoTxBalance
-        <> "time" .= getBinfoTxTime
-        <> "block_index" .= getBinfoTxBlockIndex
-        <> "block_height" .= getBinfoTxBlockHeight
-        <> "inputs" `pair` list (binfoTxInputToEncoding net) getBinfoTxInputs
-        <> "out" `pair` list (binfoTxOutputToEncoding net) getBinfoTxOutputs
-        )
+    pairs $
+        "hash" .= getBinfoTxHash <>
+        "ver" .= getBinfoTxVer <>
+        "vin_sz" .= getBinfoTxVinSz <>
+        "vout_sz" .= getBinfoTxVoutSz <>
+        "size" .= getBinfoTxSize <>
+        "weight" .= getBinfoTxWeight <>
+        "fee" .= getBinfoTxFee <>
+        "relayed_by" .= decodeUtf8 getBinfoTxRelayedBy <>
+        "lock_time" .= getBinfoTxLockTime <>
+        "tx_index" .= getBinfoTxIndex <>
+        "double_spend" .= getBinfoTxDoubleSpend <>
+        "time" .= getBinfoTxTime <>
+        "block_index" .= getBinfoTxBlockIndex <>
+        "block_height" .= getBinfoTxBlockHeight <>
+        "inputs" `pair` list (binfoTxInputToEncoding net) getBinfoTxInputs <>
+        "out" `pair` list (binfoTxOutputToEncoding net) getBinfoTxOutputs <>
+        case getBinfoTxResultBal of
+            Nothing -> mempty
+            Just (res, bal) -> "result" .= res <> "balance" .= bal
 
 binfoTxParseJSON :: Network -> Value -> Parser BinfoTx
 binfoTxParseJSON net = withObject "tx" $ \o -> do
@@ -1862,13 +1862,14 @@ binfoTxParseJSON net = withObject "tx" $ \o -> do
     getBinfoTxLockTime <- o .: "lock_time"
     getBinfoTxIndex <- o .: "tx_index"
     getBinfoTxDoubleSpend <- o .: "double_spend"
-    getBinfoTxResult <- o .: "result"
-    getBinfoTxBalance <- o .: "balance"
     getBinfoTxTime <- o .: "time"
     getBinfoTxBlockIndex <- o .: "block_index"
     getBinfoTxBlockHeight <- o .: "block_height"
     getBinfoTxInputs <- o .: "inputs" >>= mapM (binfoTxInputParseJSON net)
     getBinfoTxOutputs <- o .: "out" >>= mapM (binfoTxOutputParseJSON net)
+    res <- o .:? "result"
+    bal <- o .:? "balance"
+    let getBinfoTxResultBal = (,) <$> res <*> bal
     return BinfoTx {..}
 
 data BinfoTxInput
@@ -1904,10 +1905,13 @@ binfoTxInputToEncoding net BinfoTxInput {..} =
 binfoTxInputParseJSON :: Network -> Value -> Parser BinfoTxInput
 binfoTxInputParseJSON net = withObject "txin" $ \o -> do
     getBinfoTxInputSeq <- o .: "sequence"
-    getBinfoTxInputWitness <- maybe mzero return . decodeHex =<< o .: "witness"
-    getBinfoTxInputScript <- maybe mzero return . decodeHex =<< o .: "script"
+    getBinfoTxInputWitness <- maybe mzero return . decodeHex =<<
+                              o .: "witness"
+    getBinfoTxInputScript <- maybe mzero return . decodeHex =<<
+                             o .: "script"
     getBinfoTxInputIndex <- o .: "index"
-    getBinfoTxInputPrevOut <- o .:? "prev_out" >>= mapM (binfoTxOutputParseJSON net)
+    getBinfoTxInputPrevOut <- o .:? "prev_out" >>=
+                              mapM (binfoTxOutputParseJSON net)
     return BinfoTxInput {..}
 
 data BinfoTxOutput
@@ -2239,6 +2243,36 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
 toBinfoTxSimple :: HashMap TxHash Transaction -> Transaction -> BinfoTx
 toBinfoTxSimple r = toBinfoTx r HashMap.empty HashSet.empty False 0
 
+toBinfoTxInputs :: HashMap TxHash Transaction
+                -> HashMap Address (Maybe BinfoXPubPath)
+                -> Transaction
+                -> [BinfoTxInput]
+toBinfoTxInputs etxs abook t =
+    zipWith f [0..] (transactionInputs t)
+  where
+    f n i = BinfoTxInput{ getBinfoTxInputIndex = n
+                        , getBinfoTxInputSeq = inputSequence i
+                        , getBinfoTxInputScript = inputSigScript i
+                        , getBinfoTxInputWitness = wit i
+                        , getBinfoTxInputPrevOut = prev n i
+                        }
+    wit i =
+        case inputWitness i of
+            [] -> B.empty
+            ws -> S.runPut (put_witness ws)
+    prev = inputToBinfoTxOutput etxs abook t
+    put_witness ws = do
+        putVarInt (length ws)
+        mapM_ put_item ws
+    put_item bs = do
+        putVarInt (B.length bs)
+        S.putByteString bs
+
+toBinfoBlockIndex :: Transaction -> Maybe BlockHeight
+toBinfoBlockIndex Transaction{transactionDeleted = True} = Nothing
+toBinfoBlockIndex Transaction{transactionBlock = MemRef _} = Nothing
+toBinfoBlockIndex Transaction{transactionBlock = BlockRef h _} = Just h
+
 toBinfoTx :: HashMap TxHash Transaction
           -> HashMap Address (Maybe BinfoXPubPath)
           -> HashSet Address
@@ -2246,55 +2280,32 @@ toBinfoTx :: HashMap TxHash Transaction
           -> Int64
           -> Transaction
           -> BinfoTx
-toBinfoTx relevant_txs addr_book only_show prune bal t@Transaction{..} =
-  let getBinfoTxHash = txHash (transactionData t)
-      getBinfoTxVer = transactionVersion
-      getBinfoTxVinSz = fromIntegral $ length transactionInputs
-      getBinfoTxVoutSz = fromIntegral $ length transactionOutputs
-      getBinfoTxSize = transactionSize
-      getBinfoTxWeight = transactionWeight
-      getBinfoTxFee = transactionFees
-      getBinfoTxRelayedBy = "127.0.0.1"
-      getBinfoTxLockTime = transactionLockTime
-      getBinfoTxIndex = binfoTransactionIndex t
-      getBinfoTxDoubleSpend = transactionRBF
-      getBinfoTxTime = transactionTime
-      getBinfoTxBlockIndex =
-          if transactionDeleted
-          then Nothing
-          else case transactionBlock of
-                   MemRef _     -> Nothing
-                   BlockRef h _ -> Just h
-      getBinfoTxBlockHeight = getBinfoTxBlockIndex
-      getBinfoTxInputs =
-          let f n i =
-                  let getBinfoTxInputIndex = n
-                      getBinfoTxInputSeq = inputSequence i
-                      getBinfoTxInputWitness =
-                          case inputWitness i of
-                              [] -> B.empty
-                              ws -> S.runPut $ put_witness ws
-                      getBinfoTxInputScript = inputSigScript i
-                      getBinfoTxInputPrevOut =
-                          inputToBinfoTxOutput relevant_txs addr_book t n i
-                  in BinfoTxInput{..}
-              put_witness ws = do
-                  putVarInt $ length ws
-                  mapM_ put_item ws
-              put_item bs = do
-                  putVarInt $ B.length bs
-                  S.putByteString bs
-           in zipWith f [0..] transactionInputs
-      getBinfoTxOutputs =
-          let f = toBinfoTxOutput
-                  relevant_txs
-                  addr_book
-                  (prune && getBinfoTxResult > 0)
-                  t
-           in catMaybes $ zipWith f [0..] transactionOutputs
-      getBinfoTxResult = getTxResult only_show t
-      getBinfoTxBalance = bal
-   in BinfoTx{..}
+toBinfoTx etxs abook saddrs prune bal t@Transaction{..} =
+    BinfoTx{ getBinfoTxHash = txHash (transactionData t)
+           , getBinfoTxVer = transactionVersion
+           , getBinfoTxVinSz = fromIntegral (length transactionInputs)
+           , getBinfoTxVoutSz = fromIntegral (length transactionOutputs)
+           , getBinfoTxSize = transactionSize
+           , getBinfoTxWeight = transactionWeight
+           , getBinfoTxFee = transactionFees
+           , getBinfoTxRelayedBy = "0.0.0.0"
+           , getBinfoTxLockTime = transactionLockTime
+           , getBinfoTxIndex = binfoTransactionIndex t
+           , getBinfoTxDoubleSpend = transactionRBF
+           , getBinfoTxTime = transactionTime
+           , getBinfoTxBlockIndex = toBinfoBlockIndex t
+           , getBinfoTxBlockHeight = toBinfoBlockIndex t
+           , getBinfoTxInputs = toBinfoTxInputs etxs abook t
+           , getBinfoTxOutputs = outs
+           , getBinfoTxResultBal = resbal
+           }
+  where
+    simple = HashSet.null saddrs && HashMap.null abook && bal == 0
+    resbal = if simple then Nothing else Just (getTxResult saddrs t, bal)
+    outs =
+        let p = prune && getTxResult saddrs t > 0
+            f = toBinfoTxOutput etxs abook p t
+        in catMaybes $ zipWith f [0..] transactionOutputs
 
 getTxResult :: HashSet Address -> Transaction -> Int64
 getTxResult only_show Transaction{..} =
@@ -2384,8 +2395,7 @@ parseBinfoAddr _ "" = Just []
 parseBinfoAddr net s =
     mapM f $ T.splitOn "|" s
   where
-    f x = BinfoAddr <$> textToAddr net x
-      <|> BinfoXpub <$> xPubImport net x
+    f x = BinfoAddr <$> textToAddr net x <|> BinfoXpub <$> xPubImport net x
 
 data BinfoTxId
     = BinfoTxIdHash !TxHash

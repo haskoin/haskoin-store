@@ -448,11 +448,10 @@ instance Arbitrary BinfoTx where
         getBinfoTxLockTime <- arbitrary
         getBinfoTxIndex <- arbitrary
         getBinfoTxDoubleSpend <- arbitrary
-        getBinfoTxResult <- arbitrary
-        getBinfoTxBalance <- arbitrary
         getBinfoTxTime <- arbitrary
         getBinfoTxBlockIndex <- arbitrary
         getBinfoTxBlockHeight <- arbitrary
+        getBinfoTxResultBal <- arbitrary
         return BinfoTx {..}
 
 instance Arbitrary BinfoTxInput where
