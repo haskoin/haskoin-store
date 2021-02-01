@@ -70,6 +70,7 @@ data Config = Config
     , configMaxPeers     :: !Int
     , configMaxDiff      :: !Int
     , configCacheRefresh :: !Int
+    , configNumTxId      :: !Bool
     }
 
 instance Default Config where
@@ -97,6 +98,7 @@ instance Default Config where
                  , configMaxPeers     = defMaxPeers
                  , configMaxDiff      = defMaxDiff
                  , configCacheRefresh = defCacheRefresh
+                 , configNumTxId      = defNumTxId
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -174,6 +176,11 @@ defReqLog :: Bool
 defReqLog = unsafePerformIO $
     defEnv "REQ_LOG" False parseBool
 {-# NOINLINE defReqLog #-}
+
+defNumTxId :: Bool
+defNumTxId = unsafePerformIO $
+    defEnv "NUMTXID" False parseBool
+{-# NOINLINE defNumTxId #-}
 
 defWebLimits :: WebLimits
 defWebLimits = unsafePerformIO $ do
@@ -443,6 +450,10 @@ config = do
         <> long "max-diff"
         <> help "Maximum difference between headers and blocks"
         <> value (configMaxDiff def)
+    configNumTxId <-
+        flag (configNumTxId def) True $
+        long "numtxid"
+        <> help "Numeric tx_index field"
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -515,6 +526,7 @@ run Config { configHost = host
            , configMaxDiff = maxdiff
            , configNoMempool = nomem
            , configCacheRefresh = crefresh
+           , configNumTxId = numtxid
            } =
     runStderrLoggingT . filterLogger l $ do
         $(logInfoS) "Main" $
@@ -556,6 +568,7 @@ run Config { configHost = host
                     , webVersion = version
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
+                    , webNumTxId = numtxid
                     }
   where
     net' | asert == 0 = net

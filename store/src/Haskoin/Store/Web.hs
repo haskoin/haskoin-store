@@ -2,10 +2,12 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TupleSections       #-}
 module Haskoin.Store.Web
     ( -- * Web
       WebConfig (..)
@@ -18,9 +20,11 @@ module Haskoin.Store.Web
 import           Conduit                       (await, runConduit, takeC, yield,
                                                 (.|))
 import           Control.Applicative           ((<|>))
+import           Control.Arrow                 (second)
+import           Control.Lens
 import           Control.Monad                 (forever, unless, when, (<=<))
-import           Control.Monad.Logger          (MonadLoggerIO, logErrorS,
-                                                logInfoS)
+import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
+                                                logErrorS, logInfoS)
 import           Control.Monad.Reader          (ReaderT, ask, asks, local,
                                                 runReaderT)
 import           Control.Monad.Trans           (lift)
@@ -36,24 +40,31 @@ import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
 import           Data.Function                 ((&))
+import qualified Data.HashMap.Strict           as HashMap
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (nub)
-import           Data.Maybe                    (catMaybes, fromMaybe,
+import qualified Data.Map.Strict               as Map
+import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
                                                 listToMaybe, mapMaybe)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
+import qualified Data.Set                      as Set
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
 import           Data.Text                     (Text)
+import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
 import           Data.Text.Lazy                (toStrict)
+import qualified Data.Text.Lazy                as TL
 import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
                                                 getCurrentTime)
 import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
+import           Haskoin.Address
 import qualified Haskoin.Block                 as H
 import           Haskoin.Constants
+import           Haskoin.Keys
 import           Haskoin.Network
 import           Haskoin.Node                  (Chain, OnlinePeer (..),
                                                 PeerManager, chainGetBest,
@@ -74,12 +85,18 @@ import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
+import qualified Network.Wreq                  as Wreq
 import           NQE                           (Inbox, receive,
                                                 withSubscription)
 import           Text.Printf                   (printf)
-import           UnliftIO                      (MonadIO, MonadUnliftIO,
-                                                askRunInIO, liftIO, timeout)
+import           UnliftIO                      (MonadIO, MonadUnliftIO, TVar,
+                                                askRunInIO, atomically,
+                                                handleAny, liftIO, newTVarIO,
+                                                readTVarIO, timeout, withAsync,
+                                                writeTVar)
+import           UnliftIO.Concurrent           (threadDelay)
 import           Web.Scotty.Internal.Types     (ActionT)
+import           Web.Scotty.Trans              (Parsable)
 import qualified Web.Scotty.Trans              as S
 
 type WebT m = ActionT Except (ReaderT WebConfig m)
@@ -116,6 +133,7 @@ data WebConfig = WebConfig
     , webTimeouts   :: !WebTimeouts
     , webVersion    :: !String
     , webNoMempool  :: !Bool
+    , webNumTxId    :: !Bool
     }
 
 data WebTimeouts = WebTimeouts
@@ -180,18 +198,46 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
 -- Path Handlers --
 -------------------
 
-runWeb :: (MonadUnliftIO m , MonadLoggerIO m) => WebConfig -> m ()
-runWeb cfg@WebConfig {webHost = host, webPort = port, webReqLog = reqlog} = do
-    reqLogger <- logIt
-    runner <- askRunInIO
-    S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
-        when reqlog $ S.middleware reqLogger
-        S.defaultHandler defHandler
-        handlePaths
-        S.notFound $ S.raise ThingNotFound
+runWeb :: (MonadUnliftIO m, MonadLoggerIO m) => WebConfig -> m ()
+runWeb cfg@WebConfig{ webHost = host
+                    , webPort = port
+                    , webReqLog = wl
+                    , webStore = store } = do
+    ticker <- newTVarIO def
+    withAsync (price (storeNetwork store) ticker) $ \_ -> do
+        reqLogger <- logIt
+        runner <- askRunInIO
+        S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
+            when wl $ S.middleware reqLogger
+            S.defaultHandler defHandler
+            handlePaths ticker
+            S.notFound $ S.raise ThingNotFound
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
+
+price :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> TVar BinfoTicker -> m ()
+price net v =
+    case sym of
+        Nothing -> return ()
+        Just s  -> go s
+  where
+    sym | net == btc = Just "BTC-USD"
+        | net == bch = Just "BCH-USD"
+        | otherwise = Nothing
+    go s = forever $ do
+        let err e = $(logErrorS) "Price" $ cs (show e)
+        handleAny err $ do
+            r <- liftIO $
+                 Wreq.asJSON =<<
+                 Wreq.get "https://api.blockchain.info/v3/exchange/tickers"
+            let ts = r ^. Wreq.responseBody
+            case listToMaybe $ filter ((== s) . binfoTickerSymbol) ts of
+                Nothing -> $(logErrorS) "Price" $
+                           "No price information for symbol: " <> s
+                Just t -> atomically $ writeTVar v t
+        threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
+
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
@@ -207,8 +253,9 @@ defHandler e = do
 
 handlePaths ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => S.ScottyT Except (ReaderT WebConfig m) ()
-handlePaths = do
+    => TVar BinfoTicker
+    -> S.ScottyT Except (ReaderT WebConfig m) ()
+handlePaths ticker = do
     -- Block Paths
     pathPretty
         (GetBlock <$> paramLazy <*> paramDef)
@@ -406,6 +453,9 @@ handlePaths = do
          (const toJSON)
     S.get "/events" scottyEvents
     S.get "/dbstats" scottyDbStats
+    -- Blockchain.info
+    S.post "/blockchain/multiaddr" (scottyMultiAddr ticker)
+    S.get "/blockchain/rawtx/:txid" scottyBinfoTx
   where
     json_list f net = toJSONList . map (f net)
 
@@ -675,7 +725,7 @@ cbAfterHeight height txid =
             ts = HashSet.toList (HashSet.difference ns is)
         in case ts of
                [] -> return (Just False)
-               _ -> inputs i is' ns' ts
+               _  -> inputs i is' ns' ts
     inputs i is ns (t:ts) = getTransaction t >>= \case
         Nothing -> return Nothing
         Just tx | height_check tx ->
@@ -871,6 +921,314 @@ scottyXPubEvict (GetXPubEvict xpub deriv) = do
     cache <- lift $ asks (storeCache . webStore)
     lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
     return $ GenericResult True
+
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
+
+netBinfoSymbol :: Network -> BinfoSymbol
+netBinfoSymbol net
+  | net == btc =
+        BinfoSymbol{ getBinfoSymbolCode = "BTC"
+                   , getBinfoSymbolString = "BTC"
+                   , getBinfoSymbolName = "Bitcoin"
+                   , getBinfoSymbolConversion = 100 * 1000 * 1000
+                   , getBinfoSymbolAfter = True
+                   , getBinfoSymbolLocal = False
+                   }
+  | net == bch =
+        BinfoSymbol{ getBinfoSymbolCode = "BCH"
+                   , getBinfoSymbolString = "BCH"
+                   , getBinfoSymbolName = "Bitcoin Cash"
+                   , getBinfoSymbolConversion = 100 * 1000 * 1000
+                   , getBinfoSymbolAfter = True
+                   , getBinfoSymbolLocal = False
+                   }
+  | otherwise =
+        BinfoSymbol{ getBinfoSymbolCode = "XTS"
+                   , getBinfoSymbolString = "¤"
+                   , getBinfoSymbolName = "Test"
+                   , getBinfoSymbolConversion = 100 * 1000 * 1000
+                   , getBinfoSymbolAfter = False
+                   , getBinfoSymbolLocal = False
+                   }
+
+binfoTickerToSymbol :: BinfoTicker -> BinfoSymbol
+binfoTickerToSymbol BinfoTicker{..} =
+    BinfoSymbol{ getBinfoSymbolCode = code
+                , getBinfoSymbolString = symbol
+                , getBinfoSymbolName = name
+                , getBinfoSymbolConversion =
+                        100 * 1000 * 1000 / binfoTickerPrice24h
+                , getBinfoSymbolAfter = after
+                , getBinfoSymbolLocal = True
+                }
+  where
+    name = case code of
+        "EUR" -> "Euro"
+        "USD" -> "U.S. dollar"
+        "GBP" -> "British pound"
+        _     -> code
+    symbol = case code of
+        "EUR" -> "€"
+        "USD" -> "$"
+        "GBP" -> "£"
+        _     -> code
+    after = case code of
+        "EUR" -> False
+        "USD" -> False
+        "GBP" -> False
+        _     -> True
+    code = T.takeEnd 3 binfoTickerSymbol
+
+scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
+                => TVar BinfoTicker
+                -> WebT m ()
+scottyMultiAddr ticker = do
+    prune <- get_prune
+    n <- get_count
+    offset <- get_offset
+    cashaddr <- get_cashaddr
+    numtxid <- lift $ asks webNumTxId
+    (addrs, xpubs, saddrs, sxpubs, xspecs) <- get_addrs
+    xbals <- get_xbals xspecs
+    let sxbals = compute_sxbals sxpubs xbals
+    sxtrs <- get_sxtrs sxpubs xspecs
+    sabals <- get_abals saddrs
+    satrs <- get_atrs n offset saddrs
+    price <- readTVarIO ticker
+    let sxtns = HashMap.map length sxtrs
+        sxtrset = Set.fromList . concat $ HashMap.elems sxtrs
+        sxabals = compute_xabals sxbals
+        sallbals = sabals <> sxabals
+        abook = compute_abook addrs xbals
+        sxaddrs = compute_xaddrs sxbals
+        salladdrs = sxaddrs <> saddrs
+        bal = compute_bal sallbals
+        salltrs = sxtrset <> satrs
+        stxids = compute_txids n offset salltrs
+    stxs <- get_txs stxids
+    let etxids = if numtxid
+                 then compute_etxids prune abook stxs
+                 else []
+    etxs <- if numtxid
+            then Just <$> get_etxs etxids
+            else return Nothing
+    best <- scottyBlockBest (GetBlockBest (NoTx True))
+    peers <- get_peers
+    net <- lift $ asks (storeNetwork . webStore)
+    let ibal = fromIntegral bal
+        btxs = binfo_txs etxs abook salladdrs prune ibal stxs
+        ftxs = take n $ drop offset btxs
+        addrs = toBinfoAddrs sabals sxbals sxtns
+        recv = sum $ map getBinfoAddrReceived addrs
+        sent = sum $ map getBinfoAddrSent addrs
+        txn = sum $ map getBinfoAddrTxCount addrs
+        wallet =
+            BinfoWallet
+            { getBinfoWalletBalance = bal
+            , getBinfoWalletTxCount = txn
+            , getBinfoWalletFilteredCount = fromIntegral (length ftxs)
+            , getBinfoWalletTotalReceived = recv
+            , getBinfoWalletTotalSent = sent
+            }
+        coin = netBinfoSymbol net
+        local = binfoTickerToSymbol price
+        block =
+            BinfoBlockInfo
+            { getBinfoBlockInfoHash = H.headerHash (blockDataHeader best)
+            , getBinfoBlockInfoHeight = blockDataHeight best
+            , getBinfoBlockInfoTime = H.blockTimestamp (blockDataHeader best)
+            , getBinfoBlockInfoIndex = blockDataHeight best
+            }
+        info =
+            BinfoInfo
+            { getBinfoConnected = peers
+            , getBinfoConversion = 100 * 1000 * 1000
+            , getBinfoLocal = local
+            , getBinfoBTC = coin
+            , getBinfoLatestBlock = block
+            }
+    S.json $ binfoMultiAddrToJSON net
+        BinfoMultiAddr
+        { getBinfoMultiAddrAddresses = addrs
+        , getBinfoMultiAddrWallet = wallet
+        , getBinfoMultiAddrTxs = ftxs
+        , getBinfoMultiAddrInfo = info
+        , getBinfoMultiAddrRecommendFee = True
+        , getBinfoMultiAddrCashAddr = cashaddr
+        }
+  where
+    get_prune = fmap not $ S.param "no_compact"
+        `S.rescue` const (return False)
+    get_cashaddr = S.param "cashaddr"
+        `S.rescue` const (return False)
+    get_count = do
+        d <- lift (asks (maxLimitDefault . webMaxLimits))
+        x <- lift (asks (maxLimitFull . webMaxLimits))
+        i <- min x <$> (S.param "n" `S.rescue` const (return d))
+        return (fromIntegral i :: Int)
+    get_offset = do
+        x <- lift (asks (maxLimitOffset . webMaxLimits))
+        o <- min x <$> (S.param "offset" `S.rescue` const (return 0))
+        return (fromIntegral o :: Int)
+    get_addrs_param name = do
+        net <- lift (asks (storeNetwork . webStore))
+        p <- S.param name `S.rescue` const (return "")
+        case parseBinfoAddr net p of
+            Nothing -> S.raise (UserError "invalid active address")
+            Just xs -> return $ HashSet.fromList xs
+    addr (BinfoAddr a) = Just a
+    addr (BinfoXpub x) = Nothing
+    xpub (BinfoXpub x) = Just x
+    xpub (BinfoAddr _) = Nothing
+    binfo_txs _ _ _ _ _ [] = []
+    binfo_txs etxs abook salladdrs prune ibal (t:ts) =
+        let b = toBinfoTx etxs abook salladdrs prune ibal t
+            nbal = case getBinfoTxResultBal b of
+                Nothing -> ibal
+                Just (_, x) -> ibal - x
+         in b : binfo_txs etxs abook salladdrs prune nbal ts
+    get_addrs = do
+        active <- get_addrs_param "active"
+        p2sh <- get_addrs_param "activeP2SH"
+        bech32 <- get_addrs_param "activeBech32"
+        sh <- get_addrs_param "onlyShow"
+        let xspec d b = (\x -> (x, XPubSpec x d)) <$> xpub b
+            xspecs = HashMap.fromList $ concat
+                     [ mapMaybe (xspec DeriveNormal) (HashSet.toList active)
+                     , mapMaybe (xspec DeriveP2SH) (HashSet.toList p2sh)
+                     , mapMaybe (xspec DeriveP2WPKH) (HashSet.toList bech32)
+                     ]
+            actives = active <> p2sh <> bech32
+            addrs = HashSet.fromList . mapMaybe addr $ HashSet.toList actives
+            xpubs = HashSet.fromList . mapMaybe xpub $ HashSet.toList actives
+            sh' = if HashSet.null sh
+                  then actives
+                  else sh `HashSet.intersection` actives
+            saddrs = HashSet.fromList . mapMaybe addr $ HashSet.toList sh'
+            sxpubs = HashSet.fromList . mapMaybe xpub $ HashSet.toList sh'
+        return (addrs, xpubs, saddrs, sxpubs, xspecs)
+    get_xbals =
+        let f = not . nullBalance . xPubBal
+            g = HashMap.fromList . map (second (filter f))
+            h (k, s) = (,) k <$> xPubBals s
+        in fmap g . mapM h . HashMap.toList
+    get_abals =
+        let f b = (balanceAddress b, b)
+            g = HashMap.fromList . map f
+        in fmap g . getBalances . HashSet.toList
+    get_sxtrs sxpubs =
+        let f (k, s) = (,) k <$> xPubTxs s def
+            g = ((`HashSet.member` sxpubs) . fst)
+        in fmap HashMap.fromList . mapM f . filter g . HashMap.toList
+    get_atrs n offset =
+        let i = fromIntegral (n + offset)
+            f x = getAddressesTxs x def{limit = i}
+        in fmap Set.fromList . f . HashSet.toList
+    get_txs = fmap catMaybes . mapM getTransaction
+    get_etxs =
+        let f t = (txHash (transactionData t), t)
+            g = HashMap.fromList . map f . catMaybes
+        in fmap g . mapM getTransaction
+    get_peers = do
+        ps <- lift $ getPeersInformation =<< asks (storeManager . webStore)
+        return (fromIntegral (length ps))
+    compute_txids n offset = map txRefHash . take (n + offset) . Set.toDescList
+    compute_etxids prune abook =
+        let f = relevantTxs (HashMap.keysSet abook) prune
+        in HashSet.toList . foldl HashSet.union HashSet.empty . map f
+    compute_sxbals sxpubs =
+        let f k _ = k `HashSet.member` sxpubs
+        in HashMap.filterWithKey f
+    compute_xabals =
+        let f b = (balanceAddress (xPubBal b), xPubBal b)
+        in HashMap.fromList . concatMap (map f) . HashMap.elems
+    compute_bal =
+        let f b = balanceAmount b + balanceZero b
+        in sum . map f . HashMap.elems
+    compute_abook addrs xbals =
+        let f k XPubBal{..} =
+                let a = balanceAddress xPubBal
+                    e = error "lions and tigers and bears"
+                    s = toSoft (listToPath xPubBalPath)
+                    m = fromMaybe e s
+                in (a, Just (BinfoXPubPath k m))
+            g k = map (f k)
+            amap = HashMap.map (const Nothing) $
+                   HashSet.toMap addrs
+            xmap = HashMap.fromList .
+                   concatMap (uncurry g) $
+                   HashMap.toList xbals
+        in amap <> xmap
+    compute_xaddrs =
+        let f = map (balanceAddress . xPubBal)
+        in HashSet.fromList . concatMap f . HashMap.elems
+    sent BinfoTx{getBinfoTxResultBal = Just (r, _)}
+      | r < 0 = fromIntegral (negate r)
+      | otherwise = 0
+    sent _ = 0
+    received BinfoTx{getBinfoTxResultBal = Just (r, _)}
+      | r > 0 = fromIntegral r
+      | otherwise = 0
+    received _ = 0
+
+scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTx =
+    lift (asks webNumTxId) >>= \num -> S.param "txid" >>= \case
+        BinfoTxIdHash h -> go num h
+        BinfoTxIdIndex i ->
+            if | not num || isBinfoTxIndexNull i -> S.raise ThingNotFound
+               | isBinfoTxIndexBlock i -> block i
+               | isBinfoTxIndexHash i -> hash i
+  where
+    get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
+    js num t = do
+        let etxids = if num
+                     then HashSet.toList $ relevantTxs HashSet.empty False t
+                     else []
+        etxs' <- if num
+                 then Just . catMaybes <$> mapM getTransaction etxids
+                 else return Nothing
+        let f t = (txHash (transactionData t), t)
+            etxs = HashMap.fromList . map f <$> etxs'
+        net <- lift $ asks (storeNetwork . webStore)
+        S.json . binfoTxToJSON net $ toBinfoTxSimple etxs t
+    hex = S.text . TL.fromStrict . encodeHex . encode . transactionData
+    go num h = getTransaction h >>= \case
+        Nothing -> S.raise ThingNotFound
+        Just t -> get_format >>= \case
+            "hex" -> hex t
+            _ -> js num t
+    block i =
+        let Just (height, pos) = binfoTxIndexBlock i
+        in getBlocksAtHeight height >>= \case
+            [] -> S.raise ThingNotFound
+            h:_ -> getBlock h >>= \case
+                Nothing -> S.raise ThingNotFound
+                Just BlockData{..} ->
+                    if length blockDataTxs > fromIntegral pos
+                    then go True (blockDataTxs !! fromIntegral pos)
+                    else S.raise ThingNotFound
+    hmatch h = listToMaybe . filter (matchBinfoTxHash h)
+    hmem h = hmatch h . map snd <$> getMempool
+    hblock h =
+        let g 0 _ = return Nothing
+            g i k =
+                getBlock k >>= \case
+                Nothing -> return Nothing
+                Just BlockData{..} ->
+                    case hmatch h blockDataTxs of
+                        Nothing -> g (i - 1) (H.prevBlock blockDataHeader)
+                        Just x  -> return (Just x)
+        in getBestBlock >>= \case
+            Nothing -> return Nothing
+            Just k -> g 10 k
+    hash h = hmem h >>= \case
+        Nothing -> hblock h >>= \case
+            Nothing -> S.raise ThingNotFound
+            Just x -> go True x
+        Just x -> go True x
 
 -- GET Network Information --
 

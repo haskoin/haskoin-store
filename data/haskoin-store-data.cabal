@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 22c4a51ea57f84fd26f9b238e6612dd4c2175c8cdc0e16295811eccc8429ad49
+-- hash: 2d0a6b1d7016bb4f0f69db77192e22875601b56e9e97ec36e1898223c281b43e
 
 name:           haskoin-store-data
-version:        0.38.1
+version:        0.39.0
 synopsis:       Data for Haskoin Store
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -41,7 +41,7 @@ library
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.0
+    , haskoin-core >=0.17.6
     , http-client >=0.6.4.1
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -50,6 +50,7 @@ library
     , scotty >=0.11.5
     , string-conversions >=0.4.0.1
     , text >=1.2.3.0
+    , unordered-containers >=0.2.10
     , wreq >=0.5.3.2
   default-language: Haskell2010
 
@@ -73,7 +74,7 @@ test-suite haskoin-store-test
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.0
+    , haskoin-core >=0.17.6
     , haskoin-store-data
     , hspec >=2.7.1
     , http-client >=0.6.4.1
@@ -84,6 +85,7 @@ test-suite haskoin-store-test
     , scotty >=0.11.5
     , string-conversions >=0.4.0.1
     , text >=1.2.3.0
+    , unordered-containers >=0.2.10
     , wreq >=0.5.3.2
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover

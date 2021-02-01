@@ -5,12 +5,16 @@
 
 packages:
 - completed:
-    hackage: haskoin-core-0.18.0@sha256:66c8213c3bfe8f184417f6fbe43164e175febe86f6967f7fae3dd5575bc9780d,4782
+    size: 442132
+    url: https://github.com/haskoin/haskoin-core/archive/323433e680b6793b4b5dc91d19fd79992cdf2d4c.tar.gz
+    name: haskoin-core
+    version: 0.19.0
+    sha256: fe3ea468d5a52531b7f3e4b77189a8663b7fff50ea2184928a649033cb97eb7e
     pantry-tree:
-      size: 5110
-      sha256: 3eec6d4bc4749890aed1f8f97ac09187ea2858de50a7e9a89f3625698a235772
+      size: 6319
+      sha256: b9d45ff4422c3c98039ec29fdc94bd332a0f2ee330d463499828decedcdd92f0
   original:
-    hackage: haskoin-core-0.18.0
+    url: https://github.com/haskoin/haskoin-core/archive/323433e680b6793b4b5dc91d19fd79992cdf2d4c.tar.gz
 - completed:
     hackage: haskoin-node-0.17.1@sha256:a835e166fef1e781b635fc9b9a0febfddbf2c986c5a44b84c1eae901ba18932f,2279
     pantry-tree:

@@ -26,15 +26,17 @@ module Haskoin.Store.Database.Types
 
 import           Control.DeepSeq        (NFData)
 import           Control.Monad          (guard)
+import           Data.Bits              (Bits, shiftL, shiftR, (.|.))
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as BS
 import           Data.ByteString.Short  (ShortByteString)
 import qualified Data.ByteString.Short  as BSS
 import           Data.Default           (Default (..))
+import           Data.Either            (fromRight)
 import           Data.Hashable          (Hashable)
-import           Data.Serialize         (Serialize (..), getBytes, getWord8,
-                                         putWord8)
-import           Data.Word              (Word32, Word64)
+import           Data.Serialize         (Serialize (..), decode, encode,
+                                         getBytes, getWord8, putWord8, runPut)
+import           Data.Word              (Word16, Word32, Word64, Word8)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
 import           Haskoin                (Address, BlockHash, BlockHeight,
@@ -134,9 +136,8 @@ data OutVal = OutVal
 instance KeyValue AddrOutKey OutVal
 
 -- | Transaction database key.
-newtype TxKey = TxKey
-    { txKey :: TxHash
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable)
+data TxKey = TxKey { txKey :: TxHash }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize TxKey where
     -- 0x02 · TxHash

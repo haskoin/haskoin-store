@@ -6,6 +6,7 @@ module Haskoin.Store
     , module Haskoin.Store.BlockStore
     , module Haskoin.Store.Web
     , module Haskoin.Store.Database.Reader
+    , module Haskoin.Store.Database.Types
     , module Haskoin.Store.Data
       -- * Cache
     , CacheConfig(..)
@@ -35,5 +36,6 @@ import           Haskoin.Store.Cache
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Reader
+import           Haskoin.Store.Database.Types
 import           Haskoin.Store.Manager
 import           Haskoin.Store.Web

@@ -20,10 +20,13 @@ import           Data.Word
 import           Haskoin
 import           Haskoin.Node
 import           Haskoin.Store
+import           Haskoin.Util.Arbitrary
 import           Network.Socket
 import           NQE
 import           System.Random
 import           Test.Hspec
+import           Test.Hspec.QuickCheck
+import           Test.QuickCheck
 import           UnliftIO
 
 data TestStore = TestStore
@@ -34,7 +37,8 @@ data TestStore = TestStore
     }
 
 spec :: Spec
-spec = describe "Download" $ do
+spec = do
+  describe "Download" $ do
     it "gets 8 blocks" $
         withTestStore bchRegTest "eight-blocks" $ \TestStore {..} -> do
         bs <- replicateM 8 . receiveMatch testStoreEvents $ \case

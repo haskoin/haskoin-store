@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE RecordWildCards           #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Haskoin.Store.WebCommonSpec
     ( spec
@@ -10,7 +11,7 @@ module Haskoin.Store.WebCommonSpec
 import           Control.Monad           (forM_)
 import           Data.Proxy
 import           Data.String.Conversions (cs)
-import           Data.Word               (Word64)
+import           Data.Word
 import           Haskoin
 import           Haskoin.Store.Data
 import           Haskoin.Store.DataSpec  ()
@@ -53,7 +54,7 @@ testParam pGen =
     forAll pGen $ \p ->
         case encodeParam btc p of
             Just txts -> parseParam btc txts `shouldBe` Just p
-            _ -> expectationFailure "Param encoding failed"
+            _         -> expectationFailure "Param encoding failed"
   where
     name = cs $ proxyLabel $ proxy pGen
     proxy :: Gen a -> Proxy a

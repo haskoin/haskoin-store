@@ -3,8 +3,6 @@ cabal-version: 2.0
 -- This file has been generated from package.yaml by hpack version 0.34.2.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 1ac7a6be927cf025cc64e6ab89e07165b9f66160e499e7e68deb1ff8d6bf1515
 
 name:           haskoin-store
 version:        0.39.0
@@ -51,11 +49,12 @@ library
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.5
+    , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
-    , haskoin-store-data ==0.38.1
+    , haskoin-store-data ==0.39.0
     , hedis >=0.12.13
     , http-types >=0.12.3
+    , lens >=4.18.1
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , network >=3.1.1.1
@@ -72,6 +71,7 @@ library
     , unordered-containers >=0.2.10.0
     , wai >=3.2.2.1
     , warp >=3.3.10
+    , wreq >=0.5.3.2
   default-language: Haskell2010
 
 executable haskoin-store
@@ -93,12 +93,13 @@ executable haskoin-store
     , deepseq >=1.4.4.0
     , filepath
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.5
+    , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
     , haskoin-store
-    , haskoin-store-data ==0.38.1
+    , haskoin-store-data ==0.39.0
     , hedis >=0.12.13
     , http-types >=0.12.3
+    , lens >=4.18.1
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , network >=3.1.1.1
@@ -116,6 +117,7 @@ executable haskoin-store
     , unordered-containers >=0.2.10.0
     , wai >=3.2.2.1
     , warp >=3.3.10
+    , wreq >=0.5.3.2
   default-language: Haskell2010
 
 test-suite haskoin-store-test
@@ -141,13 +143,14 @@ test-suite haskoin-store-test
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.17.5
+    , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
     , haskoin-store
-    , haskoin-store-data ==0.38.1
+    , haskoin-store-data ==0.39.0
     , hedis >=0.12.13
     , hspec >=2.7.1
     , http-types >=0.12.3
+    , lens >=4.18.1
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , network >=3.1.1.1
@@ -164,5 +167,6 @@ test-suite haskoin-store-test
     , unordered-containers >=0.2.10.0
     , wai >=3.2.2.1
     , warp >=3.3.10
+    , wreq >=0.5.3.2
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover

@@ -11,7 +11,8 @@ packages:
   - store
   - data
 extra-deps:
-  - haskoin-core-0.18.0
+  - github: haskoin/haskoin-core
+    commit: 323433e680b6793b4b5dc91d19fd79992cdf2d4c
   - haskoin-node-0.17.1
   - secp256k1-haskell-0.5.0
   - rocksdb-haskell-jprupp-2.1.3

@@ -4,32 +4,35 @@
 {-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TupleSections              #-}
 module Haskoin.Store.WebCommon
 
 where
 
-import           Control.Applicative       ((<|>))
-import           Control.Monad             (guard)
-import           Data.Default              (Default, def)
-import           Data.Proxy                (Proxy(..))
-import qualified Data.Serialize            as S
-import           Data.String               (IsString (..))
-import           Data.String.Conversions   (cs)
-import           Data.Text                 (Text)
-import qualified Data.Text                 as Text
+import           Control.Applicative     ((<|>))
+import           Control.Monad           (guard)
+import           Data.Default            (Default, def)
+import           Data.Proxy              (Proxy (..))
+import qualified Data.Serialize          as S
+import           Data.String             (IsString (..))
+import           Data.String.Conversions (cs)
+import           Data.Text               (Text)
+import qualified Data.Text               as T
 import           Haskoin.Address
-import           Haskoin.Block             (Block, BlockHash, blockHashToHex,
-                                            hexToBlockHash)
+import           Haskoin.Block           (Block, BlockHash, blockHashToHex,
+                                          hexToBlockHash)
 import           Haskoin.Constants
-import           Haskoin.Crypto            (Hash256)
+import           Haskoin.Crypto          (Hash256)
 import           Haskoin.Keys
-import qualified Haskoin.Store.Data        as Store
+import qualified Haskoin.Store.Data      as Store
 import           Haskoin.Transaction
-import           Network.HTTP.Types        (StdMethod (..))
-import           Numeric.Natural           (Natural)
-import           Text.Read                 (readMaybe)
-import qualified Web.Scotty.Trans          as Scotty
+import           Network.HTTP.Types      (StdMethod (..))
+import           Numeric.Natural         (Natural)
+import           Text.Read               (readMaybe)
+import qualified Web.Scotty.Trans        as Scotty
 
 -------------------
 -- API Resources --
@@ -336,7 +339,7 @@ noDefBox p = [ParamBox p | p /= def]
 
 noMaybeBox :: (Param p, Eq p) => Maybe p -> [ParamBox]
 noMaybeBox (Just p) = [ParamBox p]
-noMaybeBox _ = []
+noMaybeBox _        = []
 
 asProxy :: a -> Proxy a
 asProxy = const Proxy
@@ -405,7 +408,7 @@ instance Param StartParam where
     parseParam _ [s] = parseHash <|> parseHeight <|> parseUnix
       where
         parseHash = do
-            guard (Text.length s == 32 * 2)
+            guard (T.length s == 32 * 2)
             TxHash x <- hexToTxHash s
             return $ StartParamHash x
         parseHeight = do
@@ -558,3 +561,7 @@ instance Param [TxHash] where
     encodeParam _ ts = Just $ txHashToHex <$> ts
     parseParam _ = mapM hexToTxHash
 
+
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
