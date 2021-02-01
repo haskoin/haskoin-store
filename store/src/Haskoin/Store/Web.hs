@@ -955,7 +955,7 @@ netBinfoSymbol net
 
 binfoTickerToSymbol :: Text -> BinfoTicker -> BinfoSymbol
 binfoTickerToSymbol code BinfoTicker{..} =
-    BinfoSymbol{ getBinfoSymbolCode = upper
+    BinfoSymbol{ getBinfoSymbolCode = code
                , getBinfoSymbolString = binfoTickerSymbol
                , getBinfoSymbolName = name
                , getBinfoSymbolConversion =
@@ -964,8 +964,7 @@ binfoTickerToSymbol code BinfoTicker{..} =
                , getBinfoSymbolLocal = True
                }
   where
-    upper = T.toUpper code
-    name = case upper of
+    name = case code of
         "EUR" -> "Euro"
         "USD" -> "U.S. dollar"
         "GBP" -> "British pound"
@@ -1038,6 +1037,7 @@ scottyMultiAddr ticker = do
             , getBinfoBTC = coin
             , getBinfoLatestBlock = block
             }
+    setHeaders
     S.json $ binfoMultiAddrToJSON net
         BinfoMultiAddr
         { getBinfoMultiAddrAddresses = addrs
@@ -1049,7 +1049,7 @@ scottyMultiAddr ticker = do
         }
   where
     get_price ticker = do
-        code <- S.param "local" `S.rescue` const (return "USD")
+        code <- T.toUpper <$> S.param "local" `S.rescue` const (return "USD")
         prices <- readTVarIO ticker
         case HashMap.lookup code prices of
             Nothing -> return def
@@ -1188,8 +1188,11 @@ scottyBinfoTx =
         let f t = (txHash (transactionData t), t)
             etxs = HashMap.fromList . map f <$> etxs'
         net <- lift $ asks (storeNetwork . webStore)
+        setHeaders
         S.json . binfoTxToJSON net $ toBinfoTxSimple etxs t
-    hex = S.text . TL.fromStrict . encodeHex . encode . transactionData
+    hex t = do
+        setHeaders
+        S.text . TL.fromStrict . encodeHex . encode $ transactionData t
     go num h = getTransaction h >>= \case
         Nothing -> S.raise ThingNotFound
         Just t -> get_format >>= \case
