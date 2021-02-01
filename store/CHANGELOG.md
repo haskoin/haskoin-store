@@ -5,9 +5,9 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
-## Unreleased
+## 0.40.0
 ### Added
-- Blockchain.info API compatibility
+- Blockchain.info API compatibility for multiaddr and rawtx endpoints.
 
 ### Changed
 - Segwit fields are no longer omitted on incompatible networks.
