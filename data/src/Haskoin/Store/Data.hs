@@ -1630,12 +1630,12 @@ getBinfoTxId Nothing h = BinfoTxIdHash h
 getBinfoTxId (Just m) h =
     case HashMap.lookup h m of
         Nothing -> BinfoTxIdIndex (-1)
-        Just t -> binfoTransactionIndex False t
+        Just t  -> binfoTransactionIndex False t
 
 instance ToJSON BinfoTxId where
-    toJSON (BinfoTxIdHash h) = toJSON h
+    toJSON (BinfoTxIdHash h)  = toJSON h
     toJSON (BinfoTxIdIndex i) = toJSON i
-    toEncoding (BinfoTxIdHash h) = toEncoding h
+    toEncoding (BinfoTxIdHash h)  = toEncoding h
     toEncoding (BinfoTxIdIndex i) = toEncoding i
 
 instance FromJSON BinfoTxId where
@@ -1852,7 +1852,7 @@ binfoTxToJSON net BinfoTx {..} =
         , "out" .= map (binfoTxOutputToJSON net) getBinfoTxOutputs
         ] ++
         case getBinfoTxResultBal of
-            Nothing -> []
+            Nothing         -> []
             Just (res, bal) -> ["result" .= res, "balance" .= bal]
 
 binfoTxToEncoding :: Network -> BinfoTx -> Encoding
@@ -1875,7 +1875,7 @@ binfoTxToEncoding net BinfoTx {..} =
         "inputs" `pair` list (binfoTxInputToEncoding net) getBinfoTxInputs <>
         "out" `pair` list (binfoTxOutputToEncoding net) getBinfoTxOutputs <>
         case getBinfoTxResultBal of
-            Nothing -> mempty
+            Nothing         -> mempty
             Just (res, bal) -> "result" .= res <> "balance" .= bal
 
 binfoTxParseJSON :: Network -> Value -> Parser BinfoTx
@@ -2130,35 +2130,46 @@ instance FromJSON BinfoBlockInfo where
 
 data BinfoTicker
     = BinfoTicker
-        { binfoTickerSymbol    :: !Text
-        , binfoTickerPrice24h  :: !Double
-        , binfoTickerVol24h    :: !Double
-        , binfoTickerLastPrice :: !Double
+        { binfoTicker15m    :: !Double
+        , binfoTickerLast   :: !Double
+        , binfoTickerBuy    :: !Double
+        , binfoTickerSell   :: !Double
+        , binfoTickerSymbol :: !Text
         }
     deriving (Eq, Show, Generic, NFData)
 
 instance Default BinfoTicker where
     def = BinfoTicker{ binfoTickerSymbol = "XXX"
-                     , binfoTickerPrice24h = 0.0
-                     , binfoTickerVol24h = 0.0
-                     , binfoTickerLastPrice = 0.0
+                     , binfoTicker15m = 0.0
+                     , binfoTickerLast = 0.0
+                     , binfoTickerBuy = 0.0
+                     , binfoTickerSell = 0.0
                      }
 
 instance ToJSON BinfoTicker where
     toJSON BinfoTicker{..} =
         object
             [ "symbol" .= binfoTickerSymbol
-            , "price_24h" .= binfoTickerPrice24h
-            , "volume_24h" .= binfoTickerVol24h
-            , "last_trade_price" .= binfoTickerLastPrice
+            , "sell" .= binfoTickerSell
+            , "buy" .= binfoTickerBuy
+            , "last" .= binfoTickerLast
+            , "15m" .= binfoTicker15m
             ]
+    toEncoding BinfoTicker{..} =
+        pairs $
+        "symbol" .= binfoTickerSymbol <>
+        "sell" .= binfoTickerSell <>
+        "buy" .= binfoTickerBuy <>
+        "last" .= binfoTickerLast <>
+        "15m" .= binfoTicker15m
 
 instance FromJSON BinfoTicker where
     parseJSON = withObject "ticker" $ \o -> do
         binfoTickerSymbol <- o .: "symbol"
-        binfoTickerPrice24h <- o .: "price_24h"
-        binfoTickerVol24h <- o .: "volume_24h"
-        binfoTickerLastPrice <- o .: "last_trade_price"
+        binfoTicker15m <- o .: "15m"
+        binfoTickerSell <- o .: "sell"
+        binfoTickerBuy <- o .: "buy"
+        binfoTickerLast <- o .: "last"
         return BinfoTicker{..}
 
 data BinfoSymbol
@@ -2171,6 +2182,15 @@ data BinfoSymbol
         , getBinfoSymbolLocal      :: !Bool
         }
     deriving (Eq, Show, Generic, NFData)
+
+instance Default BinfoSymbol where
+    def = BinfoSymbol{ getBinfoSymbolCode = "XXX"
+                     , getBinfoSymbolString = "¤"
+                     , getBinfoSymbolName = "No currency"
+                     , getBinfoSymbolConversion = 0.0
+                     , getBinfoSymbolAfter = False
+                     , getBinfoSymbolLocal = True
+                     }
 
 instance ToJSON BinfoSymbol where
     toJSON BinfoSymbol {..} =
@@ -2301,8 +2321,8 @@ toBinfoTxInputs etxs abook t =
         S.putByteString bs
 
 toBinfoBlockIndex :: Transaction -> Maybe BlockHeight
-toBinfoBlockIndex Transaction{transactionDeleted = True} = Nothing
-toBinfoBlockIndex Transaction{transactionBlock = MemRef _} = Nothing
+toBinfoBlockIndex Transaction{transactionDeleted = True}       = Nothing
+toBinfoBlockIndex Transaction{transactionBlock = MemRef _}     = Nothing
 toBinfoBlockIndex Transaction{transactionBlock = BlockRef h _} = Just h
 
 toBinfoTx :: Maybe (HashMap TxHash Transaction)

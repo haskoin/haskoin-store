@@ -526,8 +526,9 @@ instance Arbitrary BinfoSymbol where
 
 instance Arbitrary BinfoTicker where
     arbitrary = do
+        binfoTicker15m <- arbitrary
+        binfoTickerSell <- arbitrary
+        binfoTickerBuy <- arbitrary
+        binfoTickerLast <- arbitrary
         binfoTickerSymbol <- cs <$> listOf1 arbitraryUnicodeChar
-        binfoTickerPrice24h <- arbitrary
-        binfoTickerVol24h <- arbitrary
-        binfoTickerLastPrice <- arbitrary
         return BinfoTicker{..}

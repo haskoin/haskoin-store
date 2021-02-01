@@ -40,6 +40,7 @@ import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
 import           Data.Function                 ((&))
+import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as HashMap
 import qualified Data.HashSet                  as HashSet
 import           Data.List                     (nub)
@@ -203,7 +204,7 @@ runWeb cfg@WebConfig{ webHost = host
                     , webPort = port
                     , webReqLog = wl
                     , webStore = store } = do
-    ticker <- newTVarIO def
+    ticker <- newTVarIO HashMap.empty
     withAsync (price (storeNetwork store) ticker) $ \_ -> do
         reqLogger <- logIt
         runner <- askRunInIO
@@ -216,26 +217,25 @@ runWeb cfg@WebConfig{ webHost = host
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
 
-price :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> TVar BinfoTicker -> m ()
+price :: (MonadUnliftIO m, MonadLoggerIO m)
+      => Network
+      -> TVar (HashMap Text BinfoTicker)
+      -> m ()
 price net v =
-    case sym of
+    case code of
         Nothing -> return ()
         Just s  -> go s
   where
-    sym | net == btc = Just "BTC-USD"
-        | net == bch = Just "BCH-USD"
-        | otherwise = Nothing
+    code | net == btc = Just "btc"
+         | net == bch = Just "bch"
+         | otherwise = Nothing
     go s = forever $ do
         let err e = $(logErrorS) "Price" $ cs (show e)
+            url = "https://api.blockchain.info/ticker" <> "?" <>
+                  "base" <> "=" <> s
         handleAny err $ do
-            r <- liftIO $
-                 Wreq.asJSON =<<
-                 Wreq.get "https://api.blockchain.info/v3/exchange/tickers"
-            let ts = r ^. Wreq.responseBody
-            case listToMaybe $ filter ((== s) . binfoTickerSymbol) ts of
-                Nothing -> $(logErrorS) "Price" $
-                           "No price information for symbol: " <> s
-                Just t -> atomically $ writeTVar v t
+            r <- liftIO $ Wreq.asJSON =<< Wreq.get url
+            atomically . writeTVar v $ r ^. Wreq.responseBody
         threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
 
 
@@ -253,7 +253,7 @@ defHandler e = do
 
 handlePaths ::
        (MonadUnliftIO m, MonadLoggerIO m)
-    => TVar BinfoTicker
+    => TVar (HashMap Text BinfoTicker)
     -> S.ScottyT Except (ReaderT WebConfig m) ()
 handlePaths ticker = do
     -- Block Paths
@@ -953,36 +953,26 @@ netBinfoSymbol net
                    , getBinfoSymbolLocal = False
                    }
 
-binfoTickerToSymbol :: BinfoTicker -> BinfoSymbol
-binfoTickerToSymbol BinfoTicker{..} =
-    BinfoSymbol{ getBinfoSymbolCode = code
-                , getBinfoSymbolString = symbol
-                , getBinfoSymbolName = name
-                , getBinfoSymbolConversion =
-                        100 * 1000 * 1000 / binfoTickerPrice24h
-                , getBinfoSymbolAfter = after
-                , getBinfoSymbolLocal = True
-                }
+binfoTickerToSymbol :: Text -> BinfoTicker -> BinfoSymbol
+binfoTickerToSymbol code BinfoTicker{..} =
+    BinfoSymbol{ getBinfoSymbolCode = upper
+               , getBinfoSymbolString = binfoTickerSymbol
+               , getBinfoSymbolName = name
+               , getBinfoSymbolConversion =
+                       100 * 1000 * 1000 / binfoTicker15m -- sat/usd
+               , getBinfoSymbolAfter = False
+               , getBinfoSymbolLocal = True
+               }
   where
-    name = case code of
+    upper = T.toUpper code
+    name = case upper of
         "EUR" -> "Euro"
         "USD" -> "U.S. dollar"
         "GBP" -> "British pound"
-        _     -> code
-    symbol = case code of
-        "EUR" -> "€"
-        "USD" -> "$"
-        "GBP" -> "£"
-        _     -> code
-    after = case code of
-        "EUR" -> False
-        "USD" -> False
-        "GBP" -> False
-        _     -> True
-    code = T.takeEnd 3 binfoTickerSymbol
+        x     -> x
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
-                => TVar BinfoTicker
+                => TVar (HashMap Text BinfoTicker)
                 -> WebT m ()
 scottyMultiAddr ticker = do
     prune <- get_prune
@@ -996,7 +986,7 @@ scottyMultiAddr ticker = do
     sxtrs <- get_sxtrs sxpubs xspecs
     sabals <- get_abals saddrs
     satrs <- get_atrs n offset saddrs
-    price <- readTVarIO ticker
+    local <- get_price ticker
     let sxtns = HashMap.map length sxtrs
         sxtrset = Set.fromList . concat $ HashMap.elems sxtrs
         sxabals = compute_xabals sxbals
@@ -1033,7 +1023,6 @@ scottyMultiAddr ticker = do
             , getBinfoWalletTotalSent = sent
             }
         coin = netBinfoSymbol net
-        local = binfoTickerToSymbol price
         block =
             BinfoBlockInfo
             { getBinfoBlockInfoHash = H.headerHash (blockDataHeader best)
@@ -1059,6 +1048,12 @@ scottyMultiAddr ticker = do
         , getBinfoMultiAddrCashAddr = cashaddr
         }
   where
+    get_price ticker = do
+        code <- S.param "local" `S.rescue` const (return "USD")
+        prices <- readTVarIO ticker
+        case HashMap.lookup code prices of
+            Nothing -> return def
+            Just p  -> return $ binfoTickerToSymbol code p
     get_prune = fmap not $ S.param "no_compact"
         `S.rescue` const (return False)
     get_cashaddr = S.param "cashaddr"
@@ -1086,7 +1081,7 @@ scottyMultiAddr ticker = do
     binfo_txs etxs abook salladdrs prune ibal (t:ts) =
         let b = toBinfoTx etxs abook salladdrs prune ibal t
             nbal = case getBinfoTxResultBal b of
-                Nothing -> ibal
+                Nothing     -> ibal
                 Just (_, x) -> ibal - x
          in b : binfo_txs etxs abook salladdrs prune nbal ts
     get_addrs = do
