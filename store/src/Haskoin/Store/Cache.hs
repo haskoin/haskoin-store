@@ -923,7 +923,7 @@ startCooldown =
     let opts = Redis.SetOpts { Redis.setSeconds = Nothing
                              , Redis.setMilliseconds = Just 500
                              , Redis.setCondition = Just Redis.Nx }
-    in void . runRedis $ Redis.setOpts cacheCoolKey "cool" opts
+    in void . runRedis $ Redis.setOpts cacheCoolKey "0" opts
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
