@@ -313,7 +313,6 @@ data StoreEvent
     | StorePeerPong !Peer !Word64
     | StoreTxAvailable !Peer ![TxHash]
     | StoreTxReject !Peer !TxHash !RejectCode !ByteString
-      -- ^ block no longer head of main chain
 
 data PubExcept = PubNoPeers
     | PubReject RejectCode

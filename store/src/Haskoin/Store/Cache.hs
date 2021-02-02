@@ -541,10 +541,14 @@ redisTouchKeys now xpubs =
 cacheWriterReact ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => CacheWriterMessage -> CacheX m ()
-cacheWriterReact CacheNewBlock = do
+cacheWriterReact CacheNewBlock =
+    inSync >>= \s ->
+    when s $ do
     newBlockC
     syncMempoolC
-cacheWriterReact CachePing = do
+cacheWriterReact CachePing =
+    inSync >>= \s ->
+    when s $ do
     pruneDB
     newBlockC
     syncMempoolC
@@ -595,19 +599,23 @@ newXPubC xpub = do
         $(logDebugS) "Cache" $ "Done caching xpub: " <> xpubtxt
         return (True, bals)
 
+inSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
+       => CacheX m Bool
+inSync =
+    lift getBestBlock >>= \case
+    Nothing -> return False
+    Just bb ->
+        asks cacheChain >>= \ch ->
+        chainGetBest ch >>= \cb ->
+        return $ headerHash (nodeHeader cb) == bb
+
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
           => CacheX m ()
 newBlockC =
     lift getBestBlock >>= \m ->
-    forM_ m $ \bb ->
-    in_sync bb >>= \s ->
-    when s $ void $ withLock $ f bb
+    forM_ m $ \bb -> void $ withLock $ f bb
   where
     f bb = cacheGetHead >>= go bb
-    in_sync bb =
-        asks cacheChain >>= \ch ->
-        chainGetBest ch >>= \cb ->
-        return $ headerHash (nodeHeader cb) == bb
     go bb Nothing =
         importBlockC bb
     go bb (Just cb)
@@ -925,7 +933,9 @@ startCooldown = do
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
-    void . withLock $ isCool >>= \cool -> when cool $ do
+    void . withLock $
+    isCool >>= \cool ->
+    when cool $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
     txs <- mapM getit . HashSet.toList $
@@ -937,6 +947,10 @@ syncMempoolC =
         importMultiTxC (rights txs)
     startCooldown
   where
+    in_sync bb =
+        asks cacheChain >>= \ch ->
+        chainGetBest ch >>= \cb ->
+        return $ headerHash (nodeHeader cb) == bb
     getit th =
         lift (getTxData th) >>= \case
         Nothing -> return (Left th)
