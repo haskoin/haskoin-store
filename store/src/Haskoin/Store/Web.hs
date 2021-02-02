@@ -81,7 +81,7 @@ import           Haskoin.Transaction
 import           Haskoin.Util
 import           Network.HTTP.Types            (Status (..), status400,
                                                 status403, status404, status500,
-                                                status503)
+                                                status503, statusIsSuccessful)
 import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
@@ -130,7 +130,6 @@ data WebConfig = WebConfig
     , webMaxDiff    :: !Int
     , webMaxPending :: !Int
     , webMaxLimits  :: !WebLimits
-    , webReqLog     :: !Bool
     , webTimeouts   :: !WebTimeouts
     , webVersion    :: !String
     , webNoMempool  :: !Bool
@@ -202,14 +201,13 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
 runWeb :: (MonadUnliftIO m, MonadLoggerIO m) => WebConfig -> m ()
 runWeb cfg@WebConfig{ webHost = host
                     , webPort = port
-                    , webReqLog = wl
                     , webStore = store } = do
     ticker <- newTVarIO HashMap.empty
     withAsync (price (storeNetwork store) ticker) $ \_ -> do
         reqLogger <- logIt
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` cfg)) $ do
-            when wl $ S.middleware reqLogger
+            S.middleware reqLogger
             S.defaultHandler defHandler
             handlePaths ticker
             S.notFound $ S.raise ThingNotFound
@@ -1477,9 +1475,10 @@ logIt = do
             t2 <- getCurrentTime
             let d = diffUTCTime t2 t1
                 s = responseStatus res
-            runner $
-                $(logInfoS) "Web" $
-                fmtReq req <> " [" <> fmtStatus s <> " / " <> fmtDiff d <> "]"
+                msg = fmtReq req <> " [" <> fmtStatus s <> " / " <> fmtDiff d <> "]"
+            if statusIsSuccessful s
+                then runner $ $(logDebugS) "Web" msg
+                else runner $ $(logErrorS) "Web" msg
             respond res
 
 fmtReq :: Request -> Text

@@ -55,7 +55,6 @@ data Config = Config
     , configPeers        :: ![(String, Maybe Int)]
     , configVersion      :: !Bool
     , configDebug        :: !Bool
-    , configReqLog       :: !Bool
     , configMaxPending   :: !Int
     , configWebLimits    :: !WebLimits
     , configWebTimeouts  :: !WebTimeouts
@@ -83,7 +82,6 @@ instance Default Config where
                  , configPeers        = defPeers
                  , configVersion      = False
                  , configDebug        = defDebug
-                 , configReqLog       = defReqLog
                  , configMaxPending   = defMaxPending
                  , configWebLimits    = defWebLimits
                  , configWebTimeouts  = defWebTimeouts
@@ -171,11 +169,6 @@ defDebug :: Bool
 defDebug = unsafePerformIO $
     defEnv "DEBUG" False parseBool
 {-# NOINLINE defDebug #-}
-
-defReqLog :: Bool
-defReqLog = unsafePerformIO $
-    defEnv "REQ_LOG" False parseBool
-{-# NOINLINE defReqLog #-}
 
 defNumTxId :: Bool
 defNumTxId = unsafePerformIO $
@@ -324,10 +317,6 @@ config = do
         flag (configDebug def) True $
         long "debug"
         <> help "Show debug messages"
-    configReqLog <-
-        flag (configReqLog def) True $
-        long "req-log"
-        <> help "HTTP request logging"
     maxLimitCount <-
         option auto $
         metavar "INT"
@@ -513,7 +502,6 @@ run Config { configHost = host
            , configDebug = deb
            , configMaxPending = pend
            , configWebLimits = limits
-           , configReqLog = reqlog
            , configWebTimeouts = tos
            , configRedis = redis
            , configRedisURL = redisurl
@@ -562,7 +550,6 @@ run Config { configHost = host
                     , webPort = port
                     , webStore = st
                     , webMaxLimits = limits
-                    , webReqLog = reqlog
                     , webTimeouts = tos
                     , webMaxPending = pend
                     , webVersion = version

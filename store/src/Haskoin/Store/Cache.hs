@@ -933,23 +933,20 @@ syncMempoolC =
     when cool $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-    txs <- mapM getit . HashSet.toList $
-           mappend
-                (HashSet.difference nodepool cachepool)
-                (HashSet.difference cachepool nodepool)
+    txs <- fmap catMaybes . mapM getit . HashSet.toList $
+           HashSet.difference nodepool cachepool <>
+           HashSet.difference cachepool nodepool
     unless (null txs) $ do
-        $(logDebugS) "Cache" "Importing mempool transactions"
-        importMultiTxC (rights txs)
+        $(logDebugS) "Cache" $
+            "Importing mempool transactions: " <> cs (show (length txs))
+        importMultiTxC txs
     startCooldown
   where
     in_sync bb =
         asks cacheChain >>= \ch ->
         chainGetBest ch >>= \cb ->
         return $ headerHash (nodeHeader cb) == bb
-    getit th =
-        lift (getTxData th) >>= \case
-        Nothing -> return (Left th)
-        Just tx -> return (Right tx)
+    getit th = lift (getTxData th)
 
 cacheGetMempool :: MonadLoggerIO m => CacheX m [(UnixTime, TxHash)]
 cacheGetMempool = runRedis redisGetMempool
