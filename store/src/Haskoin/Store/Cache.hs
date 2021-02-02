@@ -43,7 +43,7 @@ import qualified Data.HashSet              as HashSet
 import qualified Data.IntMap.Strict        as I
 import           Data.List                 (sort)
 import qualified Data.Map.Strict           as Map
-import           Data.Maybe                (catMaybes, mapMaybe)
+import           Data.Maybe                (catMaybes, isNothing, mapMaybe)
 import           Data.Serialize            (Serialize, decode, encode)
 import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
@@ -916,19 +916,14 @@ cacheCoolKey :: ByteString
 cacheCoolKey = "cooldown"
 
 isCool :: (MonadUnliftIO m, MonadLoggerIO m) => CacheX m Bool
-isCool =
-    runRedis (Redis.get cacheCoolKey) >>= \case
-    Nothing -> return True
-    Just bs -> do
-        let t = read (cs bs)
-        cooldown <- toInteger . (* 500) <$> asks cacheRefresh
-        now <- microseconds
-        return (cooldown <= now - t)
+isCool = isNothing <$> runRedis (Redis.get cacheCoolKey)
 
 startCooldown :: (MonadUnliftIO m, MonadLoggerIO m) => CacheX m ()
-startCooldown = do
-    now <- microseconds
-    void $ runRedis (Redis.set cacheCoolKey (cs (show now)))
+startCooldown =
+    let opts = Redis.SetOpts { Redis.setSeconds = Nothing
+                             , Redis.setMilliseconds = Just 500
+                             , Redis.setCondition = Just Redis.Nx }
+    in void . runRedis $ Redis.setOpts cacheCoolKey "cool" opts
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
