@@ -565,7 +565,7 @@ newXPubC xpub = do
     t <- xpubText xpub
     let n = lenNotNull bals
     if x <= n
-        then go bals
+        then inSync >>= \s -> if s then go bals else return (False, bals)
         else do
             $(logDebugS) "Cache" $ "Not caching xpub: " <> t
             return (False, bals)
