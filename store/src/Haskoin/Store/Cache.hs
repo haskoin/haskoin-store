@@ -73,9 +73,10 @@ import           Haskoin.Node              (Chain, chainBlockMain,
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           NQE                       (Inbox, Mailbox, receive, send)
-import           System.Random             (randomIO)
+import           System.Random             (randomIO, randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             bracket, liftIO, throwIO)
+import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheX m a
 runRedis action =
@@ -507,6 +508,28 @@ withLock f =
         Just _ -> Just <$> f
         Nothing -> return Nothing
 
+smallDelay :: MonadUnliftIO m => m ()
+smallDelay = threadDelay =<< liftIO (randomRIO (50 * 1000, 250 * 1000))
+
+withLockForever
+    :: (MonadLoggerIO m, MonadUnliftIO m)
+    => CacheX m a
+    -> CacheX m a
+withLockForever go = withLock go >>= \case
+    Nothing -> smallDelay >> go
+    Just x -> return x
+
+withLockRetry
+    :: (MonadLoggerIO m, MonadUnliftIO m)
+    => Integer
+    -> CacheX m a
+    -> CacheX m (Maybe a)
+withLockRetry i f
+  | i <= 0 = return Nothing
+  | otherwise = withLock f >>= \case
+        Nothing -> smallDelay >> withLockRetry (i - 1) f
+        Just x -> return (Just x)
+
 pruneDB :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
         => CacheX m Integer
 pruneDB = do
@@ -613,7 +636,7 @@ newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
           => CacheX m ()
 newBlockC =
     lift getBestBlock >>= \m ->
-    forM_ m $ \bb -> void $ withLock $ f bb
+    forM_ m $ \bb -> withLock $ f bb
   where
     f bb = cacheGetHead >>= go bb
     go bb Nothing =
@@ -911,31 +934,35 @@ getNewAddrs gap xpubs =
     Nothing   -> []
     Just bals -> addrsToAdd gap bals a
 
+withCool :: (MonadLoggerIO m)
+         => ByteString
+         -> Integer
+         -> CacheX m a
+         -> CacheX m (Maybe a)
+withCool key milliseconds run =
+    is_cool >>= \c -> if c
+                      then run >>= \x -> cooldown >> return (Just x)
+                      else return Nothing
+  where
+    is_cool = isNothing <$> runRedis (Redis.get key)
+    cooldown =
+        let opts = Redis.SetOpts
+                   { Redis.setSeconds = Nothing
+                   , Redis.setMilliseconds = Just milliseconds
+                   , Redis.setCondition = Just Redis.Nx }
+        in void . runRedis $ Redis.setOpts key "0" opts
+
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
-syncMempoolC =
-    void . withLock $
-    when_cool ck s m $ do
-    nodepool <- HashSet.fromList . map snd <$> lift getMempool
-    cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-    getem (HashSet.difference nodepool cachepool)
-    when_cool pk ps pm $
-        getem (HashSet.difference cachepool nodepool)
+syncMempoolC = do
+    refresh <- toInteger <$> asks cacheRefresh
+    void . withLock . withCool "cool" refresh $ do
+        nodepool <- HashSet.fromList . map snd <$> lift getMempool
+        cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
+        getem (HashSet.difference nodepool cachepool)
+        withCool "prune" (refresh * 10) $
+            getem (HashSet.difference cachepool nodepool)
   where
-    pk = "prune"
-    ck = "cool"
-    s = Nothing
-    m = Just 500
-    ps = Just 10
-    pm = Nothing
-    when_cool k m s f = is_cool k >>= \c -> when c $ f >> cooldown k m s
-    is_cool k = isNothing <$> runRedis (Redis.get k)
-    cooldown k sec ms =
-        let opts = Redis.SetOpts
-                   { Redis.setSeconds = sec
-                   , Redis.setMilliseconds = ms
-                   , Redis.setCondition = Just Redis.Nx }
-        in void . runRedis $ Redis.setOpts k "0" opts
     getem tset = do
         let tids = HashSet.toList tset
         txs <- catMaybes <$> mapM (lift . getTxData) tids
