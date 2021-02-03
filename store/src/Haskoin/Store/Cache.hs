@@ -24,10 +24,10 @@ module Haskoin.Store.Cache
     ) where
 
 import           Control.DeepSeq           (NFData)
-import           Control.Monad             (forM, forM_, forever, unless, void,
-                                            when)
+import           Control.Monad             (forM, forM_, forever, guard, unless,
+                                            void, when)
 import           Control.Monad.Logger      (MonadLoggerIO, logDebugS, logErrorS,
-                                            logWarnS)
+                                            logInfoS, logWarnS)
 import           Control.Monad.Reader      (ReaderT (..), ask, asks)
 import           Control.Monad.Trans       (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
@@ -650,47 +650,42 @@ inSync =
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
           => CacheX m ()
 newBlockC =
-    lift getBestBlock >>= \m ->
-    forM_ m $ \bb -> withLock $ f bb
+    inSync >>= \s -> when s $
+    lift getBestBlock >>= \case
+    Nothing -> $(logDebugS) "Cache" "No best block"
+    Just bb -> cacheGetHead >>= \case
+        Nothing -> do
+            $(logInfoS) "Cache" "Initializing best cache block"
+            importBlockC bb
+        Just cb
+            | cb == bb -> $(logDebugS) "Cache" "Cache in sync"
+            | otherwise -> sync bb cb
   where
-    f bb = cacheGetHead >>= go bb
-    go bb Nothing =
-        importBlockC bb
-    go bb (Just cb)
-        | cb == bb =
-              $(logDebugS) "Cache" "Cache in sync"
-        | otherwise =
-              sync bb cb
     sync bb cb =
         asks cacheChain >>= \ch ->
-        chainBlockMain bb ch >>= \case
-        False ->
+        chainGetBlock cb ch >>= \case
+        Nothing ->
             $(logErrorS) "Cache" $
-            "New head not in main chain: " <> blockHashToHex bb
-        True ->
-            chainGetBlock cb ch >>= \case
-            Nothing ->
-                $(logErrorS) "Cache" $
-                "Cache head block node not found: " <>
-                blockHashToHex cb
-            Just cn ->
-                chainBlockMain cb ch >>= \case
-                False -> do
-                    $(logDebugS) "Cache" $
-                        "Reverting cache head not in main chain: " <>
-                        blockHashToHex cb
-                    removeHeadC >> f bb
-                True ->
-                    chainGetBlock bb ch >>= \case
-                    Just nn -> next bb nn cn
-                    Nothing -> do
-                        $(logErrorS) "Cache" $
-                            "Cache head node not found: "
-                            <> blockHashToHex bb
-                        throwIO $
-                            LogicError $
-                            "Cache head node not found: "
-                            <> cs (blockHashToHex bb)
+            "Cache head block node not found: " <>
+            blockHashToHex cb
+        Just cn ->
+            chainBlockMain cb ch >>= \case
+            False -> do
+                $(logDebugS) "Cache" $
+                    "Reverting cache head not in main chain: " <>
+                    blockHashToHex cb
+                removeHeadC cb >> newBlockC
+            True ->
+                chainGetBlock bb ch >>= \case
+                Just nn -> next bb nn cn
+                Nothing -> do
+                    $(logErrorS) "Cache" $
+                        "Cache head node not found: "
+                        <> blockHashToHex bb
+                    throwIO $
+                        LogicError $
+                        "Cache head node not found: "
+                        <> cs (blockHashToHex bb)
     next bb nn cn =
         asks cacheChain >>= \ch ->
         chainGetAncestor (nodeHeight cn + 1) nn ch >>= \case
@@ -701,11 +696,12 @@ newBlockC =
             <> " for block: "
             <> blockHashToHex (headerHash (nodeHeader nn))
         Just cn' ->
-            importBlockC (headerHash (nodeHeader cn')) >> f bb
+            importBlockC (headerHash (nodeHeader cn')) >> newBlockC
 
 importBlockC :: (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m)
              => BlockHash -> CacheX m ()
 importBlockC bh =
+    withLockForever $
     lift (getBlock bh) >>= \case
     Just bd -> do
         let ths = blockDataTxs bd
@@ -729,10 +725,12 @@ importBlockC bh =
             <> blockHashToHex bh
 
 removeHeadC :: (StoreReadExtra m, MonadUnliftIO m, MonadLoggerIO m)
-            => CacheX m ()
-removeHeadC =
+            => BlockHash -> CacheX m ()
+removeHeadC cb =
+    withLockForever $
     void . runMaybeT $ do
     bh <- MaybeT cacheGetHead
+    guard (cb == bh)
     bd <- MaybeT (lift (getBlock bh))
     lift $ do
         tds <- sortTxData . catMaybes <$>

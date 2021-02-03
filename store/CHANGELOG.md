@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Fixed
 - Unlimited retry lock acquisition now works.
+- Make locking tighter.
 
 ## 0.40.10
 ### Changed
