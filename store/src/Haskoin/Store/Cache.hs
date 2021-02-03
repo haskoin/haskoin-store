@@ -901,7 +901,6 @@ cacheAddAddresses addrs = do
         let f ts = (addressXPubSpec i, ts)
          in f <$> lift (getAddressTxs a def)
 
-
 getNewAddrs :: KeyIndex
             -> HashMap XPubSpec [XPubBal]
             -> [AddressXPub]
@@ -912,41 +911,39 @@ getNewAddrs gap xpubs =
     Nothing   -> []
     Just bals -> addrsToAdd gap bals a
 
-cacheCoolKey :: ByteString
-cacheCoolKey = "cooldown"
-
-isCool :: (MonadUnliftIO m, MonadLoggerIO m) => CacheX m Bool
-isCool = isNothing <$> runRedis (Redis.get cacheCoolKey)
-
-startCooldown :: (MonadUnliftIO m, MonadLoggerIO m) => CacheX m ()
-startCooldown =
-    let opts = Redis.SetOpts { Redis.setSeconds = Nothing
-                             , Redis.setMilliseconds = Just 500
-                             , Redis.setCondition = Just Redis.Nx }
-    in void . runRedis $ Redis.setOpts cacheCoolKey "0" opts
-
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
     void . withLock $
-    isCool >>= \cool ->
-    when cool $ do
+    when_cool ck s m $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-    txs <- fmap catMaybes . mapM getit . HashSet.toList $
-           HashSet.difference nodepool cachepool <>
-           HashSet.difference cachepool nodepool
-    unless (null txs) $ do
-        $(logDebugS) "Cache" $
-            "Importing mempool transactions: " <> cs (show (length txs))
-        importMultiTxC txs
-    startCooldown
+    getem (HashSet.difference nodepool cachepool)
+    when_cool pk ps pm $
+        getem (HashSet.difference cachepool nodepool)
   where
-    in_sync bb =
-        asks cacheChain >>= \ch ->
-        chainGetBest ch >>= \cb ->
-        return $ headerHash (nodeHeader cb) == bb
-    getit th = lift (getTxData th)
+    pk = "prune"
+    ck = "cool"
+    s = Nothing
+    m = Just 500
+    ps = Just 10
+    pm = Nothing
+    when_cool k m s f = is_cool k >>= \c -> when c f >> cooldown k m s
+    is_cool k = isNothing <$> runRedis (Redis.get k)
+    cooldown k sec ms =
+        let opts = Redis.SetOpts
+                   { Redis.setSeconds = sec
+                   , Redis.setMilliseconds = ms
+                   , Redis.setCondition = Just Redis.Nx }
+        in void . runRedis $ Redis.setOpts k "0" opts
+    getem tset = do
+        let tids = HashSet.toList tset
+        txs <- catMaybes <$> mapM (lift . getTxData) tids
+        unless (null txs) $ do
+            $(logDebugS) "Cache" $
+                "Importing mempool transactions: " <> cs (show (length txs))
+            importMultiTxC txs
+
 
 cacheGetMempool :: MonadLoggerIO m => CacheX m [(UnixTime, TxHash)]
 cacheGetMempool = runRedis redisGetMempool
