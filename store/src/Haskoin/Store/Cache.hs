@@ -18,7 +18,6 @@ module Haskoin.Store.Cache
     , CacheWriter
     , CacheWriterInbox
     , cacheNewBlock
-    , cachePing
     , cacheWriter
     , isInCache
     , evictFromCache
@@ -72,10 +71,13 @@ import           Haskoin.Node              (Chain, chainBlockMain,
                                             chainGetBlock)
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
-import           NQE                       (Inbox, Mailbox, receive, send)
+import           NQE                       (Inbox, Listen, Mailbox,
+                                            inboxToMailbox, query, receive,
+                                            send)
 import           System.Random             (randomIO, randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
-                                            bracket, liftIO, throwIO)
+                                            atomically, bracket, liftIO, link,
+                                            throwIO, withAsync)
 import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheX m a
@@ -406,7 +408,7 @@ getAllFromMap n = do
 
 data CacheWriterMessage
     = CacheNewBlock
-    | CachePing
+    | CachePing (Listen ())
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 type CacheWriter = Mailbox CacheWriterMessage
@@ -437,8 +439,13 @@ xPubAddrFunction DeriveP2WPKH = xPubWitnessAddr
 cacheWriter ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => CacheConfig -> CacheWriterInbox -> m ()
-cacheWriter cfg inbox = runReaderT go cfg
+cacheWriter cfg inbox =
+    withAsync ping $ \a ->
+    link a >> runReaderT go cfg
   where
+    ping = forever $ do
+        threadDelay (cacheRefresh cfg * 1000)
+        cachePing (inboxToMailbox inbox)
     go = do
         newBlockC
         forever $ do
@@ -569,12 +576,13 @@ cacheWriterReact CacheNewBlock =
     when s $ do
     newBlockC
     syncMempoolC
-cacheWriterReact CachePing =
+cacheWriterReact (CachePing respond) =
     inSync >>= \s ->
     when s $ do
     pruneDB
     newBlockC
     syncMempoolC
+    atomically $ respond ()
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
@@ -1173,4 +1181,4 @@ cacheNewBlock :: MonadIO m => CacheWriter -> m ()
 cacheNewBlock = send CacheNewBlock
 
 cachePing :: MonadIO m => CacheWriter -> m ()
-cachePing = send CachePing
+cachePing = query CachePing

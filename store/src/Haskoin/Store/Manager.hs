@@ -35,8 +35,8 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxHashSTM,
                                                 blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
-                                                cacheNewBlock, cachePing,
-                                                cacheWriter, connectRedis)
+                                                cacheNewBlock, cacheWriter,
+                                                connectRedis)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
@@ -203,14 +203,9 @@ cacheWriterProcesses :: MonadUnliftIO m
                      -> m a
                      -> m a
 cacheWriterProcesses crefresh evts cwm action =
-    withAsync events $ \a1 ->
-    withAsync ping   $ \a2 ->
-    link a1 >> link a2 >> action
+    withAsync events $ \a1 -> link a1 >> action
   where
     events = cacheWriterEvents evts cwm
-    ping = forever $ do
-        threadDelay (crefresh * 1000)
-        cachePing cwm
 
 cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents evts cwm =
