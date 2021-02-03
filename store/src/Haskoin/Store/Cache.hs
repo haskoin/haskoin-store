@@ -928,7 +928,7 @@ syncMempoolC =
     m = Just 500
     ps = Just 10
     pm = Nothing
-    when_cool k m s f = is_cool k >>= \c -> when c f >> cooldown k m s
+    when_cool k m s f = is_cool k >>= \c -> when c $ f >> cooldown k m s
     is_cool k = isNothing <$> runRedis (Redis.get k)
     cooldown k sec ms =
         let opts = Redis.SetOpts
