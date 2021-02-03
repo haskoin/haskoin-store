@@ -468,7 +468,9 @@ lockIt = do
             $(logErrorS) "Cache" $
                 "Unexpected status acquiring lock: " <> cs s
             return Nothing
-        Left (Redis.Bulk Nothing) -> return Nothing
+        Left (Redis.Bulk Nothing) -> do
+            $(logDebugS) "Cache" "Lock already taken"
+            return Nothing
         Left e -> do
             $(logErrorS) "Cache"
                 "Error when trying to acquire lock"
@@ -522,8 +524,12 @@ withLockForever
     :: (MonadLoggerIO m, MonadUnliftIO m)
     => CacheX m a
     -> CacheX m a
-withLockForever go = withLock go >>= \case
-    Nothing -> smallDelay >> go
+withLockForever go =
+    withLock go >>= \case
+    Nothing -> do
+        smallDelay
+        $(logDebugS) "Cache" "Retrying lock aquisition without limits"
+        withLockForever go
     Just x -> return x
 
 withLockRetry
@@ -534,8 +540,13 @@ withLockRetry
 withLockRetry i f
   | i <= 0 = return Nothing
   | otherwise = withLock f >>= \case
-        Nothing -> smallDelay >> withLockRetry (i - 1) f
-        Just x -> return (Just x)
+        Nothing -> do
+            smallDelay
+            $(logDebugS) "Cache" $
+                "Retrying lock acquisition: " <>
+                cs (show i) <> " tries remaining"
+            withLockRetry (i - 1) f
+        x -> return x
 
 pruneDB :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
         => CacheX m Integer
@@ -944,9 +955,16 @@ withCool :: (MonadLoggerIO m)
          -> CacheX m a
          -> CacheX m (Maybe a)
 withCool key milliseconds run =
-    is_cool >>= \c -> if c
-                      then run >>= \x -> cooldown >> return (Just x)
-                      else return Nothing
+    is_cool >>= \c ->
+    if c
+    then do
+        $(logDebugS) "Cache" $ "Cooldown reached for key: " <> cs (show key)
+        x <- run
+        cooldown
+        return (Just x)
+    else do
+        $(logDebugS) "Cache" $ "Cooldown NOT reached for key: " <> cs (show key)
+        return Nothing
   where
     is_cool = isNothing <$> runRedis (Redis.get key)
     cooldown =
