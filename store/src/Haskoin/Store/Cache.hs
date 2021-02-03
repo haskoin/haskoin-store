@@ -572,17 +572,13 @@ cacheWriterReact ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => CacheWriterMessage -> CacheX m ()
 cacheWriterReact CacheNewBlock =
-    inSync >>= \s ->
-    when s $ do
+    inSync >>= \s -> when s
     newBlockC
-    syncMempoolC
 cacheWriterReact (CachePing respond) =
-    inSync >>= \s ->
-    when s $ do
-    pruneDB
-    newBlockC
-    syncMempoolC
-    atomically $ respond ()
+    inSync >>= \s -> when s $
+    syncMempoolC >>
+    pruneDB >>
+    atomically (respond ())
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
