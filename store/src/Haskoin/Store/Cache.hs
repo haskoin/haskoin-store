@@ -702,27 +702,38 @@ importBlockC :: (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m)
              => BlockHash -> CacheX m ()
 importBlockC bh =
     withLockForever $
-    lift (getBlock bh) >>= \case
-    Just bd -> do
-        let ths = blockDataTxs bd
-        tds <- sortTxData . catMaybes <$> mapM (lift . getTxData) ths
-        $(logDebugS) "Cache" $
-            "Importing " <> cs (show (length tds)) <>
-            " transactions from block " <>
-            blockHashToHex bh
-        importMultiTxC tds
-        $(logDebugS) "Cache" $
-            "Done importing " <> cs (show (length tds)) <>
-            " transactions from block " <>
-            blockHashToHex bh
-        cacheSetHead bh
-    Nothing -> do
-        $(logErrorS) "Cache" $
-            "Could not get block: "
-            <> blockHashToHex bh
-        throwIO . LogicError . cs $
-            "Could not get block: "
-            <> blockHashToHex bh
+    cacheGetHead >>= \case
+    Nothing -> return ()
+    Just cb ->
+        asks cacheChain >>= \ch ->
+        chainGetBlock bh ch >>= \case
+        Nothing -> return ()
+        Just bn ->
+            if prevBlock (nodeHeader bn) == cb
+            then go
+            else return ()
+  where
+    go = lift (getBlock bh) >>= \case
+        Just bd -> do
+            let ths = blockDataTxs bd
+            tds <- sortTxData . catMaybes <$> mapM (lift . getTxData) ths
+            $(logDebugS) "Cache" $
+                "Importing " <> cs (show (length tds)) <>
+                " transactions from block " <>
+                blockHashToHex bh
+            importMultiTxC tds
+            $(logDebugS) "Cache" $
+                "Done importing " <> cs (show (length tds)) <>
+                " transactions from block " <>
+                blockHashToHex bh
+            cacheSetHead bh
+        Nothing -> do
+            $(logErrorS) "Cache" $
+                "Could not get block: "
+                <> blockHashToHex bh
+            throwIO . LogicError . cs $
+                "Could not get block: "
+                <> blockHashToHex bh
 
 removeHeadC :: (StoreReadExtra m, MonadUnliftIO m, MonadLoggerIO m)
             => BlockHash -> CacheX m ()
