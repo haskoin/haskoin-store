@@ -964,11 +964,11 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC = do
     refresh <- toInteger <$> asks cacheRefresh
-    void . withLock . withCool "cool" refresh $ do
+    void . withLock . withCool "cool" (refresh * 10 `div` 9) $ do
         nodepool <- HashSet.fromList . map snd <$> lift getMempool
         cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
         getem (HashSet.difference nodepool cachepool)
-        withCool "prune" (refresh * 10) $
+        withCool "prune" (refresh * 100 `div` 9) $
             getem (HashSet.difference cachepool nodepool)
   where
     getem tset = do
