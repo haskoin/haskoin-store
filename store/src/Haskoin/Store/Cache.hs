@@ -565,18 +565,16 @@ newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => XPubSpec -> [XPubBal] -> CacheX m ()
 newXPubC xpub bals =
+    should_index >>= \i -> when i $
     void . async . withLockRetry 100 $
-    should_index >>= \i -> when i index
+    isXPubCached xpub >>= \c -> when (not c) index
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
-    should_index =
-        isXPubCached xpub >>= \case
-            True -> return False
-            False -> do
-                x <- asks cacheMin
-                if x <= lenNotNull bals
-                    then inSync
-                    else return False
+    should_index = do
+        x <- asks cacheMin
+        if x <= lenNotNull bals
+            then inSync
+            else return False
     index = do
         bals <- lift (xPubBals xpub)
         xpubtxt <- xpubText xpub
