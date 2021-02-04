@@ -533,7 +533,7 @@ pruneDB = do
     if s > x then flush (s - x) else return 0
   where
     flush n =
-        case min 1000 (n `div` 64) of
+        case n `div` 64 of
         0 -> return 0
         x -> withLockForever $ do
             ks <- fmap (map fst) . runRedis $
@@ -579,25 +579,31 @@ newXPubC xpub = do
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     go bals = do
-        xpubtxt <- xpubText xpub
-        $(logDebugS) "Cache" $
-            "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
-            " addresses / " <> cs (show (lenNotNull bals)) <> " used"
-        utxo <- lift $ xPubUnspents xpub def
-        $(logDebugS) "Cache" $
-            "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <> " utxos"
-        xtxs <- lift $ xPubTxs xpub def
-        $(logDebugS) "Cache" $
-            "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <> " txs"
-        now <- systemSeconds <$> liftIO getSystemTime
-        runRedis $ do
-            b <- redisTouchKeys now [xpub]
-            c <- redisAddXPubBalances xpub bals
-            d <- redisAddXPubUnspents xpub (map op utxo)
-            e <- redisAddXPubTxs xpub xtxs
-            return $ b >> c >> d >> e >> return ()
-        $(logDebugS) "Cache" $ "Cached " <> xpubtxt
-        return (True, bals)
+        m <- withLockRetry 10 $ do
+            xpubtxt <- xpubText xpub
+            $(logDebugS) "Cache" $
+                "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
+                " addresses / " <> cs (show (lenNotNull bals)) <>
+                " used"
+            utxo <- lift $ xPubUnspents xpub def
+            $(logDebugS) "Cache" $
+                "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <>
+                " utxos"
+            xtxs <- lift $ xPubTxs xpub def
+            $(logDebugS) "Cache" $
+                "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <>
+                " txs"
+            now <- systemSeconds <$> liftIO getSystemTime
+            runRedis $ do
+                b <- redisTouchKeys now [xpub]
+                c <- redisAddXPubBalances xpub bals
+                d <- redisAddXPubUnspents xpub (map op utxo)
+                e <- redisAddXPubTxs xpub xtxs
+                return $ b >> c >> d >> e >> return ()
+            $(logDebugS) "Cache" $ "Cached " <> xpubtxt
+        case m of
+            Nothing -> return (False, bals)
+            Just () -> return (True, bals)
 
 inSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
        => CacheX m Bool
@@ -1012,7 +1018,7 @@ evictFromCache ::
     -> CacheT m ()
 evictFromCache xpubs = ask >>= \case
     Nothing -> return ()
-    Just cfg -> void (runReaderT (delXPubKeys xpubs) cfg)
+    Just cfg -> void (runReaderT (withLockRetry 100 (delXPubKeys xpubs)) cfg)
 
 delXPubKeys ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)

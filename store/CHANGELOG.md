@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.40.17
+### Changed
+- Delete more than 1000 xpubs from Redis if needed.
+- Attempt to get lock ten times in order to index a new xpub.
+
 ## 0.40.16
 ### Fixed
 - Fix best block not set.
