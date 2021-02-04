@@ -78,7 +78,7 @@ import           NQE                       (Inbox, Listen, Mailbox,
 import           System.Random             (randomIO, randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
                                             atomically, bracket, liftIO, link,
-                                            throwIO, withAsync)
+                                            throwIO, withAsync, async)
 import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheX m a
@@ -172,12 +172,9 @@ getXPubTxs xpub limits = do
             txs <- cacheGetXPubTxs xpub limits
             return txs
         False -> do
-            newXPubC xpub >>= \(t, bals) ->
-                if t
-                    then do
-                        cacheGetXPubTxs xpub limits
-                    else do
-                        lift $ xPubBalsTxs bals limits
+            bals <- lift $ xPubBals xpub
+            newXPubC xpub bals
+            lift $ xPubBalsTxs bals limits
 
 getXPubUnspents ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
@@ -188,13 +185,10 @@ getXPubUnspents xpub limits = do
         True -> do
             bals <- cacheGetXPubBalances xpub
             process bals
-        False ->
-            newXPubC xpub >>= \(t, bals) ->
-                if t
-                    then do
-                        process bals
-                    else do
-                        lift $ xPubBalsUnspents bals limits
+        False -> do
+            bals <- lift $ xPubBals xpub
+            newXPubC xpub bals
+            lift $ xPubBalsUnspents bals limits
   where
     process bals = do
         ops <- map snd <$> cacheGetXPubUnspents xpub limits
@@ -228,7 +222,9 @@ getXPubBalances xpub = do
             bals <- cacheGetXPubBalances xpub
             return bals
         False -> do
-            snd <$> newXPubC xpub
+            bals <- lift $ xPubBals xpub
+            newXPubC xpub bals
+            return bals
 
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
 isInCache xpub =
@@ -567,43 +563,43 @@ lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
 
 newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> CacheX m (Bool, [XPubBal])
-newXPubC xpub = do
-    bals <- lift $ xPubBals xpub
-    x <- asks cacheMin
-    t <- xpubText xpub
-    let n = lenNotNull bals
-    if x <= n
-        then inSync >>= \s -> if s then go bals else return (False, bals)
-        else return (False, bals)
+    => XPubSpec -> [XPubBal] -> CacheX m ()
+newXPubC xpub bals =
+    void . async . withLockRetry 100 $
+    should_index >>= \i -> when i index
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
-    go bals = do
-        m <- withLockRetry 10 $ do
-            xpubtxt <- xpubText xpub
-            $(logDebugS) "Cache" $
-                "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
-                " addresses / " <> cs (show (lenNotNull bals)) <>
-                " used"
-            utxo <- lift $ xPubUnspents xpub def
-            $(logDebugS) "Cache" $
-                "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <>
-                " utxos"
-            xtxs <- lift $ xPubTxs xpub def
-            $(logDebugS) "Cache" $
-                "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <>
-                " txs"
-            now <- systemSeconds <$> liftIO getSystemTime
-            runRedis $ do
-                b <- redisTouchKeys now [xpub]
-                c <- redisAddXPubBalances xpub bals
-                d <- redisAddXPubUnspents xpub (map op utxo)
-                e <- redisAddXPubTxs xpub xtxs
-                return $ b >> c >> d >> e >> return ()
-            $(logDebugS) "Cache" $ "Cached " <> xpubtxt
-        case m of
-            Nothing -> return (False, bals)
-            Just () -> return (True, bals)
+    should_index =
+        isXPubCached xpub >>= \case
+            True -> return False
+            False -> do
+                x <- asks cacheMin
+                if x <= lenNotNull bals
+                    then inSync
+                    else return False
+    index = do
+        bals <- lift (xPubBals xpub)
+        xpubtxt <- xpubText xpub
+        $(logDebugS) "Cache" $
+            "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
+            " addresses / " <> cs (show (lenNotNull bals)) <>
+            " used"
+        utxo <- lift $ xPubUnspents xpub def
+        $(logDebugS) "Cache" $
+            "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <>
+            " utxos"
+        xtxs <- lift $ xPubTxs xpub def
+        $(logDebugS) "Cache" $
+            "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <>
+            " txs"
+        now <- systemSeconds <$> liftIO getSystemTime
+        runRedis $ do
+            b <- redisTouchKeys now [xpub]
+            c <- redisAddXPubBalances xpub bals
+            d <- redisAddXPubUnspents xpub (map op utxo)
+            e <- redisAddXPubTxs xpub xtxs
+            return $ b >> c >> d >> e >> return ()
+        $(logDebugS) "Cache" $ "Cached " <> xpubtxt
 
 inSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
        => CacheX m Bool
