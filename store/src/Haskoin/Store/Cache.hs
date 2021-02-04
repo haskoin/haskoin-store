@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
@@ -611,53 +612,63 @@ inSync =
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
           => CacheX m ()
 newBlockC =
-    inSync >>= \s -> when s $
+    inSync >>= \s -> when s $ do
     lift getBestBlock >>= \case
-    Nothing -> $(logDebugS) "Cache" "No best block"
-    Just bb -> cacheGetHead >>= \case
-        Nothing -> do
-            $(logInfoS) "Cache" "Initializing best cache block"
-            importBlockC bb
-        Just cb
-            | cb == bb -> $(logDebugS) "Cache" "Cache in sync"
-            | otherwise -> sync bb cb
-  where
-    sync bb cb =
-        asks cacheChain >>= \ch ->
-        chainGetBlock cb ch >>= \case
-        Nothing ->
-            $(logErrorS) "Cache" $
-            "Cache head block node not found: " <>
-            blockHashToHex cb
-        Just cn ->
-            chainBlockMain cb ch >>= \case
-            False -> do
-                $(logDebugS) "Cache" $
-                    "Reverting cache head not in main chain: " <>
-                    blockHashToHex cb
-                removeHeadC cb >> newBlockC
-            True ->
-                chainGetBlock bb ch >>= \case
-                Just nn -> next bb nn cn
+        Nothing -> $(logWarnS) "Cache" "No best block"
+        Just bb ->
+            asks cacheChain >>= \ch ->
+            chainGetBest ch >>= \cn ->
+            cacheGetHead >>= \case
                 Nothing -> do
-                    $(logErrorS) "Cache" $
-                        "Cache head node not found: "
-                        <> blockHashToHex bb
-                    throwIO $
-                        LogicError $
-                        "Cache head node not found: "
-                        <> cs (blockHashToHex bb)
-    next bb nn cn =
-        asks cacheChain >>= \ch ->
-        chainGetAncestor (nodeHeight cn + 1) nn ch >>= \case
-        Nothing ->
-            $(logWarnS) "Cache" $
-            "Ancestor not found at height "
-            <> cs (show (nodeHeight cn + 1))
-            <> " for block: "
-            <> blockHashToHex (headerHash (nodeHeader nn))
-        Just cn' ->
-            importBlockC (headerHash (nodeHeader cn')) >> newBlockC
+                    $(logInfoS) "Cache" "Initializing best cache block"
+                    importBlockC bb
+                Just hb ->
+                    if hb == headerHash (nodeHeader cn)
+                    then $(logDebugS) "Cache" "Cache in sync"
+                    else sync ch hb bb
+  where
+    sync ch hb bb =
+        chainGetBlock hb ch >>= \case
+            Nothing ->
+                $(logErrorS) "Cache" $
+                "Cache head block node not found: " <>
+                blockHashToHex hb
+            Just hn ->
+                chainBlockMain hb ch >>= \m ->
+                    if m
+                    then
+                        chainGetBlock bb ch >>= \case
+                            Just bn -> next ch bn hn
+                            Nothing -> do
+                                $(logErrorS) "Cache" $
+                                    "Cache head node not found: "
+                                    <> blockHashToHex bb
+                                throwIO $
+                                    LogicError $
+                                    "Cache head node not found: "
+                                    <> cs (blockHashToHex bb)
+                    else do
+                        $(logDebugS) "Cache" $
+                            "Reverting cache head not in main chain: " <>
+                            blockHashToHex hb
+                        removeHeadC hb
+                        newBlockC
+    next ch bn hn =
+        if | prevBlock (nodeHeader bn) == headerHash (nodeHeader hn) ->
+                 importBlockC (headerHash (nodeHeader bn))
+           | nodeHeight bn > nodeHeight hn ->
+                 chainGetAncestor (nodeHeight hn + 1) bn ch >>= \case
+                     Nothing ->
+                         $(logWarnS) "Cache" $
+                         "Ancestor not found at height "
+                         <> cs (show (nodeHeight hn + 1))
+                         <> " for block: "
+                         <> blockHashToHex (headerHash (nodeHeader bn))
+                     Just hn' -> do
+                         importBlockC (headerHash (nodeHeader hn'))
+                         newBlockC
+           | otherwise ->
+                 $(logInfoS) "Cache" "Cache best block higher than this node's"
 
 importBlockC :: (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m)
              => BlockHash -> CacheX m ()
