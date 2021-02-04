@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Be more careful about importing blocks to the cache.
 
+### Removed
+- Reduce excessive cache logging.
+
 ## 0.40.12
 ### Fixed
 - Correct bad arithmetics in cache cooldown.

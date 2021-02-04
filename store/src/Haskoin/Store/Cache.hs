@@ -166,26 +166,16 @@ getXPubTxs ::
     => XPubSpec -> Limits -> CacheX m [TxRef]
 getXPubTxs xpub limits = do
     xpubtxt <- xpubText xpub
-    $(logDebugS) "Cache" $ "Getting xpub txs for " <> xpubtxt
     isXPubCached xpub >>= \case
         True -> do
             txs <- cacheGetXPubTxs xpub limits
-            $(logDebugS) "Cache" $
-                "Returning " <> cs (show (length txs)) <>
-                " transactions for cached xpub: " <>
-                xpubtxt
             return txs
         False -> do
-            $(logDebugS) "Cache" $ "Caching new xpub " <> xpubtxt
             newXPubC xpub >>= \(t, bals) ->
                 if t
                     then do
-                        $(logDebugS) "Cache" $
-                            "Successfully cached xpub " <> xpubtxt
                         cacheGetXPubTxs xpub limits
                     else do
-                        $(logDebugS) "Cache" $
-                            "Using DB to return txs for xpub " <> xpubtxt
                         lift $ xPubBalsTxs bals limits
 
 getXPubUnspents ::
@@ -193,7 +183,6 @@ getXPubUnspents ::
     => XPubSpec -> Limits -> CacheX m [XPubUnspent]
 getXPubUnspents xpub limits = do
     xpubtxt <- xpubText xpub
-    $(logDebugS) "Cache" $ "Getting utxo for xpub " <> xpubtxt
     isXPubCached xpub >>= \case
         True -> do
             bals <- cacheGetXPubBalances xpub
@@ -202,12 +191,8 @@ getXPubUnspents xpub limits = do
             newXPubC xpub >>= \(t, bals) ->
                 if t
                     then do
-                        $(logDebugS) "Cache" $
-                            "Successfully cached xpub " <> xpubtxt
                         process bals
                     else do
-                        $(logDebugS) "Cache" $
-                            "Using DB to return utxo for xpub " <> xpubtxt
                         lift $ xPubBalsUnspents bals limits
   where
     process bals = do
@@ -230,10 +215,6 @@ getXPubUnspents xpub limits = do
                     (\(a, u) -> (`XPubUnspent` u) <$> Map.lookup a addrmap)
                     addrutxo
         xpubtxt <- xpubText xpub
-        $(logDebugS) "Cache" $
-            "Returning " <> cs (show (length xpubutxo)) <>
-            " utxos for cached xpub: " <>
-            xpubtxt
         return xpubutxo
 
 getXPubBalances ::
@@ -241,16 +222,11 @@ getXPubBalances ::
     => XPubSpec -> CacheX m [XPubBal]
 getXPubBalances xpub = do
     xpubtxt <- xpubText xpub
-    $(logDebugS) "Cache" $ "Getting balances for xpub " <> xpubtxt
     isXPubCached xpub >>= \case
         True -> do
             bals <- cacheGetXPubBalances xpub
-            $(logDebugS) "Cache" $
-                "Returning " <> cs (show (length bals)) <> " balances for xpub " <>
-                xpubtxt
             return bals
         False -> do
-            $(logDebugS) "Cache" $ "Caching balances for xpub " <> xpubtxt
             snd <$> newXPubC xpub
 
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
@@ -604,37 +580,28 @@ newXPubC xpub = do
     let n = lenNotNull bals
     if x <= n
         then inSync >>= \s -> if s then go bals else return (False, bals)
-        else do
-            $(logDebugS) "Cache" $ "Not caching xpub: " <> t
-            return (False, bals)
+        else return (False, bals)
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     go bals = do
         xpubtxt <- xpubText xpub
         $(logDebugS) "Cache" $
-            "Caching xpub with " <> cs (show (length bals)) <>
-            " addresses (used: " <>
-            cs (show (lenNotNull bals)) <>
-            "): " <>
-            xpubtxt
+            "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
+            " addresses / " <> cs (show (lenNotNull bals)) <> " used"
         utxo <- lift $ xPubUnspents xpub def
         $(logDebugS) "Cache" $
-            "Caching xpub with " <> cs (show (length utxo)) <> " utxos: " <>
-            xpubtxt
+            "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <> " utxos"
         xtxs <- lift $ xPubTxs xpub def
         $(logDebugS) "Cache" $
-            "Caching xpub with " <> cs (show (length xtxs)) <> " txs: " <>
-            xpubtxt
+            "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <> " txs"
         now <- systemSeconds <$> liftIO getSystemTime
-        $(logDebugS) "Cache" $
-            "Running Redis pipeline to cache xpub: " <> xpubtxt <> ""
         runRedis $ do
             b <- redisTouchKeys now [xpub]
             c <- redisAddXPubBalances xpub bals
             d <- redisAddXPubUnspents xpub (map op utxo)
             e <- redisAddXPubTxs xpub xtxs
             return $ b >> c >> d >> e >> return ()
-        $(logDebugS) "Cache" $ "Done caching xpub: " <> xpubtxt
+        $(logDebugS) "Cache" $ "Cached " <> xpubtxt
         return (True, bals)
 
 inSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
