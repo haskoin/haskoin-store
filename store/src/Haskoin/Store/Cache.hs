@@ -534,16 +534,12 @@ pruneDB = do
     flush n =
         case min 1000 (n `div` 64) of
         0 -> return 0
-        x -> do
-            m <- withLock $ do
-                ks <- fmap (map fst) . runRedis $
-                      getFromSortedSet maxKey Nothing 0 (fromIntegral x)
-                $(logDebugS) "Cache" $
-                    "Pruning " <> cs (show (length ks)) <> " old xpubs"
-                delXPubKeys ks
-            case m of
-                Nothing -> return 0
-                Just y  -> return y
+        x -> withLockForever $ do
+            ks <- fmap (map fst) . runRedis $
+                  getFromSortedSet maxKey Nothing 0 (fromIntegral x)
+            $(logDebugS) "Cache" $
+                "Pruning " <> cs (show (length ks)) <> " old xpubs"
+            delXPubKeys ks
 
 touchKeys :: MonadLoggerIO m => [XPubSpec] -> CacheX m ()
 touchKeys xpubs = do
@@ -559,12 +555,10 @@ cacheWriterReact ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => CacheWriterMessage -> CacheX m ()
 cacheWriterReact CacheNewBlock =
-    inSync >>= \s -> when s
-    newBlockC
-cacheWriterReact (CachePing respond) =
-    inSync >>= \s -> when s $
-    syncMempoolC >>
-    pruneDB >>
+    inSync >>= \s -> when s newBlockC
+cacheWriterReact (CachePing respond) = do
+    s <- inSync
+    when s $ syncMempoolC >> void pruneDB
     atomically (respond ())
 
 lenNotNull :: [XPubBal] -> Int
@@ -954,7 +948,7 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC = do
     refresh <- toInteger <$> asks cacheRefresh
-    void . withLock . withCool "cool" (refresh * 9 `div` 10) $ do
+    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $ do
         nodepool <- HashSet.fromList . map snd <$> lift getMempool
         cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
         getem (HashSet.difference nodepool cachepool)
