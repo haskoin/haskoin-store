@@ -77,8 +77,8 @@ import           NQE                       (Inbox, Listen, Mailbox,
                                             send)
 import           System.Random             (randomIO, randomRIO)
 import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
-                                            atomically, bracket, liftIO, link,
-                                            throwIO, withAsync, async)
+                                            async, atomically, bracket, liftIO,
+                                            link, throwIO, withAsync)
 import           UnliftIO.Concurrent       (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheX m a
@@ -91,11 +91,13 @@ runRedis action =
         throwIO (RedisError e)
 
 data CacheConfig = CacheConfig
-    { cacheConn    :: !Connection
-    , cacheMin     :: !Int
-    , cacheMax     :: !Integer
-    , cacheChain   :: !Chain
-    , cacheRefresh :: !Int
+    { cacheConn       :: !Connection
+    , cacheMin        :: !Int
+    , cacheMax        :: !Integer
+    , cacheChain      :: !Chain
+    , cacheRefresh    :: !Int -- millisenconds
+    , cacheRetries    :: !Int
+    , cacheRetryDelay :: !Int -- microseconds
     }
 
 type CacheT = ReaderT (Maybe CacheConfig)
@@ -490,8 +492,12 @@ withLock f =
         Just _ -> Just <$> f
         Nothing -> return Nothing
 
-smallDelay :: MonadUnliftIO m => m ()
-smallDelay = threadDelay =<< liftIO (randomRIO (50 * 1000, 250 * 1000))
+smallDelay :: MonadUnliftIO m => CacheX m ()
+smallDelay = do
+    delay <- asks cacheRetryDelay
+    let delayMin = delay `div` 2
+    let delayMax = delay * 3 `div` 2
+    threadDelay =<< liftIO (randomRIO (delayMin, delayMax))
 
 withLockForever
     :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -507,7 +513,7 @@ withLockForever go =
 
 withLockRetry
     :: (MonadLoggerIO m, MonadUnliftIO m)
-    => Integer
+    => Int
     -> CacheX m a
     -> CacheX m (Maybe a)
 withLockRetry i f
@@ -566,7 +572,8 @@ newXPubC ::
     => XPubSpec -> [XPubBal] -> CacheX m ()
 newXPubC xpub bals =
     should_index >>= \i -> when i $
-    void . async . withLockRetry 100 $
+    asks cacheRetries >>= \r ->
+    void . async . withLockRetry r $
     isXPubCached xpub >>= \c -> when (not c) index
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
@@ -963,8 +970,7 @@ syncMempoolC = do
         nodepool <- HashSet.fromList . map snd <$> lift getMempool
         cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
         getem (HashSet.difference nodepool cachepool)
-        withCool "prune" (refresh * 90 `div` 10) $
-            getem (HashSet.difference cachepool nodepool)
+        getem (HashSet.difference cachepool nodepool)
   where
     getem tset = do
         let tids = HashSet.toList tset

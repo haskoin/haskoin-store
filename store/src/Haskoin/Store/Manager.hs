@@ -65,38 +65,42 @@ data Store =
 -- | Configuration for a 'Store'.
 data StoreConfig =
     StoreConfig
-        { storeConfMaxPeers     :: !Int
+        { storeConfMaxPeers        :: !Int
       -- ^ max peers to connect to
-        , storeConfInitPeers    :: ![HostPort]
+        , storeConfInitPeers       :: ![HostPort]
       -- ^ static set of peers to connect to
-        , storeConfDiscover     :: !Bool
+        , storeConfDiscover        :: !Bool
       -- ^ discover new peers
-        , storeConfDB           :: !FilePath
+        , storeConfDB              :: !FilePath
       -- ^ RocksDB database path
-        , storeConfNetwork      :: !Network
+        , storeConfNetwork         :: !Network
       -- ^ network constants
-        , storeConfCache        :: !(Maybe String)
+        , storeConfCache           :: !(Maybe String)
       -- ^ Redis cache configuration
-        , storeConfInitialGap   :: !Word32
+        , storeConfInitialGap      :: !Word32
       -- ^ gap on extended public key with no transactions
-        , storeConfGap          :: !Word32
+        , storeConfGap             :: !Word32
       -- ^ gap for extended public keys
-        , storeConfCacheMin     :: !Int
+        , storeConfCacheMin        :: !Int
       -- ^ cache xpubs with more than this many used addresses
-        , storeConfMaxKeys      :: !Integer
+        , storeConfMaxKeys         :: !Integer
       -- ^ maximum number of keys in Redis cache
-        , storeConfNoMempool    :: !Bool
+        , storeConfNoMempool       :: !Bool
       -- ^ do not index new mempool transactions
-        , storeConfWipeMempool  :: !Bool
+        , storeConfWipeMempool     :: !Bool
       -- ^ wipe mempool when starting
-        , storeConfPeerTimeout  :: !NominalDiffTime
+        , storeConfPeerTimeout     :: !NominalDiffTime
       -- ^ disconnect peer if message not received for this many seconds
-        , storeConfPeerMaxLife  :: !NominalDiffTime
+        , storeConfPeerMaxLife     :: !NominalDiffTime
       -- ^ disconnect peer if it has been connected this long
-        , storeConfConnect      :: !(SockAddr -> WithConnection)
+        , storeConfConnect         :: !(SockAddr -> WithConnection)
       -- ^ connect to peers using the function 'withConnection'
-        , storeConfCacheRefresh :: !Int
+        , storeConfCacheRefresh    :: !Int
       -- ^ refresh the cache this often (milliseconds)
+        , storeConfCacheRetries    :: !Int
+      -- ^ retry count for getting cache lock to index xpub
+        , storeConfCacheRetryDelay :: !Int
+      -- ^ delay in microseconds to retry getting cache lock
         }
 
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -194,6 +198,8 @@ withCache cfg chain db pub action =
            , cacheChain = chain
            , cacheMax = storeConfMaxKeys cfg
            , cacheRefresh = storeConfCacheRefresh cfg
+           , cacheRetries = storeConfCacheRetries cfg
+           , cacheRetryDelay = storeConfCacheRetryDelay cfg
            }
 
 cacheWriterProcesses :: MonadUnliftIO m
