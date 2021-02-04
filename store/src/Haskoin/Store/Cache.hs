@@ -675,15 +675,15 @@ importBlockC :: (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m)
 importBlockC bh =
     withLockForever $
     cacheGetHead >>= \case
-    Nothing -> return ()
-    Just cb ->
-        asks cacheChain >>= \ch ->
-        chainGetBlock bh ch >>= \case
-        Nothing -> return ()
-        Just bn ->
-            if prevBlock (nodeHeader bn) == cb
-            then go
-            else return ()
+        Nothing -> go
+        Just cb ->
+            asks cacheChain >>= \ch ->
+            chainGetBlock bh ch >>= \case
+                Nothing -> return ()
+                Just bn ->
+                    if prevBlock (nodeHeader bn) == cb
+                    then go
+                    else return ()
   where
     go = lift (getBlock bh) >>= \case
         Just bd -> do
