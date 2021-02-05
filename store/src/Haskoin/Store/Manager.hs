@@ -46,6 +46,7 @@ import           NQE                           (Inbox, Process (..), Publisher,
                                                 publishSTM, receive,
                                                 withProcess, withPublisher,
                                                 withSubscription)
+import qualified System.Metrics                as Metrics (Store)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, STM,
                                                 atomically, link, withAsync)
 import           UnliftIO.Concurrent           (threadDelay)
@@ -101,6 +102,8 @@ data StoreConfig =
       -- ^ retry count for getting cache lock to index xpub
         , storeConfCacheRetryDelay :: !Int
       -- ^ delay in microseconds to retry getting cache lock
+        , storeConfStats           :: !(Maybe Metrics.Store)
+      -- ^ stats store
         }
 
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)

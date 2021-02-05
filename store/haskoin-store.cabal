@@ -32,6 +32,7 @@ library
       Haskoin.Store.Database.Writer
       Haskoin.Store.Logic
       Haskoin.Store.Manager
+      Haskoin.Store.Stats
       Haskoin.Store.Web
   other-modules:
       Paths_haskoin_store
@@ -47,6 +48,8 @@ library
     , containers >=0.6.2.1
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
+    , ekg-core >=0.1.1.7
+    , ekg-statsd >=0.2.5
     , hashable >=1.3.0.0
     , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
@@ -54,6 +57,7 @@ library
     , hedis >=0.12.13
     , http-types >=0.12.3
     , lens >=4.18.1
+    , monad-control >=1.0.2.3
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , network >=3.1.1.1
@@ -90,6 +94,8 @@ executable haskoin-store
     , containers >=0.6.2.1
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
+    , ekg-core >=0.1.1.7
+    , ekg-statsd >=0.2.5
     , filepath
     , hashable >=1.3.0.0
     , haskoin-core >=0.19.0
@@ -99,6 +105,7 @@ executable haskoin-store
     , hedis >=0.12.13
     , http-types >=0.12.3
     , lens >=4.18.1
+    , monad-control >=1.0.2.3
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , network >=3.1.1.1
@@ -141,6 +148,8 @@ test-suite haskoin-store-test
     , containers >=0.6.2.1
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
+    , ekg-core >=0.1.1.7
+    , ekg-statsd >=0.2.5
     , hashable >=1.3.0.0
     , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
@@ -150,6 +159,7 @@ test-suite haskoin-store-test
     , hspec >=2.7.1
     , http-types >=0.12.3
     , lens >=4.18.1
+    , monad-control >=1.0.2.3
     , monad-logger >=0.3.32
     , mtl >=2.2.2
     , network >=3.1.1.1

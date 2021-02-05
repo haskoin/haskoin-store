@@ -24,6 +24,7 @@ import           Haskoin.Node            (withConnection)
 import           Haskoin.Store           (StoreConfig (..), WebConfig (..),
                                           WebLimits (..), WebTimeouts (..),
                                           runWeb, withStore)
+import           Haskoin.Store.Stats     (withStats)
 import           Options.Applicative     (Parser, auto, eitherReader,
                                           execParser, flag, fullDesc, header,
                                           help, helper, info, long, many,
@@ -547,7 +548,7 @@ run Config { configHost = host
            , configCacheRetryDelay = cretrydelay
            , configNumTxId = numtxid
            } =
-    runStderrLoggingT . filterLogger l $ do
+    runStderrLoggingT . filterLogger l . withStats $ \stats -> do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
@@ -575,6 +576,7 @@ run Config { configHost = host
                     , storeConfCacheRefresh = crefresh
                     , storeConfCacheRetries = cretries
                     , storeConfCacheRetryDelay = cretrydelay
+                    , storeConfStats = Just stats
                     }
         withStore scfg $ \st ->
             runWeb
@@ -589,6 +591,7 @@ run Config { configHost = host
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
                     , webNumTxId = numtxid
+                    , webStats = Just stats
                     }
   where
     net' | asert == 0 = net

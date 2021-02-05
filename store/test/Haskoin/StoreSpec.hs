@@ -99,6 +99,7 @@ withTestStore net t f =
               , storeConfCacheRefresh = 750
               , storeConfCacheRetries = 100
               , storeConfCacheRetryDelay = 100000
+              , storeConfStats = Nothing
               }
     withStore cfg $ \Store {..} ->
         withSubscription storePublisher $ \sub ->
