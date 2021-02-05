@@ -7,6 +7,7 @@
 {-# LANGUAGE TupleSections     #-}
 module Main where
 
+import           Control.Applicative       ((<|>))
 import           Control.Arrow             (second)
 import           Control.Monad             (when)
 import           Control.Monad.Logger      (LogLevel (..), filterLogger,
@@ -257,16 +258,18 @@ defMaxDiff = unsafePerformIO $
 {-# NOINLINE defMaxDiff #-}
 
 defStatsPrefix :: String
-defStatsPrefix = unsafePerformIO $
-    runMaybeT nomad >>= \case
-        Nothing -> dflt
+defStatsPrefix =
+    unsafePerformIO $
+    runMaybeT go >>= \case
+        Nothing -> return "haskoin_store"
         Just x -> return x
   where
+    go = prefix <|> nomad
+    prefix = MaybeT $ lookupEnv "STATS_PREFIX"
     nomad = do
         task <- MaybeT $ lookupEnv "NOMAD_TASK_NAME"
         service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
         return $ task <> "." <> service
-    dflt = defEnv "STATS_PREFIX" "haskoin_store" pure
 {-# NOINLINE defStatsPrefix #-}
 
 netNames :: String
