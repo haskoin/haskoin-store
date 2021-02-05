@@ -7,38 +7,40 @@
 {-# LANGUAGE TupleSections     #-}
 module Main where
 
-import           Control.Arrow           (second)
-import           Control.Monad           (when)
-import           Control.Monad.Logger    (LogLevel (..), filterLogger, logInfoS,
-                                          runStderrLoggingT)
-import           Data.Char               (toLower)
-import           Data.Default            (Default (..))
-import           Data.List               (intercalate)
-import           Data.Maybe              (fromMaybe)
-import           Data.String.Conversions (cs)
-import qualified Data.Text               as T
-import           Data.Word               (Word32)
-import           Haskoin                 (Network (..), allNets, bch,
-                                          bchRegTest, bchTest, btc, btcRegTest,
-                                          btcTest, eitherToMaybe)
-import           Haskoin.Node            (withConnection)
-import           Haskoin.Store           (StoreConfig (..), WebConfig (..),
-                                          WebLimits (..), WebTimeouts (..),
-                                          runWeb, withStore)
-import           Haskoin.Store.Stats     (withStats)
-import           Options.Applicative     (Parser, auto, eitherReader,
-                                          execParser, flag, fullDesc, header,
-                                          help, helper, info, long, many,
-                                          metavar, option, progDesc, short,
-                                          showDefault, strOption, switch, value)
-import           System.Exit             (exitSuccess)
-import           System.FilePath         ((</>))
-import           System.IO.Unsafe        (unsafePerformIO)
-import           Text.Read               (readMaybe)
-import           UnliftIO                (MonadIO)
-import           UnliftIO.Directory      (createDirectoryIfMissing,
-                                          getAppUserDataDirectory)
-import           UnliftIO.Environment    (lookupEnv)
+import           Control.Arrow             (second)
+import           Control.Monad             (when)
+import           Control.Monad.Logger      (LogLevel (..), filterLogger,
+                                            logInfoS, runStderrLoggingT)
+import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
+import           Data.Char                 (toLower)
+import           Data.Default              (Default (..))
+import           Data.List                 (intercalate)
+import           Data.Maybe                (fromMaybe)
+import           Data.String.Conversions   (cs)
+import qualified Data.Text                 as T
+import           Data.Word                 (Word32)
+import           Haskoin                   (Network (..), allNets, bch,
+                                            bchRegTest, bchTest, btc,
+                                            btcRegTest, btcTest, eitherToMaybe)
+import           Haskoin.Node              (withConnection)
+import           Haskoin.Store             (StoreConfig (..), WebConfig (..),
+                                            WebLimits (..), WebTimeouts (..),
+                                            runWeb, withStore)
+import           Haskoin.Store.Stats       (withStats)
+import           Options.Applicative       (Parser, auto, eitherReader,
+                                            execParser, flag, fullDesc, header,
+                                            help, helper, info, long, many,
+                                            metavar, option, progDesc, short,
+                                            showDefault, strOption, switch,
+                                            value)
+import           System.Exit               (exitSuccess)
+import           System.FilePath           ((</>))
+import           System.IO.Unsafe          (unsafePerformIO)
+import           Text.Read                 (readMaybe)
+import           UnliftIO                  (MonadIO)
+import           UnliftIO.Directory        (createDirectoryIfMissing,
+                                            getAppUserDataDirectory)
+import           UnliftIO.Environment      (lookupEnv)
 
 version :: String
 #ifdef CURRENT_PACKAGE_VERSION
@@ -256,7 +258,15 @@ defMaxDiff = unsafePerformIO $
 
 defStatsPrefix :: String
 defStatsPrefix = unsafePerformIO $
-    defEnv "STATS_PREFIX" "haskoin_store" pure
+    runMaybeT nomad >>= \case
+        Nothing -> dflt
+        Just x -> return x
+  where
+    nomad = do
+        task <- MaybeT $ lookupEnv "NOMAD_TASK_NAME"
+        service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
+        return $ task <> "." <> service
+    dflt = defEnv "STATS_PREFIX" "haskoin_store" pure
 {-# NOINLINE defStatsPrefix #-}
 
 netNames :: String
