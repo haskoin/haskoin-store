@@ -256,7 +256,7 @@ defMaxDiff = unsafePerformIO $
 
 defStatsPrefix :: String
 defStatsPrefix = unsafePerformIO $
-    defEnv "STATS_PREFIX" "haskoin_store." readMaybe
+    defEnv "STATS_PREFIX" "haskoin_store" pure
 {-# NOINLINE defStatsPrefix #-}
 
 netNames :: String
