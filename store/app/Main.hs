@@ -16,6 +16,7 @@ import           Data.Default            (Default (..))
 import           Data.List               (intercalate)
 import           Data.Maybe              (fromMaybe)
 import           Data.String.Conversions (cs)
+import qualified Data.Text               as T
 import           Data.Word               (Word32)
 import           Haskoin                 (Network (..), allNets, bch,
                                           bchRegTest, bchTest, btc, btcRegTest,
@@ -71,8 +72,9 @@ data Config = Config
     , configMaxDiff         :: !Int
     , configCacheRefresh    :: !Int
     , configCacheRetries    :: !Int
-    , configCacheRetryDelay :: Int
+    , configCacheRetryDelay :: !Int
     , configNumTxId         :: !Bool
+    , configStatsPrefix     :: !String
     }
 
 instance Default Config where
@@ -102,6 +104,7 @@ instance Default Config where
                  , configCacheRetries    = defCacheRetries
                  , configCacheRetryDelay = defCacheRetryDelay
                  , configNumTxId         = defNumTxId
+                 , configStatsPrefix     = defStatsPrefix
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -250,6 +253,11 @@ defMaxDiff :: Int
 defMaxDiff = unsafePerformIO $
     defEnv "MAX_DIFF" 2 readMaybe
 {-# NOINLINE defMaxDiff #-}
+
+defStatsPrefix :: String
+defStatsPrefix = unsafePerformIO $
+    defEnv "STATS_PREFIX" "haskoin-store." readMaybe
+{-# NOINLINE defStatsPrefix #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -473,6 +481,13 @@ config = do
         flag (configNumTxId def) True $
         long "numtxid"
         <> help "Numeric tx_index field"
+    configStatsPrefix <-
+        strOption $
+        metavar "PREFIX"
+        <> long "stats-prefix"
+        <> help "Prefix for statsd messages"
+        <> showDefault
+        <> value (configStatsPrefix def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -547,8 +562,9 @@ run Config { configHost = host
            , configCacheRetries = cretries
            , configCacheRetryDelay = cretrydelay
            , configNumTxId = numtxid
+           , configStatsPrefix = pfx
            } =
-    runStderrLoggingT . filterLogger l . withStats $ \stats -> do
+    runStderrLoggingT . filterLogger l . withStats (T.pack pfx) $ \stats -> do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
