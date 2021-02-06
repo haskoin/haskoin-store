@@ -76,7 +76,8 @@ data Config = Config
     , configCacheRefresh    :: !Int
     , configCacheRetryDelay :: !Int
     , configNumTxId         :: !Bool
-    , configStatsPrefix     :: !String
+    , configStatsdHost      :: !String
+    , configStatsdPrefix    :: !String
     }
 
 instance Default Config where
@@ -105,7 +106,8 @@ instance Default Config where
                  , configCacheRefresh    = defCacheRefresh
                  , configCacheRetryDelay = defCacheRetryDelay
                  , configNumTxId         = defNumTxId
-                 , configStatsPrefix     = defStatsPrefix
+                 , configStatsdHost      = defStatsdHost
+                 , configStatsdPrefix    = defStatsdPrefix
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -250,20 +252,25 @@ defMaxDiff = unsafePerformIO $
     defEnv "MAX_DIFF" 2 readMaybe
 {-# NOINLINE defMaxDiff #-}
 
-defStatsPrefix :: String
-defStatsPrefix =
+defStatsdHost :: String
+defStatsdHost = unsafePerformIO $
+    defEnv "STATSD_HOST" "localhost" pure
+{-# NOINLINE defStatsdHost #-}
+
+defStatsdPrefix :: String
+defStatsdPrefix =
     unsafePerformIO $
     runMaybeT go >>= \case
         Nothing -> return "haskoin_store"
         Just x -> return x
   where
     go = prefix <|> nomad
-    prefix = MaybeT $ lookupEnv "STATS_PREFIX"
+    prefix = MaybeT $ lookupEnv "STATSD_PREFIX"
     nomad = do
         task <- MaybeT $ lookupEnv "NOMAD_TASK_NAME"
         service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
         return $ task <> "." <> service
-{-# NOINLINE defStatsPrefix #-}
+{-# NOINLINE defStatsdPrefix #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -480,13 +487,20 @@ config = do
         flag (configNumTxId def) True $
         long "numtxid"
         <> help "Numeric tx_index field"
-    configStatsPrefix <-
+    configStatsdHost <-
+        strOption $
+        metavar "HOST"
+        <> long "statsd-host"
+        <> help "Host to send statsd metrics"
+        <> showDefault
+        <> value (configStatsdHost def)
+    configStatsdPrefix <-
         strOption $
         metavar "PREFIX"
-        <> long "stats-prefix"
-        <> help "Prefix for statsd messages"
+        <> long "statsd-prefix"
+        <> help "Prefix for statsd metrics"
         <> showDefault
-        <> value (configStatsPrefix def)
+        <> value (configStatsdPrefix def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -560,9 +574,11 @@ run Config { configHost = host
            , configCacheRefresh = crefresh
            , configCacheRetryDelay = cretrydelay
            , configNumTxId = numtxid
-           , configStatsPrefix = pfx
+           , configStatsdHost = statsd
+           , configStatsdPrefix = pfx
            } =
-    runStderrLoggingT . filterLogger l . withStats (T.pack pfx) $ \stats -> do
+    runStderrLoggingT . filterLogger l $
+    withStats (T.pack statsd) (T.pack pfx) $ \stats -> do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
