@@ -1,8 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.3.
+-- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
+--
+-- hash: 251ded154f3ac63ad4d98c3542569930c860f789cc7848158e4a196c80475967
 
 name:           haskoin-store
 version:        0.40.18
