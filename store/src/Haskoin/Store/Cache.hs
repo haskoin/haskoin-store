@@ -120,7 +120,6 @@ data CacheConfig = CacheConfig
 data CacheMetrics = CacheMetrics
     { cacheHits        :: !Metrics.Counter
     , cacheMisses      :: !Metrics.Counter
-    , cacheRefreshes   :: !Metrics.Counter
     , cacheIgnore      :: !Metrics.Counter
     , cacheIndexTime   :: !Metrics.Distribution
     , cacheRefreshTime :: !Metrics.Distribution
@@ -131,7 +130,6 @@ newCacheMetrics s = liftIO $ do
     cacheHits            <- c "hits"
     cacheMisses          <- c "misses"
     cacheIgnore          <- c "ignore"
-    cacheRefreshes       <- c "refreshes"
     cacheIndexTime       <- d "index_time_ms"
     cacheRefreshTime     <- d "refresh_time_ms"
     return CacheMetrics{..}
@@ -1037,13 +1035,12 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
     toInteger <$> asks cacheRefresh >>= \refresh ->
-    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $ do
+    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $
     withTimeMetrics cacheRefreshTime $ do
         nodepool <- HashSet.fromList . map snd <$> lift getMempool
         cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
         getem (HashSet.difference nodepool cachepool)
         getem (HashSet.difference cachepool nodepool)
-    incrementCounter cacheRefreshes
   where
     getem tset = do
         let tids = HashSet.toList tset
