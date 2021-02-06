@@ -74,7 +74,6 @@ data Config = Config
     , configMaxPeers        :: !Int
     , configMaxDiff         :: !Int
     , configCacheRefresh    :: !Int
-    , configCacheRetries    :: !Int
     , configCacheRetryDelay :: !Int
     , configNumTxId         :: !Bool
     , configStatsPrefix     :: !String
@@ -104,7 +103,6 @@ instance Default Config where
                  , configMaxPeers        = defMaxPeers
                  , configMaxDiff         = defMaxDiff
                  , configCacheRefresh    = defCacheRefresh
-                 , configCacheRetries    = defCacheRetries
                  , configCacheRetryDelay = defCacheRetryDelay
                  , configNumTxId         = defNumTxId
                  , configStatsPrefix     = defStatsPrefix
@@ -119,11 +117,6 @@ defCacheRefresh :: Int
 defCacheRefresh = unsafePerformIO $
     defEnv "CACHE_REFRESH" 750 readMaybe
 {-# NOINLINE defCacheRefresh #-}
-
-defCacheRetries :: Int
-defCacheRetries = unsafePerformIO $
-    defEnv "CACHE_RETRIES" 100 readMaybe
-{-# NOINLINE defCacheRetries #-}
 
 defCacheRetryDelay :: Int
 defCacheRetryDelay = unsafePerformIO $
@@ -461,13 +454,6 @@ config = do
         <> help "Refresh cache this frequently"
         <> showDefault
         <> value (configCacheRefresh def)
-    configCacheRetries <-
-        option auto $
-        metavar "INT"
-        <> long "cache-retries"
-        <> help "Retry getting cache lock to index xpub"
-        <> showDefault
-        <> value (configCacheRetries def)
     configCacheRetryDelay <-
         option auto $
         metavar "MICROSECONDS"
@@ -572,7 +558,6 @@ run Config { configHost = host
            , configMaxDiff = maxdiff
            , configNoMempool = nomem
            , configCacheRefresh = crefresh
-           , configCacheRetries = cretries
            , configCacheRetryDelay = cretrydelay
            , configNumTxId = numtxid
            , configStatsPrefix = pfx
@@ -603,7 +588,6 @@ run Config { configHost = host
                     , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
                     , storeConfCacheRefresh = crefresh
-                    , storeConfCacheRetries = cretries
                     , storeConfCacheRetryDelay = cretrydelay
                     , storeConfStats = Just stats
                     }

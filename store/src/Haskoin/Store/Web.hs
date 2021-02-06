@@ -59,9 +59,9 @@ import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
 import           Data.Text.Lazy                (toStrict)
 import qualified Data.Text.Lazy                as TL
-import           Data.Time.Clock               (NominalDiffTime, diffUTCTime,
-                                                getCurrentTime)
-import           Data.Time.Clock.System        (getSystemTime, systemSeconds)
+import           Data.Time.Clock               (NominalDiffTime, diffUTCTime)
+import           Data.Time.Clock.System        (getSystemTime, systemSeconds,
+                                                systemToUTCTime)
 import           Data.Word                     (Word32, Word64)
 import           Database.RocksDB              (Property (..), getProperty)
 import           Haskoin.Address
@@ -294,14 +294,14 @@ withMetrics cf df mi go =
             s <- liftWith $ \run ->
                 nostats $
                 bracket
-                (liftIO getCurrentTime)
+                (systemToUTCTime <$> liftIO getSystemTime)
                 (end m)
                 (const (run go))
             restoreT $ return s
   where
     nostats = local $ \s -> s { webMetrics = Nothing }
     end metrics t1 = do
-        t2 <- liftIO getCurrentTime
+        t2 <- systemToUTCTime <$> liftIO getSystemTime
         let diff = realToFrac $ diffUTCTime t2 t1 * 1000
             c = cf metrics
             d = df metrics
@@ -1852,9 +1852,9 @@ logIt :: (MonadUnliftIO m, MonadLoggerIO m) => m Middleware
 logIt = do
     runner <- askRunInIO
     return $ \app req respond -> do
-        t1 <- getCurrentTime
+        t1 <- systemToUTCTime <$> liftIO getSystemTime
         app req $ \res -> do
-            t2 <- getCurrentTime
+            t2 <- systemToUTCTime <$> liftIO getSystemTime
             let d = diffUTCTime t2 t1
                 s = responseStatus res
                 msg = fmtReq req <> " [" <> fmtStatus s <> " / " <> fmtDiff d <> "]"
