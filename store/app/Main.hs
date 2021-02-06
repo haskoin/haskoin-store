@@ -254,7 +254,7 @@ defMaxDiff = unsafePerformIO $
 
 defStatsdHost :: String
 defStatsdHost = unsafePerformIO $
-    defEnv "STATSD_HOST" "localhost" pure
+    defEnv "STATSD_HOST" "127.0.0.1" pure
 {-# NOINLINE defStatsdHost #-}
 
 defStatsdPrefix :: String
