@@ -1037,13 +1037,13 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
     toInteger <$> asks cacheRefresh >>= \refresh ->
-    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $
+    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $ do
     withTimeMetrics cacheRefreshTime $ do
-        incrementCounter cacheRefreshes
         nodepool <- HashSet.fromList . map snd <$> lift getMempool
         cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
         getem (HashSet.difference nodepool cachepool)
         getem (HashSet.difference cachepool nodepool)
+    incrementCounter cacheRefreshes
   where
     getem tset = do
         let tids = HashSet.toList tset
