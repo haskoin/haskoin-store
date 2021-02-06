@@ -1039,6 +1039,7 @@ syncMempoolC =
     toInteger <$> asks cacheRefresh >>= \refresh ->
     void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $
     withTimeMetrics cacheRefreshTime $ do
+        incrementCounter cacheRefreshes
         nodepool <- HashSet.fromList . map snd <$> lift getMempool
         cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
         getem (HashSet.difference nodepool cachepool)
