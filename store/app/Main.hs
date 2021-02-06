@@ -254,7 +254,7 @@ defMaxDiff = unsafePerformIO $
 
 defStatsdHost :: String
 defStatsdHost = unsafePerformIO $
-    defEnv "STATSD_HOST" "127.0.0.1" pure
+    defEnv "STATSD_HOST" "localhost" pure
 {-# NOINLINE defStatsdHost #-}
 
 defStatsdPrefix :: String
@@ -579,6 +579,9 @@ run Config { configHost = host
            } =
     runStderrLoggingT . filterLogger l $
     withStats (T.pack statsd) (T.pack pfx) $ \stats -> do
+        $(logInfoS) "Main" $
+            "Sending stats to " <> T.pack statsd <>
+            " with prefix " <> T.pack pfx
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd

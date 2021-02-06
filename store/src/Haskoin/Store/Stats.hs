@@ -8,11 +8,11 @@ import           System.Remote.Monitoring.Statsd (defaultStatsdOptions,
 import           UnliftIO                        (MonadIO, liftIO)
 
 withStats :: MonadIO m => Text -> Text -> (Store -> m a) -> m a
-withStats host pfx go = do
+withStats h pfx go = do
     store <- liftIO newStore
     _statsd <- liftIO $
         forkStatsd defaultStatsdOptions{ prefix = pfx
-                                       , host = host
+                                       , host = h
                                        } store
     liftIO $ registerGcMetrics store
     go store
