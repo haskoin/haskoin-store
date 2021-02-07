@@ -86,7 +86,9 @@ import           NQE                           (Inbox, receive,
                                                 withSubscription)
 import           Network.HTTP.Types            (Status (..), status400,
                                                 status403, status404, status500,
-                                                status503, statusIsSuccessful)
+                                                status503, statusIsClientError,
+                                                statusIsServerError,
+                                                statusIsSuccessful)
 import           Network.Wai                   (Middleware, Request (..),
                                                 responseStatus)
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
@@ -151,59 +153,116 @@ data WebState = WebState
     , webMetrics :: !(Maybe WebMetrics)
     }
 
+data ErrorCounter = ErrorCounter
+    { clientErrors :: Metrics.Counter
+    , serverErrors :: Metrics.Counter
+    }
+
+createErrorCounter :: MonadIO m
+                   => Text
+                   -> Metrics.Store
+                   -> m ErrorCounter
+createErrorCounter t s = liftIO $ do
+    clientErrors <- Metrics.createCounter (t <> ".client_errors") s
+    serverErrors <- Metrics.createCounter (t <> ".server_errors") s
+    return ErrorCounter{..}
+
 data WebMetrics = WebMetrics
-    { responseTime            :: !StatDist
+    { everyResponseTime       :: !StatDist
+    , everyError              :: !ErrorCounter
     , blockResponseTime       :: !StatDist
+    , blockErrors             :: !ErrorCounter
     , rawBlockResponseTime    :: !StatDist
+    , rawBlockErrors          :: !ErrorCounter
     , txResponseTime          :: !StatDist
+    , txErrors                :: !ErrorCounter
     , txBlockResponseTime     :: !StatDist
+    , txBlockErrors           :: !ErrorCounter
     , txAfterResponseTime     :: !StatDist
+    , txAfterErrors           :: !ErrorCounter
     , postTxResponseTime      :: !StatDist
+    , postTxErrors            :: !ErrorCounter
     , mempoolResponseTime     :: !StatDist
+    , mempoolErrors           :: !ErrorCounter
     , addrTxResponseTime      :: !StatDist
+    , addrTxErrors            :: !ErrorCounter
     , addrBalanceResponseTime :: !StatDist
+    , addrBalanceErrors       :: !ErrorCounter
     , addrUnspentResponseTime :: !StatDist
+    , addrUnspentErrors       :: !ErrorCounter
     , xPubResponseTime        :: !StatDist
+    , xPubErrors              :: !ErrorCounter
     , xPubTxResponseTime      :: !StatDist
+    , xPubTxErrors            :: !ErrorCounter
     , xPubTxFullResponseTime  :: !StatDist
+    , xPubTxFullErrors        :: !ErrorCounter
     , xPubUnspentResponseTime :: !StatDist
+    , xPubUnspentErrors       :: !ErrorCounter
     , xPubEvictResponseTime   :: !StatDist
+    , xPubEvictErrors         :: !ErrorCounter
     , multiaddrResponseTime   :: !StatDist
+    , multiaddrErrors         :: !ErrorCounter
     , rawtxResponseTime       :: !StatDist
+    , rawtxErrors             :: !ErrorCounter
     , peerResponseTime        :: !StatDist
+    , peerErrors              :: !ErrorCounter
     , healthResponseTime      :: !StatDist
+    , healthErrors            :: !ErrorCounter
     , dbStatsResponseTime     :: !StatDist
+    , dbStatsErrors           :: !ErrorCounter
     , eventsConnected         :: !Metrics.Gauge
     }
 
 createMetrics :: MonadIO m => Metrics.Store -> m WebMetrics
 createMetrics s = liftIO $ do
-    responseTime              <- d "response_time_ms"
+    everyResponseTime         <- d "every_response_time_ms"
+    everyError                <- e "every_error"
     blockResponseTime         <- d "block.response_time_ms"
+    blockErrors               <- e "block.errors"
     rawBlockResponseTime      <- d "block_raw.response_time_ms"
+    rawBlockErrors            <- e "block_raw.errors"
     txResponseTime            <- d "tx.response_time"
+    txErrors                  <- e "tx.errors"
     txBlockResponseTime       <- d "tx_block.response_time_ms"
+    txBlockErrors             <- e "tx_block.errors"
     txAfterResponseTime       <- d "tx_after.response_time_ms"
+    txAfterErrors             <- e "tx_after.errors"
     postTxResponseTime        <- d "tx_post.response_time_ms"
+    postTxErrors              <- e "tx_post.errors"
     mempoolResponseTime       <- d "mempool.response_time_ms"
+    mempoolErrors             <- e "mempool.errors"
     addrTxResponseTime        <- d "addr_tx.response_time_ms"
+    addrTxErrors              <- e "addr_tx.errors"
     addrBalanceResponseTime   <- d "addr_balance.response_time_ms"
+    addrBalanceErrors         <- e "addr_balance.errors"
     addrUnspentResponseTime   <- d "addr_unspent.response_time_ms"
+    addrUnspentErrors         <- e "addr_unspent.errors"
     xPubResponseTime          <- d "xpub.response_time_ms"
+    xPubErrors                <- e "xpub.errors"
     xPubTxResponseTime        <- d "xpub_tx.response_time_ms"
+    xPubTxErrors              <- e "xpub_tx.errors"
     xPubTxFullResponseTime    <- d "xpub_tx_full.response_time_ms"
+    xPubTxFullErrors          <- e "xpub_tx_full.errors"
     xPubUnspentResponseTime   <- d "xpub_unspent.response_time_ms"
+    xPubUnspentErrors         <- e "xpub_unspent.errors"
     xPubEvictResponseTime     <- d "xpub_evict.response_time_ms"
+    xPubEvictErrors           <- e "xpub_evict.errors"
     multiaddrResponseTime     <- d "multiaddr.response_time_ms"
+    multiaddrErrors           <- e "multiaddr.errors"
     rawtxResponseTime         <- d "rawtx.response_time_ms"
+    rawtxErrors               <- e "rawtx.errors"
     peerResponseTime          <- d "peer.response_time_ms"
+    peerErrors                <- e "peer.errors"
     healthResponseTime        <- d "health.response_time_ms"
+    healthErrors              <- e "health.errors"
     dbStatsResponseTime       <- d "dbstats.response_time_ms"
+    dbStatsErrors             <- e "dbstats.errors"
     eventsConnected           <- g "events.connected"
     return WebMetrics{..}
   where
     d x = createStatDist       ("web." <> x) s
     g x = Metrics.createGauge  ("web." <> x) s
+    e x = createErrorCounter   ("web." <> x) s
 
 withGaugeIncrease :: MonadUnliftIO m
                   => (WebMetrics -> Metrics.Gauge)
@@ -246,7 +305,7 @@ withMetrics df i go =
         t2 <- systemToUTCTime <$> liftIO getSystemTime
         let diff = round $ diffUTCTime t2 t1 * 1000
         df metrics `addStatEntry` StatEntry diff (fromIntegral i)
-        responseTime metrics `addStatEntry` StatEntry diff (fromIntegral i)
+        everyResponseTime metrics `addStatEntry` StatEntry diff (fromIntegral i)
 
 data WebTimeouts = WebTimeouts
     { txTimeout    :: !Word64
@@ -326,7 +385,7 @@ runWeb cfg@WebConfig{ webHost = host
             S.middleware reqLogger
             S.defaultHandler defHandler
             handlePaths
-            S.notFound $ S.raise ThingNotFound
+            S.notFound $ raise_ ThingNotFound
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
@@ -352,17 +411,48 @@ price net v =
             atomically . writeTVar v $ r ^. Wreq.responseBody
         threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
 
+raise_ :: MonadIO m => Except -> WebT m a
+raise_ err =
+    lift (asks webMetrics) >>= \case
+    Nothing -> S.raise err
+    Just metrics -> do
+        let status = errStatus err
+        if | statusIsClientError status -> liftIO $
+                 Metrics.Counter.inc (clientErrors (everyError metrics))
+           | statusIsServerError status -> liftIO $
+                 Metrics.Counter.inc (serverErrors (everyError metrics))
+           | otherwise ->
+                 return ()
+        S.raise err
+
+raise :: MonadIO m => (WebMetrics -> ErrorCounter) -> Except -> WebT m a
+raise metric err =
+    lift (asks webMetrics) >>= \case
+    Nothing -> S.raise err
+    Just metrics -> do
+        let status = errStatus err
+        if | statusIsClientError status -> liftIO $ do
+                 Metrics.Counter.inc (clientErrors (everyError metrics))
+                 Metrics.Counter.inc (clientErrors (metric metrics))
+           | statusIsServerError status -> liftIO $ do
+                 Metrics.Counter.inc (serverErrors (everyError metrics))
+                 Metrics.Counter.inc (serverErrors (metric metrics))
+           | otherwise ->
+                 return ()
+        S.raise err
+
+errStatus :: Except -> Status
+errStatus ThingNotFound = status404
+errStatus BadRequest    = status400
+errStatus UserError{}   = status400
+errStatus StringError{} = status400
+errStatus ServerError   = status500
+errStatus BlockTooLarge = status403
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
     proto <- setupContentType False
-    case e of
-        ThingNotFound -> S.status status404
-        BadRequest    -> S.status status400
-        UserError _   -> S.status status400
-        StringError _ -> S.status status400
-        ServerError   -> S.status status500
-        BlockTooLarge -> S.status status403
+    S.status $ errStatus e
     S.raw $ protoSerial proto toEncoding toJSON e
 
 handlePaths :: (MonadUnliftIO m, MonadLoggerIO m)
@@ -648,7 +738,8 @@ scottyBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlock -> WebT m BlockData
 scottyBlock (GetBlock h (NoTx noTx)) =
     withMetrics blockResponseTime 1 $
-    maybe (S.raise ThingNotFound) (return . pruneTx noTx) =<< getBlock h
+    maybe (raise blockErrors ThingNotFound) (return . pruneTx noTx) =<<
+    getBlock h
 
 scottyBlocks ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlocks -> WebT m [BlockData]
@@ -674,8 +765,8 @@ getRawBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => H.BlockHash -> WebT m H.Block
 getRawBlock h =
     withMetrics rawBlockResponseTime 1 $ do
-    b <- maybe (S.raise ThingNotFound) return =<< getBlock h
-    refuseLargeBlock b
+    b <- maybe (raise rawBlockErrors ThingNotFound) return =<< getBlock h
+    refuseLargeBlock rawBlockErrors b
     toRawBlock b
 
 toRawBlock :: (Monad m, StoreReadBase m) => BlockData -> m H.Block
@@ -684,10 +775,13 @@ toRawBlock b = do
     txs <- map transactionData . catMaybes <$> mapM getTransaction ths
     return H.Block {H.blockHeader = blockDataHeader b, H.blockTxns = txs}
 
-refuseLargeBlock :: Monad m => BlockData -> WebT m ()
-refuseLargeBlock BlockData {blockDataTxs = txs} = do
+refuseLargeBlock :: MonadIO m
+                 => (WebMetrics -> ErrorCounter)
+                 -> BlockData
+                 -> WebT m ()
+refuseLargeBlock metric BlockData {blockDataTxs = txs} = do
     WebLimits {maxLimitFull = f} <- lift $ asks (webMaxLimits . webConfig)
-    when (length txs > fromIntegral f) $ S.raise BlockTooLarge
+    when (length txs > fromIntegral f) $ raise metric BlockTooLarge
 
 -- GET BlockBest / BlockBestRaw --
 
@@ -696,15 +790,17 @@ scottyBlockBest ::
 scottyBlockBest (GetBlockBest noTx) =
     withMetrics blockResponseTime 1 $ do
     bestM <- getBestBlock
-    maybe (S.raise ThingNotFound) (scottyBlock . (`GetBlock` noTx)) bestM
+    maybe (raise blockErrors ThingNotFound) (scottyBlock . (`GetBlock` noTx)) bestM
 
 scottyBlockBestRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
     => GetBlockBestRaw
     -> WebT m (RawResult H.Block)
 scottyBlockBestRaw _ =
-    withMetrics rawBlockResponseTime 1 $ do
-    RawResult <$> (maybe (S.raise ThingNotFound) getRawBlock =<< getBestBlock)
+    withMetrics rawBlockResponseTime 1 $
+    fmap RawResult $ maybe (raise rawBlockErrors ThingNotFound)
+    getRawBlock =<<
+    getBestBlock
 
 -- GET BlockLatest --
 
@@ -714,7 +810,7 @@ scottyBlockLatest ::
     -> WebT m [BlockData]
 scottyBlockLatest (GetBlockLatest (NoTx noTx)) =
     withMetrics blockResponseTime 100 $
-    maybe (S.raise ThingNotFound) (go [] <=< getBlock) =<< getBestBlock
+    maybe (raise blockErrors ThingNotFound) (go [] <=< getBlock) =<< getBestBlock
   where
     go acc Nothing = return acc
     go acc (Just b)
@@ -757,7 +853,7 @@ scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) =
     withMetrics blockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrBefore ch t
-    maybe (S.raise ThingNotFound) (return . pruneTx noTx) m
+    maybe (raise blockErrors ThingNotFound) (return . pruneTx noTx) m
 
 scottyBlockMTP :: (MonadUnliftIO m, MonadLoggerIO m)
                => GetBlockMTP -> WebT m BlockData
@@ -765,7 +861,7 @@ scottyBlockMTP (GetBlockMTP (TimeParam t) (NoTx noTx)) =
     withMetrics blockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrAfterMTP ch t
-    maybe (S.raise ThingNotFound) (return . pruneTx noTx) m
+    maybe (raise blockErrors ThingNotFound) (return . pruneTx noTx) m
 
 scottyBlockTimeRaw :: (MonadUnliftIO m, MonadLoggerIO m)
                    => GetBlockTimeRaw -> WebT m (RawResult H.Block)
@@ -773,8 +869,8 @@ scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) =
     withMetrics rawBlockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrBefore ch t
-    b <- maybe (S.raise ThingNotFound) return m
-    refuseLargeBlock b
+    b <- maybe (raise rawBlockErrors ThingNotFound) return m
+    refuseLargeBlock rawBlockErrors b
     RawResult <$> toRawBlock b
 
 scottyBlockMTPRaw :: (MonadUnliftIO m, MonadLoggerIO m)
@@ -783,8 +879,8 @@ scottyBlockMTPRaw (GetBlockMTPRaw (TimeParam t)) =
     withMetrics rawBlockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrAfterMTP ch t
-    b <- maybe (S.raise ThingNotFound) return m
-    refuseLargeBlock b
+    b <- maybe (raise rawBlockErrors ThingNotFound) return m
+    refuseLargeBlock rawBlockErrors b
     RawResult <$> toRawBlock b
 
 -- GET Transactions --
@@ -792,7 +888,7 @@ scottyBlockMTPRaw (GetBlockMTPRaw (TimeParam t)) =
 scottyTx :: (MonadUnliftIO m, MonadLoggerIO m) => GetTx -> WebT m Transaction
 scottyTx (GetTx txid) =
     withMetrics txResponseTime 1 $
-    maybe (S.raise ThingNotFound) return =<< getTransaction txid
+    maybe (raise txErrors ThingNotFound) return =<< getTransaction txid
 
 scottyTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxs -> WebT m [Transaction]
@@ -804,7 +900,7 @@ scottyTxRaw ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxRaw -> WebT m (RawResult Tx)
 scottyTxRaw (GetTxRaw txid) =
     withMetrics txResponseTime 1 $ do
-    tx <- maybe (S.raise ThingNotFound) return =<< getTransaction txid
+    tx <- maybe (raise txErrors ThingNotFound) return =<< getTransaction txid
     return $ RawResult $ transactionData tx
 
 scottyTxsRaw ::
@@ -820,8 +916,8 @@ scottyTxsBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxsBlock -> WebT m [Transaction]
 scottyTxsBlock (GetTxsBlock h) =
     withMetrics txBlockResponseTime 1 $ do
-    b <- maybe (S.raise ThingNotFound) return =<< getBlock h
-    refuseLargeBlock b
+    b <- maybe (raise txBlockErrors ThingNotFound) return =<< getBlock h
+    refuseLargeBlock txBlockErrors b
     catMaybes <$> mapM getTransaction (blockDataTxs b)
 
 scottyTxsBlockRaw ::
@@ -883,8 +979,8 @@ scottyPostTx (PostTx tx) =
     withMetrics postTxResponseTime 1 $
     lift (asks webConfig) >>= \cfg -> lift (publishTx cfg tx) >>= \case
         Right ()             -> return $ TxId (txHash tx)
-        Left e@(PubReject _) -> S.raise $ UserError $ show e
-        _                    -> S.raise ServerError
+        Left e@(PubReject _) -> raise postTxErrors $ UserError $ show e
+        _                    -> raise postTxErrors ServerError
 
 -- | Publish a new transaction to the network.
 publishTx ::
@@ -1227,7 +1323,7 @@ scottyMultiAddr =
         net <- lift (asks (storeNetwork . webStore . webConfig))
         p <- S.param name `S.rescue` const (return "")
         case parseBinfoAddr net p of
-            Nothing -> S.raise (UserError "invalid active address")
+            Nothing -> raise multiaddrErrors (UserError "invalid active address")
             Just xs -> return $ HashSet.fromList xs
     addr (BinfoAddr a) = Just a
     addr (BinfoXpub x) = Nothing
@@ -1331,7 +1427,7 @@ scottyBinfoTx =
     lift (asks (webNumTxId . webConfig)) >>= \num -> S.param "txid" >>= \case
         BinfoTxIdHash h -> go num h
         BinfoTxIdIndex i ->
-            if | not num || isBinfoTxIndexNull i -> S.raise ThingNotFound
+            if | not num || isBinfoTxIndexNull i -> raise rawtxErrors ThingNotFound
                | isBinfoTxIndexBlock i           -> block i
                | isBinfoTxIndexHash i            -> hash i
   where
@@ -1352,20 +1448,20 @@ scottyBinfoTx =
         setHeaders
         S.text . TL.fromStrict . encodeHex . encode $ transactionData t
     go num h = getTransaction h >>= \case
-        Nothing -> S.raise ThingNotFound
+        Nothing -> raise rawtxErrors ThingNotFound
         Just t -> get_format >>= \case
             "hex" -> hex t
             _     -> js num t
     block i =
         let Just (height, pos) = binfoTxIndexBlock i
         in getBlocksAtHeight height >>= \case
-            [] -> S.raise ThingNotFound
+            [] -> raise rawtxErrors ThingNotFound
             h:_ -> getBlock h >>= \case
-                Nothing -> S.raise ThingNotFound
+                Nothing -> raise rawtxErrors ThingNotFound
                 Just BlockData{..} ->
                     if length blockDataTxs > fromIntegral pos
                     then go True (blockDataTxs !! fromIntegral pos)
-                    else S.raise ThingNotFound
+                    else raise rawtxErrors ThingNotFound
     hmatch h = listToMaybe . filter (matchBinfoTxHash h)
     hmem h = hmatch h . map snd <$> getMempool
     hblock h =
@@ -1382,7 +1478,7 @@ scottyBinfoTx =
             Just k  -> g 10 k
     hash h = hmem h >>= \case
         Nothing -> hblock h >>= \case
-            Nothing -> S.raise ThingNotFound
+            Nothing -> raise rawtxErrors ThingNotFound
             Just x  -> go True x
         Just x -> go True x
 
@@ -1507,42 +1603,42 @@ scottyDbStats =
 
 -- | Returns @Nothing@ if the parameter is not supplied. Raises an exception on
 -- parse failure.
-paramOptional :: (Param a, Monad m) => WebT m (Maybe a)
+paramOptional :: (Param a, MonadIO m) => WebT m (Maybe a)
 paramOptional = go Proxy
   where
-    go :: (Param a, Monad m) => Proxy a -> WebT m (Maybe a)
+    go :: (Param a, MonadIO m) => Proxy a -> WebT m (Maybe a)
     go proxy = do
         net <- lift $ asks (storeNetwork . webStore . webConfig)
         tsM :: Maybe [Text] <- p `S.rescue` const (return Nothing)
         case tsM of
             Nothing -> return Nothing -- Parameter was not supplied
-            Just ts -> maybe (S.raise err) (return . Just) $ parseParam net ts
+            Just ts -> maybe (raise_ err) (return . Just) $ parseParam net ts
       where
         l = proxyLabel proxy
         p = Just <$> S.param (cs l)
         err = UserError $ "Unable to parse param " <> cs l
 
 -- | Raises an exception if the parameter is not supplied
-param :: (Param a, Monad m) => WebT m a
+param :: (Param a, MonadIO m) => WebT m a
 param = go Proxy
   where
-    go :: (Param a, Monad m) => Proxy a -> WebT m a
+    go :: (Param a, MonadIO m) => Proxy a -> WebT m a
     go proxy = do
         resM <- paramOptional
         case resM of
             Just res -> return res
             _ ->
-                S.raise . UserError $
+                raise_ . UserError $
                 "The param " <> cs (proxyLabel proxy) <> " was not defined"
 
 -- | Returns the default value of a parameter if it is not supplied. Raises an
 -- exception on parse failure.
-paramDef :: (Default a, Param a, Monad m) => WebT m a
+paramDef :: (Default a, Param a, MonadIO m) => WebT m a
 paramDef = fromMaybe def <$> paramOptional
 
 -- | Does not raise exceptions. Will call @Scotty.next@ if the parameter is
 -- not supplied or if parsing fails.
-paramLazy :: (Param a, Monad m) => WebT m a
+paramLazy :: (Param a, MonadIO m) => WebT m a
 paramLazy = do
     resM <- paramOptional `S.rescue` const (return Nothing)
     maybe S.next return resM
@@ -1551,18 +1647,18 @@ parseBody :: (MonadIO m, Serialize a) => WebT m a
 parseBody = do
     b <- S.body
     case hex b <|> bin (L.toStrict b) of
-        Nothing -> S.raise $ UserError "Failed to parse request body"
+        Nothing -> raise_ $ UserError "Failed to parse request body"
         Just x  -> return x
   where
     bin = eitherToMaybe . Serialize.decode
     hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
 
-parseOffset :: Monad m => WebT m OffsetParam
+parseOffset :: MonadIO m => WebT m OffsetParam
 parseOffset = do
     res@(OffsetParam o) <- paramDef
     limits <- lift $ asks (webMaxLimits . webConfig)
     when (maxLimitOffset limits > 0 && fromIntegral o > maxLimitOffset limits) $
-        S.raise . UserError $
+        raise_ . UserError $
         "offset exceeded: " <> show o <> " > " <> show (maxLimitOffset limits)
     return res
 
@@ -1591,7 +1687,7 @@ parseStart (Just s) =
         let g = blockDataHeight b
         return $ AtBlock g
 
-parseLimits :: Monad m => WebT m LimitsParam
+parseLimits :: MonadIO m => WebT m LimitsParam
 parseLimits = LimitsParam <$> paramOptional <*> parseOffset <*> paramOptional
 
 paramToLimits ::

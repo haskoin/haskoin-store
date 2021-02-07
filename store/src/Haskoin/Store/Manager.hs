@@ -147,6 +147,7 @@ blockStoreCfg cfg node pub db =
         , blockConfNoMempool = storeConfNoMempool cfg
         , blockConfWipeMempool = storeConfWipeMempool cfg
         , blockConfPeerTimeout = storeConfPeerTimeout cfg
+        , blockConfStats = storeConfStats cfg
         }
 
 nodeCfg :: StoreConfig

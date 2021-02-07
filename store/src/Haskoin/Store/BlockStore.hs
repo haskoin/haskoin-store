@@ -82,10 +82,14 @@ import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 getOldMempool, importBlock,
                                                 initBest, newMempoolTx,
                                                 revertBlock)
+import           Haskoin.Store.Stats
 import           NQE                           (Listen, Mailbox, Publisher,
                                                 inboxToMailbox, newInbox,
                                                 publish, query, receive, send,
                                                 sendSTM)
+import qualified System.Metrics                as Metrics
+import qualified System.Metrics.Gauge          as Metrics (Gauge)
+import qualified System.Metrics.Gauge          as Metrics.Gauge
 import           System.Random                 (randomRIO)
 import           UnliftIO                      (Exception, MonadIO,
                                                 MonadUnliftIO, STM, TVar, async,
@@ -136,7 +140,72 @@ data BlockStore =
         , myPeer    :: !(TVar (Maybe Syncing))
         , myTxs     :: !(TVar (HashMap TxHash PendingTx))
         , requested :: !(TVar (HashSet TxHash))
+        , myMetrics :: !(Maybe StoreMetrics)
         }
+
+data StoreMetrics = StoreMetrics
+    { storeHeight         :: !Metrics.Gauge
+    , headersHeight       :: !Metrics.Gauge
+    , storePendingTxs     :: !Metrics.Gauge
+    , storePeersConnected :: !Metrics.Gauge
+    , storeMempoolSize    :: !Metrics.Gauge
+    }
+
+newStoreMetrics :: MonadIO m => Metrics.Store -> m StoreMetrics
+newStoreMetrics s = liftIO $ do
+    storeHeight             <- g "height"
+    headersHeight           <- g "headers"
+    storePendingTxs         <- g "pending_txs"
+    storePeersConnected     <- g "peers_connected"
+    storeMempoolSize        <- g "mempool_size"
+    return StoreMetrics{..}
+  where
+    g x = Metrics.createGauge   ("store." <> x) s
+
+setStoreHeight :: MonadIO m => BlockT m ()
+setStoreHeight =
+    asks myMetrics >>= \case
+    Nothing -> return ()
+    Just m ->
+        getBestBlock >>= \case
+        Nothing -> setit m 0
+        Just bb -> getBlock bb >>= \case
+            Nothing -> setit m 0
+            Just b -> setit m (blockDataHeight b)
+  where
+    setit m i = liftIO $ storeHeight m `Metrics.Gauge.set` fromIntegral i
+
+setHeadersHeight :: MonadIO m => BlockT m ()
+setHeadersHeight =
+    asks myMetrics >>= \case
+    Nothing -> return ()
+    Just m -> do
+        h <- fmap nodeHeight $ chainGetBest =<< asks (blockConfChain . myConfig)
+        liftIO $ headersHeight m `Metrics.Gauge.set` fromIntegral h
+
+setPendingTxs :: MonadIO m => BlockT m ()
+setPendingTxs =
+    asks myMetrics >>= \case
+    Nothing -> return ()
+    Just m -> do
+        s <- asks myTxs >>= \t -> atomically (HashMap.size <$> readTVar t)
+        liftIO $ storePendingTxs m `Metrics.Gauge.set` fromIntegral s
+
+setPeersConnected :: MonadIO m => BlockT m ()
+setPeersConnected =
+    asks myMetrics >>= \case
+    Nothing -> return ()
+    Just m -> do
+        ps <- fmap length $ getPeers =<< asks (blockConfManager . myConfig)
+        liftIO $ storePeersConnected m `Metrics.Gauge.set` fromIntegral ps
+
+setMempoolSize :: MonadIO m => BlockT m ()
+setMempoolSize =
+    asks myMetrics >>= \case
+    Nothing -> return ()
+    Just m -> do
+        s <- length <$> getMempool
+        liftIO $ storeMempoolSize m `Metrics.Gauge.set` fromIntegral s
 
 -- | Configuration for a block store.
 data BlockStoreConfig =
@@ -157,6 +226,7 @@ data BlockStoreConfig =
         -- ^ wipe mempool at start
         , blockConfPeerTimeout :: !NominalDiffTime
         -- ^ disconnect syncing peer if inactive for this long
+        , blockConfStats       :: !(Maybe Metrics.Store)
         }
 
 type BlockT m = ReaderT BlockStore m
@@ -216,11 +286,13 @@ withBlockStore cfg action = do
     ts <- newTVarIO HashMap.empty
     rq <- newTVarIO HashSet.empty
     inbox <- newInbox
+    metrics <- mapM newStoreMetrics (blockConfStats cfg)
     let r = BlockStore { myMailbox = inboxToMailbox inbox
                        , myConfig = cfg
                        , myPeer = pb
                        , myTxs = ts
                        , requested = rq
+                       , myMetrics = metrics
                        }
     withAsync (runReaderT (go inbox) r) $ \a -> do
         link a
@@ -279,7 +351,6 @@ guardMempool f = do
 
 mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 mempool p = guardMempool $ void $ async $ do
-    threadDelay 23849118
     isInSync >>= \s -> when s $ do
         $(logDebugS) "BlockStore" $
             "Requesting mempool from peer: " <> peerText p
@@ -310,7 +381,7 @@ processBlock peer block = void . runMaybeT $ do
         "Processing block: " <> blockText node Nothing
         <> " from peer: " <> peerText peer
     lift $ runImport (importBlock block node) >>= \case
-        Left e -> failure e
+        Left e   -> failure e
         Right () -> success node
   where
     header = blockHeader block
@@ -416,6 +487,8 @@ addPendingTx p = do
     atomically $ do
         modifyTVar ts $ HashMap.insert th p
         modifyTVar rq $ HashSet.delete th
+        HashMap.size <$> readTVar ts
+    setPendingTxs
   where
     th = txHash (pendingTx p)
 
@@ -438,10 +511,13 @@ isPending th = do
               || th `HashSet.member` rs
 
 pendingTxs :: MonadIO m => Int -> BlockT m [PendingTx]
-pendingTxs i = asks myTxs >>= \box -> atomically $ do
-    pending <- readTVar box
-    let (selected, rest) = select pending
-    writeTVar box rest
+pendingTxs i = do
+    selected <- asks myTxs >>= \box -> atomically $ do
+        pending <- readTVar box
+        let (selected, rest) = select pending
+        writeTVar box rest
+        return (selected)
+    setPendingTxs
     return selected
   where
     select pend =
@@ -560,7 +636,7 @@ processMempool = guardMempool $ do
             block_read
             (pendingTxTime p)
             (pendingTx p) >>= \case
-                True -> return $ Just (txHash (pendingTx p))
+                True  -> return $ Just (txHash (pendingTx p))
                 False -> return Nothing
     import_txs block_read txs =
         let r = mapM (run_import block_read) txs
@@ -795,7 +871,7 @@ finishPeer p = do
     box <- asks myPeer
     readTVarIO box >>= \case
         Just Syncing { syncingPeer = p' } | p == p' -> reset_it box
-        _ -> return ()
+        _                                           -> return ()
   where
     reset_it box = do
         atomically $ writeTVar box Nothing
@@ -805,7 +881,7 @@ finishPeer p = do
 trySetPeer :: MonadLoggerIO m => Peer -> BlockT m Bool
 trySetPeer p =
     getSyncingState >>= \case
-        Just _ -> return False
+        Just _  -> return False
         Nothing -> set_it
   where
     set_it =
@@ -828,14 +904,14 @@ trySyncing =
     isInSync >>= \case
         True -> return ()
         False -> getSyncingState >>= \case
-            Just _ -> return ()
+            Just _  -> return ()
             Nothing -> online_peer
   where
     recurse [] = return ()
     recurse (p : ps) =
         trySetPeer p >>= \case
             False -> recurse ps
-            True -> syncMe
+            True  -> syncMe
     online_peer = do
         ops <- getPeers =<< asks (blockConfManager . myConfig)
         let ps = map onlinePeerMailbox ops
@@ -847,7 +923,7 @@ trySyncingPeer p =
         True -> mempool p
         False -> trySetPeer p >>= \case
             False -> return ()
-            True -> syncMe
+            True  -> syncMe
 
 getSyncingState
     :: (MonadIO m, MonadReader BlockStore m) => m (Maybe Syncing)
@@ -858,7 +934,7 @@ clearSyncingState
     :: (MonadLoggerIO m, MonadReader BlockStore m) => m ()
 clearSyncingState =
     asks myPeer >>= readTVarIO >>= \case
-        Nothing -> return ()
+        Nothing                          -> return ()
         Just Syncing { syncingPeer = p } -> finishPeer p
 
 processBlockStoreMessage :: (MonadUnliftIO m, MonadLoggerIO m)
@@ -891,6 +967,11 @@ processBlockStoreMessage (BlockPing r) = do
     pruneOrphans
     checkTime
     pruneMempool
+    setStoreHeight
+    setHeadersHeight
+    setPendingTxs
+    setPeersConnected
+    setMempoolSize
     atomically (r ())
 
 pingMe :: MonadLoggerIO m => Mailbox BlockStoreMessage -> m ()
