@@ -59,7 +59,7 @@ createStatDist t store = liftIO $ do
             , (t <> ".per_query.max",    Gauge . maxi . map value)
             , (t <> ".per_query.min",    Gauge . mini . map value)
             , (t <> ".per_query.p90max", Gauge . p90max . map value)
-            , (t <> ".per_query.90min",  Gauge . p90min . map value)
+            , (t <> ".per_query.p90min", Gauge . p90min . map value)
             , (t <> ".per_query.p90avg", Gauge . p90avg . map value)
             , (t <> ".per_query.var",    Gauge . var . map value)
             , (t <> ".per_item.mean",    Gauge . mean . normalize)
