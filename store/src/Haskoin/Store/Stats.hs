@@ -38,7 +38,6 @@ withStats h pfx go = do
         defaultStatsdOptions
             { prefix = pfx
             , host = h
-            , flushInterval = 10 * 1000 * 1000
             } store
     liftIO $ registerGcMetrics store
     go store
@@ -53,8 +52,8 @@ createStatDist :: MonadIO m => Text -> Store -> m StatDist
 createStatDist t store = liftIO $ do
     q <- newTQueueIO
     let metrics = HashMap.fromList
-            [ (t <> ".query_count",      Counter . fromIntegral . length)
-            , (t <> ".item_count",       Counter . sum . map count)
+            [ (t <> ".query_count",      Gauge . fromIntegral . length)
+            , (t <> ".item_count",       Gauge . sum . map count)
             , (t <> ".per_query.mean",   Gauge . mean . map value)
             , (t <> ".per_query.avg",    Gauge . avg . map value)
             , (t <> ".per_query.max",    Gauge . maxi . map value)
