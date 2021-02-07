@@ -112,7 +112,7 @@ p90max ls =
   where
     sorted = sortBy (comparing Down) ls
     len = length sorted
-    chopped = drop (length sorted * 9 `div` 10) sorted
+    chopped = drop (length sorted * 1 `div` 10) sorted
 
 p90min :: [Int64] -> Int64
 p90min ls =
@@ -122,7 +122,7 @@ p90min ls =
   where
     sorted = sort ls
     len = length sorted
-    chopped = drop (length sorted * 9 `div` 10) sorted
+    chopped = drop (length sorted * 1 `div` 10) sorted
 
 p90avg :: [Int64] -> Int64
 p90avg ls =
@@ -130,7 +130,7 @@ p90avg ls =
   where
     sorted = sortBy (comparing Down) ls
     len = length sorted
-    chopped = drop (length sorted * 9 `div` 10) sorted
+    chopped = drop (length sorted * 1 `div` 10) sorted
 
 normalize :: [StatEntry] -> [Int64]
 normalize =
