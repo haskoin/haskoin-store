@@ -78,9 +78,12 @@ import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Reader
 import           Haskoin.Store.Manager
+import           Haskoin.Store.Stats
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
 import           Haskoin.Util
+import           NQE                           (Inbox, receive,
+                                                withSubscription)
 import           Network.HTTP.Types            (Status (..), status400,
                                                 status403, status404, status500,
                                                 status503, statusIsSuccessful)
@@ -89,13 +92,9 @@ import           Network.Wai                   (Middleware, Request (..),
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
 import qualified Network.Wreq                  as Wreq
-import           NQE                           (Inbox, receive,
-                                                withSubscription)
 import qualified System.Metrics                as Metrics
-import qualified System.Metrics.Counter        as Metrics.Counter
 import qualified System.Metrics.Counter        as Metrics (Counter)
-import qualified System.Metrics.Distribution   as Metrics (Distribution)
-import qualified System.Metrics.Distribution   as Metrics.Distribution
+import qualified System.Metrics.Counter        as Metrics.Counter
 import qualified System.Metrics.Gauge          as Metrics (Gauge)
 import qualified System.Metrics.Gauge          as Metrics.Gauge
 import           Text.Printf                   (printf)
@@ -153,34 +152,27 @@ data WebState = WebState
     }
 
 data WebMetrics = WebMetrics
-    { responseTime            :: !Metrics.Distribution
-    , blockResponseTime       :: !Metrics.Distribution
-    , blockItems              :: !Metrics.Distribution
-    , rawBlockResponseTime    :: !Metrics.Distribution
-    , rawBlockItems           :: !Metrics.Distribution
-    , txResponseTime          :: !Metrics.Distribution
-    , txItems                 :: !Metrics.Distribution
-    , txBlockResponseTime     :: !Metrics.Distribution
-    , txAfterResponseTime     :: !Metrics.Distribution
-    , postTxResponseTime      :: !Metrics.Distribution
-    , mempoolResponseTime     :: !Metrics.Distribution
-    , addrTxResponseTime      :: !Metrics.Distribution
-    , addrTxItems             :: !Metrics.Distribution
-    , addrBalanceResponseTime :: !Metrics.Distribution
-    , addrBalanceItems        :: !Metrics.Distribution
-    , addrUnspentResponseTime :: !Metrics.Distribution
-    , addrUnspentItems        :: !Metrics.Distribution
-    , xPubResponseTime        :: !Metrics.Distribution
-    , xPubTxResponseTime      :: !Metrics.Distribution
-    , xPubTxFullResponseTime  :: !Metrics.Distribution
-    , xPubUnspentResponseTime :: !Metrics.Distribution
-    , xPubEvictResponseTime   :: !Metrics.Distribution
-    , multiaddrResponseTime   :: !Metrics.Distribution
-    , multiaddrItems          :: !Metrics.Distribution
-    , rawtxResponseTime       :: !Metrics.Distribution
-    , peerResponseTime        :: !Metrics.Distribution
-    , healthResponseTime      :: !Metrics.Distribution
-    , dbStatsResponseTime     :: !Metrics.Distribution
+    { responseTime            :: !StatDist
+    , blockResponseTime       :: !StatDist
+    , rawBlockResponseTime    :: !StatDist
+    , txResponseTime          :: !StatDist
+    , txBlockResponseTime     :: !StatDist
+    , txAfterResponseTime     :: !StatDist
+    , postTxResponseTime      :: !StatDist
+    , mempoolResponseTime     :: !StatDist
+    , addrTxResponseTime      :: !StatDist
+    , addrBalanceResponseTime :: !StatDist
+    , addrUnspentResponseTime :: !StatDist
+    , xPubResponseTime        :: !StatDist
+    , xPubTxResponseTime      :: !StatDist
+    , xPubTxFullResponseTime  :: !StatDist
+    , xPubUnspentResponseTime :: !StatDist
+    , xPubEvictResponseTime   :: !StatDist
+    , multiaddrResponseTime   :: !StatDist
+    , rawtxResponseTime       :: !StatDist
+    , peerResponseTime        :: !StatDist
+    , healthResponseTime      :: !StatDist
+    , dbStatsResponseTime     :: !StatDist
     , eventsConnected         :: !Metrics.Gauge
     }
 
@@ -188,28 +180,21 @@ createMetrics :: MonadIO m => Metrics.Store -> m WebMetrics
 createMetrics s = liftIO $ do
     responseTime              <- d "response_time_ms"
     blockResponseTime         <- d "block.response_time_ms"
-    blockItems                <- d "block.items_per_request"
     rawBlockResponseTime      <- d "block_raw.response_time_ms"
-    rawBlockItems             <- d "block_raw.items_per_request"
     txResponseTime            <- d "tx.response_time"
-    txItems                   <- d "tx.items_per_request"
     txBlockResponseTime       <- d "tx_block.response_time_ms"
     txAfterResponseTime       <- d "tx_after.response_time_ms"
     postTxResponseTime        <- d "tx_post.response_time_ms"
     mempoolResponseTime       <- d "mempool.response_time_ms"
     addrTxResponseTime        <- d "addr_tx.response_time_ms"
-    addrTxItems               <- d "addr_tx.items_per_request"
     addrBalanceResponseTime   <- d "addr_balance.response_time_ms"
-    addrBalanceItems          <- d "addr_balance.items_per_request"
     addrUnspentResponseTime   <- d "addr_unspent.response_time_ms"
-    addrUnspentItems          <- d "addr_unspent.items_per_request"
     xPubResponseTime          <- d "xpub.response_time_ms"
     xPubTxResponseTime        <- d "xpub_tx.response_time_ms"
     xPubTxFullResponseTime    <- d "xpub_tx_full.response_time_ms"
     xPubUnspentResponseTime   <- d "xpub_unspent.response_time_ms"
     xPubEvictResponseTime     <- d "xpub_evict.response_time_ms"
     multiaddrResponseTime     <- d "multiaddr.response_time_ms"
-    multiaddrItems            <- d "multiaddr.items_per_request"
     rawtxResponseTime         <- d "rawtx.response_time_ms"
     peerResponseTime          <- d "peer.response_time_ms"
     healthResponseTime        <- d "health.response_time_ms"
@@ -217,8 +202,8 @@ createMetrics s = liftIO $ do
     eventsConnected           <- g "events.connected"
     return WebMetrics{..}
   where
-    d x = Metrics.createDistribution ("web." <> x) s
-    g x = Metrics.createGauge        ("web." <> x) s
+    d x = createStatDist       ("web." <> x) s
+    g x = Metrics.createGauge  ("web." <> x) s
 
 withGaugeIncrease :: MonadUnliftIO m
                   => (WebMetrics -> Metrics.Gauge)
@@ -239,34 +224,29 @@ withGaugeIncrease gf go =
     end m = liftIO $ Metrics.Gauge.dec (gf m)
 
 withMetrics :: MonadUnliftIO m
-            => (WebMetrics -> Metrics.Distribution)
-            -> (Maybe (WebMetrics -> Metrics.Distribution, Int))
+            => (WebMetrics -> StatDist)
+            -> Int
             -> WebT m a
             -> WebT m a
-withMetrics df mi go =
+withMetrics df i go =
     lift (asks webMetrics) >>= \case
         Nothing -> go
         Just m -> do
-            s <- liftWith $ \run ->
+            x <-
+                liftWith $ \run ->
                 nostats $
                 bracket
                 (systemToUTCTime <$> liftIO getSystemTime)
                 (end m)
                 (const (run go))
-            restoreT $ return s
+            restoreT $ return x
   where
     nostats = local $ \s -> s { webMetrics = Nothing }
     end metrics t1 = do
         t2 <- systemToUTCTime <$> liftIO getSystemTime
-        let diff = realToFrac $ diffUTCTime t2 t1 * 1000
-            d = df metrics
-        liftIO $ Metrics.Distribution.add (responseTime metrics) diff
-        liftIO $ Metrics.Distribution.add d diff
-        case mi of
-            Nothing -> return ()
-            Just (fi, n) -> do
-                let i = fi metrics
-                liftIO $ Metrics.Distribution.add i (fromIntegral n)
+        let diff = round $ diffUTCTime t2 t1 * 1000
+        df metrics `addStatEntry` StatEntry diff (fromIntegral i)
+        responseTime metrics `addStatEntry` StatEntry diff (fromIntegral i)
 
 data WebTimeouts = WebTimeouts
     { txTimeout    :: !Word64
@@ -667,17 +647,13 @@ setupContentType pretty = do
 scottyBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlock -> WebT m BlockData
 scottyBlock (GetBlock h (NoTx noTx)) =
-    withMetrics
-    blockResponseTime
-    (Just (blockItems, 1)) $
+    withMetrics blockResponseTime 1 $
     maybe (S.raise ThingNotFound) (return . pruneTx noTx) =<< getBlock h
 
 scottyBlocks ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlocks -> WebT m [BlockData]
 scottyBlocks (GetBlocks hs (NoTx noTx)) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, length hs)) $
+    withMetrics blockResponseTime (length hs) $
     (pruneTx noTx <$>) . catMaybes <$> mapM getBlock (nub hs)
 
 pruneTx :: Bool -> BlockData -> BlockData
@@ -691,18 +667,13 @@ scottyBlockRaw ::
     => GetBlockRaw
     -> WebT m (RawResult H.Block)
 scottyBlockRaw (GetBlockRaw h) =
-    withMetrics
-        rawBlockResponseTime
-        (Just (rawBlockItems, 1)) $
+    withMetrics rawBlockResponseTime 1 $
     RawResult <$> getRawBlock h
 
 getRawBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => H.BlockHash -> WebT m H.Block
 getRawBlock h =
-    withMetrics
-        rawBlockResponseTime
-        (Just (rawBlockItems, 1)) $
-    do
+    withMetrics rawBlockResponseTime 1 $ do
     b <- maybe (S.raise ThingNotFound) return =<< getBlock h
     refuseLargeBlock b
     toRawBlock b
@@ -723,10 +694,7 @@ refuseLargeBlock BlockData {blockDataTxs = txs} = do
 scottyBlockBest ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockBest -> WebT m BlockData
 scottyBlockBest (GetBlockBest noTx) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, 1)) $
-    do
+    withMetrics blockResponseTime 1 $ do
     bestM <- getBestBlock
     maybe (S.raise ThingNotFound) (scottyBlock . (`GetBlock` noTx)) bestM
 
@@ -735,10 +703,7 @@ scottyBlockBestRaw ::
     => GetBlockBestRaw
     -> WebT m (RawResult H.Block)
 scottyBlockBestRaw _ =
-    withMetrics
-        rawBlockResponseTime
-        (Just (rawBlockItems, 1)) $
-    do
+    withMetrics rawBlockResponseTime 1 $ do
     RawResult <$> (maybe (S.raise ThingNotFound) getRawBlock =<< getBestBlock)
 
 -- GET BlockLatest --
@@ -748,9 +713,7 @@ scottyBlockLatest ::
     => GetBlockLatest
     -> WebT m [BlockData]
 scottyBlockLatest (GetBlockLatest (NoTx noTx)) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, 100)) $
+    withMetrics blockResponseTime 100 $
     maybe (S.raise ThingNotFound) (go [] <=< getBlock) =<< getBestBlock
   where
     go acc Nothing = return acc
@@ -766,9 +729,7 @@ scottyBlockLatest (GetBlockLatest (NoTx noTx)) =
 scottyBlockHeight ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetBlockHeight -> WebT m [BlockData]
 scottyBlockHeight (GetBlockHeight h noTx) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, 1)) $
+    withMetrics blockResponseTime 1 $
     scottyBlocks . (`GetBlocks` noTx) =<< getBlocksAtHeight (fromIntegral h)
 
 scottyBlockHeights ::
@@ -776,10 +737,7 @@ scottyBlockHeights ::
     => GetBlockHeights
     -> WebT m [BlockData]
 scottyBlockHeights (GetBlockHeights (HeightsParam heights) noTx) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, length heights)) $
-    do
+    withMetrics blockResponseTime (length heights) $ do
     bhs <- concat <$> mapM getBlocksAtHeight (fromIntegral <$> heights)
     scottyBlocks (GetBlocks bhs noTx)
 
@@ -788,9 +746,7 @@ scottyBlockHeightRaw ::
     => GetBlockHeightRaw
     -> WebT m (RawResultList H.Block)
 scottyBlockHeightRaw (GetBlockHeightRaw h) =
-    withMetrics
-        rawBlockResponseTime
-        (Just (rawBlockItems, 1)) $
+    withMetrics rawBlockResponseTime 1 $
     RawResultList <$> (mapM getRawBlock =<< getBlocksAtHeight (fromIntegral h))
 
 -- GET BlockTime / BlockTimeRaw --
@@ -798,10 +754,7 @@ scottyBlockHeightRaw (GetBlockHeightRaw h) =
 scottyBlockTime :: (MonadUnliftIO m, MonadLoggerIO m)
                 => GetBlockTime -> WebT m BlockData
 scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, 1)) $
-    do
+    withMetrics blockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrBefore ch t
     maybe (S.raise ThingNotFound) (return . pruneTx noTx) m
@@ -809,10 +762,7 @@ scottyBlockTime (GetBlockTime (TimeParam t) (NoTx noTx)) =
 scottyBlockMTP :: (MonadUnliftIO m, MonadLoggerIO m)
                => GetBlockMTP -> WebT m BlockData
 scottyBlockMTP (GetBlockMTP (TimeParam t) (NoTx noTx)) =
-    withMetrics
-        blockResponseTime
-        (Just (blockItems, 1)) $
-    do
+    withMetrics blockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrAfterMTP ch t
     maybe (S.raise ThingNotFound) (return . pruneTx noTx) m
@@ -820,10 +770,7 @@ scottyBlockMTP (GetBlockMTP (TimeParam t) (NoTx noTx)) =
 scottyBlockTimeRaw :: (MonadUnliftIO m, MonadLoggerIO m)
                    => GetBlockTimeRaw -> WebT m (RawResult H.Block)
 scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) =
-    withMetrics
-        rawBlockResponseTime
-        (Just (rawBlockItems, 1)) $
-    do
+    withMetrics rawBlockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrBefore ch t
     b <- maybe (S.raise ThingNotFound) return m
@@ -833,10 +780,7 @@ scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) =
 scottyBlockMTPRaw :: (MonadUnliftIO m, MonadLoggerIO m)
                   => GetBlockMTPRaw -> WebT m (RawResult H.Block)
 scottyBlockMTPRaw (GetBlockMTPRaw (TimeParam t)) =
-    withMetrics
-        rawBlockResponseTime
-        (Just (rawBlockItems, 1)) $
-    do
+    withMetrics rawBlockResponseTime 1 $ do
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrAfterMTP ch t
     b <- maybe (S.raise ThingNotFound) return m
@@ -847,26 +791,19 @@ scottyBlockMTPRaw (GetBlockMTPRaw (TimeParam t)) =
 
 scottyTx :: (MonadUnliftIO m, MonadLoggerIO m) => GetTx -> WebT m Transaction
 scottyTx (GetTx txid) =
-    withMetrics
-        txResponseTime
-        (Just (txItems, 1)) $
+    withMetrics txResponseTime 1 $
     maybe (S.raise ThingNotFound) return =<< getTransaction txid
 
 scottyTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxs -> WebT m [Transaction]
 scottyTxs (GetTxs txids) =
-    withMetrics
-        txResponseTime
-        (Just (txItems, length txids)) $
+    withMetrics txResponseTime (length txids) $
     catMaybes <$> mapM getTransaction (nub txids)
 
 scottyTxRaw ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxRaw -> WebT m (RawResult Tx)
 scottyTxRaw (GetTxRaw txid) =
-    withMetrics
-        txResponseTime
-        (Just (txItems, 1)) $
-    do
+    withMetrics txResponseTime 1 $ do
     tx <- maybe (S.raise ThingNotFound) return =<< getTransaction txid
     return $ RawResult $ transactionData tx
 
@@ -875,20 +812,14 @@ scottyTxsRaw ::
     => GetTxsRaw
     -> WebT m (RawResultList Tx)
 scottyTxsRaw (GetTxsRaw txids) =
-    withMetrics
-        txResponseTime
-        (Just (txItems, length txids)) $
-    do
+    withMetrics txResponseTime (length txids) $ do
     txs <- catMaybes <$> mapM getTransaction (nub txids)
     return $ RawResultList $ transactionData <$> txs
 
 scottyTxsBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxsBlock -> WebT m [Transaction]
 scottyTxsBlock (GetTxsBlock h) =
-    withMetrics
-        txBlockResponseTime
-        Nothing $
-    do
+    withMetrics txBlockResponseTime 1 $ do
     b <- maybe (S.raise ThingNotFound) return =<< getBlock h
     refuseLargeBlock b
     catMaybes <$> mapM getTransaction (blockDataTxs b)
@@ -898,9 +829,7 @@ scottyTxsBlockRaw ::
     => GetTxsBlockRaw
     -> WebT m (RawResultList Tx)
 scottyTxsBlockRaw (GetTxsBlockRaw h) =
-    withMetrics
-        txBlockResponseTime
-        Nothing $
+    withMetrics txBlockResponseTime 1 $
     RawResultList . fmap transactionData <$> scottyTxsBlock (GetTxsBlock h)
 
 -- GET TransactionAfterHeight --
@@ -910,9 +839,7 @@ scottyTxAfter ::
     => GetTxAfter
     -> WebT m (GenericResult (Maybe Bool))
 scottyTxAfter (GetTxAfter txid height) =
-    withMetrics
-        txAfterResponseTime
-        Nothing $
+    withMetrics txAfterResponseTime 1 $
     GenericResult <$> cbAfterHeight (fromIntegral height) txid
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
@@ -953,13 +880,11 @@ cbAfterHeight height txid =
 
 scottyPostTx :: (MonadUnliftIO m, MonadLoggerIO m) => PostTx -> WebT m TxId
 scottyPostTx (PostTx tx) =
-    withMetrics
-        postTxResponseTime
-        Nothing $
+    withMetrics postTxResponseTime 1 $
     lift (asks webConfig) >>= \cfg -> lift (publishTx cfg tx) >>= \case
-        Right () -> return $ TxId (txHash tx)
+        Right ()             -> return $ TxId (txHash tx)
         Left e@(PubReject _) -> S.raise $ UserError $ show e
-        _ -> S.raise ServerError
+        _                    -> S.raise ServerError
 
 -- | Publish a new transaction to the network.
 publishTx ::
@@ -970,7 +895,7 @@ publishTx ::
 publishTx cfg tx =
     withSubscription pub $ \s ->
         getTransaction (txHash tx) >>= \case
-            Just _ -> return $ Right ()
+            Just _  -> return $ Right ()
             Nothing -> go s
   where
     pub = storePublisher (webStore cfg)
@@ -994,8 +919,8 @@ publishTx cfg tx =
       | webNoMempool cfg = return $ Right ()
       | otherwise =
         liftIO (timeout t (g p s)) >>= \case
-            Nothing -> return $ Left PubTimeout
-            Just (Left e) -> return $ Left e
+            Nothing         -> return $ Left PubTimeout
+            Just (Left e)   -> return $ Left e
             Just (Right ()) -> return $ Right ()
     g p s =
         receive s >>= \case
@@ -1012,10 +937,7 @@ publishTx cfg tx =
 scottyMempool ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetMempool -> WebT m [TxHash]
 scottyMempool (GetMempool limitM (OffsetParam o)) =
-    withMetrics
-        mempoolResponseTime
-        Nothing $
-    do
+    withMetrics mempoolResponseTime 1 $ do
     wl <- lift $ asks (webMaxLimits . webConfig)
     let wl' = wl { maxLimitCount = 0 }
         l = Limits (validateLimit wl' False limitM) (fromIntegral o) Nothing
@@ -1052,17 +974,13 @@ receiveEvent sub = do
 scottyAddrTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrTxs -> WebT m [TxRef]
 scottyAddrTxs (GetAddrTxs addr pLimits) =
-    withMetrics
-        addrTxResponseTime
-        (Just (addrTxItems, 1)) $
+    withMetrics addrTxResponseTime 1 $
     getAddressTxs addr =<< paramToLimits False pLimits
 
 scottyAddrsTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsTxs -> WebT m [TxRef]
 scottyAddrsTxs (GetAddrsTxs addrs pLimits) =
-    withMetrics
-        addrTxResponseTime
-        (Just (addrTxItems, length addrs)) $
+    withMetrics addrTxResponseTime (length addrs) $
     getAddressesTxs addrs =<< paramToLimits False pLimits
 
 scottyAddrTxsFull ::
@@ -1070,53 +988,39 @@ scottyAddrTxsFull ::
     => GetAddrTxsFull
     -> WebT m [Transaction]
 scottyAddrTxsFull (GetAddrTxsFull addr pLimits) =
-    withMetrics
-        addrTxResponseTime
-        (Just (addrTxItems, 1)) $
-    do
+    withMetrics addrTxResponseTime 1 $ do
     txs <- getAddressTxs addr =<< paramToLimits True pLimits
     catMaybes <$> mapM (getTransaction . txRefHash) txs
 
 scottyAddrsTxsFull :: (MonadUnliftIO m, MonadLoggerIO m)
                    => GetAddrsTxsFull -> WebT m [Transaction]
 scottyAddrsTxsFull (GetAddrsTxsFull addrs pLimits) =
-    withMetrics
-        addrTxResponseTime
-        (Just (addrTxItems, length addrs)) $
-    do
+    withMetrics addrTxResponseTime (length addrs) $ do
     txs <- getAddressesTxs addrs =<< paramToLimits True pLimits
     catMaybes <$> mapM (getTransaction . txRefHash) txs
 
 scottyAddrBalance :: (MonadUnliftIO m, MonadLoggerIO m)
                   => GetAddrBalance -> WebT m Balance
 scottyAddrBalance (GetAddrBalance addr) =
-    withMetrics
-        addrBalanceResponseTime
-        (Just (addrBalanceItems, 1)) $
+    withMetrics addrBalanceResponseTime 1 $
     getDefaultBalance addr
 
 scottyAddrsBalance ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsBalance -> WebT m [Balance]
 scottyAddrsBalance (GetAddrsBalance addrs) =
-    withMetrics
-        addrBalanceResponseTime
-        (Just (addrBalanceItems, length addrs)) $
+    withMetrics addrBalanceResponseTime (length addrs) $
     getBalances addrs
 
 scottyAddrUnspent ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrUnspent -> WebT m [Unspent]
 scottyAddrUnspent (GetAddrUnspent addr pLimits) =
-    withMetrics
-        addrUnspentResponseTime
-        (Just (addrUnspentItems, 1)) $
+    withMetrics addrUnspentResponseTime 1 $
     getAddressUnspents addr =<< paramToLimits False pLimits
 
 scottyAddrsUnspent ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetAddrsUnspent -> WebT m [Unspent]
 scottyAddrsUnspent (GetAddrsUnspent addrs pLimits) =
-    withMetrics
-        addrUnspentResponseTime
-        (Just (addrUnspentItems, length addrs)) $
+    withMetrics addrUnspentResponseTime (length addrs) $
     getAddressesUnspents addrs =<< paramToLimits False pLimits
 
 -- GET XPubs --
@@ -1124,18 +1028,13 @@ scottyAddrsUnspent (GetAddrsUnspent addrs pLimits) =
 scottyXPub ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetXPub -> WebT m XPubSummary
 scottyXPub (GetXPub xpub deriv (NoCache noCache)) =
-    withMetrics
-        xPubResponseTime
-        Nothing $
+    withMetrics xPubResponseTime 1 $
     lift . runNoCache noCache $ xPubSummary $ XPubSpec xpub deriv
 
 scottyXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetXPubTxs -> WebT m [TxRef]
 scottyXPubTxs (GetXPubTxs xpub deriv pLimits (NoCache noCache)) =
-    withMetrics
-        xPubTxResponseTime
-        Nothing $
-    do
+    withMetrics xPubTxResponseTime 1 $ do
     limits <- paramToLimits False pLimits
     lift . runNoCache noCache $ xPubTxs (XPubSpec xpub deriv) limits
 
@@ -1144,10 +1043,7 @@ scottyXPubTxsFull ::
     => GetXPubTxsFull
     -> WebT m [Transaction]
 scottyXPubTxsFull (GetXPubTxsFull xpub deriv pLimits n@(NoCache noCache)) =
-    withMetrics
-        xPubTxFullResponseTime
-        Nothing $
-    do
+    withMetrics xPubTxFullResponseTime 1 $ do
     refs <- scottyXPubTxs (GetXPubTxs xpub deriv pLimits n)
     txs <- lift . runNoCache noCache $ mapM (getTransaction . txRefHash) refs
     return $ catMaybes txs
@@ -1155,9 +1051,7 @@ scottyXPubTxsFull (GetXPubTxsFull xpub deriv pLimits n@(NoCache noCache)) =
 scottyXPubBalances ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetXPubBalances -> WebT m [XPubBal]
 scottyXPubBalances (GetXPubBalances xpub deriv (NoCache noCache)) =
-    withMetrics
-        xPubResponseTime
-        Nothing $
+    withMetrics xPubResponseTime 1 $
     filter f <$> lift (runNoCache noCache (xPubBals spec))
   where
     spec = XPubSpec xpub deriv
@@ -1168,10 +1062,7 @@ scottyXPubUnspent ::
     => GetXPubUnspent
     -> WebT m [XPubUnspent]
 scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) =
-    withMetrics
-        xPubUnspentResponseTime
-        Nothing $
-    do
+    withMetrics xPubUnspentResponseTime 1 $ do
     limits <- paramToLimits False pLimits
     lift . runNoCache noCache $ xPubUnspents (XPubSpec xpub deriv) limits
 
@@ -1180,9 +1071,7 @@ scottyXPubEvict ::
     => GetXPubEvict
     -> WebT m (GenericResult Bool)
 scottyXPubEvict (GetXPubEvict xpub deriv) =
-    withMetrics
-        xPubEvictResponseTime
-        Nothing $ do
+    withMetrics xPubEvictResponseTime 1 $ do
     cache <- lift $ asks (storeCache . webStore . webConfig)
     lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
     return $ GenericResult True
@@ -1240,10 +1129,7 @@ scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
 scottyMultiAddr =
     get_addrs >>= \(addrs, xpubs, saddrs, sxpubs, xspecs) ->
     let len = HashSet.size addrs + HashSet.size xpubs
-    in withMetrics
-       multiaddrResponseTime
-       (Just (multiaddrItems, len)) $
-    do
+    in withMetrics multiaddrResponseTime len $ do
     prune <- get_prune
     n <- get_count
     offset <- get_offset
@@ -1441,15 +1327,13 @@ scottyMultiAddr =
 
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
-    withMetrics
-        rawtxResponseTime
-        Nothing $
+    withMetrics rawtxResponseTime 1 $
     lift (asks (webNumTxId . webConfig)) >>= \num -> S.param "txid" >>= \case
         BinfoTxIdHash h -> go num h
         BinfoTxIdIndex i ->
             if | not num || isBinfoTxIndexNull i -> S.raise ThingNotFound
-               | isBinfoTxIndexBlock i -> block i
-               | isBinfoTxIndexHash i -> hash i
+               | isBinfoTxIndexBlock i           -> block i
+               | isBinfoTxIndexHash i            -> hash i
   where
     get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
     js num t = do
@@ -1471,7 +1355,7 @@ scottyBinfoTx =
         Nothing -> S.raise ThingNotFound
         Just t -> get_format >>= \case
             "hex" -> hex t
-            _ -> js num t
+            _     -> js num t
     block i =
         let Just (height, pos) = binfoTxIndexBlock i
         in getBlocksAtHeight height >>= \case
@@ -1495,11 +1379,11 @@ scottyBinfoTx =
                         Just x  -> return (Just x)
         in getBestBlock >>= \case
             Nothing -> return Nothing
-            Just k -> g 10 k
+            Just k  -> g 10 k
     hash h = hmem h >>= \case
         Nothing -> hblock h >>= \case
             Nothing -> S.raise ThingNotFound
-            Just x -> go True x
+            Just x  -> go True x
         Just x -> go True x
 
 -- GET Network Information --
@@ -1508,9 +1392,7 @@ scottyPeers :: (MonadUnliftIO m, MonadLoggerIO m)
             => GetPeers
             -> WebT m [PeerInformation]
 scottyPeers _ =
-    withMetrics
-        peerResponseTime
-        Nothing $
+    withMetrics peerResponseTime 1 $
     lift $
     getPeersInformation =<< asks (storeManager . webStore . webConfig)
 
@@ -1539,10 +1421,7 @@ getPeersInformation mgr =
 scottyHealth ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetHealth -> WebT m HealthCheck
 scottyHealth _ =
-    withMetrics
-        healthResponseTime
-        Nothing $
-    do
+    withMetrics healthResponseTime 1 $ do
     h <- lift $ asks webConfig >>= healthCheck
     unless (isOK h) $ S.status status503
     return h
@@ -1616,10 +1495,7 @@ healthCheck cfg@WebConfig {..} = do
 
 scottyDbStats :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyDbStats =
-    withMetrics
-        dbStatsResponseTime
-        Nothing $
-    do
+    withMetrics dbStatsResponseTime 1 $ do
     setHeaders
     db <- lift $ asks (databaseHandle . storeDB . webStore . webConfig)
     statsM <- lift (getProperty db Stats)

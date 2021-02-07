@@ -80,12 +80,13 @@ import           Haskoin.Node                (Chain, chainBlockMain,
                                               chainGetBlock)
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
+import           Haskoin.Store.Stats
 import           NQE                         (Inbox, Listen, Mailbox,
                                               inboxToMailbox, query, receive,
                                               send)
 import qualified System.Metrics              as Metrics
-import qualified System.Metrics.Counter      as Metrics.Counter
 import qualified System.Metrics.Counter      as Metrics (Counter)
+import qualified System.Metrics.Counter      as Metrics.Counter
 import qualified System.Metrics.Distribution as Metrics (Distribution)
 import qualified System.Metrics.Distribution as Metrics.Distribution
 import qualified System.Metrics.Gauge        as Metrics (Gauge)
@@ -118,11 +119,11 @@ data CacheConfig = CacheConfig
     }
 
 data CacheMetrics = CacheMetrics
-    { cacheHits        :: !Metrics.Counter
-    , cacheMisses      :: !Metrics.Counter
-    , cacheIgnore      :: !Metrics.Counter
-    , cacheIndexTime   :: !Metrics.Distribution
-    , cacheRefreshTime :: !Metrics.Distribution
+    { cacheHits      :: !Metrics.Counter
+    , cacheMisses    :: !Metrics.Counter
+    , cacheIgnore    :: !Metrics.Counter
+    , cacheRefreshes :: !Metrics.Counter
+    , cacheIndexTime :: !StatDist
     }
 
 newCacheMetrics :: MonadIO m => Metrics.Store -> m CacheMetrics
@@ -130,18 +131,18 @@ newCacheMetrics s = liftIO $ do
     cacheHits            <- c "hits"
     cacheMisses          <- c "misses"
     cacheIgnore          <- c "ignore"
+    cacheRefreshes       <- c "refreshes"
     cacheIndexTime       <- d "index_time_ms"
-    cacheRefreshTime     <- d "refresh_time_ms"
     return CacheMetrics{..}
   where
-    c x = Metrics.createCounter      ("cache." <> x) s
-    d x = Metrics.createDistribution ("cache." <> x) s
+    c x = Metrics.createCounter ("cache." <> x) s
+    d x = createStatDist        ("cache." <> x) s
 
-withTimeMetrics :: MonadUnliftIO m
-                => (CacheMetrics -> Metrics.Distribution)
-                -> CacheX m a
-                -> CacheX m a
-withTimeMetrics df go =
+withMetrics :: MonadUnliftIO m
+            => (CacheMetrics -> StatDist)
+            -> CacheX m a
+            -> CacheX m a
+withMetrics df go =
     asks cacheMetrics >>= \case
         Nothing -> go
         Just m ->
@@ -152,9 +153,8 @@ withTimeMetrics df go =
   where
     end metrics t1 = do
         t2 <- systemToUTCTime <$> liftIO getSystemTime
-        let diff = realToFrac $ diffUTCTime t2 t1 * 1000
-            d = df metrics
-        liftIO $ Metrics.Distribution.add d diff
+        let diff = round $ diffUTCTime t2 t1 * 1000
+        df metrics `addStatEntry` StatEntry diff 1
 
 incrementCounter :: MonadIO m
                  => (CacheMetrics -> Metrics.Counter)
@@ -162,7 +162,7 @@ incrementCounter :: MonadIO m
 incrementCounter cf =
     asks cacheMetrics >>= \case
         Nothing -> return ()
-        Just m -> liftIO $ Metrics.Counter.inc (cf m)
+        Just m  -> liftIO $ Metrics.Counter.inc (cf m)
 
 type CacheT = ReaderT (Maybe CacheConfig)
 type CacheX = ReaderT CacheConfig
@@ -203,15 +203,15 @@ instance (MonadUnliftIO m , MonadLoggerIO m, StoreReadExtra m) =>
     getAddressesUnspents addrs = lift . getAddressesUnspents addrs
     xPubBals xpub =
         ask >>= \case
-            Nothing -> lift (xPubBals xpub)
+            Nothing  -> lift (xPubBals xpub)
             Just cfg -> lift (runReaderT (getXPubBalances xpub) cfg)
     xPubUnspents xpub limits =
         ask >>= \case
-            Nothing -> lift (xPubUnspents xpub limits)
+            Nothing  -> lift (xPubUnspents xpub limits)
             Just cfg -> lift (runReaderT (getXPubUnspents xpub limits) cfg)
     xPubTxs xpub limits =
         ask >>= \case
-            Nothing -> lift (xPubTxs xpub limits)
+            Nothing  -> lift (xPubTxs xpub limits)
             Just cfg -> lift (runReaderT (getXPubTxs xpub limits) cfg)
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
@@ -297,7 +297,7 @@ getXPubBalances xpub = do
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
 isInCache xpub =
     ask >>= \case
-        Nothing -> return False
+        Nothing  -> return False
         Just cfg -> runReaderT (isXPubCached xpub) cfg
 
 isXPubCached :: MonadLoggerIO m => XPubSpec -> CacheX m Bool
@@ -555,7 +555,7 @@ withLock ::
     -> CacheX m (Maybe a)
 withLock f =
     bracket lockIt unlockIt $ \case
-        Just _ -> Just <$> f
+        Just _  -> Just <$> f
         Nothing -> return Nothing
 
 smallDelay :: MonadUnliftIO m => CacheX m ()
@@ -643,7 +643,7 @@ newXPubC xpub bals =
     if i
     then do
         incrementCounter cacheMisses
-        withTimeMetrics cacheIndexTime index
+        withMetrics cacheIndexTime index
     else incrementCounter cacheIgnore
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
@@ -1035,12 +1035,12 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
     toInteger <$> asks cacheRefresh >>= \refresh ->
-    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $
-    withTimeMetrics cacheRefreshTime $ do
-        nodepool <- HashSet.fromList . map snd <$> lift getMempool
-        cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-        getem (HashSet.difference nodepool cachepool)
-        getem (HashSet.difference cachepool nodepool)
+    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $ do
+    nodepool <- HashSet.fromList . map snd <$> lift getMempool
+    cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
+    getem (HashSet.difference nodepool cachepool)
+    getem (HashSet.difference cachepool nodepool)
+    incrementCounter cacheRefreshes
   where
     getem tset = do
         let tids = HashSet.toList tset
@@ -1087,7 +1087,7 @@ evictFromCache ::
     => [XPubSpec]
     -> CacheT m ()
 evictFromCache xpubs = ask >>= \case
-    Nothing -> return ()
+    Nothing  -> return ()
     Just cfg -> void (runReaderT (withLockRetry 100 (delXPubKeys xpubs)) cfg)
 
 delXPubKeys ::
