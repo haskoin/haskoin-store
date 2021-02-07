@@ -385,7 +385,7 @@ runWeb cfg@WebConfig{ webHost = host
             S.middleware reqLogger
             S.defaultHandler defHandler
             handlePaths
-            S.notFound $ raise_ ThingNotFound
+            S.notFound $ S.raise ThingNotFound
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
