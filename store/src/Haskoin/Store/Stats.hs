@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell   #-}
 module Haskoin.Store.Stats
     ( StatDist
     , StatEntry(..)
@@ -10,6 +11,8 @@ module Haskoin.Store.Stats
 import           Control.Concurrent.STM.TQueue   (TQueue, flushTQueue,
                                                   writeTQueue)
 import qualified Control.Foldl                   as L
+import           Control.Monad                   (forever)
+import           Control.Monad.Logger            (MonadLoggerIO, logDebugS)
 import           Data.Function                   (on)
 import           Data.HashMap.Strict             (HashMap)
 import qualified Data.HashMap.Strict             as HashMap
@@ -17,17 +20,34 @@ import           Data.Int                        (Int64)
 import           Data.List                       (sort, sortBy)
 import           Data.Maybe                      (fromMaybe)
 import           Data.Ord                        (Down (..), comparing)
+import           Data.String.Conversions         (cs)
 import           Data.Text                       (Text)
 import           System.Metrics                  (Store, Value (..), newStore,
                                                   registerGcMetrics,
-                                                  registerGroup)
+                                                  registerGroup, sampleAll)
 import           System.Remote.Monitoring.Statsd (defaultStatsdOptions,
                                                   forkStatsd, host, prefix)
-import           UnliftIO                        (MonadIO, atomically, liftIO,
-                                                  newTQueueIO)
+import           UnliftIO                        (MonadIO, MonadUnliftIO,
+                                                  atomically, liftIO,
+                                                  newTQueueIO, withAsync)
+import           UnliftIO.Concurrent             (threadDelay)
 
-withStats :: MonadIO m => Text -> Text -> (Store -> m a) -> m a
-withStats h pfx go = do
+withStats :: (MonadUnliftIO m, MonadLoggerIO m)
+          => Text
+          -> Text
+          -> (Store -> m a)
+          -> m a
+withStats _ _ go = do
+    store <- liftIO newStore
+    withAsync (f store) $ \_ -> go store
+  where
+    f store = forever $ do
+        sample <- liftIO $ sampleAll store
+        $(logDebugS) "Stats" $ cs (show sample)
+        threadDelay $ 10 * 1000 * 1000
+
+withStatsNormal :: MonadIO m => Text -> Text -> (Store -> m a) -> m a
+withStatsNormal h pfx go = do
     store <- liftIO newStore
     _statsd <- liftIO $
         forkStatsd
