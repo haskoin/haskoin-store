@@ -25,19 +25,20 @@ import           System.Metrics                  (Store, Value (..), newStore,
                                                   registerGroup, sampleAll)
 import           System.Remote.Monitoring.Statsd (defaultStatsdOptions,
                                                   flushInterval, forkStatsd,
-                                                  host, prefix)
+                                                  host, port, prefix)
 import           UnliftIO                        (MonadIO, atomically, liftIO,
                                                   newTQueueIO, withAsync)
 import           UnliftIO.Concurrent             (threadDelay)
 
-withStats :: MonadIO m => Text -> Text -> (Store -> m a) -> m a
-withStats h pfx go = do
+withStats :: MonadIO m => Text -> Int -> Text -> (Store -> m a) -> m a
+withStats h p pfx go = do
     store <- liftIO newStore
     _statsd <- liftIO $
         forkStatsd
         defaultStatsdOptions
             { prefix = pfx
             , host = h
+            , port = p
             } store
     liftIO $ registerGcMetrics store
     go store

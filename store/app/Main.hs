@@ -76,7 +76,9 @@ data Config = Config
     , configCacheRefresh    :: !Int
     , configCacheRetryDelay :: !Int
     , configNumTxId         :: !Bool
+    , configStatsd          :: !Bool
     , configStatsdHost      :: !String
+    , configStatsdPort      :: !Int
     , configStatsdPrefix    :: !String
     }
 
@@ -106,7 +108,9 @@ instance Default Config where
                  , configCacheRefresh    = defCacheRefresh
                  , configCacheRetryDelay = defCacheRetryDelay
                  , configNumTxId         = defNumTxId
+                 , configStatsd          = defStatsd
                  , configStatsdHost      = defStatsdHost
+                 , configStatsdPort      = defStatsdPort
                  , configStatsdPrefix    = defStatsdPrefix
                  }
 
@@ -252,10 +256,20 @@ defMaxDiff = unsafePerformIO $
     defEnv "MAX_DIFF" 2 readMaybe
 {-# NOINLINE defMaxDiff #-}
 
+defStatsd :: Bool
+defStatsd = unsafePerformIO $
+    defEnv "STATSD" False parseBool
+{-# NOINLINE defStatsd #-}
+
 defStatsdHost :: String
 defStatsdHost = unsafePerformIO $
     defEnv "STATSD_HOST" "localhost" pure
 {-# NOINLINE defStatsdHost #-}
+
+defStatsdPort :: Int
+defStatsdPort = unsafePerformIO $
+    defEnv "STATSD_PORT" 8125 readMaybe
+{-# NOINLINE defStatsdPort #-}
 
 defStatsdPrefix :: String
 defStatsdPrefix =
@@ -487,6 +501,10 @@ config = do
         flag (configNumTxId def) True $
         long "numtxid"
         <> help "Numeric tx_index field"
+    configStatsd <-
+        flag (configStatsd def) True $
+        long "statsd"
+        <> help "Enable statsd metrics"
     configStatsdHost <-
         strOption $
         metavar "HOST"
@@ -494,6 +512,13 @@ config = do
         <> help "Host to send statsd metrics"
         <> showDefault
         <> value (configStatsdHost def)
+    configStatsdPort <-
+        option auto $
+        metavar "PORT"
+        <> long "statsd-port"
+        <> help "Port to send statsd metrics"
+        <> showDefault
+        <> value (configStatsdPort def)
     configStatsdPrefix <-
         strOption $
         metavar "PREFIX"
@@ -574,14 +599,12 @@ run Config { configHost = host
            , configCacheRefresh = crefresh
            , configCacheRetryDelay = cretrydelay
            , configNumTxId = numtxid
-           , configStatsdHost = statsd
-           , configStatsdPrefix = pfx
+           , configStatsd = statsd
+           , configStatsdHost = statsdhost
+           , configStatsdPort = statsdport
+           , configStatsdPrefix = statsdpfx
            } =
-    runStderrLoggingT . filterLogger l $
-    withStats (T.pack statsd) (T.pack pfx) $ \stats -> do
-        $(logInfoS) "Main" $
-            "Sending stats to " <> T.pack statsd <>
-            " with prefix " <> T.pack pfx
+    runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
@@ -608,7 +631,7 @@ run Config { configHost = host
                     , storeConfConnect = withConnection
                     , storeConfCacheRefresh = crefresh
                     , storeConfCacheRetryDelay = cretrydelay
-                    , storeConfStats = Just stats
+                    , storeConfStats = stats
                     }
         withStore scfg $ \st ->
             runWeb
@@ -623,9 +646,21 @@ run Config { configHost = host
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
                     , webNumTxId = numtxid
-                    , webStats = Just stats
+                    , webStats = stats
                     }
   where
+    with_stats go
+        | statsd = do
+            $(logInfoS) "Main" $
+                "Sending stats to " <> T.pack statsdhost <>
+                ":" <> cs (show statsdport) <>
+                " with prefix: " <> T.pack statsdpfx
+            withStats
+                (T.pack statsdhost)
+                statsdport
+                (T.pack statsdpfx)
+                (go . Just)
+        | otherwise = go Nothing
     net' | asert == 0 = net
          | otherwise = net { getAsertActivationTime = Just asert }
     l _ lvl
