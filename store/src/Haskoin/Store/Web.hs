@@ -627,6 +627,7 @@ handlePaths = do
     S.get "/dbstats" scottyDbStats
     -- Blockchain.info
     S.post "/blockchain/multiaddr" scottyMultiAddr
+    S.get  "/blockchain/multiaddr" scottyMultiAddr
     S.get "/blockchain/rawtx/:txid" scottyBinfoTx
   where
     json_list f net = toJSONList . map (f net)
