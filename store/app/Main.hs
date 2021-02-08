@@ -283,7 +283,7 @@ defStatsdPrefix =
     nomad = do
         task <- MaybeT $ lookupEnv "NOMAD_TASK_NAME"
         service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
-        return $ task <> "." <> service
+        return $ "app." <> task <> "." <> service
 {-# NOINLINE defStatsdPrefix #-}
 
 netNames :: String
