@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.40.20
+### Added
+- Prefix 'app.' in statsd when using Nomad variables.
+
 ## 0.40.19
 ### Added
 - Statsd support and pleny of statistics.
