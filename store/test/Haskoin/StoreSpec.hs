@@ -97,8 +97,8 @@ withTestStore net t f =
               , storeConfPeerMaxLife = 48 * 3600
               , storeConfConnect = dummyPeerConnect net ad
               , storeConfCacheRefresh = 750
-              , storeConfCacheRetries = 100
               , storeConfCacheRetryDelay = 100000
+              , storeConfStats = Nothing
               }
     withStore cfg $ \Store {..} ->
         withSubscription storePublisher $ \sub ->

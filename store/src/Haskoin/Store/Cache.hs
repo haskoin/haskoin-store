@@ -6,12 +6,15 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
 module Haskoin.Store.Cache
     ( CacheConfig(..)
+    , CacheMetrics
     , CacheT
     , CacheError(..)
+    , newCacheMetrics
     , withCache
     , connectRedis
     , blockRefScore
@@ -24,71 +27,86 @@ module Haskoin.Store.Cache
     , evictFromCache
     ) where
 
-import           Control.DeepSeq           (NFData)
-import           Control.Monad             (forM, forM_, forever, guard, unless,
-                                            void, when)
-import           Control.Monad.Logger      (MonadLoggerIO, logDebugS, logErrorS,
-                                            logInfoS, logWarnS)
-import           Control.Monad.Reader      (ReaderT (..), ask, asks)
-import           Control.Monad.Trans       (lift)
-import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
-import           Data.Bits                 (shift, (.&.), (.|.))
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Short     as BSS
-import           Data.Default              (def)
-import           Data.Either               (rights)
-import           Data.HashMap.Strict       (HashMap)
-import qualified Data.HashMap.Strict       as HashMap
-import qualified Data.HashSet              as HashSet
-import qualified Data.IntMap.Strict        as I
-import           Data.List                 (sort)
-import qualified Data.Map.Strict           as Map
-import           Data.Maybe                (catMaybes, isNothing, mapMaybe)
-import           Data.Serialize            (Serialize, decode, encode)
-import           Data.String.Conversions   (cs)
-import           Data.Text                 (Text)
-import           Data.Time.Clock.System    (getSystemTime, systemSeconds)
-import           Data.Word                 (Word32, Word64)
-import           Database.Redis            (Connection, Redis, RedisCtx, Reply,
-                                            checkedConnect, defaultConnectInfo,
-                                            hgetall, parseConnectInfo, zadd,
-                                            zrangeWithscores,
-                                            zrangebyscoreWithscoresLimit, zrem)
-import qualified Database.Redis            as Redis
-import           GHC.Generics              (Generic)
-import           Haskoin                   (Address, BlockHash,
-                                            BlockHeader (..), BlockNode (..),
-                                            DerivPathI (..), KeyIndex,
-                                            OutPoint (..), Tx (..), TxHash,
-                                            TxIn (..), TxOut (..), XPubKey,
-                                            blockHashToHex, derivePubPath,
-                                            eitherToMaybe, headerHash,
-                                            pathToList, scriptToAddressBS,
-                                            txHash, xPubAddr,
-                                            xPubCompatWitnessAddr, xPubExport,
-                                            xPubWitnessAddr)
-import           Haskoin.Node              (Chain, chainBlockMain,
-                                            chainGetAncestor, chainGetBest,
-                                            chainGetBlock)
+import           Control.DeepSeq             (NFData)
+import           Control.Monad               (forM, forM_, forever, guard,
+                                              unless, void, when)
+import           Control.Monad.Logger        (MonadLoggerIO, logDebugS,
+                                              logErrorS, logInfoS, logWarnS)
+import           Control.Monad.Reader        (ReaderT (..), ask, asks)
+import           Control.Monad.Trans         (lift)
+import           Control.Monad.Trans.Maybe   (MaybeT (..), runMaybeT)
+import           Data.Bits                   (shift, (.&.), (.|.))
+import           Data.ByteString             (ByteString)
+import qualified Data.ByteString.Short       as BSS
+import           Data.Default                (def)
+import           Data.Either                 (rights)
+import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as HashMap
+import           Data.HashSet                (HashSet)
+import qualified Data.HashSet                as HashSet
+import qualified Data.IntMap.Strict          as I
+import           Data.List                   (sort)
+import qualified Data.Map.Strict             as Map
+import           Data.Maybe                  (catMaybes, isNothing, mapMaybe)
+import           Data.Serialize              (Serialize, decode, encode)
+import           Data.String.Conversions     (cs)
+import           Data.Text                   (Text)
+import           Data.Time.Clock             (NominalDiffTime, diffUTCTime)
+import           Data.Time.Clock.System      (getSystemTime, systemSeconds,
+                                              systemToUTCTime)
+import           Data.Word                   (Word32, Word64)
+import           Database.Redis              (Connection, Redis, RedisCtx,
+                                              Reply, checkedConnect,
+                                              defaultConnectInfo, hgetall,
+                                              parseConnectInfo, zadd,
+                                              zrangeWithscores,
+                                              zrangebyscoreWithscoresLimit,
+                                              zrem)
+import qualified Database.Redis              as Redis
+import           GHC.Generics                (Generic)
+import           Haskoin                     (Address, BlockHash,
+                                              BlockHeader (..), BlockNode (..),
+                                              DerivPathI (..), KeyIndex,
+                                              OutPoint (..), Tx (..), TxHash,
+                                              TxIn (..), TxOut (..), XPubKey,
+                                              blockHashToHex, derivePubPath,
+                                              eitherToMaybe, headerHash,
+                                              pathToList, scriptToAddressBS,
+                                              txHash, xPubAddr,
+                                              xPubCompatWitnessAddr, xPubExport,
+                                              xPubWitnessAddr)
+import           Haskoin.Node                (Chain, chainBlockMain,
+                                              chainGetAncestor, chainGetBest,
+                                              chainGetBlock)
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
-import           NQE                       (Inbox, Listen, Mailbox,
-                                            inboxToMailbox, query, receive,
-                                            send)
-import           System.Random             (randomIO, randomRIO)
-import           UnliftIO                  (Exception, MonadIO, MonadUnliftIO,
-                                            async, atomically, bracket, liftIO,
-                                            link, throwIO, withAsync)
-import           UnliftIO.Concurrent       (threadDelay)
+import           Haskoin.Store.Stats
+import           NQE                         (Inbox, Listen, Mailbox,
+                                              inboxToMailbox, query, receive,
+                                              send)
+import qualified System.Metrics              as Metrics
+import qualified System.Metrics.Counter      as Metrics (Counter)
+import qualified System.Metrics.Counter      as Metrics.Counter
+import qualified System.Metrics.Distribution as Metrics (Distribution)
+import qualified System.Metrics.Distribution as Metrics.Distribution
+import qualified System.Metrics.Gauge        as Metrics (Gauge)
+import qualified System.Metrics.Gauge        as Metrics.Gauge
+import           System.Random               (randomIO, randomRIO)
+import           UnliftIO                    (Exception, MonadIO, MonadUnliftIO,
+                                              TQueue, TVar, async, atomically,
+                                              bracket, liftIO, link, readTQueue,
+                                              readTVar, throwIO, withAsync,
+                                              writeTQueue, writeTVar)
+import           UnliftIO.Concurrent         (threadDelay)
 
 runRedis :: MonadLoggerIO m => Redis (Either Reply a) -> CacheX m a
 runRedis action =
     asks cacheConn >>= \conn ->
     liftIO (Redis.runRedis conn action) >>= \case
-    Right x -> return x
-    Left e -> do
-        $(logErrorS) "Cache" $ "Got error from Redis: " <> cs (show e)
-        throwIO (RedisError e)
+        Right x -> return x
+        Left e -> do
+            $(logErrorS) "Cache" $ "Got error from Redis: " <> cs (show e)
+            throwIO (RedisError e)
 
 data CacheConfig = CacheConfig
     { cacheConn       :: !Connection
@@ -96,9 +114,55 @@ data CacheConfig = CacheConfig
     , cacheMax        :: !Integer
     , cacheChain      :: !Chain
     , cacheRefresh    :: !Int -- millisenconds
-    , cacheRetries    :: !Int
     , cacheRetryDelay :: !Int -- microseconds
+    , cacheMetrics    :: !(Maybe CacheMetrics)
     }
+
+data CacheMetrics = CacheMetrics
+    { cacheHits      :: !Metrics.Counter
+    , cacheMisses    :: !Metrics.Counter
+    , cacheIgnore    :: !Metrics.Counter
+    , cacheRefreshes :: !Metrics.Counter
+    , cacheIndexTime :: !StatDist
+    }
+
+newCacheMetrics :: MonadIO m => Metrics.Store -> m CacheMetrics
+newCacheMetrics s = liftIO $ do
+    cacheHits            <- c "hits"
+    cacheMisses          <- c "misses"
+    cacheIgnore          <- c "ignore"
+    cacheRefreshes       <- c "refreshes"
+    cacheIndexTime       <- d "index_time_ms"
+    return CacheMetrics{..}
+  where
+    c x = Metrics.createCounter ("cache." <> x) s
+    d x = createStatDist        ("cache." <> x) s
+
+withMetrics :: MonadUnliftIO m
+            => (CacheMetrics -> StatDist)
+            -> CacheX m a
+            -> CacheX m a
+withMetrics df go =
+    asks cacheMetrics >>= \case
+        Nothing -> go
+        Just m ->
+            bracket
+            (systemToUTCTime <$> liftIO getSystemTime)
+            (end m)
+            (const go)
+  where
+    end metrics t1 = do
+        t2 <- systemToUTCTime <$> liftIO getSystemTime
+        let diff = round $ diffUTCTime t2 t1 * 1000
+        df metrics `addStatEntry` StatEntry diff 1
+
+incrementCounter :: MonadIO m
+                 => (CacheMetrics -> Metrics.Counter)
+                 -> CacheX m ()
+incrementCounter cf =
+    asks cacheMetrics >>= \case
+        Nothing -> return ()
+        Just m  -> liftIO $ Metrics.Counter.inc (cf m)
 
 type CacheT = ReaderT (Maybe CacheConfig)
 type CacheX = ReaderT CacheConfig
@@ -139,15 +203,15 @@ instance (MonadUnliftIO m , MonadLoggerIO m, StoreReadExtra m) =>
     getAddressesUnspents addrs = lift . getAddressesUnspents addrs
     xPubBals xpub =
         ask >>= \case
-            Nothing -> lift (xPubBals xpub)
+            Nothing  -> lift (xPubBals xpub)
             Just cfg -> lift (runReaderT (getXPubBalances xpub) cfg)
     xPubUnspents xpub limits =
         ask >>= \case
-            Nothing -> lift (xPubUnspents xpub limits)
+            Nothing  -> lift (xPubUnspents xpub limits)
             Just cfg -> lift (runReaderT (getXPubUnspents xpub limits) cfg)
     xPubTxs xpub limits =
         ask >>= \case
-            Nothing -> lift (xPubTxs xpub limits)
+            Nothing  -> lift (xPubTxs xpub limits)
             Just cfg -> lift (runReaderT (getXPubTxs xpub limits) cfg)
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
@@ -171,6 +235,7 @@ getXPubTxs xpub limits = do
     xpubtxt <- xpubText xpub
     isXPubCached xpub >>= \case
         True -> do
+            incrementCounter cacheHits
             txs <- cacheGetXPubTxs xpub limits
             return txs
         False -> do
@@ -185,6 +250,7 @@ getXPubUnspents xpub limits = do
     xpubtxt <- xpubText xpub
     isXPubCached xpub >>= \case
         True -> do
+            incrementCounter cacheHits
             bals <- cacheGetXPubBalances xpub
             process bals
         False -> do
@@ -221,8 +287,8 @@ getXPubBalances xpub = do
     xpubtxt <- xpubText xpub
     isXPubCached xpub >>= \case
         True -> do
-            bals <- cacheGetXPubBalances xpub
-            return bals
+            incrementCounter cacheHits
+            cacheGetXPubBalances xpub
         False -> do
             bals <- lift $ xPubBals xpub
             newXPubC xpub bals
@@ -231,7 +297,7 @@ getXPubBalances xpub = do
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
 isInCache xpub =
     ask >>= \case
-        Nothing -> return False
+        Nothing  -> return False
         Just cfg -> runReaderT (isXPubCached xpub) cfg
 
 isXPubCached :: MonadLoggerIO m => XPubSpec -> CacheX m Bool
@@ -383,7 +449,7 @@ getAllFromMap n = do
 
 data CacheWriterMessage
     = CacheNewBlock
-    | CachePing (Listen ())
+    | CachePing !(Listen ())
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 type CacheWriter = Mailbox CacheWriterMessage
@@ -489,7 +555,7 @@ withLock ::
     -> CacheX m (Maybe a)
 withLock f =
     bracket lockIt unlockIt $ \case
-        Just _ -> Just <$> f
+        Just _  -> Just <$> f
         Nothing -> return Nothing
 
 smallDelay :: MonadUnliftIO m => CacheX m ()
@@ -561,7 +627,9 @@ cacheWriterReact CacheNewBlock =
     inSync >>= \s -> when s newBlockC
 cacheWriterReact (CachePing respond) = do
     s <- inSync
-    when s $ syncMempoolC >> void pruneDB
+    when s $ do
+        syncMempoolC
+        void pruneDB
     atomically (respond ())
 
 lenNotNull :: [XPubBal] -> Int
@@ -571,10 +639,12 @@ newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => XPubSpec -> [XPubBal] -> CacheX m ()
 newXPubC xpub bals =
-    should_index >>= \i -> when i $
-    asks cacheRetries >>= \r ->
-    void . async . withLockRetry r $
-    isXPubCached xpub >>= \c -> when (not c) index
+    should_index >>= \i ->
+    if i
+    then do
+        incrementCounter cacheMisses
+        withMetrics cacheIndexTime index
+    else incrementCounter cacheIgnore
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     should_index = do
@@ -583,7 +653,6 @@ newXPubC xpub bals =
             then inSync
             else return False
     index = do
-        bals <- lift (xPubBals xpub)
         xpubtxt <- xpubText xpub
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
@@ -964,13 +1033,14 @@ withCool key milliseconds run =
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
-syncMempoolC = do
-    refresh <- toInteger <$> asks cacheRefresh
+syncMempoolC =
+    toInteger <$> asks cacheRefresh >>= \refresh ->
     void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $ do
-        nodepool <- HashSet.fromList . map snd <$> lift getMempool
-        cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-        getem (HashSet.difference nodepool cachepool)
-        getem (HashSet.difference cachepool nodepool)
+    nodepool <- HashSet.fromList . map snd <$> lift getMempool
+    cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
+    getem (HashSet.difference nodepool cachepool)
+    getem (HashSet.difference cachepool nodepool)
+    incrementCounter cacheRefreshes
   where
     getem tset = do
         let tids = HashSet.toList tset
@@ -1017,7 +1087,7 @@ evictFromCache ::
     => [XPubSpec]
     -> CacheT m ()
 evictFromCache xpubs = ask >>= \case
-    Nothing -> return ()
+    Nothing  -> return ()
     Just cfg -> void (runReaderT (withLockRetry 100 (delXPubKeys xpubs)) cfg)
 
 delXPubKeys ::

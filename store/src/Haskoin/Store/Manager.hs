@@ -36,7 +36,7 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheWriter,
-                                                connectRedis)
+                                                connectRedis, newCacheMetrics)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
@@ -46,6 +46,7 @@ import           NQE                           (Inbox, Process (..), Publisher,
                                                 publishSTM, receive,
                                                 withProcess, withPublisher,
                                                 withSubscription)
+import qualified System.Metrics                as Metrics (Store)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, STM,
                                                 atomically, link, withAsync)
 import           UnliftIO.Concurrent           (threadDelay)
@@ -97,10 +98,10 @@ data StoreConfig =
       -- ^ connect to peers using the function 'withConnection'
         , storeConfCacheRefresh    :: !Int
       -- ^ refresh the cache this often (milliseconds)
-        , storeConfCacheRetries    :: !Int
-      -- ^ retry count for getting cache lock to index xpub
         , storeConfCacheRetryDelay :: !Int
       -- ^ delay in microseconds to retry getting cache lock
+        , storeConfStats           :: !(Maybe Metrics.Store)
+      -- ^ stats store
         }
 
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -146,6 +147,7 @@ blockStoreCfg cfg node pub db =
         , blockConfNoMempool = storeConfNoMempool cfg
         , blockConfWipeMempool = storeConfWipeMempool cfg
         , blockConfPeerTimeout = storeConfPeerTimeout cfg
+        , blockConfStats = storeConfStats cfg
         }
 
 nodeCfg :: StoreConfig
@@ -182,24 +184,25 @@ withCache cfg chain db pub action =
         Nothing ->
             action Nothing
         Just redisurl ->
+            mapM newCacheMetrics (storeConfStats cfg) >>= \metrics ->
             connectRedis redisurl >>= \conn ->
             withSubscription pub $ \evts ->
-            withProcess (f conn) $ \p ->
+            withProcess (f conn metrics) $ \p ->
             cacheWriterProcesses crefresh evts (getProcessMailbox p) $
-            action (Just (c conn))
+            action (Just (c conn metrics))
   where
     crefresh = storeConfCacheRefresh cfg
-    f conn cwinbox =
-        runReaderT (cacheWriter (c conn) cwinbox) db
-    c conn =
+    f conn metrics cwinbox =
+        runReaderT (cacheWriter (c conn metrics) cwinbox) db
+    c conn metrics =
         CacheConfig
            { cacheConn = conn
            , cacheMin = storeConfCacheMin cfg
            , cacheChain = chain
            , cacheMax = storeConfMaxKeys cfg
            , cacheRefresh = storeConfCacheRefresh cfg
-           , cacheRetries = storeConfCacheRetries cfg
            , cacheRetryDelay = storeConfCacheRetryDelay cfg
+           , cacheMetrics = metrics
            }
 
 cacheWriterProcesses :: MonadUnliftIO m

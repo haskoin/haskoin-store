@@ -7,36 +7,41 @@
 {-# LANGUAGE TupleSections     #-}
 module Main where
 
-import           Control.Arrow           (second)
-import           Control.Monad           (when)
-import           Control.Monad.Logger    (LogLevel (..), filterLogger, logInfoS,
-                                          runStderrLoggingT)
-import           Data.Char               (toLower)
-import           Data.Default            (Default (..))
-import           Data.List               (intercalate)
-import           Data.Maybe              (fromMaybe)
-import           Data.String.Conversions (cs)
-import           Data.Word               (Word32)
-import           Haskoin                 (Network (..), allNets, bch,
-                                          bchRegTest, bchTest, btc, btcRegTest,
-                                          btcTest, eitherToMaybe)
-import           Haskoin.Node            (withConnection)
-import           Haskoin.Store           (StoreConfig (..), WebConfig (..),
-                                          WebLimits (..), WebTimeouts (..),
-                                          runWeb, withStore)
-import           Options.Applicative     (Parser, auto, eitherReader,
-                                          execParser, flag, fullDesc, header,
-                                          help, helper, info, long, many,
-                                          metavar, option, progDesc, short,
-                                          showDefault, strOption, switch, value)
-import           System.Exit             (exitSuccess)
-import           System.FilePath         ((</>))
-import           System.IO.Unsafe        (unsafePerformIO)
-import           Text.Read               (readMaybe)
-import           UnliftIO                (MonadIO)
-import           UnliftIO.Directory      (createDirectoryIfMissing,
-                                          getAppUserDataDirectory)
-import           UnliftIO.Environment    (lookupEnv)
+import           Control.Applicative       ((<|>))
+import           Control.Arrow             (second)
+import           Control.Monad             (when)
+import           Control.Monad.Logger      (LogLevel (..), filterLogger,
+                                            logInfoS, runStderrLoggingT)
+import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
+import           Data.Char                 (toLower)
+import           Data.Default              (Default (..))
+import           Data.List                 (intercalate)
+import           Data.Maybe                (fromMaybe)
+import           Data.String.Conversions   (cs)
+import qualified Data.Text                 as T
+import           Data.Word                 (Word32)
+import           Haskoin                   (Network (..), allNets, bch,
+                                            bchRegTest, bchTest, btc,
+                                            btcRegTest, btcTest, eitherToMaybe)
+import           Haskoin.Node              (withConnection)
+import           Haskoin.Store             (StoreConfig (..), WebConfig (..),
+                                            WebLimits (..), WebTimeouts (..),
+                                            runWeb, withStore)
+import           Haskoin.Store.Stats       (withStats)
+import           Options.Applicative       (Parser, auto, eitherReader,
+                                            execParser, flag, fullDesc, header,
+                                            help, helper, info, long, many,
+                                            metavar, option, progDesc, short,
+                                            showDefault, strOption, switch,
+                                            value)
+import           System.Exit               (exitSuccess)
+import           System.FilePath           ((</>))
+import           System.IO.Unsafe          (unsafePerformIO)
+import           Text.Read                 (readMaybe)
+import           UnliftIO                  (MonadIO)
+import           UnliftIO.Directory        (createDirectoryIfMissing,
+                                            getAppUserDataDirectory)
+import           UnliftIO.Environment      (lookupEnv)
 
 version :: String
 #ifdef CURRENT_PACKAGE_VERSION
@@ -69,9 +74,12 @@ data Config = Config
     , configMaxPeers        :: !Int
     , configMaxDiff         :: !Int
     , configCacheRefresh    :: !Int
-    , configCacheRetries    :: !Int
-    , configCacheRetryDelay :: Int
+    , configCacheRetryDelay :: !Int
     , configNumTxId         :: !Bool
+    , configStatsd          :: !Bool
+    , configStatsdHost      :: !String
+    , configStatsdPort      :: !Int
+    , configStatsdPrefix    :: !String
     }
 
 instance Default Config where
@@ -98,9 +106,12 @@ instance Default Config where
                  , configMaxPeers        = defMaxPeers
                  , configMaxDiff         = defMaxDiff
                  , configCacheRefresh    = defCacheRefresh
-                 , configCacheRetries    = defCacheRetries
                  , configCacheRetryDelay = defCacheRetryDelay
                  , configNumTxId         = defNumTxId
+                 , configStatsd          = defStatsd
+                 , configStatsdHost      = defStatsdHost
+                 , configStatsdPort      = defStatsdPort
+                 , configStatsdPrefix    = defStatsdPrefix
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -112,11 +123,6 @@ defCacheRefresh :: Int
 defCacheRefresh = unsafePerformIO $
     defEnv "CACHE_REFRESH" 750 readMaybe
 {-# NOINLINE defCacheRefresh #-}
-
-defCacheRetries :: Int
-defCacheRetries = unsafePerformIO $
-    defEnv "CACHE_RETRIES" 100 readMaybe
-{-# NOINLINE defCacheRetries #-}
 
 defCacheRetryDelay :: Int
 defCacheRetryDelay = unsafePerformIO $
@@ -249,6 +255,36 @@ defMaxDiff :: Int
 defMaxDiff = unsafePerformIO $
     defEnv "MAX_DIFF" 2 readMaybe
 {-# NOINLINE defMaxDiff #-}
+
+defStatsd :: Bool
+defStatsd = unsafePerformIO $
+    defEnv "STATSD" False parseBool
+{-# NOINLINE defStatsd #-}
+
+defStatsdHost :: String
+defStatsdHost = unsafePerformIO $
+    defEnv "STATSD_HOST" "localhost" pure
+{-# NOINLINE defStatsdHost #-}
+
+defStatsdPort :: Int
+defStatsdPort = unsafePerformIO $
+    defEnv "STATSD_PORT" 8125 readMaybe
+{-# NOINLINE defStatsdPort #-}
+
+defStatsdPrefix :: String
+defStatsdPrefix =
+    unsafePerformIO $
+    runMaybeT go >>= \case
+        Nothing -> return "haskoin_store"
+        Just x -> return x
+  where
+    go = prefix <|> nomad
+    prefix = MaybeT $ lookupEnv "STATSD_PREFIX"
+    nomad = do
+        task <- MaybeT $ lookupEnv "NOMAD_TASK_NAME"
+        service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
+        return $ task <> "." <> service
+{-# NOINLINE defStatsdPrefix #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -439,13 +475,6 @@ config = do
         <> help "Refresh cache this frequently"
         <> showDefault
         <> value (configCacheRefresh def)
-    configCacheRetries <-
-        option auto $
-        metavar "INT"
-        <> long "cache-retries"
-        <> help "Retry getting cache lock to index xpub"
-        <> showDefault
-        <> value (configCacheRetries def)
     configCacheRetryDelay <-
         option auto $
         metavar "MICROSECONDS"
@@ -472,6 +501,31 @@ config = do
         flag (configNumTxId def) True $
         long "numtxid"
         <> help "Numeric tx_index field"
+    configStatsd <-
+        flag (configStatsd def) True $
+        long "statsd"
+        <> help "Enable statsd metrics"
+    configStatsdHost <-
+        strOption $
+        metavar "HOST"
+        <> long "statsd-host"
+        <> help "Host to send statsd metrics"
+        <> showDefault
+        <> value (configStatsdHost def)
+    configStatsdPort <-
+        option auto $
+        metavar "PORT"
+        <> long "statsd-port"
+        <> help "Port to send statsd metrics"
+        <> showDefault
+        <> value (configStatsdPort def)
+    configStatsdPrefix <-
+        strOption $
+        metavar "PREFIX"
+        <> long "statsd-prefix"
+        <> help "Prefix for statsd metrics"
+        <> showDefault
+        <> value (configStatsdPrefix def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -543,11 +597,14 @@ run Config { configHost = host
            , configMaxDiff = maxdiff
            , configNoMempool = nomem
            , configCacheRefresh = crefresh
-           , configCacheRetries = cretries
            , configCacheRetryDelay = cretrydelay
            , configNumTxId = numtxid
+           , configStatsd = statsd
+           , configStatsdHost = statsdhost
+           , configStatsdPort = statsdport
+           , configStatsdPrefix = statsdpfx
            } =
-    runStderrLoggingT . filterLogger l $ do
+    runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
         $(logInfoS) "Main" $
             "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
@@ -573,8 +630,8 @@ run Config { configHost = host
                     , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
                     , storeConfCacheRefresh = crefresh
-                    , storeConfCacheRetries = cretries
                     , storeConfCacheRetryDelay = cretrydelay
+                    , storeConfStats = stats
                     }
         withStore scfg $ \st ->
             runWeb
@@ -589,8 +646,21 @@ run Config { configHost = host
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
                     , webNumTxId = numtxid
+                    , webStats = stats
                     }
   where
+    with_stats go
+        | statsd = do
+            $(logInfoS) "Main" $
+                "Sending stats to " <> T.pack statsdhost <>
+                ":" <> cs (show statsdport) <>
+                " with prefix: " <> T.pack statsdpfx
+            withStats
+                (T.pack statsdhost)
+                statsdport
+                (T.pack statsdpfx)
+                (go . Just)
+        | otherwise = go Nothing
     net' | asert == 0 = net
          | otherwise = net { getAsertActivationTime = Just asert }
     l _ lvl

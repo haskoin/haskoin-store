@@ -1,4 +1,4 @@
-resolver: lts-16.24
+resolver: lts-17.1
 nix:
   packages:
     - perl
@@ -11,8 +11,5 @@ packages:
   - store
   - data
 extra-deps:
-  - haskoin-core-0.19.0
-  - haskoin-node-0.17.1
-  - secp256k1-haskell-0.5.0
-  - rocksdb-haskell-jprupp-2.1.3
-  - rocksdb-query-0.4.2
+  - haskoin-core-0.19.0@sha256:8edd4bd3f0fd658c290bd0b44c2aeb4195789de9510c4f31f67936320810f2bb,4782
+  - haskoin-node-0.17.1@sha256:a835e166fef1e781b635fc9b9a0febfddbf2c986c5a44b84c1eae901ba18932f,2279
