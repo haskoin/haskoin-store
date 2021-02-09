@@ -188,7 +188,6 @@ data WebMetrics = WebMetrics
     , xPubTxResponseTime      :: !StatDist
     , xPubTxFullResponseTime  :: !StatDist
     , xPubUnspentResponseTime :: !StatDist
-    , xPubEvictResponseTime   :: !StatDist
     , multiaddrResponseTime   :: !StatDist
     , multiaddrErrors         :: !ErrorCounter
     , rawtxResponseTime       :: !StatDist
@@ -221,7 +220,6 @@ createMetrics s = liftIO $ do
     xPubTxResponseTime        <- d "xpub_tx.response_time_ms"
     xPubTxFullResponseTime    <- d "xpub_tx_full.response_time_ms"
     xPubUnspentResponseTime   <- d "xpub_unspent.response_time_ms"
-    xPubEvictResponseTime     <- d "xpub_evict.response_time_ms"
     multiaddrResponseTime     <- d "multiaddr.response_time_ms"
     multiaddrErrors           <- e "multiaddr.errors"
     rawtxResponseTime         <- d "rawtx.response_time_ms"
@@ -607,11 +605,6 @@ handlePaths = do
         scottyXPubUnspent
         (list . xPubUnspentToEncoding)
         (json_list xPubUnspentToJSON)
-    pathCompact
-        (GetXPubEvict <$> paramLazy <*> paramDef)
-        scottyXPubEvict
-        (const toEncoding)
-        (const toJSON)
     -- Network
     pathPretty
         (GetPeers & return)
@@ -1150,16 +1143,6 @@ scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) =
     withMetrics xPubUnspentResponseTime 1 $ do
     limits <- paramToLimits False pLimits
     lift . runNoCache noCache $ xPubUnspents (XPubSpec xpub deriv) limits
-
-scottyXPubEvict ::
-       (MonadUnliftIO m, MonadLoggerIO m)
-    => GetXPubEvict
-    -> WebT m (GenericResult Bool)
-scottyXPubEvict (GetXPubEvict xpub deriv) =
-    withMetrics xPubEvictResponseTime 1 $ do
-    cache <- lift $ asks (storeCache . webStore . webConfig)
-    lift . withCache cache $ evictFromCache [XPubSpec xpub deriv]
-    return $ GenericResult True
 
 ---------------------------------------
 -- Blockchain.info API Compatibility --

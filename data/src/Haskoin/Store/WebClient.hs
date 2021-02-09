@@ -45,7 +45,6 @@ module Haskoin.Store.WebClient
 , GetXPubTxsFull(..)
 , GetXPubBalances(..)
 , GetXPubUnspent(..)
-, GetXPubEvict(..)
 -- Network
 , GetPeers(..)
 , GetHealth(..)
