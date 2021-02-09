@@ -640,16 +640,16 @@ cacheWriterReact ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => CacheWriterMessage -> CacheX m ()
 cacheWriterReact CacheNewBlock =
-    doSync True
+    doSync
 cacheWriterReact (CachePing respond) =
-    doSync False >> atomically (respond ())
+    doSync >> atomically (respond ())
 
 doSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-       => Bool -> CacheX m ()
-doSync prune =
+       => CacheX m ()
+doSync =
     inSync >>= \s -> when s $ do
         newBlockC
-        syncMempoolC prune
+        syncMempoolC
         void pruneDB
 
 lenNotNull :: [XPubBal] -> Int
@@ -1052,15 +1052,15 @@ withCool key milliseconds run =
         in void . runRedis $ Redis.setOpts key "0" opts
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-             => Bool -> CacheX m ()
-syncMempoolC prune =
+             => CacheX m ()
+syncMempoolC =
     toInteger <$> asks cacheRefresh >>= \refresh ->
     void . withLock . withCool "cool" (refresh * 9 `div` 10) $
     withMetrics cacheMempoolSyncTime $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
     getem (HashSet.difference nodepool cachepool)
-    when prune $ getem (HashSet.difference cachepool nodepool)
+    getem (HashSet.difference cachepool nodepool)
     incrementCounter cacheRefreshes
   where
     getem tset = do

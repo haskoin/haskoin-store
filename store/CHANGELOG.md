@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.41.2
+### Changed
+- Caching mempool is not much slower when pruning, so reversing that change.
+
 ## 0.41.1
 ### Changed
 - Only prune mempool every ten minutes or so.
