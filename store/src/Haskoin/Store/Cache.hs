@@ -119,11 +119,16 @@ data CacheConfig = CacheConfig
     }
 
 data CacheMetrics = CacheMetrics
-    { cacheHits      :: !Metrics.Counter
-    , cacheMisses    :: !Metrics.Counter
-    , cacheIgnore    :: !Metrics.Counter
-    , cacheRefreshes :: !Metrics.Counter
-    , cacheIndexTime :: !StatDist
+    { cacheHits            :: !Metrics.Counter
+    , cacheMisses          :: !Metrics.Counter
+    , cacheIgnore          :: !Metrics.Counter
+    , cacheRefreshes       :: !Metrics.Counter
+    , cacheLockAcquired    :: !Metrics.Counter
+    , cacheLockReleased    :: !Metrics.Counter
+    , cacheLockFailed      :: !Metrics.Counter
+    , cacheIndexTime       :: !StatDist
+    , cacheMempoolSyncTime :: !StatDist
+    , cacheBlockSyncTime   :: !StatDist
     }
 
 newCacheMetrics :: MonadIO m => Metrics.Store -> m CacheMetrics
@@ -132,7 +137,12 @@ newCacheMetrics s = liftIO $ do
     cacheMisses          <- c "misses"
     cacheIgnore          <- c "ignore"
     cacheRefreshes       <- c "refreshes"
+    cacheLockAcquired    <- c "lock_acquired"
+    cacheLockReleased    <- c "lock_released"
+    cacheLockFailed      <- c "lock_failed"
     cacheIndexTime       <- d "index_time_ms"
+    cacheMempoolSyncTime <- d "mempool_sync_time_ms"
+    cacheBlockSyncTime   <- d "block_sync_time_ms"
     return CacheMetrics{..}
   where
     c x = Metrics.createCounter ("cache." <> x) s
@@ -500,21 +510,26 @@ lockIt = do
         Right Redis.Ok -> do
             $(logDebugS) "Cache" $
                 "Acquired lock with value " <> cs (show rnd)
+            incrementCounter cacheLockAcquired
             return (Just rnd)
         Right Redis.Pong -> do
             $(logErrorS) "Cache"
                 "Unexpected pong when acquiring lock"
+            incrementCounter cacheLockFailed
             return Nothing
         Right (Redis.Status s) -> do
             $(logErrorS) "Cache" $
                 "Unexpected status acquiring lock: " <> cs s
+            incrementCounter cacheLockFailed
             return Nothing
         Left (Redis.Bulk Nothing) -> do
             $(logDebugS) "Cache" "Lock already taken"
+            incrementCounter cacheLockFailed
             return Nothing
         Left e -> do
             $(logErrorS) "Cache"
                 "Error when trying to acquire lock"
+            incrementCounter cacheLockFailed
             throwIO (RedisError e)
   where
     go rnd = do
@@ -544,6 +559,7 @@ unlockIt (Just i) =
                 $(logDebugS) "Cache" $
                     "Released lock with value " <>
                     cs (show i)
+                incrementCounter cacheLockReleased
             else
                 $(logErrorS) "Cache" $
                     "Could not release lock: value is not " <>
@@ -750,6 +766,7 @@ importBlockC :: (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m)
              => BlockHash -> CacheX m ()
 importBlockC bh =
     withLockForever $
+    withMetrics cacheBlockSyncTime $
     cacheGetHead >>= \case
         Nothing -> go
         Just cb ->
@@ -1035,7 +1052,8 @@ syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
 syncMempoolC =
     toInteger <$> asks cacheRefresh >>= \refresh ->
-    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $ do
+    void . withLockForever . withCool "cool" (refresh * 9 `div` 10) $
+    withMetrics cacheMempoolSyncTime $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
     getem (HashSet.difference nodepool cachepool)
