@@ -326,7 +326,8 @@ withBlockStore cfg action = do
                       "Could not initialize: " <> cs (show e)
                   throwIO e
               Right () -> return ()
-    run inbox = withAsync (pingMe (inboxToMailbox inbox))
+    run inbox =
+          withAsync (pingMe (inboxToMailbox inbox))
           $ const
           $ forever
           $ receive inbox >>=
@@ -962,26 +963,26 @@ processBlockStoreMessage (TxRefAvailable p ts) =
     processTxs p ts
 
 processBlockStoreMessage (BlockPing r) = do
-    trySyncing
-    processMempool
-    pruneOrphans
-    checkTime
-    pruneMempool
     setStoreHeight
     setHeadersHeight
     setPendingTxs
     setPeersConnected
     setMempoolSize
+    trySyncing
+    processMempool
+    pruneOrphans
+    checkTime
+    pruneMempool
     atomically (r ())
 
 pingMe :: MonadLoggerIO m => Mailbox BlockStoreMessage -> m ()
 pingMe mbox =
     forever $ do
+        BlockPing `query` mbox
         delay <- liftIO $
             randomRIO (  100 * 1000
                       , 1000 * 1000 )
         threadDelay delay
-        BlockPing `query` mbox
 
 blockStorePeerConnect :: MonadIO m => Peer -> BlockStore -> m ()
 blockStorePeerConnect peer store =
