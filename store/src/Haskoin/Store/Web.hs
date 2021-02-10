@@ -1279,7 +1279,7 @@ scottyMultiAddr =
             Nothing -> raise multiaddrErrors ThingNotFound
             Just b -> return b
     get_price ticker = do
-        code <- T.toUpper <$> S.param "local" `S.rescue` const (return "USD")
+        code <- T.toUpper <$> S.param "currency" `S.rescue` const (return "USD")
         prices <- readTVarIO ticker
         case HashMap.lookup code prices of
             Nothing -> return def
