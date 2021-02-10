@@ -1204,26 +1204,30 @@ scottyMultiAddr =
     cashaddr <- get_cashaddr
     numtxid <- lift $ asks (webNumTxId . webConfig)
     xbals <- get_xbals xspecs
-    let sxbals = compute_sxbals sxpubs xbals
-    sxtrs <- get_sxtrs sxpubs xspecs
-    sabals <- get_abals saddrs
-    satrs <- get_atrs n offset saddrs
+    let sxbals = subset sxpubs xbals
+    xtrs <- get_xtrs xspecs
+    abals <- get_abals addrs
+    atrs <- get_atrs addrs
     ticker <- lift $ asks webTicker
     local <- get_price ticker
-    let sxtns = HashMap.map length sxtrs
-        sxtrset = Set.fromList . concat $ HashMap.elems sxtrs
+    let xtns = HashMap.map length xtrs
+        xtrset = Set.fromList . concat $ HashMap.elems xtrs
+        xabals = compute_xabals xbals
         sxabals = compute_xabals sxbals
+        sabals = subset saddrs abals
         sallbals = sabals <> sxabals
+        allbals = abals <> xabals
         abook = compute_abook addrs xbals
         sxaddrs = compute_xaddrs sxbals
         salladdrs = sxaddrs <> saddrs
-        bal = compute_bal sallbals
-        salltrs = sxtrset <> satrs
-        stxids = compute_txids n offset salltrs
-    stxs <- get_txs stxids
-    let etxids = if numtxid
-                then compute_etxids prune abook stxs
-                else []
+        bal = compute_bal allbals
+        alltrs = xtrset <> atrs
+        txids = compute_txids alltrs
+    txs <- get_txs salladdrs (n + offset) txids
+    let etxids =
+            if numtxid
+            then compute_etxids prune abook (map fst (filter snd txs))
+            else []
     etxs <- if numtxid
             then Just <$> get_etxs etxids
             else return Nothing
@@ -1231,12 +1235,12 @@ scottyMultiAddr =
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     let ibal = fromIntegral bal
-        btxs = binfo_txs etxs abook salladdrs prune ibal stxs
-        ftxs = take n $ drop offset btxs
-        addrs = toBinfoAddrs sabals sxbals sxtns
-        recv = sum $ map getBinfoAddrReceived addrs
-        sent = sum $ map getBinfoAddrSent addrs
-        txn = sum $ map getBinfoAddrTxCount addrs
+        btxs = binfo_txs etxs abook prune ibal txs
+        ftxs = drop offset btxs
+        baddrs = toBinfoAddrs sabals sxbals xtns
+        recv = sum $ map getBinfoAddrReceived baddrs
+        sent = sum $ map getBinfoAddrSent baddrs
+        txn = fromIntegral $ Set.size alltrs
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
@@ -1264,7 +1268,7 @@ scottyMultiAddr =
     setHeaders
     S.json $ binfoMultiAddrToJSON net
         BinfoMultiAddr
-        { getBinfoMultiAddrAddresses = addrs
+        { getBinfoMultiAddrAddresses = baddrs
         , getBinfoMultiAddrWallet = wallet
         , getBinfoMultiAddrTxs = ftxs
         , getBinfoMultiAddrInfo = info
@@ -1303,17 +1307,21 @@ scottyMultiAddr =
         case parseBinfoAddr net p of
             Nothing -> raise multiaddrErrors (UserError "invalid active address")
             Just xs -> return $ HashSet.fromList xs
+    subset ks =
+        HashMap.filterWithKey (\k _ -> k `HashSet.member` ks)
     addr (BinfoAddr a) = Just a
     addr (BinfoXpub x) = Nothing
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
-    binfo_txs _ _ _ _ _ [] = []
-    binfo_txs etxs abook salladdrs prune ibal (t:ts) =
-        let b = toBinfoTx etxs abook salladdrs prune ibal t
+    binfo_txs _ _ _ _ [] = []
+    binfo_txs etxs abook prune ibal ((t, i):ts) =
+        let b = toBinfoTx etxs abook prune ibal t
             nbal = case getBinfoTxResultBal b of
                 Nothing     -> ibal
                 Just (_, x) -> ibal - x
-         in b : binfo_txs etxs abook salladdrs prune nbal ts
+         in if i
+            then b : binfo_txs etxs abook prune nbal ts
+            else binfo_txs etxs abook prune nbal ts
     get_addrs = do
         active <- get_addrs_param "active"
         p2sh <- get_addrs_param "activeP2SH"
@@ -1343,15 +1351,31 @@ scottyMultiAddr =
         let f b = (balanceAddress b, b)
             g = HashMap.fromList . map f
         in fmap g . getBalances . HashSet.toList
-    get_sxtrs sxpubs =
+    get_xtrs =
         let f (k, s) = (,) k <$> xPubTxs s def
-            g = ((`HashSet.member` sxpubs) . fst)
-        in fmap HashMap.fromList . mapM f . filter g . HashMap.toList
-    get_atrs n offset =
-        let i = fromIntegral (n + offset)
-            f x = getAddressesTxs x def{limit = i}
+        in fmap HashMap.fromList . mapM f . HashMap.toList
+    get_atrs =
+        let f x = getAddressesTxs x def
         in fmap Set.fromList . f . HashSet.toList
-    get_txs = fmap catMaybes . mapM getTransaction
+    get_txs _ _ [] = return []
+    get_txs _ 0 _ = return []
+    get_txs s n (i:is) =
+        getTransaction i >>= \case
+        Nothing -> get_txs s n is
+        Just t ->
+            if addr_in_set s t
+            then ((t, True):) <$> get_txs s (n - 1) is
+            else ((t, False):) <$> get_txs s n is
+    addr_in_set s t =
+        let f StoreCoinbase{} = False
+            f StoreInput{inputAddress = Nothing} = False
+            f StoreInput{inputAddress = Just a} = a `HashSet.member` s
+            g StoreOutput{outputAddress = m} = case m of
+                Nothing -> False
+                Just a -> a `HashSet.member` s
+            i = any f (transactionInputs t)
+            o = any g (transactionOutputs t)
+        in i || o
     get_etxs =
         let f t = (txHash (transactionData t), t)
             g = HashMap.fromList . map f . catMaybes
@@ -1360,13 +1384,10 @@ scottyMultiAddr =
         ps <- lift $ getPeersInformation =<<
             asks (storeManager . webStore . webConfig)
         return (fromIntegral (length ps))
-    compute_txids n offset = map txRefHash . take (n + offset) . Set.toDescList
+    compute_txids = map txRefHash . Set.toDescList
     compute_etxids prune abook =
         let f = relevantTxs (HashMap.keysSet abook) prune
         in HashSet.toList . foldl HashSet.union HashSet.empty . map f
-    compute_sxbals sxpubs =
-        let f k _ = k `HashSet.member` sxpubs
-        in HashMap.filterWithKey f
     compute_xabals =
         let f b = (balanceAddress (xPubBal b), xPubBal b)
         in HashMap.fromList . concatMap (map f) . HashMap.elems

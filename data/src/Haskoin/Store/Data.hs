@@ -2293,7 +2293,7 @@ toBinfoTxSimple :: Maybe (HashMap TxHash Transaction)
                 -> Transaction
                 -> BinfoTx
 toBinfoTxSimple etxs =
-    toBinfoTx etxs HashMap.empty HashSet.empty False 0
+    toBinfoTx etxs HashMap.empty False 0
 
 toBinfoTxInputs :: Maybe (HashMap TxHash Transaction)
                 -> HashMap Address (Maybe BinfoXPubPath)
@@ -2327,12 +2327,11 @@ toBinfoBlockIndex Transaction{transactionBlock = BlockRef h _} = Just h
 
 toBinfoTx :: Maybe (HashMap TxHash Transaction)
           -> HashMap Address (Maybe BinfoXPubPath)
-          -> HashSet Address
           -> Bool
           -> Int64
           -> Transaction
           -> BinfoTx
-toBinfoTx etxs abook saddrs prune bal t@Transaction{..} =
+toBinfoTx etxs abook prune bal t@Transaction{..} =
     BinfoTx{ getBinfoTxHash = txHash (transactionData t)
            , getBinfoTxVer = transactionVersion
            , getBinfoTxVinSz = fromIntegral (length transactionInputs)
@@ -2352,15 +2351,16 @@ toBinfoTx etxs abook saddrs prune bal t@Transaction{..} =
            , getBinfoTxResultBal = resbal
            }
   where
-    simple = HashSet.null saddrs && HashMap.null abook && bal == 0
-    resbal = if simple then Nothing else Just (getTxResult saddrs t, bal)
+    simple = HashMap.null abook && bal == 0
+    resbal = if simple then Nothing else Just (getTxResult aset t, bal)
+    aset = HashMap.keysSet abook
     outs =
-        let p = prune && getTxResult saddrs t > 0
+        let p = prune && getTxResult aset t > 0
             f = toBinfoTxOutput etxs abook p t
         in catMaybes $ zipWith f [0..] transactionOutputs
 
 getTxResult :: HashSet Address -> Transaction -> Int64
-getTxResult saddrs Transaction{..} =
+getTxResult aset Transaction{..} =
     let input_sum = sum $ map input_value transactionInputs
         input_value StoreCoinbase{} = 0
         input_value StoreInput{..} =
@@ -2370,7 +2370,7 @@ getTxResult saddrs Transaction{..} =
                     if test_addr a
                     then negate $ fromIntegral inputAmount
                     else 0
-        test_addr a = HashSet.member a saddrs
+        test_addr a = HashSet.member a aset
         output_sum = sum $ map out_value transactionOutputs
         out_value StoreOutput{..} =
             case outputAddress of
