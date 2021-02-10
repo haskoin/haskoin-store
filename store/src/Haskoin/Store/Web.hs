@@ -1238,8 +1238,9 @@ scottyMultiAddr =
         btxs = binfo_txs etxs abook prune ibal txs
         ftxs = drop offset btxs
         baddrs = toBinfoAddrs sabals sxbals xtns
-        recv = sum $ map getBinfoAddrReceived baddrs
-        sent = sum $ map getBinfoAddrSent baddrs
+        abaddrs = toBinfoAddrs abals xbals xtns
+        recv = sum $ map getBinfoAddrReceived abaddrs
+        sent = sum $ map getBinfoAddrSent abaddrs
         txn = fromIntegral $ Set.size alltrs
         wallet =
             BinfoWallet
