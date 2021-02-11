@@ -9,7 +9,6 @@ module Haskoin.Store.Logic
     ( ImportException (..)
     , MonadImport
     , initBest
-    , getOldMempool
     , revertBlock
     , importBlock
     , newMempoolTx

@@ -79,9 +79,8 @@ import           Haskoin.Store.Database.Reader
 import           Haskoin.Store.Database.Writer
 import           Haskoin.Store.Logic           (ImportException (Orphan),
                                                 deleteUnconfirmedTx,
-                                                getOldMempool, importBlock,
-                                                initBest, newMempoolTx,
-                                                revertBlock)
+                                                importBlock, initBest,
+                                                newMempoolTx, revertBlock)
 import           Haskoin.Store.Stats
 import           NQE                           (Listen, Mailbox, Publisher,
                                                 inboxToMailbox, newInbox,
@@ -171,7 +170,7 @@ setStoreHeight =
         Nothing -> setit m 0
         Just bb -> getBlock bb >>= \case
             Nothing -> setit m 0
-            Just b -> setit m (blockDataHeight b)
+            Just b  -> setit m (blockDataHeight b)
   where
     setit m i = liftIO $ storeHeight m `Metrics.Gauge.set` fromIntegral i
 
@@ -728,27 +727,6 @@ checkTime =
                     "Syncing peer timeout: " <> peerText p
                 killPeer PeerTimeout p
 
-pruneMempool :: MonadLoggerIO m => BlockT m ()
-pruneMempool = guardMempool $ do
-    s <- isInSync
-    when s $ do
-        now <- liftIO getCurrentTime
-        let seconds = floor (utcTimeToPOSIXSeconds now)
-        getOldMempool seconds >>= \old ->
-            unless (null old) $
-            runImport (mapM_ delete_it old) >>= \case
-                Left e -> do
-                    $(logErrorS) "BlockStore" $
-                        "Could not prune mempool: "
-                        <> cs (show e)
-                    throwIO e
-                Right x -> return x
-  where
-    delete_it txid = do
-        $(logDebugS) "BlockStore" $
-            "Deleting old mempool tx: " <> txHashToHex txid
-        deleteUnconfirmedTx False txid
-
 revertToMainChain :: MonadLoggerIO m => BlockT m ()
 revertToMainChain = do
     h <- headerHash . nodeHeader <$> getBest
@@ -972,7 +950,6 @@ processBlockStoreMessage (BlockPing r) = do
     processMempool
     pruneOrphans
     checkTime
-    pruneMempool
     atomically (r ())
 
 pingMe :: MonadLoggerIO m => Mailbox BlockStoreMessage -> m ()
