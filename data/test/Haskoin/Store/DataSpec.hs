@@ -462,6 +462,7 @@ instance Arbitrary BinfoTx where
         getBinfoTxLockTime <- arbitrary
         getBinfoTxIndex <- arbitrary
         getBinfoTxDoubleSpend <- arbitrary
+        getBinfoTxRBF <- arbitrary
         getBinfoTxTime <- arbitrary
         getBinfoTxBlockIndex <- arbitrary
         getBinfoTxBlockHeight <- arbitrary

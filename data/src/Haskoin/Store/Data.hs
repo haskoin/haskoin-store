@@ -1903,6 +1903,7 @@ data BinfoTx
         , getBinfoTxLockTime    :: !Word32
         , getBinfoTxIndex       :: !BinfoTxId
         , getBinfoTxDoubleSpend :: !Bool
+        , getBinfoTxRBF         :: !Bool
         , getBinfoTxResultBal   :: !(Maybe (Int64, Int64))
         , getBinfoTxTime        :: !Word64
         , getBinfoTxBlockIndex  :: !(Maybe Word32)
@@ -1931,10 +1932,13 @@ binfoTxToJSON net BinfoTx {..} =
         , "block_height" .= getBinfoTxBlockHeight
         , "inputs" .= map (binfoTxInputToJSON net) getBinfoTxInputs
         , "out" .= map (binfoTxOutputToJSON net) getBinfoTxOutputs
-        ] ++
+        ] ++ bal ++ rbf
+  where
+    bal =
         case getBinfoTxResultBal of
             Nothing         -> []
             Just (res, bal) -> ["result" .= res, "balance" .= bal]
+    rbf = if getBinfoTxRBF then ["rbf" .= True] else []
 
 binfoTxToEncoding :: Network -> BinfoTx -> Encoding
 binfoTxToEncoding net BinfoTx {..} =
@@ -1955,9 +1959,13 @@ binfoTxToEncoding net BinfoTx {..} =
         "block_height" .= getBinfoTxBlockHeight <>
         "inputs" `pair` list (binfoTxInputToEncoding net) getBinfoTxInputs <>
         "out" `pair` list (binfoTxOutputToEncoding net) getBinfoTxOutputs <>
+        bal <> rbf
+  where
+    bal =
         case getBinfoTxResultBal of
             Nothing         -> mempty
             Just (res, bal) -> "result" .= res <> "balance" .= bal
+    rbf = if getBinfoTxRBF then "rbf" .= True else mempty
 
 binfoTxParseJSON :: Network -> Value -> Parser BinfoTx
 binfoTxParseJSON net = withObject "tx" $ \o -> do
@@ -1977,6 +1985,7 @@ binfoTxParseJSON net = withObject "tx" $ \o -> do
     getBinfoTxBlockHeight <- o .: "block_height"
     getBinfoTxInputs <- o .: "inputs" >>= mapM (binfoTxInputParseJSON net)
     getBinfoTxOutputs <- o .: "out" >>= mapM (binfoTxOutputParseJSON net)
+    getBinfoTxRBF <- o .:? "rbf" .!= False
     res <- o .:? "result"
     bal <- o .:? "balance"
     let getBinfoTxResultBal = (,) <$> res <*> bal
@@ -2423,7 +2432,8 @@ toBinfoTx etxs abook prune bal t@Transaction{..} =
            , getBinfoTxRelayedBy = "0.0.0.0"
            , getBinfoTxLockTime = transactionLockTime
            , getBinfoTxIndex = binfoTransactionIndex (isNothing etxs) t
-           , getBinfoTxDoubleSpend = transactionRBF
+           , getBinfoTxDoubleSpend = transactionDeleted
+           , getBinfoTxRBF = transactionRBF
            , getBinfoTxTime = transactionTime
            , getBinfoTxBlockIndex = toBinfoBlockIndex t
            , getBinfoTxBlockHeight = toBinfoBlockIndex t
