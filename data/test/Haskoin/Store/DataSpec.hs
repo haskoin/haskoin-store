@@ -82,8 +82,6 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoSpender)
     , JsonBox (arbitrary :: Gen BinfoTicker)
     , JsonBox (arbitrary :: Gen BinfoTxId)
-    , JsonBox (arbitrary :: Gen BinfoUnspent)
-    , JsonBox (arbitrary :: Gen BinfoUnspents)
     ]
 
 netVals :: [NetBox]
@@ -143,6 +141,10 @@ netVals =
     , NetBox ( binfoXPubPathToJSON
              , binfoXPubPathToEncoding
              , binfoXPubPathParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoUnspentToJSON
+             , binfoUnspentToEncoding
+             , binfoUnspentParseJSON
              , arbitraryNetData)
     ]
 
@@ -545,6 +547,7 @@ instance Arbitrary BinfoUnspent where
         getBinfoUnspentValue <- arbitrary
         getBinfoUnspentConfirmations <- arbitrary
         getBinfoUnspentTxIndex <- arbitrary
+        getBinfoUnspentXPub <- arbitrary
         return BinfoUnspent{..}
 
 instance Arbitrary BinfoUnspents where

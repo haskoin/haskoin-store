@@ -106,7 +106,13 @@ module Haskoin.Store.Data
     , parseBinfoAddr
     , BinfoWallet(..)
     , BinfoUnspent(..)
+    , binfoUnspentToJSON
+    , binfoUnspentToEncoding
+    , binfoUnspentParseJSON
     , BinfoUnspents(..)
+    , binfoUnspentsToJSON
+    , binfoUnspentsToEncoding
+    , binfoUnspentsParseJSON
     , BinfoTx(..)
     , relevantTxs
     , toBinfoTx
@@ -1132,12 +1138,12 @@ instance ToJSON XPubSummary where
             , "indices" .= object ["change" .= ch, "external" .= ext]
             ]
     toEncoding XPubSummary { xPubSummaryConfirmed = c
-                       , xPubSummaryZero = z
-                       , xPubSummaryReceived = r
-                       , xPubUnspentCount = u
-                       , xPubExternalIndex = ext
-                       , xPubChangeIndex = ch
-                       } =
+                           , xPubSummaryZero = z
+                           , xPubSummaryReceived = r
+                           , xPubUnspentCount = u
+                           , xPubExternalIndex = ext
+                           , xPubChangeIndex = ch
+                           } =
         pairs
             (  "balance" `pair` pairs
                 (  "confirmed" .= c
@@ -1420,8 +1426,7 @@ instance ToJSON Event where
     toEncoding (EventTx h) =
         pairs ("type" `pair` text "tx" <> "id" `pair` text (txHashToHex h))
     toEncoding (EventBlock h) =
-        pairs
-            ("type" `pair` text "block" <> "id" `pair` text (blockHashToHex h))
+        pairs ("type" `pair` text "block" <> "id" `pair` text (blockHashToHex h))
 
 instance FromJSON Event where
     parseJSON =
@@ -1820,11 +1825,12 @@ data BinfoUnspent
       , getBinfoUnspentValue           :: !Word64
       , getBinfoUnspentConfirmations   :: !Word32
       , getBinfoUnspentTxIndex         :: !BinfoTxId
+      , getBinfoUnspentXPub            :: !(Maybe BinfoXPubPath)
       } deriving (Eq, Show, Generic, Serialize, NFData)
 
-instance ToJSON BinfoUnspent where
-    toJSON BinfoUnspent{..} =
-        object
+binfoUnspentToJSON :: Network -> BinfoUnspent -> Value
+binfoUnspentToJSON net BinfoUnspent{..} =
+        object $
         [ "tx_hash" .= getBinfoUnspentHash
         , "tx_hash_big_endian" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash))
         , "tx_output_n" .= getBinfoUnspentOutputIndex
@@ -1833,32 +1839,55 @@ instance ToJSON BinfoUnspent where
         , "value_hex" .= (printf "%x" getBinfoUnspentValue :: String)
         , "confirmations" .= getBinfoUnspentConfirmations
         , "tx_index" .= getBinfoUnspentTxIndex
+        ] <>
+        [ "xpub" .= binfoXPubPathToJSON net x
+        | x <- maybeToList getBinfoUnspentXPub
         ]
 
-instance FromJSON BinfoUnspent where
-    parseJSON = withObject "unspent" $ \o -> do
+binfoUnspentToEncoding :: Network -> BinfoUnspent -> Encoding
+binfoUnspentToEncoding net BinfoUnspent{..} =
+        pairs $
+        "tx_hash" .= getBinfoUnspentHash <>
+        "tx_hash_big_endian" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash)) <>
+        "tx_output_n" .= getBinfoUnspentOutputIndex <>
+        "script" .= encodeHex getBinfoUnspentScript <>
+        "value" .= getBinfoUnspentValue <>
+        "value_hex" .= (printf "%x" getBinfoUnspentValue :: String) <>
+        "confirmations" .= getBinfoUnspentConfirmations <>
+        "tx_index" .= getBinfoUnspentTxIndex <>
+        maybe mempty (("xpub" `pair`) . binfoXPubPathToEncoding net) getBinfoUnspentXPub
+
+binfoUnspentParseJSON :: Network -> Value -> Parser BinfoUnspent
+binfoUnspentParseJSON net = withObject "unspent" $ \o -> do
         getBinfoUnspentHash <- o .: "tx_hash"
         getBinfoUnspentOutputIndex <- o .: "tx_output_n"
         getBinfoUnspentScript <- maybe mzero return . decodeHex =<< o .: "script"
         getBinfoUnspentValue <- o .: "value"
         getBinfoUnspentConfirmations <- o .: "confirmations"
         getBinfoUnspentTxIndex <- o .: "tx_index"
+        getBinfoUnspentXPub <- mapM (binfoXPubPathParseJSON net) =<< o .:? "xpub"
         return BinfoUnspent{..}
 
 newtype BinfoUnspents = BinfoUnspents [BinfoUnspent]
     deriving (Eq, Show, Generic, Serialize, NFData)
 
-instance ToJSON BinfoUnspents where
-    toJSON (BinfoUnspents us) =
-        object
-        [ "notice" .= T.empty
-        , "unspent_outputs" .= us
-        ]
+binfoUnspentsToJSON :: Network -> BinfoUnspents -> Value
+binfoUnspentsToJSON net (BinfoUnspents us) =
+    object
+    [ "notice" .= T.empty
+    , "unspent_outputs" .= map (binfoUnspentToJSON net) us
+    ]
 
-instance FromJSON BinfoUnspents where
-    parseJSON = withObject "unspents" $ \o -> do
-        us <- o .: "unspent_outputs"
-        return (BinfoUnspents us)
+binfoUnspentsToEncoding :: Network -> BinfoUnspents -> Encoding
+binfoUnspentsToEncoding net (BinfoUnspents us) =
+    pairs $
+    "notice" .= T.empty <>
+    "unspent_outputs" `pair` list (binfoUnspentToEncoding net) us
+
+binfoUnspentsParseJSON :: Network -> Value -> Parser BinfoUnspents
+binfoUnspentsParseJSON net = withObject "unspents" $ \o -> do
+    us <- mapM (binfoUnspentParseJSON net) =<< o .: "unspent_outputs"
+    return (BinfoUnspents us)
 
 data BinfoTx
     = BinfoTx
