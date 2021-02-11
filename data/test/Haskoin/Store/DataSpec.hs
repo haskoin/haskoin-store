@@ -57,6 +57,8 @@ serialVals =
     , SerialBox (arbitrary :: Gen BinfoTxInput)
     , SerialBox (arbitrary :: Gen BinfoTx)
     , SerialBox (arbitrary :: Gen BinfoTxId)
+    , SerialBox (arbitrary :: Gen BinfoUnspent)
+    , SerialBox (arbitrary :: Gen BinfoUnspents)
     ]
 
 jsonVals :: [JsonBox]
@@ -80,6 +82,8 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoSpender)
     , JsonBox (arbitrary :: Gen BinfoTicker)
     , JsonBox (arbitrary :: Gen BinfoTxId)
+    , JsonBox (arbitrary :: Gen BinfoUnspent)
+    , JsonBox (arbitrary :: Gen BinfoUnspents)
     ]
 
 netVals :: [NetBox]
@@ -532,3 +536,16 @@ instance Arbitrary BinfoTicker where
         binfoTickerLast <- arbitrary
         binfoTickerSymbol <- cs <$> listOf1 arbitraryUnicodeChar
         return BinfoTicker{..}
+
+instance Arbitrary BinfoUnspent where
+    arbitrary = do
+        getBinfoUnspentHash <- arbitraryTxHash
+        getBinfoUnspentOutputIndex <- arbitrary
+        getBinfoUnspentScript <- B.pack <$> listOf arbitrary
+        getBinfoUnspentValue <- arbitrary
+        getBinfoUnspentConfirmations <- arbitrary
+        getBinfoUnspentTxIndex <- arbitrary
+        return BinfoUnspent{..}
+
+instance Arbitrary BinfoUnspents where
+    arbitrary = BinfoUnspents <$> arbitrary

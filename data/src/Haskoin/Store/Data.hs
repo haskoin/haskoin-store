@@ -105,6 +105,8 @@ module Haskoin.Store.Data
     , BinfoAddr(..)
     , parseBinfoAddr
     , BinfoWallet(..)
+    , BinfoUnspent(..)
+    , BinfoUnspents(..)
     , BinfoTx(..)
     , relevantTxs
     , toBinfoTx
@@ -156,11 +158,11 @@ import           Data.Default            (Default (..))
 import           Data.Either             (fromRight, lefts, rights)
 import           Data.Foldable           (toList)
 import           Data.Function           (on)
-import           Data.Hashable           (Hashable (..))
 import           Data.HashMap.Strict     (HashMap)
 import qualified Data.HashMap.Strict     as HashMap
 import           Data.HashSet            (HashSet)
 import qualified Data.HashSet            as HashSet
+import           Data.Hashable           (Hashable (..))
 import           Data.Int                (Int64)
 import qualified Data.IntMap             as IntMap
 import           Data.IntMap.Strict      (IntMap)
@@ -194,6 +196,7 @@ import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           txHashToHex, wrapPubKey, xPubFromJSON,
                                           xPubImport, xPubToEncoding,
                                           xPubToJSON)
+import           Text.Printf             (printf)
 import           Text.Read               (readMaybe)
 import           Web.Scotty.Trans        (Parsable (..), ScottyError (..))
 
@@ -463,7 +466,7 @@ unspentParseJSON net =
         script <- BSS.toShort <$> (o .: "pkscript" >>= jsonHex)
         addr <- o .: "address" >>= \case
             Nothing -> return Nothing
-            Just a -> Just <$> addrFromJSON net a <|> return Nothing
+            Just a  -> Just <$> addrFromJSON net a <|> return Nothing
         return
             Unspent
                 { unspentBlock = block
@@ -698,7 +701,7 @@ storeInputParseJSON net =
                 value <- o .: "value"
                 addr <- o .: "address" >>= \case
                     Nothing -> return Nothing
-                    Just a -> Just <$> addrFromJSON net a <|> return Nothing
+                    Just a  -> Just <$> addrFromJSON net a <|> return Nothing
                 return
                     StoreInput
                         { inputPoint = outpoint
@@ -779,7 +782,7 @@ storeOutputParseJSON net =
         spender <- o .: "spender"
         addr <- o .: "address" >>= \case
             Nothing -> return Nothing
-            Just a -> Just <$> addrFromJSON net a <|> return Nothing
+            Just a  -> Just <$> addrFromJSON net a <|> return Nothing
         return
             StoreOutput
                 { outputAmount = value
@@ -1808,6 +1811,54 @@ instance FromJSON BinfoWallet where
         getBinfoWalletTotalReceived <- o .: "total_received"
         getBinfoWalletTotalSent <- o .: "total_sent"
         return BinfoWallet {..}
+
+data BinfoUnspent
+    = BinfoUnspent
+      { getBinfoUnspentHash            :: !TxHash
+      , getBinfoUnspentOutputIndex     :: !Word32
+      , getBinfoUnspentScript          :: !ByteString
+      , getBinfoUnspentValue           :: !Word64
+      , getBinfoUnspentConfirmations   :: !Word32
+      , getBinfoUnspentTxIndex         :: !BinfoTxId
+      } deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoUnspent where
+    toJSON BinfoUnspent{..} =
+        object
+        [ "tx_hash" .= getBinfoUnspentHash
+        , "tx_hash_big_endian" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash))
+        , "tx_output_n" .= getBinfoUnspentOutputIndex
+        , "script" .= encodeHex getBinfoUnspentScript
+        , "value" .= getBinfoUnspentValue
+        , "value_hex" .= (printf "%x" getBinfoUnspentValue :: String)
+        , "confirmations" .= getBinfoUnspentConfirmations
+        , "tx_index" .= getBinfoUnspentTxIndex
+        ]
+
+instance FromJSON BinfoUnspent where
+    parseJSON = withObject "unspent" $ \o -> do
+        getBinfoUnspentHash <- o .: "tx_hash"
+        getBinfoUnspentOutputIndex <- o .: "tx_output_n"
+        getBinfoUnspentScript <- maybe mzero return . decodeHex =<< o .: "script"
+        getBinfoUnspentValue <- o .: "value"
+        getBinfoUnspentConfirmations <- o .: "confirmations"
+        getBinfoUnspentTxIndex <- o .: "tx_index"
+        return BinfoUnspent{..}
+
+newtype BinfoUnspents = BinfoUnspents [BinfoUnspent]
+    deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance ToJSON BinfoUnspents where
+    toJSON (BinfoUnspents us) =
+        object
+        [ "notice" .= T.empty
+        , "unspent_outputs" .= us
+        ]
+
+instance FromJSON BinfoUnspents where
+    parseJSON = withObject "unspents" $ \o -> do
+        us <- o .: "unspent_outputs"
+        return (BinfoUnspents us)
 
 data BinfoTx
     = BinfoTx
