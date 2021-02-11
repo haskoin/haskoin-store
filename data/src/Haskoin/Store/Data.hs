@@ -93,6 +93,7 @@ module Haskoin.Store.Data
     , binfoTxIndexBlock
     , binfoTransactionIndex
     , BinfoTxId(..)
+    , getBinfoTxId
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding

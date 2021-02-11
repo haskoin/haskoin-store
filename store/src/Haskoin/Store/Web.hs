@@ -38,14 +38,16 @@ import           Data.Aeson.Text               (encodeToLazyText)
 import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
+import           Data.ByteString.Short         (fromShort)
 import           Data.Char                     (isSpace)
 import           Data.Default                  (Default (..))
-import           Data.Function                 ((&))
+import           Data.Function                 (on, (&))
 import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as HashMap
+import           Data.HashSet                  (HashSet)
 import qualified Data.HashSet                  as HashSet
 import           Data.Int                      (Int64)
-import           Data.List                     (nub)
+import           Data.List                     (nub, sortBy)
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
                                                 listToMaybe, mapMaybe)
@@ -190,6 +192,8 @@ data WebMetrics = WebMetrics
     , xPubUnspentResponseTime :: !StatDist
     , multiaddrResponseTime   :: !StatDist
     , multiaddrErrors         :: !ErrorCounter
+    , unspentResponseTime     :: !StatDist
+    , unspentErrors           :: !ErrorCounter
     , rawtxResponseTime       :: !StatDist
     , rawtxErrors             :: !ErrorCounter
     , peerResponseTime        :: !StatDist
@@ -228,6 +232,8 @@ createMetrics s = liftIO $ do
     healthResponseTime        <- d "health.response_time_ms"
     dbStatsResponseTime       <- d "dbstats.response_time_ms"
     eventsConnected           <- g "events.connected"
+    unspentResponseTime       <- d "unspent.response_time_ms"
+    unspentErrors             <- e "unspent.errors"
     return WebMetrics{..}
   where
     d x = createStatDist       ("web." <> x) s
@@ -621,6 +627,8 @@ handlePaths = do
     -- Blockchain.info
     S.post "/blockchain/multiaddr" scottyMultiAddr
     S.get  "/blockchain/multiaddr" scottyMultiAddr
+    S.post "/blockchain/unspent" scottyBinfoUnspent
+    S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get "/blockchain/rawtx/:txid" scottyBinfoTx
   where
     json_list f net = toJSONList . map (f net)
@@ -763,7 +771,7 @@ scottyBlockBest (GetBlockBest (NoTx notx)) =
         Nothing -> raise blockErrors ThingNotFound
         Just bb -> getBlock bb >>= \case
             Nothing -> raise blockErrors ThingNotFound
-            Just b -> return $ pruneTx notx b
+            Just b  -> return $ pruneTx notx b
 
 scottyBlockBestRaw ::
        (MonadUnliftIO m, MonadLoggerIO m)
@@ -1192,8 +1200,103 @@ binfoTickerToSymbol code BinfoTicker{..} =
         "GBP" -> "British pound"
         x     -> x
 
-scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m)
-                => WebT m ()
+getBinfoAddrsParam :: MonadIO m => Text -> WebT m (HashSet BinfoAddr)
+getBinfoAddrsParam name = do
+    net <- lift (asks (storeNetwork . webStore . webConfig))
+    p <- S.param (cs name) `S.rescue` const (return "")
+    case parseBinfoAddr net p of
+        Nothing -> raise multiaddrErrors (UserError "invalid active address")
+        Just xs -> return $ HashSet.fromList xs
+
+getBinfoActive :: MonadIO m => WebT m (HashMap XPubKey XPubSpec, HashSet Address)
+getBinfoActive = do
+    active <- getBinfoAddrsParam "active"
+    p2sh <- getBinfoAddrsParam "activeP2SH"
+    bech32 <- getBinfoAddrsParam "activeBech32"
+    let xspec d b = (\x -> (x, XPubSpec x d)) <$> xpub b
+        xspecs = HashMap.fromList $ concat
+                 [ mapMaybe (xspec DeriveNormal) (HashSet.toList active)
+                 , mapMaybe (xspec DeriveP2SH) (HashSet.toList p2sh)
+                 , mapMaybe (xspec DeriveP2WPKH) (HashSet.toList bech32)
+                 ]
+        addrs = HashSet.fromList . mapMaybe addr $ HashSet.toList active
+    return (xspecs, addrs)
+  where
+    addr (BinfoAddr a) = Just a
+    addr (BinfoXpub x) = Nothing
+    xpub (BinfoXpub x) = Just x
+    xpub (BinfoAddr _) = Nothing
+
+scottyBinfoUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoUnspent =
+    getBinfoActive >>= \(xspecs, addrs) ->
+    let len = HashSet.size addrs + HashMap.size xspecs
+    in withMetrics unspentResponseTime len $ do
+    xuns <- get_xpub_unspents xspecs
+    auns <- get_addr_unspents addrs
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    numtxid <- lift $ asks (webNumTxId . webConfig)
+    etxs <- if numtxid then Just <$> get_etxs xuns auns else return Nothing
+    height <- get_height
+    limit <- get_limit
+    min_conf <- get_min_conf
+    let g k = map (xpub_unspent etxs height k)
+        xbus = concatMap (uncurry g) (HashMap.toList xuns)
+        abus = map (unspent etxs height) auns
+        f u@BinfoUnspent{..} =
+            ((getBinfoUnspentHash, getBinfoUnspentOutputIndex), u)
+        busm = HashMap.fromList (map f (xbus ++ abus))
+        bus =
+            take limit $
+            filter ((min_conf <=) . getBinfoUnspentConfirmations) $
+            sortBy
+            (flip compare `on` getBinfoUnspentConfirmations)
+            (HashMap.elems busm)
+    setHeaders
+    S.json $ binfoUnspentsToJSON net (BinfoUnspents bus)
+  where
+    get_limit = fmap (min 1000) $ S.param "limit" `S.rescue` const (return 250)
+    get_min_conf = S.param "limit" `S.rescue` const (return 0)
+    get_etxs xuns auns = do
+        let als = map (outPointHash . unspentPoint) auns
+            xelems = concat (HashMap.elems xuns)
+            xls = map (outPointHash . unspentPoint . xPubUnspent) xelems
+            ids = HashSet.fromList (als ++ xls)
+            f i = fmap (i,) <$> getTransaction i
+        HashMap.fromList . catMaybes <$> mapM f (HashSet.toList ids)
+    get_height =
+        getBestBlock >>= \case
+        Nothing -> raise unspentErrors ThingNotFound
+        Just bh -> getBlock bh >>= \case
+            Nothing -> raise unspentErrors ThingNotFound
+            Just b  -> return (blockDataHeight b)
+    xpub_unspent etxs height xpub (XPubUnspent p u) =
+        let path = toSoft (listToPath p)
+            xp = BinfoXPubPath xpub <$> path
+            bu = unspent etxs height u
+        in bu {getBinfoUnspentXPub = xp}
+    unspent etxs height Unspent{..} =
+        let conf = case unspentBlock of
+                       MemRef{}     -> 0
+                       BlockRef h _ -> height - h
+            hash = outPointHash unspentPoint
+            idx = outPointIndex unspentPoint
+            val = unspentAmount
+            script = fromShort unspentScript
+            txi = getBinfoTxId etxs hash
+        in BinfoUnspent
+           { getBinfoUnspentHash = hash
+           , getBinfoUnspentOutputIndex = idx
+           , getBinfoUnspentScript = script
+           , getBinfoUnspentValue = val
+           , getBinfoUnspentConfirmations = conf
+           , getBinfoUnspentTxIndex = txi
+           , getBinfoUnspentXPub = Nothing
+           }
+    get_xpub_unspents = mapM (`xPubUnspents` def)
+    get_addr_unspents = (`getAddressesUnspents` def) . HashSet.toList
+
+scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
     get_addrs >>= \(addrs, xpubs, saddrs, sxpubs, xspecs) ->
     let len = HashSet.size addrs + HashSet.size xpubs
@@ -1282,7 +1385,7 @@ scottyMultiAddr =
         Nothing -> raise multiaddrErrors ThingNotFound
         Just bh -> getBlock bh >>= \case
             Nothing -> raise multiaddrErrors ThingNotFound
-            Just b -> return b
+            Just b  -> return b
     get_price ticker = do
         code <- T.toUpper <$> S.param "currency" `S.rescue` const (return "USD")
         prices <- readTVarIO ticker
@@ -1302,12 +1405,6 @@ scottyMultiAddr =
         x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
         o <- min x <$> (S.param "offset" `S.rescue` const (return 0))
         return (fromIntegral o :: Int)
-    get_addrs_param name = do
-        net <- lift (asks (storeNetwork . webStore . webConfig))
-        p <- S.param name `S.rescue` const (return "")
-        case parseBinfoAddr net p of
-            Nothing -> raise multiaddrErrors (UserError "invalid active address")
-            Just xs -> return $ HashSet.fromList xs
     subset ks =
         HashMap.filterWithKey (\k _ -> k `HashSet.member` ks)
     addr (BinfoAddr a) = Just a
@@ -1324,19 +1421,11 @@ scottyMultiAddr =
             then b : binfo_txs etxs abook prune nbal ts
             else binfo_txs etxs abook prune nbal ts
     get_addrs = do
-        active <- get_addrs_param "active"
-        p2sh <- get_addrs_param "activeP2SH"
-        bech32 <- get_addrs_param "activeBech32"
-        sh <- get_addrs_param "onlyShow"
-        let xspec d b = (\x -> (x, XPubSpec x d)) <$> xpub b
-            xspecs = HashMap.fromList $ concat
-                     [ mapMaybe (xspec DeriveNormal) (HashSet.toList active)
-                     , mapMaybe (xspec DeriveP2SH) (HashSet.toList p2sh)
-                     , mapMaybe (xspec DeriveP2WPKH) (HashSet.toList bech32)
-                     ]
-            actives = active <> p2sh <> bech32
-            addrs = HashSet.fromList . mapMaybe addr $ HashSet.toList actives
-            xpubs = HashSet.fromList . mapMaybe xpub $ HashSet.toList actives
+        (xspecs, addrs) <- getBinfoActive
+        sh <- getBinfoAddrsParam "onlyShow"
+        let xpubs = HashMap.keysSet xspecs
+            actives = HashSet.map BinfoAddr addrs <>
+                      HashSet.map BinfoXpub xpubs
             sh' = if HashSet.null sh
                   then actives
                   else sh `HashSet.intersection` actives
@@ -1368,12 +1457,12 @@ scottyMultiAddr =
             then ((t, True):) <$> get_txs s (n - 1) is
             else ((t, False):) <$> get_txs s n is
     addr_in_set s t =
-        let f StoreCoinbase{} = False
+        let f StoreCoinbase{}                    = False
             f StoreInput{inputAddress = Nothing} = False
-            f StoreInput{inputAddress = Just a} = a `HashSet.member` s
+            f StoreInput{inputAddress = Just a}  = a `HashSet.member` s
             g StoreOutput{outputAddress = m} = case m of
                 Nothing -> False
-                Just a -> a `HashSet.member` s
+                Just a  -> a `HashSet.member` s
             i = any f (transactionInputs t)
             o = any g (transactionOutputs t)
         in i || o
