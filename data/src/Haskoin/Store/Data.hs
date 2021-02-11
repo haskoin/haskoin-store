@@ -1832,8 +1832,8 @@ data BinfoUnspent
 binfoUnspentToJSON :: Network -> BinfoUnspent -> Value
 binfoUnspentToJSON net BinfoUnspent{..} =
         object $
-        [ "tx_hash" .= getBinfoUnspentHash
-        , "tx_hash_big_endian" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash))
+        [ "tx_hash_big_endian" .= getBinfoUnspentHash
+        , "tx_hash" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash))
         , "tx_output_n" .= getBinfoUnspentOutputIndex
         , "script" .= encodeHex getBinfoUnspentScript
         , "value" .= getBinfoUnspentValue
@@ -1848,8 +1848,8 @@ binfoUnspentToJSON net BinfoUnspent{..} =
 binfoUnspentToEncoding :: Network -> BinfoUnspent -> Encoding
 binfoUnspentToEncoding net BinfoUnspent{..} =
         pairs $
-        "tx_hash" .= getBinfoUnspentHash <>
-        "tx_hash_big_endian" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash)) <>
+        "tx_hash_big_endian" .= getBinfoUnspentHash <>
+        "tx_hash" .= encodeHex (S.encode (getTxHash getBinfoUnspentHash)) <>
         "tx_output_n" .= getBinfoUnspentOutputIndex <>
         "script" .= encodeHex getBinfoUnspentScript <>
         "value" .= getBinfoUnspentValue <>
@@ -1860,7 +1860,7 @@ binfoUnspentToEncoding net BinfoUnspent{..} =
 
 binfoUnspentParseJSON :: Network -> Value -> Parser BinfoUnspent
 binfoUnspentParseJSON net = withObject "unspent" $ \o -> do
-        getBinfoUnspentHash <- o .: "tx_hash"
+        getBinfoUnspentHash <- o .: "tx_hash_big_endian"
         getBinfoUnspentOutputIndex <- o .: "tx_output_n"
         getBinfoUnspentScript <- maybe mzero return . decodeHex =<< o .: "script"
         getBinfoUnspentValue <- o .: "value"
