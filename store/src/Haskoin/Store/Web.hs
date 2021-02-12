@@ -674,6 +674,11 @@ pathCommon parser action encJson encValue pretty =
     toProxy = const Proxy
     proxy = toProxy parser
 
+streamEncoding :: Monad m => Encoding -> WebT m ()
+streamEncoding e = do
+   S.setHeader "Content-Type" "application/json; charset=utf-8"
+   S.raw (encodingToLazyByteString e)
+
 protoSerial
     :: Serialize a
     => SerialAs
@@ -1254,7 +1259,7 @@ scottyBinfoUnspent =
     etxs <- if numtxid then Just <$> get_etxs bus else return Nothing
     let bus' = if numtxid then map (add_txid etxs) bus else bus
     setHeaders
-    S.json $ binfoUnspentsToJSON net (BinfoUnspents bus')
+    streamEncoding (binfoUnspentsToEncoding net (BinfoUnspents bus'))
   where
     add_txid etxs b =
         b {getBinfoUnspentTxIndex = getBinfoTxId etxs (getBinfoUnspentHash b)}
@@ -1376,7 +1381,7 @@ scottyMultiAddr =
             , getBinfoLatestBlock = block
             }
     setHeaders
-    S.json $ binfoMultiAddrToJSON net
+    streamEncoding $ binfoMultiAddrToEncoding net
         BinfoMultiAddr
         { getBinfoMultiAddrAddresses = baddrs
         , getBinfoMultiAddrWallet = wallet
