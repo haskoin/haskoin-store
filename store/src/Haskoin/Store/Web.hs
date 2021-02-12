@@ -1552,7 +1552,7 @@ scottyBinfoTx =
             etxs = HashMap.fromList . map f <$> etxs'
         net <- lift $ asks (storeNetwork . webStore . webConfig)
         setHeaders
-        S.json . binfoTxToJSON net $ toBinfoTxSimple etxs t
+        streamEncoding $ binfoTxToEncoding net $ toBinfoTxSimple etxs t
     hex t = do
         setHeaders
         S.text . TL.fromStrict . encodeHex . encode $ transactionData t
