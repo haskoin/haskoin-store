@@ -1256,7 +1256,7 @@ scottyBinfoUnspent =
     S.json $ binfoUnspentsToJSON net (BinfoUnspents bus)
   where
     get_limit = fmap (min 1000) $ S.param "limit" `S.rescue` const (return 250)
-    get_min_conf = S.param "limit" `S.rescue` const (return 0)
+    get_min_conf = S.param "confirmations" `S.rescue` const (return 0)
     get_etxs xuns auns = do
         let als = map (outPointHash . unspentPoint) auns
             xelems = concat (HashMap.elems xuns)
