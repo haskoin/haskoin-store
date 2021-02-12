@@ -1278,7 +1278,7 @@ scottyBinfoUnspent =
     unspent etxs height Unspent{..} =
         let conf = case unspentBlock of
                        MemRef{}     -> 0
-                       BlockRef h _ -> height - h
+                       BlockRef h _ -> height - h + 1
             hash = outPointHash unspentPoint
             idx = outPointIndex unspentPoint
             val = unspentAmount
