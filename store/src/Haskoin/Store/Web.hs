@@ -1236,46 +1236,47 @@ scottyBinfoUnspent =
     auns <- get_addr_unspents addrs
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     numtxid <- lift $ asks (webNumTxId . webConfig)
-    etxs <- if numtxid then Just <$> get_etxs xuns auns else return Nothing
     height <- get_height
     limit <- get_limit
     min_conf <- get_min_conf
-    let g k = map (xpub_unspent etxs height k)
+    let g k = map (xpub_unspent height k)
         xbus = concatMap (uncurry g) (HashMap.toList xuns)
-        abus = map (unspent etxs height) auns
+        abus = map (unspent height) auns
         f u@BinfoUnspent{..} =
             ((getBinfoUnspentHash, getBinfoUnspentOutputIndex), u)
         busm = HashMap.fromList (map f (xbus ++ abus))
         bus =
             take limit $
-            filter ((min_conf <=) . getBinfoUnspentConfirmations) $
+            takeWhile ((min_conf <=) . getBinfoUnspentConfirmations) $
             sortBy
             (flip compare `on` getBinfoUnspentConfirmations)
             (HashMap.elems busm)
+    etxs <- if numtxid then Just <$> get_etxs bus else return Nothing
+    let bus' = if numtxid then map (add_txid etxs) bus else bus
     setHeaders
-    S.json $ binfoUnspentsToJSON net (BinfoUnspents bus)
+    S.json $ binfoUnspentsToJSON net (BinfoUnspents bus')
   where
+    add_txid etxs b =
+        b {getBinfoUnspentTxIndex = getBinfoTxId etxs (getBinfoUnspentHash b)}
     get_limit = fmap (min 1000) $ S.param "limit" `S.rescue` const (return 250)
     get_min_conf = S.param "confirmations" `S.rescue` const (return 0)
-    get_etxs xuns auns = do
-        let als = map (outPointHash . unspentPoint) auns
-            xelems = concat (HashMap.elems xuns)
-            xls = map (outPointHash . unspentPoint . xPubUnspent) xelems
-            ids = HashSet.fromList (als ++ xls)
+    get_etxs bus = do
+        let xs = map getBinfoUnspentHash bus
+            hs = HashSet.toList $ HashSet.fromList xs
             f i = fmap (i,) <$> getTransaction i
-        HashMap.fromList . catMaybes <$> mapM f (HashSet.toList ids)
+        HashMap.fromList . catMaybes <$> mapM f hs
     get_height =
         getBestBlock >>= \case
         Nothing -> raise unspentErrors ThingNotFound
         Just bh -> getBlock bh >>= \case
             Nothing -> raise unspentErrors ThingNotFound
             Just b  -> return (blockDataHeight b)
-    xpub_unspent etxs height xpub (XPubUnspent p u) =
+    xpub_unspent height xpub (XPubUnspent p u) =
         let path = toSoft (listToPath p)
             xp = BinfoXPubPath xpub <$> path
-            bu = unspent etxs height u
+            bu = unspent height u
         in bu {getBinfoUnspentXPub = xp}
-    unspent etxs height Unspent{..} =
+    unspent height Unspent{..} =
         let conf = case unspentBlock of
                        MemRef{}     -> 0
                        BlockRef h _ -> height - h + 1
@@ -1283,7 +1284,7 @@ scottyBinfoUnspent =
             idx = outPointIndex unspentPoint
             val = unspentAmount
             script = fromShort unspentScript
-            txi = getBinfoTxId etxs hash
+            txi = getBinfoTxId Nothing hash
         in BinfoUnspent
            { getBinfoUnspentHash = hash
            , getBinfoUnspentOutputIndex = idx
