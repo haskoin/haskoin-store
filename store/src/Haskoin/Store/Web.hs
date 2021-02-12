@@ -1344,7 +1344,7 @@ scottyMultiAddr =
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     let ibal = fromIntegral sbal
-        btxs = binfo_txs etxs abook prune ibal stxs
+        btxs = binfo_txs etxs salladdrs abook prune ibal stxs
         ftxs = drop offset btxs
         baddrs = toBinfoAddrs sabals sxbals xtns
         abaddrs = toBinfoAddrs abals xbals xtns
@@ -1417,13 +1417,24 @@ scottyMultiAddr =
     addr (BinfoXpub x) = Nothing
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
-    binfo_txs _ _ _ _ [] = []
-    binfo_txs etxs abook prune ibal (t:ts) =
+    compute_bal_change addrs BinfoTx{..} =
+        let ins = mapMaybe getBinfoTxInputPrevOut getBinfoTxInputs
+            out = getBinfoTxOutputs
+            f b BinfoTxOutput{..} =
+                let val = fromIntegral getBinfoTxOutputValue
+                in case getBinfoTxOutputAddress of
+                       Nothing -> 0
+                       Just a | a `HashSet.member` addrs ->
+                                if b
+                                then val
+                                else negate val
+                              | otherwise -> 0
+        in sum $ map (f False) ins <> map (f True) out
+    binfo_txs _ _ _ _ _ [] = []
+    binfo_txs etxs salladdrs abook prune ibal (t:ts) =
         let b = toBinfoTx etxs abook prune ibal t
-            nbal = case getBinfoTxResultBal b of
-                Nothing     -> ibal
-                Just (_, x) -> ibal - x
-         in b : binfo_txs etxs abook prune nbal ts
+            nbal = ibal - compute_bal_change salladdrs b
+         in b : binfo_txs etxs salladdrs abook prune nbal ts
     get_addrs = do
         (xspecs, addrs) <- getBinfoActive
         sh <- getBinfoAddrsParam "onlyShow"
