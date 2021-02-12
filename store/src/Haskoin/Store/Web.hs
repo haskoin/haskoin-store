@@ -1310,27 +1310,32 @@ scottyMultiAddr =
     xbals <- get_xbals xspecs
     let sxbals = subset sxpubs xbals
     xtrs <- get_xtrs xspecs
+    let sxtrs = subset sxpubs xtrs
     abals <- get_abals addrs
-    atrs <- get_atrs addrs
+    satrs <- get_atrs saddrs
+    nosatrs <- get_atrs (addrs `HashSet.difference` saddrs)
     ticker <- lift $ asks webTicker
     local <- get_price ticker
     let xtns = HashMap.map length xtrs
-        xtrset = Set.fromList . concat $ HashMap.elems xtrs
+        xtrset = Set.fromList (concat (HashMap.elems xtrs))
+        sxtrset = Set.fromList (concat (HashMap.elems sxtrs))
         xabals = compute_xabals xbals
         sxabals = compute_xabals sxbals
         sabals = subset saddrs abals
         sallbals = sabals <> sxabals
+        sbal = compute_bal sallbals
         allbals = abals <> xabals
         abook = compute_abook addrs xbals
         sxaddrs = compute_xaddrs sxbals
         salladdrs = sxaddrs <> saddrs
         bal = compute_bal allbals
-        alltrs = xtrset <> atrs
-        txids = compute_txids alltrs
-    txs <- get_txs salladdrs (n + offset) txids
+        alltrs = xtrset <> nosatrs <> satrs
+        salltrs = sxtrset <> satrs
+        stxids = compute_txids salltrs
+    stxs <- catMaybes <$> mapM getTransaction (take (n + offset) stxids)
     let etxids =
             if numtxid
-            then compute_etxids prune abook (map fst (filter snd txs))
+            then compute_etxids prune abook (drop offset stxs)
             else []
     etxs <- if numtxid
             then Just <$> get_etxs etxids
@@ -1338,8 +1343,8 @@ scottyMultiAddr =
     best <- get_best_block
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    let ibal = fromIntegral bal
-        btxs = binfo_txs etxs abook prune ibal txs
+    let ibal = fromIntegral sbal
+        btxs = binfo_txs etxs abook prune ibal stxs
         ftxs = drop offset btxs
         baddrs = toBinfoAddrs sabals sxbals xtns
         abaddrs = toBinfoAddrs abals xbals xtns
@@ -1413,14 +1418,12 @@ scottyMultiAddr =
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
     binfo_txs _ _ _ _ [] = []
-    binfo_txs etxs abook prune ibal ((t, i):ts) =
+    binfo_txs etxs abook prune ibal (t:ts) =
         let b = toBinfoTx etxs abook prune ibal t
             nbal = case getBinfoTxResultBal b of
                 Nothing     -> ibal
                 Just (_, x) -> ibal - x
-         in if i
-            then b : binfo_txs etxs abook prune nbal ts
-            else binfo_txs etxs abook prune nbal ts
+         in b : binfo_txs etxs abook prune nbal ts
     get_addrs = do
         (xspecs, addrs) <- getBinfoActive
         sh <- getBinfoAddrsParam "onlyShow"
