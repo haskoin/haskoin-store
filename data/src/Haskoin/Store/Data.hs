@@ -82,18 +82,9 @@ module Haskoin.Store.Data
     , Except(..)
 
      -- * Blockchain.info API
-    , BinfoTxIndex
-    , isBinfoTxIndexNull
-    , isBinfoTxIndexBlock
-    , isBinfoTxIndexHash
-    , encodeBinfoTxIndexHash
-    , hashToBinfoTxIndex
-    , blockToBinfoTxIndex
-    , matchBinfoTxHash
-    , binfoTxIndexBlock
-    , binfoTransactionIndex
     , BinfoTxId(..)
-    , getBinfoTxId
+    , encodeBinfoTxId
+    , decodeBinfoTxId
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
@@ -1572,74 +1563,48 @@ instance FromJSON Except where
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
-type BinfoTxIndex = Int64
-
-isBinfoTxIndexNull :: BinfoTxIndex -> Bool
-isBinfoTxIndexNull = (0 >)
-
-isBinfoTxIndexBlock :: BinfoTxIndex -> Bool
-isBinfoTxIndexBlock n = 0 <= n && not (testBit n 48)
-
-isBinfoTxIndexHash :: BinfoTxIndex -> Bool
-isBinfoTxIndexHash n = 0 <= n && testBit n 48
-
-encodeBinfoTxIndexHash :: BinfoTxIndex -> Maybe ByteString
-encodeBinfoTxIndexHash n =
-    if isBinfoTxIndexHash n
-    then Just . B.drop 2 $ S.encode n
-    else Nothing
-
-hashToBinfoTxIndex :: TxHash -> BinfoTxIndex
-hashToBinfoTxIndex h =
-    fromRight (error "weird monkeys dancing") . S.decode $
-    0x00 `B.cons` 0x01 `B.cons` B.take 6 (S.encode h)
-
-blockToBinfoTxIndex :: BlockHeight -> Word32 -> BinfoTxIndex
-blockToBinfoTxIndex h p =
-    let norm = (.&.) (2 ^ 24 - 1) . fromIntegral
-     in norm h `shift` 24 .|. norm p
-
-matchBinfoTxHash :: Int64 -> TxHash -> Bool
-matchBinfoTxHash n h =
-    let bn = B.drop 2 $ S.encode n
-        bh = B.take 6 $ S.encode h
-    in isBinfoTxIndexHash n && bn == bh
-
-binfoTxIndexBlock :: BinfoTxIndex -> Maybe (BlockHeight, Word32)
-binfoTxIndexBlock n =
-    let norm = (.&.) (2 ^ 24 - 1) . fromIntegral
-        height = norm $ n `shift` (-24)
-        pos = norm n
-    in if isBinfoTxIndexBlock n
-       then Just (height, pos)
-       else Nothing
-
-binfoTransactionIndex :: Bool -> Transaction -> BinfoTxId
-binfoTransactionIndex True t = BinfoTxIdHash (txHash (transactionData t))
-binfoTransactionIndex False Transaction{transactionDeleted = True} =
-    BinfoTxIdIndex (-1)
-binfoTransactionIndex False t@Transaction{transactionBlock = MemRef _} =
-    BinfoTxIdIndex (hashToBinfoTxIndex (txHash (transactionData t)))
-binfoTransactionIndex False Transaction{transactionBlock = BlockRef h p} =
-    BinfoTxIdIndex (blockToBinfoTxIndex h p)
-
 data BinfoTxId
     = BinfoTxIdHash !TxHash
-    | BinfoTxIdIndex !BinfoTxIndex
+    | BinfoTxIdIndex !Integer
     deriving (Eq, Show, Read, Generic, Serialize, NFData)
+
+encodeBinfoTxId :: Bool -> TxHash -> BinfoTxId
+encodeBinfoTxId False h = BinfoTxIdHash h
+encodeBinfoTxId True h =
+    let bs = S.encode h
+        f = do
+            w1 <- S.getWord64be
+            w2 <- S.getWord64be
+            w3 <- S.getWord64be
+            w4 <- S.getWord64be
+            return (w1, w2, w3, w4)
+        Right (w1, w2, w3, w4) = S.runGet f bs
+        i = toInteger w4 .|.
+            toInteger w3 `shift` 64 .|.
+            toInteger w2 `shift` 128 .|.
+            toInteger w1 `shift` 192
+    in BinfoTxIdIndex i
+
+decodeBinfoTxId :: BinfoTxId -> TxHash
+decodeBinfoTxId (BinfoTxIdHash h) = h
+decodeBinfoTxId (BinfoTxIdIndex i) =
+    let w4 = fromIntegral (i                  .&. 0xffffffffffffffff)
+        w3 = fromIntegral ((i `shift` (-64))  .&. 0xffffffffffffffff)
+        w2 = fromIntegral ((i `shift` (-128)) .&. 0xffffffffffffffff)
+        w1 = fromIntegral ((i `shift` (-192)) .&. 0xffffffffffffffff)
+        bs = S.runPut $ do
+            S.putWord64be w1
+            S.putWord64be w2
+            S.putWord64be w3
+            S.putWord64be w4
+        Right h = S.decode bs
+    in h
 
 instance Parsable BinfoTxId where
     parseParam t =
         case hexToTxHash (TL.toStrict t) of
             Nothing -> BinfoTxIdIndex <$> parseParam t
             Just h  -> Right (BinfoTxIdHash h)
-
-getBinfoTxId :: Maybe (HashMap TxHash Transaction) -> TxHash -> BinfoTxId
-getBinfoTxId Nothing h = BinfoTxIdHash h
-getBinfoTxId (Just m) h =
-    case HashMap.lookup h m of
-        Nothing -> BinfoTxIdIndex (-1)
-        Just t  -> binfoTransactionIndex False t
 
 instance ToJSON BinfoTxId where
     toJSON (BinfoTxIdHash h)  = toJSON h
@@ -2379,17 +2344,17 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
                                }
          in map f $ HashMap.elems only_addrs
 
-toBinfoTxSimple :: Maybe (HashMap TxHash Transaction)
+toBinfoTxSimple :: Bool
                 -> Transaction
                 -> BinfoTx
-toBinfoTxSimple etxs =
-    toBinfoTx etxs HashMap.empty False 0
+toBinfoTxSimple numtxid =
+    toBinfoTx numtxid HashMap.empty False 0
 
-toBinfoTxInputs :: Maybe (HashMap TxHash Transaction)
+toBinfoTxInputs :: Bool
                 -> HashMap Address (Maybe BinfoXPubPath)
                 -> Transaction
                 -> [BinfoTxInput]
-toBinfoTxInputs etxs abook t =
+toBinfoTxInputs numtxid abook t =
     zipWith f [0..] (transactionInputs t)
   where
     f n i = BinfoTxInput{ getBinfoTxInputIndex = n
@@ -2402,7 +2367,7 @@ toBinfoTxInputs etxs abook t =
         case inputWitness i of
             [] -> B.empty
             ws -> S.runPut (put_witness ws)
-    prev = inputToBinfoTxOutput etxs abook t
+    prev = inputToBinfoTxOutput numtxid abook t
     put_witness ws = do
         putVarInt (length ws)
         mapM_ put_item ws
@@ -2415,13 +2380,13 @@ toBinfoBlockIndex Transaction{transactionDeleted = True}       = Nothing
 toBinfoBlockIndex Transaction{transactionBlock = MemRef _}     = Nothing
 toBinfoBlockIndex Transaction{transactionBlock = BlockRef h _} = Just h
 
-toBinfoTx :: Maybe (HashMap TxHash Transaction)
+toBinfoTx :: Bool
           -> HashMap Address (Maybe BinfoXPubPath)
           -> Bool
           -> Int64
           -> Transaction
           -> BinfoTx
-toBinfoTx etxs abook prune bal t@Transaction{..} =
+toBinfoTx numtxid abook prune bal t@Transaction{..} =
     BinfoTx{ getBinfoTxHash = txHash (transactionData t)
            , getBinfoTxVer = transactionVersion
            , getBinfoTxVinSz = fromIntegral (length transactionInputs)
@@ -2431,13 +2396,14 @@ toBinfoTx etxs abook prune bal t@Transaction{..} =
            , getBinfoTxFee = transactionFees
            , getBinfoTxRelayedBy = "0.0.0.0"
            , getBinfoTxLockTime = transactionLockTime
-           , getBinfoTxIndex = binfoTransactionIndex (isNothing etxs) t
+           , getBinfoTxIndex =
+                   encodeBinfoTxId numtxid (txHash (transactionData t))
            , getBinfoTxDoubleSpend = transactionDeleted
            , getBinfoTxRBF = transactionRBF
            , getBinfoTxTime = transactionTime
            , getBinfoTxBlockIndex = toBinfoBlockIndex t
            , getBinfoTxBlockHeight = toBinfoBlockIndex t
-           , getBinfoTxInputs = toBinfoTxInputs etxs abook t
+           , getBinfoTxInputs = toBinfoTxInputs numtxid abook t
            , getBinfoTxOutputs = outs
            , getBinfoTxResultBal = resbal
            }
@@ -2447,7 +2413,7 @@ toBinfoTx etxs abook prune bal t@Transaction{..} =
     aset = HashMap.keysSet abook
     outs =
         let p = prune && getTxResult aset t > 0
-            f = toBinfoTxOutput etxs abook p t
+            f = toBinfoTxOutput numtxid abook p t
         in catMaybes $ zipWith f [0..] transactionOutputs
 
 getTxResult :: HashSet Address -> Transaction -> Int64
@@ -2472,22 +2438,23 @@ getTxResult aset Transaction{..} =
                     else 0
      in input_sum + output_sum
 
-toBinfoTxOutput :: Maybe (HashMap TxHash Transaction)
+toBinfoTxOutput :: Bool
                 -> HashMap Address (Maybe BinfoXPubPath)
                 -> Bool
                 -> Transaction
                 -> Word32
                 -> StoreOutput
                 -> Maybe BinfoTxOutput
-toBinfoTxOutput etxs abook prune t n StoreOutput{..} =
+toBinfoTxOutput numtxid abook prune t n StoreOutput{..} =
     let getBinfoTxOutputType = 0
         getBinfoTxOutputSpent = isJust outputSpender
         getBinfoTxOutputValue = outputAmount
         getBinfoTxOutputIndex = n
-        getBinfoTxOutputTxIndex = binfoTransactionIndex (isNothing etxs) t
+        getBinfoTxOutputTxIndex =
+            encodeBinfoTxId numtxid (txHash (transactionData t))
         getBinfoTxOutputScript = outputScript
         getBinfoTxOutputSpenders =
-            maybeToList $ toBinfoSpender etxs <$> outputSpender
+            maybeToList $ toBinfoSpender numtxid <$> outputSpender
         getBinfoTxOutputAddress = outputAddress
         getBinfoTxOutputXPub =
             outputAddress >>= join . (`HashMap.lookup` abook)
@@ -2495,35 +2462,38 @@ toBinfoTxOutput etxs abook prune t n StoreOutput{..} =
         then Nothing
         else Just BinfoTxOutput{..}
 
-toBinfoSpender :: Maybe (HashMap TxHash Transaction)
-               -> Spender
-               -> BinfoSpender
-toBinfoSpender etxs Spender{..} =
-    let getBinfoSpenderTxIndex = getBinfoTxId etxs spenderHash
+toBinfoSpender :: Bool -> Spender -> BinfoSpender
+toBinfoSpender numtxid Spender{..} =
+    let getBinfoSpenderTxIndex = encodeBinfoTxId numtxid spenderHash
         getBinfoSpenderIndex = spenderIndex
      in BinfoSpender{..}
 
-inputToBinfoTxOutput :: Maybe (HashMap TxHash Transaction)
+inputToBinfoTxOutput :: Bool
                      -> HashMap Address (Maybe BinfoXPubPath)
                      -> Transaction
                      -> Word32
                      -> StoreInput
                      -> Maybe BinfoTxOutput
 inputToBinfoTxOutput _ _ _ _ StoreCoinbase{} = Nothing
-inputToBinfoTxOutput etxs abook t n StoreInput{..} =
-    Just BinfoTxOutput{ getBinfoTxOutputIndex = out_index
-                      , getBinfoTxOutputType = 0
-                      , getBinfoTxOutputSpent = True
-                      , getBinfoTxOutputValue = inputAmount
-                      , getBinfoTxOutputTxIndex = getBinfoTxId etxs out_hash
-                      , getBinfoTxOutputScript = inputPkScript
-                      , getBinfoTxOutputSpenders = [spender]
-                      , getBinfoTxOutputAddress = inputAddress
-                      , getBinfoTxOutputXPub = xpub
-                      }
+inputToBinfoTxOutput numtxid abook t n StoreInput{..} =
+    Just
+    BinfoTxOutput
+    { getBinfoTxOutputIndex = out_index
+    , getBinfoTxOutputType = 0
+    , getBinfoTxOutputSpent = True
+    , getBinfoTxOutputValue = inputAmount
+    , getBinfoTxOutputTxIndex = encodeBinfoTxId numtxid out_hash
+    , getBinfoTxOutputScript = inputPkScript
+    , getBinfoTxOutputSpenders = [spender]
+    , getBinfoTxOutputAddress = inputAddress
+    , getBinfoTxOutputXPub = xpub
+    }
   where
     OutPoint out_hash out_index = inputPoint
-    spender = BinfoSpender (binfoTransactionIndex (isNothing etxs) t) n
+    spender =
+        BinfoSpender
+        (encodeBinfoTxId numtxid (txHash (transactionData t)))
+        n
     xpub = inputAddress >>= join . (`HashMap.lookup` abook)
 
 data BinfoAddr

@@ -1244,9 +1244,9 @@ scottyBinfoUnspent =
     height <- get_height
     limit <- get_limit
     min_conf <- get_min_conf
-    let g k = map (xpub_unspent height k)
+    let g k = map (xpub_unspent numtxid height k)
         xbus = concatMap (uncurry g) (HashMap.toList xuns)
-        abus = map (unspent height) auns
+        abus = map (unspent numtxid height) auns
         f u@BinfoUnspent{..} =
             ((getBinfoUnspentHash, getBinfoUnspentOutputIndex), u)
         busm = HashMap.fromList (map f (xbus ++ abus))
@@ -1256,32 +1256,23 @@ scottyBinfoUnspent =
             sortBy
             (flip compare `on` getBinfoUnspentConfirmations)
             (HashMap.elems busm)
-    etxs <- if numtxid then Just <$> get_etxs bus else return Nothing
-    let bus' = if numtxid then map (add_txid etxs) bus else bus
     setHeaders
-    streamEncoding (binfoUnspentsToEncoding net (BinfoUnspents bus'))
+    streamEncoding (binfoUnspentsToEncoding net (BinfoUnspents bus))
   where
-    add_txid etxs b =
-        b {getBinfoUnspentTxIndex = getBinfoTxId etxs (getBinfoUnspentHash b)}
     get_limit = fmap (min 1000) $ S.param "limit" `S.rescue` const (return 250)
     get_min_conf = S.param "confirmations" `S.rescue` const (return 0)
-    get_etxs bus = do
-        let xs = map getBinfoUnspentHash bus
-            hs = HashSet.toList $ HashSet.fromList xs
-            f i = fmap (i,) <$> getTransaction i
-        HashMap.fromList . catMaybes <$> mapM f hs
     get_height =
         getBestBlock >>= \case
         Nothing -> raise unspentErrors ThingNotFound
         Just bh -> getBlock bh >>= \case
             Nothing -> raise unspentErrors ThingNotFound
             Just b  -> return (blockDataHeight b)
-    xpub_unspent height xpub (XPubUnspent p u) =
+    xpub_unspent numtxid height xpub (XPubUnspent p u) =
         let path = toSoft (listToPath p)
             xp = BinfoXPubPath xpub <$> path
-            bu = unspent height u
+            bu = unspent numtxid height u
         in bu {getBinfoUnspentXPub = xp}
-    unspent height Unspent{..} =
+    unspent numtxid height Unspent{..} =
         let conf = case unspentBlock of
                        MemRef{}     -> 0
                        BlockRef h _ -> height - h + 1
@@ -1289,7 +1280,7 @@ scottyBinfoUnspent =
             idx = outPointIndex unspentPoint
             val = unspentAmount
             script = fromShort unspentScript
-            txi = getBinfoTxId Nothing hash
+            txi = encodeBinfoTxId numtxid hash
         in BinfoUnspent
            { getBinfoUnspentHash = hash
            , getBinfoUnspentOutputIndex = idx
@@ -1338,18 +1329,11 @@ scottyMultiAddr =
         salltrs = sxtrset <> satrs
         stxids = compute_txids salltrs
     stxs <- catMaybes <$> mapM getTransaction (take (n + offset) stxids)
-    let etxids =
-            if numtxid
-            then compute_etxids prune abook (drop offset stxs)
-            else []
-    etxs <- if numtxid
-            then Just <$> get_etxs etxids
-            else return Nothing
     best <- get_best_block
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     let ibal = fromIntegral sbal
-        btxs = binfo_txs etxs salladdrs abook prune ibal stxs
+        btxs = binfo_txs numtxid salladdrs abook prune ibal stxs
         ftxs = drop offset btxs
         baddrs = toBinfoAddrs sabals sxbals xtns
         abaddrs = toBinfoAddrs abals xbals xtns
@@ -1436,10 +1420,10 @@ scottyMultiAddr =
                               | otherwise -> 0
         in sum $ map (f False) ins <> map (f True) out
     binfo_txs _ _ _ _ _ [] = []
-    binfo_txs etxs salladdrs abook prune ibal (t:ts) =
-        let b = toBinfoTx etxs abook prune ibal t
+    binfo_txs numtxid salladdrs abook prune ibal (t:ts) =
+        let b = toBinfoTx numtxid abook prune ibal t
             nbal = ibal - compute_bal_change salladdrs b
-         in b : binfo_txs etxs salladdrs abook prune nbal ts
+         in b : binfo_txs numtxid salladdrs abook prune nbal ts
     get_addrs = do
         (xspecs, addrs) <- getBinfoActive
         sh <- getBinfoAddrsParam "onlyShow"
@@ -1486,10 +1470,6 @@ scottyMultiAddr =
             i = any f (transactionInputs t)
             o = any g (transactionOutputs t)
         in i || o
-    get_etxs =
-        let f t = (txHash (transactionData t), t)
-            g = HashMap.fromList . map f . catMaybes
-        in fmap g . mapM getTransaction
     get_peers = do
         ps <- lift $ getPeersInformation =<<
             asks (storeManager . webStore . webConfig)
@@ -1533,63 +1513,22 @@ scottyMultiAddr =
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
     withMetrics rawtxResponseTime 1 $
-    lift (asks (webNumTxId . webConfig)) >>= \num -> S.param "txid" >>= \case
-        BinfoTxIdHash h -> go num h
-        BinfoTxIdIndex i ->
-            if | not num || isBinfoTxIndexNull i -> raise rawtxErrors ThingNotFound
-               | isBinfoTxIndexBlock i           -> block i
-               | isBinfoTxIndexHash i            -> hash i
+    lift (asks (webNumTxId . webConfig)) >>= \numtxid ->
+    S.param "txid" >>= go numtxid . decodeBinfoTxId
   where
     get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
-    js num t = do
-        let etxids = if num
-                     then HashSet.toList $ relevantTxs HashSet.empty False t
-                     else []
-        etxs' <- if num
-                 then Just . catMaybes <$> mapM getTransaction etxids
-                 else return Nothing
-        let f t = (txHash (transactionData t), t)
-            etxs = HashMap.fromList . map f <$> etxs'
+    js numtxid t = do
         net <- lift $ asks (storeNetwork . webStore . webConfig)
         setHeaders
-        streamEncoding $ binfoTxToEncoding net $ toBinfoTxSimple etxs t
+        streamEncoding $ binfoTxToEncoding net $ toBinfoTxSimple numtxid t
     hex t = do
         setHeaders
         S.text . TL.fromStrict . encodeHex . encode $ transactionData t
-    go num h = getTransaction h >>= \case
+    go numtxid h = getTransaction h >>= \case
         Nothing -> raise rawtxErrors ThingNotFound
         Just t -> get_format >>= \case
             "hex" -> hex t
-            _     -> js num t
-    block i =
-        let Just (height, pos) = binfoTxIndexBlock i
-        in getBlocksAtHeight height >>= \case
-            [] -> raise rawtxErrors ThingNotFound
-            h:_ -> getBlock h >>= \case
-                Nothing -> raise rawtxErrors ThingNotFound
-                Just BlockData{..} ->
-                    if length blockDataTxs > fromIntegral pos
-                    then go True (blockDataTxs !! fromIntegral pos)
-                    else raise rawtxErrors ThingNotFound
-    hmatch h = listToMaybe . filter (matchBinfoTxHash h)
-    hmem h = hmatch h . map snd <$> getMempool
-    hblock h =
-        let g 0 _ = return Nothing
-            g i k =
-                getBlock k >>= \case
-                Nothing -> return Nothing
-                Just BlockData{..} ->
-                    case hmatch h blockDataTxs of
-                        Nothing -> g (i - 1) (H.prevBlock blockDataHeader)
-                        Just x  -> return (Just x)
-        in getBestBlock >>= \case
-            Nothing -> return Nothing
-            Just k  -> g 10 k
-    hash h = hmem h >>= \case
-        Nothing -> hblock h >>= \case
-            Nothing -> raise rawtxErrors ThingNotFound
-            Just x  -> go True x
-        Just x -> go True x
+            _     -> js numtxid t
 
 -- GET Network Information --
 

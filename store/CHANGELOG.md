@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.43.0
+### Changed
+- Transaction index now simply encodes txid as a long number (sorry JS users).
+
 ## 0.42.4
 ### Changed
 - Optimise encoding of JSON data for Blockchain.info API.

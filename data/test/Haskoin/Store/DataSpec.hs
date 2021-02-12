@@ -157,16 +157,9 @@ spec = do
     describe "Data.Aeson Encoding with Network" $
         forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
     describe "Blockchain.info API" $ do
-        it "compresses txids correctly" $
+        it "encodes and decodes numeric txids" $
             forAll arbitraryTxHash $ \h ->
-            matchBinfoTxHash (hashToBinfoTxIndex h) h
-        prop "compresses blockchain locations correctly" $
-            let x = choose (0, 2 ^ 24 - 1)
-             in forAll ((,) <$> x <*> x) $ \(b, p) ->
-                let i = blockToBinfoTxIndex b p
-                    Just (b', p') = binfoTxIndexBlock i
-                 in b == b' && p == p'
-
+            (decodeBinfoTxId . encodeBinfoTxId True) h == h
 
 instance Arbitrary BlockRef where
     arbitrary =
