@@ -746,8 +746,7 @@ scottyBlockRaw (GetBlockRaw h) =
 
 getRawBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => H.BlockHash -> WebT m H.Block
-getRawBlock h =
-    withMetrics rawBlockResponseTime 1 $ do
+getRawBlock h = do
     b <- maybe (raise blockErrors ThingNotFound) return =<< getBlock h
     refuseLargeBlock blockErrors b
     toRawBlock b
@@ -1205,19 +1204,24 @@ binfoTickerToSymbol code BinfoTicker{..} =
         "GBP" -> "British pound"
         x     -> x
 
-getBinfoAddrsParam :: MonadIO m => Text -> WebT m (HashSet BinfoAddr)
-getBinfoAddrsParam name = do
+getBinfoAddrsParam :: MonadIO m
+                   => (WebMetrics -> ErrorCounter)
+                   -> Text
+                   -> WebT m (HashSet BinfoAddr)
+getBinfoAddrsParam metric name = do
     net <- lift (asks (storeNetwork . webStore . webConfig))
     p <- S.param (cs name) `S.rescue` const (return "")
     case parseBinfoAddr net p of
-        Nothing -> raise multiaddrErrors (UserError "invalid active address")
+        Nothing -> raise metric (UserError "invalid active address")
         Just xs -> return $ HashSet.fromList xs
 
-getBinfoActive :: MonadIO m => WebT m (HashMap XPubKey XPubSpec, HashSet Address)
-getBinfoActive = do
-    active <- getBinfoAddrsParam "active"
-    p2sh <- getBinfoAddrsParam "activeP2SH"
-    bech32 <- getBinfoAddrsParam "activeBech32"
+getBinfoActive :: MonadIO m
+               => (WebMetrics -> ErrorCounter)
+               -> WebT m (HashMap XPubKey XPubSpec, HashSet Address)
+getBinfoActive metric = do
+    active <- getBinfoAddrsParam metric "active"
+    p2sh <- getBinfoAddrsParam metric "activeP2SH"
+    bech32 <- getBinfoAddrsParam metric "activeBech32"
     let xspec d b = (\x -> (x, XPubSpec x d)) <$> xpub b
         xspecs = HashMap.fromList $ concat
                  [ mapMaybe (xspec DeriveNormal) (HashSet.toList active)
@@ -1234,7 +1238,9 @@ getBinfoActive = do
 
 scottyBinfoUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoUnspent =
-    getBinfoActive >>= \(xspecs, addrs) ->
+    getBinfoActive unspentErrors >>= \(xspecs, addrs) ->
+    get_limit >>= \limit ->
+    get_min_conf >>= \min_conf ->
     let len = HashSet.size addrs + HashMap.size xspecs
     in withMetrics unspentResponseTime len $ do
     xuns <- get_xpub_unspents xspecs
@@ -1242,8 +1248,6 @@ scottyBinfoUnspent =
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     numtxid <- lift $ asks (webNumTxId . webConfig)
     height <- get_height
-    limit <- get_limit
-    min_conf <- get_min_conf
     let g k = map (xpub_unspent numtxid height k)
         xbus = concatMap (uncurry g) (HashMap.toList xuns)
         abus = map (unspent numtxid height) auns
@@ -1296,12 +1300,14 @@ scottyBinfoUnspent =
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
     get_addrs >>= \(addrs, xpubs, saddrs, sxpubs, xspecs) ->
+    lift (asks webTicker) >>= \ticker ->
+    get_price ticker >>= \local ->
+    get_cashaddr >>= \cashaddr ->
+    get_offset >>= \offset ->
+    get_count >>= \n ->
+    get_prune >>= \prune ->
     let len = HashSet.size addrs + HashSet.size xpubs
     in withMetrics multiaddrResponseTime len $ do
-    prune <- get_prune
-    n <- get_count
-    offset <- get_offset
-    cashaddr <- get_cashaddr
     numtxid <- lift $ asks (webNumTxId . webConfig)
     xbals <- get_xbals xspecs
     let sxbals = subset sxpubs xbals
@@ -1310,8 +1316,6 @@ scottyMultiAddr =
     abals <- get_abals addrs
     satrs <- get_atrs saddrs
     nosatrs <- get_atrs (addrs `HashSet.difference` saddrs)
-    ticker <- lift $ asks webTicker
-    local <- get_price ticker
     let xtns = HashMap.map length xtrs
         xtrset = Set.fromList (concat (HashMap.elems xtrs))
         sxtrset = Set.fromList (concat (HashMap.elems sxtrs))
@@ -1425,8 +1429,8 @@ scottyMultiAddr =
             nbal = ibal - compute_bal_change salladdrs b
          in b : binfo_txs numtxid salladdrs abook prune nbal ts
     get_addrs = do
-        (xspecs, addrs) <- getBinfoActive
-        sh <- getBinfoAddrsParam "onlyShow"
+        (xspecs, addrs) <- getBinfoActive multiaddrErrors
+        sh <- getBinfoAddrsParam multiaddrErrors "onlyShow"
         let xpubs = HashMap.keysSet xspecs
             actives = HashSet.map BinfoAddr addrs <>
                       HashSet.map BinfoXpub xpubs
@@ -1512,9 +1516,9 @@ scottyMultiAddr =
 
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
-    withMetrics rawtxResponseTime 1 $
     lift (asks (webNumTxId . webConfig)) >>= \numtxid ->
-    S.param "txid" >>= go numtxid . decodeBinfoTxId
+    S.param "txid" >>= \txid ->
+    withMetrics rawtxResponseTime 1 $ go numtxid (decodeBinfoTxId txid)
   where
     get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
     js numtxid t = do
@@ -1783,12 +1787,9 @@ logIt :: (MonadUnliftIO m, MonadLoggerIO m) => m Middleware
 logIt = do
     runner <- askRunInIO
     return $ \app req respond -> do
-        t1 <- systemToUTCTime <$> liftIO getSystemTime
         app req $ \res -> do
-            t2 <- systemToUTCTime <$> liftIO getSystemTime
-            let d = diffUTCTime t2 t1
-                s = responseStatus res
-                msg = fmtReq req <> " [" <> fmtStatus s <> " / " <> fmtDiff d <> "]"
+            let s = responseStatus res
+                msg = fmtReq req <> " [" <> fmtStatus s <> "]"
             if statusIsSuccessful s
                 then runner $ $(logDebugS) "Web" msg
                 else runner $ $(logErrorS) "Web" msg
@@ -1801,10 +1802,6 @@ fmtReq req =
         p = rawPathInfo req
         q = rawQueryString req
      in T.decodeUtf8 $ m <> " " <> p <> q <> " " <> cs (show v)
-
-fmtDiff :: NominalDiffTime -> Text
-fmtDiff d =
-    cs (printf "%0.3f" (realToFrac (d * 1000) :: Double) :: String) <> " ms"
 
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
