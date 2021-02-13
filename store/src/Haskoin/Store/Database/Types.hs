@@ -156,14 +156,18 @@ instance Serialize TxKey where
         guard . (== 0x02) =<< getWord8
         TxKey <$> get
 
-decodeTxKey :: Word64 -> ((Word32, Word16), TxHash)
+decodeTxKey :: Word64 -> ((Word32, Word16), Word8)
 decodeTxKey i =
     let masked = i .&. 0x001fffffffffffff
         wb = masked `shift` 11
         bs = runPut (putWord64be wb)
-        Right h = decode (bs <> BS.replicate 24 0x00)
-        Right (w1, w2) = runGet ((,) <$> getWord32be <*> getWord16be) bs
-    in ((w1, w2), h)
+        g = do
+            w1 <- getWord32be
+            w2 <- getWord16be
+            w3 <- getWord8
+            return (w1, w2, w3)
+        Right (w1, w2, w3) = runGet g bs
+    in ((w1, w2), w3)
 
 instance Key TxKey
 instance KeyValue TxKey TxData

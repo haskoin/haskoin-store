@@ -20,17 +20,19 @@ import           Conduit                      (lift, mapC, runConduit, sinkList,
                                                (.|))
 import           Control.Monad.Except         (runExceptT, throwError)
 import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
+import           Data.Bits                    ((.&.))
 import qualified Data.ByteString              as BS
 import           Data.Default                 (def)
 import           Data.Function                (on)
 import           Data.List                    (sortBy)
 import           Data.Maybe                   (fromMaybe)
+import           Data.Serialize               (encode)
 import           Data.Word                    (Word32, Word64)
 import           Database.RocksDB             (ColumnFamily, Config (..),
                                                DB (..), withDBCF, withIterCF)
-import           Database.RocksDB.Query       (firstMatchingSkipCF, insert,
-                                               matching, matchingSkip, retrieve,
-                                               retrieveCF)
+import           Database.RocksDB.Query       (insert, matching,
+                                               matchingAsListCF, matchingSkip,
+                                               retrieve, retrieveCF)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common
@@ -144,10 +146,16 @@ getTxDataDB th DatabaseReader{databaseHandle = db} =
 
 getNumTxDataDB :: MonadIO m => Word64 -> DatabaseReader -> m (Maybe TxData)
 getNumTxDataDB i r@DatabaseReader{databaseHandle = db} = do
-    let (sk, th) = decodeTxKey i
-    may <- liftIO (firstMatchingSkipCF db (txCF db) (TxKeyS sk) (TxKey th))
-    return $ fmap snd may
-
+    let (sk, w) = decodeTxKey i
+    ls <- liftIO (matchingAsListCF db (txCF db) (TxKeyS sk))
+    let f (k, _) = let bs = encode k
+                       b = BS.head (BS.drop 6 bs)
+                       w' = b .&. 0xf8
+                    in w == w'
+        xs = map snd $ filter f ls
+    case xs of
+        [x] -> return $ Just x
+        _   -> return Nothing
 
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
 getSpenderDB op DatabaseReader{databaseHandle = db} =
