@@ -12,6 +12,7 @@ module Haskoin.Store.Database.Types
     , MemKey(..)
     , SpenderKey(..)
     , TxKey(..)
+    , decodeTxKey
     , UnspentKey(..)
     , VersionKey(..)
     , BalVal(..)
@@ -26,7 +27,8 @@ module Haskoin.Store.Database.Types
 
 import           Control.DeepSeq        (NFData)
 import           Control.Monad          (guard)
-import           Data.Bits              (Bits, shiftL, shiftR, (.|.))
+import           Data.Bits              (Bits, shift, shiftL, shiftR, (.&.),
+                                         (.|.))
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as BS
 import           Data.ByteString.Short  (ShortByteString)
@@ -35,7 +37,9 @@ import           Data.Default           (Default (..))
 import           Data.Either            (fromRight)
 import           Data.Hashable          (Hashable)
 import           Data.Serialize         (Serialize (..), decode, encode,
-                                         getBytes, getWord8, putWord8, runPut)
+                                         getBytes, getWord16be, getWord32be,
+                                         getWord8, putWord32be, putWord64be,
+                                         putWord8, runGet, runPut)
 import           Data.Word              (Word16, Word32, Word64, Word8)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
@@ -137,6 +141,7 @@ instance KeyValue AddrOutKey OutVal
 
 -- | Transaction database key.
 data TxKey = TxKey { txKey :: TxHash }
+           | TxKeyS { txKeyShort :: (Word32, Word16) }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize TxKey where
@@ -144,9 +149,25 @@ instance Serialize TxKey where
     put (TxKey h) = do
         putWord8 0x02
         put h
+    put (TxKeyS h) = do
+        putWord8 0x02
+        put h
     get = do
         guard . (== 0x02) =<< getWord8
         TxKey <$> get
+
+decodeTxKey :: Word64 -> ((Word32, Word16), Word8)
+decodeTxKey i =
+    let masked = i .&. 0x001fffffffffffff
+        wb = masked `shift` 11
+        bs = runPut (putWord64be wb)
+        g = do
+            w1 <- getWord32be
+            w2 <- getWord16be
+            w3 <- getWord8
+            return (w1, w2, w3)
+        Right (w1, w2, w3) = runGet g bs
+    in ((w1, w2), w3)
 
 instance Key TxKey
 instance KeyValue TxKey TxData

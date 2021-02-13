@@ -21,6 +21,7 @@ module Haskoin.Store.Common
     , xPubBalsTxs
     , xPubBalsUnspents
     , getTransaction
+    , getNumTransaction
     , blockAtOrBefore
     , blockAtOrAfterMTP
     , deOffset
@@ -40,8 +41,8 @@ import           Control.Monad.Trans.Reader (runReaderT)
 import           Data.ByteString            (ByteString)
 import           Data.Default               (Default (..))
 import           Data.Function              (on)
-import           Data.Hashable              (Hashable)
 import qualified Data.HashSet               as H
+import           Data.Hashable              (Hashable)
 import           Data.IntMap.Strict         (IntMap)
 import qualified Data.IntMap.Strict         as I
 import           Data.List                  (sortBy)
@@ -66,7 +67,7 @@ import           Haskoin                    (Address, BlockHash,
 import           Haskoin.Node               (Chain, Peer)
 import           Haskoin.Store.Data         (Balance (..), BlockData (..),
                                              DeriveType (..), Spender,
-                                             Transaction, TxData (..),
+                                             Transaction (..), TxData (..),
                                              TxRef (..), UnixTime, Unspent (..),
                                              XPubBal (..), XPubSpec (..),
                                              XPubSummary (..), XPubUnspent (..),
@@ -124,6 +125,7 @@ class StoreReadBase m => StoreReadExtra m where
     getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
+    getNumTxData :: Word64 -> m (Maybe TxData)
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
@@ -220,12 +222,12 @@ getSpenders th =
 getActiveBlock :: StoreReadExtra m => BlockHash -> m (Maybe BlockData)
 getActiveBlock bh = getBlock bh >>= \case
     Just b | blockDataMainChain b -> return (Just b)
-    _ -> return Nothing
+    _                             -> return Nothing
 
 getActiveTxData :: StoreReadBase m => TxHash -> m (Maybe TxData)
 getActiveTxData th = getTxData th >>= \case
     Just td | not (txDataDeleted td) -> return (Just td)
-    _ -> return Nothing
+    _                                -> return Nothing
 
 getDefaultBalance :: StoreReadBase m => Address -> m Balance
 getDefaultBalance a = getBalance a >>= \case
@@ -275,6 +277,13 @@ getTransaction ::
 getTransaction h = runMaybeT $ do
     d <- MaybeT $ getTxData h
     sm <- lift $ getSpenders h
+    return $ toTransaction d sm
+
+getNumTransaction ::
+    (Monad m, StoreReadExtra m) => Word64 -> m (Maybe Transaction)
+getNumTransaction i = runMaybeT $ do
+    d <- MaybeT $ getNumTxData i
+    sm <- lift $ getSpenders (txHash (txData d))
     return $ toTransaction d sm
 
 blockAtOrBefore :: (MonadIO m, StoreReadExtra m)

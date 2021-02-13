@@ -84,7 +84,6 @@ module Haskoin.Store.Data
      -- * Blockchain.info API
     , BinfoTxId(..)
     , encodeBinfoTxId
-    , decodeBinfoTxId
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
@@ -1558,6 +1557,11 @@ instance FromJSON Except where
                 String "block-too-large" -> return BlockTooLarge
                 _                        -> mzero
 
+toIntTxId :: TxHash -> Word64
+toIntTxId h =
+    let bs = S.encode h
+        Right w64 = S.runGet getWord64be bs
+    in w64 `shift` (-11)
 
 ---------------------------------------
 -- Blockchain.info API Compatibility --
@@ -1565,46 +1569,22 @@ instance FromJSON Except where
 
 data BinfoTxId
     = BinfoTxIdHash !TxHash
-    | BinfoTxIdIndex !Integer
+    | BinfoTxIdIndex !Word64
     deriving (Eq, Show, Read, Generic, Serialize, NFData)
 
 encodeBinfoTxId :: Bool -> TxHash -> BinfoTxId
-encodeBinfoTxId False h = BinfoTxIdHash h
-encodeBinfoTxId True h =
-    let bs = S.encode h
-        f = do
-            w1 <- S.getWord64be
-            w2 <- S.getWord64be
-            w3 <- S.getWord64be
-            w4 <- S.getWord64be
-            return (w1, w2, w3, w4)
-        Right (w1, w2, w3, w4) = S.runGet f bs
-        i = toInteger w4 .|.
-            toInteger w3 `shift` 64 .|.
-            toInteger w2 `shift` 128 .|.
-            toInteger w1 `shift` 192
-    in BinfoTxIdIndex i
-
-decodeBinfoTxId :: BinfoTxId -> TxHash
-decodeBinfoTxId (BinfoTxIdHash h) = h
-decodeBinfoTxId (BinfoTxIdIndex i) =
-    let w4 = fromIntegral (i                  .&. 0xffffffffffffffff)
-        w3 = fromIntegral ((i `shift` (-64))  .&. 0xffffffffffffffff)
-        w2 = fromIntegral ((i `shift` (-128)) .&. 0xffffffffffffffff)
-        w1 = fromIntegral ((i `shift` (-192)) .&. 0xffffffffffffffff)
-        bs = S.runPut $ do
-            S.putWord64be w1
-            S.putWord64be w2
-            S.putWord64be w3
-            S.putWord64be w4
-        Right h = S.decode bs
-    in h
+encodeBinfoTxId False = BinfoTxIdHash
+encodeBinfoTxId True  = BinfoTxIdIndex . toIntTxId
 
 instance Parsable BinfoTxId where
     parseParam t =
-        case hexToTxHash (TL.toStrict t) of
-            Nothing -> BinfoTxIdIndex <$> parseParam t
-            Just h  -> Right (BinfoTxIdHash h)
+        hex <> igr
+      where
+        hex =
+            case hexToTxHash (TL.toStrict t) of
+                Nothing -> Left "could not decode txid"
+                Just h -> Right $ BinfoTxIdHash h
+        igr = BinfoTxIdIndex <$> parseParam t
 
 instance ToJSON BinfoTxId where
     toJSON (BinfoTxIdHash h)  = toJSON h
@@ -1785,13 +1765,13 @@ instance FromJSON BinfoWallet where
 
 data BinfoUnspent
     = BinfoUnspent
-      { getBinfoUnspentHash            :: !TxHash
-      , getBinfoUnspentOutputIndex     :: !Word32
-      , getBinfoUnspentScript          :: !ByteString
-      , getBinfoUnspentValue           :: !Word64
-      , getBinfoUnspentConfirmations   :: !Word32
-      , getBinfoUnspentTxIndex         :: !BinfoTxId
-      , getBinfoUnspentXPub            :: !(Maybe BinfoXPubPath)
+      { getBinfoUnspentHash          :: !TxHash
+      , getBinfoUnspentOutputIndex   :: !Word32
+      , getBinfoUnspentScript        :: !ByteString
+      , getBinfoUnspentValue         :: !Word64
+      , getBinfoUnspentConfirmations :: !Word32
+      , getBinfoUnspentTxIndex       :: !BinfoTxId
+      , getBinfoUnspentXPub          :: !(Maybe BinfoXPubPath)
       } deriving (Eq, Show, Generic, Serialize, NFData)
 
 binfoUnspentToJSON :: Network -> BinfoUnspent -> Value
