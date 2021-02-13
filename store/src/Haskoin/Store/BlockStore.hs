@@ -273,6 +273,8 @@ instance MonadIO m => StoreReadExtra (BlockT m) where
         runRocksDB . getAddressUnspents a
     getAddressTxs a =
         runRocksDB . getAddressTxs a
+    getNumTxData =
+        runRocksDB . getNumTxData
 
 -- | Run block store process.
 withBlockStore ::

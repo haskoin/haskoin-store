@@ -1598,17 +1598,24 @@ data BinfoTxId
 
 encodeBinfoTxId :: Bool -> TxHash -> BinfoTxId
 encodeBinfoTxId False = BinfoTxIdHash
-encodeBinfoTxId True = BinfoTxIdIndex . toIntTxId
+encodeBinfoTxId True  = BinfoTxIdIndex . toIntTxId
 
 decodeBinfoTxId :: BinfoTxId -> TxHash
-decodeBinfoTxId (BinfoTxIdHash h) = h
+decodeBinfoTxId (BinfoTxIdHash h)  = h
 decodeBinfoTxId (BinfoTxIdIndex i) = fromIntTxId i
 
 instance Parsable BinfoTxId where
     parseParam t =
-        case hexToTxHash (TL.toStrict t) of
-            Nothing -> BinfoTxIdIndex <$> parseParam t
-            Just h  -> Right (BinfoTxIdHash h)
+        hex <> igr <> dbl
+      where
+        hex =
+            case hexToTxHash (TL.toStrict t) of
+                Nothing -> Left "could not decode txid"
+                Just h -> Right $ BinfoTxIdHash h
+        igr = BinfoTxIdIndex <$> parseParam t
+        dbl = do
+            dbl <- parseParam t
+            return $ BinfoTxIdIndex (floor (dbl :: Double))
 
 instance ToJSON BinfoTxId where
     toJSON (BinfoTxIdHash h)  = toJSON h
@@ -1789,13 +1796,13 @@ instance FromJSON BinfoWallet where
 
 data BinfoUnspent
     = BinfoUnspent
-      { getBinfoUnspentHash            :: !TxHash
-      , getBinfoUnspentOutputIndex     :: !Word32
-      , getBinfoUnspentScript          :: !ByteString
-      , getBinfoUnspentValue           :: !Word64
-      , getBinfoUnspentConfirmations   :: !Word32
-      , getBinfoUnspentTxIndex         :: !BinfoTxId
-      , getBinfoUnspentXPub            :: !(Maybe BinfoXPubPath)
+      { getBinfoUnspentHash          :: !TxHash
+      , getBinfoUnspentOutputIndex   :: !Word32
+      , getBinfoUnspentScript        :: !ByteString
+      , getBinfoUnspentValue         :: !Word64
+      , getBinfoUnspentConfirmations :: !Word32
+      , getBinfoUnspentTxIndex       :: !BinfoTxId
+      , getBinfoUnspentXPub          :: !(Maybe BinfoXPubPath)
       } deriving (Eq, Show, Generic, Serialize, NFData)
 
 binfoUnspentToJSON :: Network -> BinfoUnspent -> Value
