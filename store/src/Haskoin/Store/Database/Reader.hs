@@ -34,7 +34,8 @@ import           Database.RocksDB.Query       (insert, matching,
                                                matchingAsListCF, matchingSkip,
                                                retrieve, retrieveCF)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
-                                               Network, OutPoint (..), TxHash)
+                                               Network, OutPoint (..), TxHash,
+                                               txHash)
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Types
@@ -147,12 +148,12 @@ getTxDataDB th DatabaseReader{databaseHandle = db} =
 getNumTxDataDB :: MonadIO m => Word64 -> DatabaseReader -> m (Maybe TxData)
 getNumTxDataDB i r@DatabaseReader{databaseHandle = db} = do
     let (sk, w) = decodeTxKey i
-    ls <- liftIO (matchingAsListCF db (txCF db) (TxKeyS sk))
-    let f (k, _) = let bs = encode k
-                       b = BS.head (BS.drop 6 bs)
-                       w' = b .&. 0xf8
-                    in w == w'
-        xs = map snd $ filter f ls
+    ls <- liftIO $ matchingAsListCF db (txCF db) (TxKeyS sk)
+    let f t = let bs = encode $ txHash (txData t)
+                  b = BS.head (BS.drop 6 bs)
+                  w' = b .&. 0xf8
+              in w == w'
+        xs = filter f $ map snd ls
     case xs of
         [x] -> return $ Just x
         _   -> return Nothing
