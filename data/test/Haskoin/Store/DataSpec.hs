@@ -156,10 +156,6 @@ spec = do
         forM_ jsonVals $ \(JsonBox g) -> testJson g
     describe "Data.Aeson Encoding with Network" $
         forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
-    describe "Blockchain.info API" $ do
-        it "encodes and decodes numeric txids" $
-            forAll arbitraryTxHash $ \h ->
-            (decodeBinfoTxId . encodeBinfoTxId True) h == h
 
 instance Arbitrary BlockRef where
     arbitrary =

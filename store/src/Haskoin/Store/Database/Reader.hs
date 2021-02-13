@@ -25,10 +25,10 @@ import           Data.Default                 (def)
 import           Data.Function                (on)
 import           Data.List                    (sortBy)
 import           Data.Maybe                   (fromMaybe)
-import           Data.Word                    (Word32)
+import           Data.Word                    (Word32, Word64)
 import           Database.RocksDB             (ColumnFamily, Config (..),
                                                DB (..), withDBCF, withIterCF)
-import           Database.RocksDB.Query       (firstMatchingCF, insert,
+import           Database.RocksDB.Query       (firstMatchingSkipCF, insert,
                                                matching, matchingSkip, retrieve,
                                                retrieveCF)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
@@ -142,9 +142,11 @@ getTxDataDB :: MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
 getTxDataDB th DatabaseReader{databaseHandle = db} =
     retrieveCF db (txCF db) (TxKey th)
 
-getNumTxDataDB :: MonadIO m => Integer -> DatabaseReader -> m (Maybe TxData)
-getNumTxDataDB i r@DatabaseReader{databaseHandle = db} =
-    fmap snd <$> liftIO (firstMatchingCF db (txCF db) (decodeTxKey i))
+getNumTxDataDB :: MonadIO m => Word64 -> DatabaseReader -> m (Maybe TxData)
+getNumTxDataDB i r@DatabaseReader{databaseHandle = db} = do
+    let (sk, th) = decodeTxKey i
+    may <- liftIO (firstMatchingSkipCF db (txCF db) (TxKeyS sk) (TxKey th))
+    return $ fmap snd may
 
 
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)

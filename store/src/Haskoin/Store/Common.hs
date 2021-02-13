@@ -125,7 +125,7 @@ class StoreReadBase m => StoreReadExtra m where
     getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
-    getNumTxData :: Integer -> m (Maybe TxData)
+    getNumTxData :: Word64 -> m (Maybe TxData)
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
@@ -280,7 +280,7 @@ getTransaction h = runMaybeT $ do
     return $ toTransaction d sm
 
 getNumTransaction ::
-    (Monad m, StoreReadExtra m) => Integer -> m (Maybe Transaction)
+    (Monad m, StoreReadExtra m) => Word64 -> m (Maybe Transaction)
 getNumTransaction i = runMaybeT $ do
     d <- MaybeT $ getNumTxData i
     sm <- lift $ getSpenders (txHash (txData d))

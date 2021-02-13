@@ -84,7 +84,6 @@ module Haskoin.Store.Data
      -- * Blockchain.info API
     , BinfoTxId(..)
     , encodeBinfoTxId
-    , decodeBinfoTxId
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
@@ -1558,34 +1557,13 @@ instance FromJSON Except where
                 String "block-too-large" -> return BlockTooLarge
                 _                        -> mzero
 
-toIntTxId :: TxHash -> Integer
+toIntTxId :: TxHash -> Word64
 toIntTxId h =
-    let bs = S.encode h
-        f = do
-            w1 <- S.getWord64be
-            w2 <- S.getWord64be
-            w3 <- S.getWord64be
-            w4 <- S.getWord64be
-            return (w1, w2, w3, w4)
-        Right (w1, w2, w3, w4) = S.runGet f bs
-    in toInteger w4 .|.
-       toInteger w3 `shift` 64 .|.
-       toInteger w2 `shift` 128 .|.
-       toInteger w1 `shift` 192
-
-fromIntTxId :: Integer -> TxHash
-fromIntTxId i =
-    let w4 = fromIntegral (i                  .&. 0xffffffffffffffff)
-        w3 = fromIntegral ((i `shift` (-64))  .&. 0xffffffffffffffff)
-        w2 = fromIntegral ((i `shift` (-128)) .&. 0xffffffffffffffff)
-        w1 = fromIntegral ((i `shift` (-192)) .&. 0xffffffffffffffff)
-        bs = S.runPut $ do
-            S.putWord64be w1
-            S.putWord64be w2
-            S.putWord64be w3
-            S.putWord64be w4
-        Right h = S.decode bs
-    in h
+    let xs = S.encode h
+        b = B.head xs .&. 0x1f
+        bs = B.tail xs
+        Right w64 = S.decode (0x00 `B.cons` b `B.cons` bs)
+    in w64
 
 ---------------------------------------
 -- Blockchain.info API Compatibility --
@@ -1593,29 +1571,22 @@ fromIntTxId i =
 
 data BinfoTxId
     = BinfoTxIdHash !TxHash
-    | BinfoTxIdIndex !Integer
+    | BinfoTxIdIndex !Word64
     deriving (Eq, Show, Read, Generic, Serialize, NFData)
 
 encodeBinfoTxId :: Bool -> TxHash -> BinfoTxId
 encodeBinfoTxId False = BinfoTxIdHash
 encodeBinfoTxId True  = BinfoTxIdIndex . toIntTxId
 
-decodeBinfoTxId :: BinfoTxId -> TxHash
-decodeBinfoTxId (BinfoTxIdHash h)  = h
-decodeBinfoTxId (BinfoTxIdIndex i) = fromIntTxId i
-
 instance Parsable BinfoTxId where
     parseParam t =
-        hex <> igr <> dbl
+        hex <> igr
       where
         hex =
             case hexToTxHash (TL.toStrict t) of
                 Nothing -> Left "could not decode txid"
                 Just h -> Right $ BinfoTxIdHash h
         igr = BinfoTxIdIndex <$> parseParam t
-        dbl = do
-            dbl <- parseParam t
-            return $ BinfoTxIdIndex (floor (dbl :: Double))
 
 instance ToJSON BinfoTxId where
     toJSON (BinfoTxIdHash h)  = toJSON h
