@@ -1,5 +1,5 @@
 name: haskoin-store-data
-version: 0.43.0
+version: 0.44.0
 synopsis: Data for Haskoin Store
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
@@ -10,6 +10,9 @@ license-file: LICENSE
 github: haskoin/haskoin-store.git
 homepage: http://github.com/haskoin/haskoin-store#readme
 bug-reports: http://github.com/haskoin/haskoin-store/issues
+extra-source-files:
+  - README.md
+  - CHANGELOG.md
 dependencies:
   - aeson >= 1.4.7.1
   - base >=4.9 && <5
