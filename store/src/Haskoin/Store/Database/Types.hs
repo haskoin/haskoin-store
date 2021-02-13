@@ -156,7 +156,7 @@ instance Serialize TxKey where
         guard . (== 0x02) =<< getWord8
         TxKey <$> get
 
-decodeTxKey :: Integer -> (TxHash, Maybe (Word32, Word16))
+decodeTxKey :: Integer -> TxKey
 decodeTxKey i =
     let w4 = fromIntegral (i                  .&. 0xffffffffffffffff)
         w3 = fromIntegral ((i `shift` (-64))  .&. 0xffffffffffffffff)
@@ -168,12 +168,11 @@ decodeTxKey i =
             putWord64be w3
             putWord64be w4
         Right h = decode bs
-        sh = if w4 .&. 0x00ffffffffffffff == 0x0000000000000000
-             then let s1 = fromIntegral (w1 `shift` (-32))
-                      s2 = fromIntegral (w1 `shift` (-16))
-                  in Just (s1, s2)
-             else Nothing
-    in (h, sh)
+    in if w4 .&. 0x00ffffffffffffff == 0x0000000000000000
+       then let s1 = fromIntegral (w1 `shift` (-32))
+                s2 = fromIntegral (w1 `shift` (-16))
+            in TxKeyS (s1, s2)
+       else TxKey h
 
 instance Key TxKey
 instance KeyValue TxKey TxData

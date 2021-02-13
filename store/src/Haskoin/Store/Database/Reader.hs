@@ -28,7 +28,7 @@ import           Data.Maybe                   (fromMaybe)
 import           Data.Word                    (Word32)
 import           Database.RocksDB             (ColumnFamily, Config (..),
                                                DB (..), withDBCF, withIterCF)
-import           Database.RocksDB.Query       (firstMatchingSkipCF, insert,
+import           Database.RocksDB.Query       (firstMatchingCF, insert,
                                                matching, matchingSkip, retrieve,
                                                retrieveCF)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
@@ -144,12 +144,7 @@ getTxDataDB th DatabaseReader{databaseHandle = db} =
 
 getNumTxDataDB :: MonadIO m => Integer -> DatabaseReader -> m (Maybe TxData)
 getNumTxDataDB i r@DatabaseReader{databaseHandle = db} =
-    case decodeTxKey i of
-        (th, Just sk) ->
-            fmap snd <$>
-            liftIO (firstMatchingSkipCF db (txCF db) (TxKeyS sk) (TxKey th))
-        (th, Nothing) ->
-            getTxDataDB th r
+    fmap snd <$> liftIO (firstMatchingCF db (txCF db) (decodeTxKey i))
 
 
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
