@@ -75,7 +75,6 @@ data Config = Config
     , configMaxDiff         :: !Int
     , configCacheRefresh    :: !Int
     , configCacheRetryDelay :: !Int
-    , configNumTxId         :: !Bool
     , configStatsd          :: !Bool
     , configStatsdHost      :: !String
     , configStatsdPort      :: !Int
@@ -107,7 +106,6 @@ instance Default Config where
                  , configMaxDiff         = defMaxDiff
                  , configCacheRefresh    = defCacheRefresh
                  , configCacheRetryDelay = defCacheRetryDelay
-                 , configNumTxId         = defNumTxId
                  , configStatsd          = defStatsd
                  , configStatsdHost      = defStatsdHost
                  , configStatsdPort      = defStatsdPort
@@ -189,11 +187,6 @@ defDebug :: Bool
 defDebug = unsafePerformIO $
     defEnv "DEBUG" False parseBool
 {-# NOINLINE defDebug #-}
-
-defNumTxId :: Bool
-defNumTxId = unsafePerformIO $
-    defEnv "NUMTXID" False parseBool
-{-# NOINLINE defNumTxId #-}
 
 defWebLimits :: WebLimits
 defWebLimits = unsafePerformIO $ do
@@ -497,10 +490,6 @@ config = do
         <> help "Maximum difference between headers and blocks"
         <> showDefault
         <> value (configMaxDiff def)
-    configNumTxId <-
-        flag (configNumTxId def) True $
-        long "numtxid"
-        <> help "Numeric tx_index field"
     configStatsd <-
         flag (configStatsd def) True $
         long "statsd"
@@ -598,7 +587,6 @@ run Config { configHost = host
            , configNoMempool = nomem
            , configCacheRefresh = crefresh
            , configCacheRetryDelay = cretrydelay
-           , configNumTxId = numtxid
            , configStatsd = statsd
            , configStatsdHost = statsdhost
            , configStatsdPort = statsdport
@@ -645,7 +633,6 @@ run Config { configHost = host
                     , webVersion = version
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
-                    , webNumTxId = numtxid
                     , webStats = stats
                     }
   where

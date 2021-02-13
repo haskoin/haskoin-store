@@ -145,7 +145,6 @@ data WebConfig = WebConfig
     , webTimeouts   :: !WebTimeouts
     , webVersion    :: !String
     , webNoMempool  :: !Bool
-    , webNumTxId    :: !Bool
     , webStats      :: !(Maybe Metrics.Store)
     }
 
@@ -1238,9 +1237,13 @@ getBinfoActive metric = do
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
 
+getNumTxId :: MonadIO m => WebT m Bool
+getNumTxId = fmap not $ S.param "txidindex" `S.rescue` const (return False)
+
 scottyBinfoUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoUnspent =
     getBinfoActive unspentErrors >>= \(xspecs, addrs) ->
+    getNumTxId >>= \numtxid ->
     get_limit >>= \limit ->
     get_min_conf >>= \min_conf ->
     let len = HashSet.size addrs + HashMap.size xspecs
@@ -1248,7 +1251,6 @@ scottyBinfoUnspent =
     xuns <- get_xpub_unspents xspecs
     auns <- get_addr_unspents addrs
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    numtxid <- lift $ asks (webNumTxId . webConfig)
     height <- get_height
     let g k = map (xpub_unspent numtxid height k)
         xbus = concatMap (uncurry g) (HashMap.toList xuns)
@@ -1302,6 +1304,7 @@ scottyBinfoUnspent =
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
     get_addrs >>= \(addrs, xpubs, saddrs, sxpubs, xspecs) ->
+    getNumTxId >>= \numtxid ->
     lift (asks webTicker) >>= \ticker ->
     get_price ticker >>= \local ->
     get_cashaddr >>= \cashaddr ->
@@ -1310,7 +1313,6 @@ scottyMultiAddr =
     get_prune >>= \prune ->
     let len = HashSet.size addrs + HashSet.size xpubs
     in withMetrics multiaddrResponseTime len $ do
-    numtxid <- lift $ asks (webNumTxId . webConfig)
     xbals <- get_xbals xspecs
     let sxbals = subset sxpubs xbals
     xtrs <- get_xtrs xspecs
@@ -1518,7 +1520,7 @@ scottyMultiAddr =
 
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
-    lift (asks (webNumTxId . webConfig)) >>= \numtxid ->
+    getNumTxId >>= \numtxid ->
     S.param "txid" >>= \txid ->
     withMetrics rawtxResponseTime 1 $ go numtxid txid
   where
