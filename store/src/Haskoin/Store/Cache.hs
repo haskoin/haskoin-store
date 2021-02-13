@@ -225,6 +225,7 @@ instance (MonadUnliftIO m , MonadLoggerIO m, StoreReadExtra m) =>
             Just cfg -> lift (runReaderT (getXPubTxs xpub limits) cfg)
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
+    getNumTxData = lift . getNumTxData
 
 withCache :: StoreReadBase m => Maybe CacheConfig -> CacheT m a -> m a
 withCache s f = runReaderT f s

@@ -12,6 +12,7 @@ module Haskoin.Store.Database.Types
     , MemKey(..)
     , SpenderKey(..)
     , TxKey(..)
+    , decodeTxKey
     , UnspentKey(..)
     , VersionKey(..)
     , BalVal(..)
@@ -26,7 +27,8 @@ module Haskoin.Store.Database.Types
 
 import           Control.DeepSeq        (NFData)
 import           Control.Monad          (guard)
-import           Data.Bits              (Bits, shiftL, shiftR, (.|.))
+import           Data.Bits              (Bits, shift, shiftL, shiftR, (.&.),
+                                         (.|.))
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as BS
 import           Data.ByteString.Short  (ShortByteString)
@@ -35,7 +37,9 @@ import           Data.Default           (Default (..))
 import           Data.Either            (fromRight)
 import           Data.Hashable          (Hashable)
 import           Data.Serialize         (Serialize (..), decode, encode,
-                                         getBytes, getWord8, putWord8, runPut)
+                                         getBytes, getWord16be, getWord32be,
+                                         getWord8, putWord32be, putWord64be,
+                                         putWord8, runGet, runPut)
 import           Data.Word              (Word16, Word32, Word64, Word8)
 import           Database.RocksDB.Query (Key, KeyValue)
 import           GHC.Generics           (Generic)
@@ -137,6 +141,7 @@ instance KeyValue AddrOutKey OutVal
 
 -- | Transaction database key.
 data TxKey = TxKey { txKey :: TxHash }
+           | TxKeyS { txKeyShort :: (Word32, Word16) }
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize TxKey where
@@ -144,9 +149,31 @@ instance Serialize TxKey where
     put (TxKey h) = do
         putWord8 0x02
         put h
+    put (TxKeyS h) = do
+        putWord8 0x02
+        put h
     get = do
         guard . (== 0x02) =<< getWord8
         TxKey <$> get
+
+decodeTxKey :: Integer -> (TxHash, Maybe (Word32, Word16))
+decodeTxKey i =
+    let w4 = fromIntegral (i                  .&. 0xffffffffffffffff)
+        w3 = fromIntegral ((i `shift` (-64))  .&. 0xffffffffffffffff)
+        w2 = fromIntegral ((i `shift` (-128)) .&. 0xffffffffffffffff)
+        w1 = fromIntegral ((i `shift` (-192)) .&. 0xffffffffffffffff)
+        bs = runPut $ do
+            putWord64be w1
+            putWord64be w2
+            putWord64be w3
+            putWord64be w4
+        Right h = decode bs
+        sh = if w4 .&. 0x00ffffffffffffff == 0x0000000000000000
+             then let s1 = fromIntegral (w1 `shift` (-32))
+                      s2 = fromIntegral (w1 `shift` (-16))
+                  in Just (s1, s2)
+             else Nothing
+    in (h, sh)
 
 instance Key TxKey
 instance KeyValue TxKey TxData

@@ -1558,19 +1558,8 @@ instance FromJSON Except where
                 String "block-too-large" -> return BlockTooLarge
                 _                        -> mzero
 
-
----------------------------------------
--- Blockchain.info API Compatibility --
----------------------------------------
-
-data BinfoTxId
-    = BinfoTxIdHash !TxHash
-    | BinfoTxIdIndex !Integer
-    deriving (Eq, Show, Read, Generic, Serialize, NFData)
-
-encodeBinfoTxId :: Bool -> TxHash -> BinfoTxId
-encodeBinfoTxId False h = BinfoTxIdHash h
-encodeBinfoTxId True h =
+toIntTxId :: TxHash -> Integer
+toIntTxId h =
     let bs = S.encode h
         f = do
             w1 <- S.getWord64be
@@ -1579,15 +1568,13 @@ encodeBinfoTxId True h =
             w4 <- S.getWord64be
             return (w1, w2, w3, w4)
         Right (w1, w2, w3, w4) = S.runGet f bs
-        i = toInteger w4 .|.
-            toInteger w3 `shift` 64 .|.
-            toInteger w2 `shift` 128 .|.
-            toInteger w1 `shift` 192
-    in BinfoTxIdIndex i
+    in toInteger w4 .|.
+       toInteger w3 `shift` 64 .|.
+       toInteger w2 `shift` 128 .|.
+       toInteger w1 `shift` 192
 
-decodeBinfoTxId :: BinfoTxId -> TxHash
-decodeBinfoTxId (BinfoTxIdHash h) = h
-decodeBinfoTxId (BinfoTxIdIndex i) =
+fromIntTxId :: Integer -> TxHash
+fromIntTxId i =
     let w4 = fromIntegral (i                  .&. 0xffffffffffffffff)
         w3 = fromIntegral ((i `shift` (-64))  .&. 0xffffffffffffffff)
         w2 = fromIntegral ((i `shift` (-128)) .&. 0xffffffffffffffff)
@@ -1599,6 +1586,23 @@ decodeBinfoTxId (BinfoTxIdIndex i) =
             S.putWord64be w4
         Right h = S.decode bs
     in h
+
+---------------------------------------
+-- Blockchain.info API Compatibility --
+---------------------------------------
+
+data BinfoTxId
+    = BinfoTxIdHash !TxHash
+    | BinfoTxIdIndex !Integer
+    deriving (Eq, Show, Read, Generic, Serialize, NFData)
+
+encodeBinfoTxId :: Bool -> TxHash -> BinfoTxId
+encodeBinfoTxId False = BinfoTxIdHash
+encodeBinfoTxId True = BinfoTxIdIndex . toIntTxId
+
+decodeBinfoTxId :: BinfoTxId -> TxHash
+decodeBinfoTxId (BinfoTxIdHash h) = h
+decodeBinfoTxId (BinfoTxIdIndex i) = fromIntTxId i
 
 instance Parsable BinfoTxId where
     parseParam t =

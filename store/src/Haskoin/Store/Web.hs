@@ -316,6 +316,7 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     xPubSummary = runInWebReader . xPubSummary
     xPubUnspents xpub = runInWebReader . xPubUnspents xpub
     xPubTxs xpub = runInWebReader . xPubTxs xpub
+    getNumTxData = runInWebReader . getNumTxData
 
 instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadBase (WebT m) where
     getNetwork = lift getNetwork
@@ -338,6 +339,7 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
     xPubTxs xpub = lift . xPubTxs xpub
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
+    getNumTxData = lift . getNumTxData
 
 -------------------
 -- Path Handlers --
@@ -1518,7 +1520,7 @@ scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
     lift (asks (webNumTxId . webConfig)) >>= \numtxid ->
     S.param "txid" >>= \txid ->
-    withMetrics rawtxResponseTime 1 $ go numtxid (decodeBinfoTxId txid)
+    withMetrics rawtxResponseTime 1 $ go numtxid txid
   where
     get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
     js numtxid t = do
@@ -1528,11 +1530,14 @@ scottyBinfoTx =
     hex t = do
         setHeaders
         S.text . TL.fromStrict . encodeHex . encode $ transactionData t
-    go numtxid h = getTransaction h >>= \case
-        Nothing -> raise rawtxErrors ThingNotFound
-        Just t -> get_format >>= \case
-            "hex" -> hex t
-            _     -> js numtxid t
+    go numtxid txid =
+        let f (BinfoTxIdHash h)  = getTransaction h
+            f (BinfoTxIdIndex i) = getNumTransaction i
+        in f txid >>= \case
+            Nothing -> raise rawtxErrors ThingNotFound
+            Just t -> get_format >>= \case
+                "hex" -> hex t
+                _     -> js numtxid t
 
 -- GET Network Information --
 

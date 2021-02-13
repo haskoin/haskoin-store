@@ -16,9 +16,11 @@ module Haskoin.Store.Database.Reader
     , balanceCF
     ) where
 
-import           Conduit                      (mapC, runConduit, sinkList, (.|))
+import           Conduit                      (lift, mapC, runConduit, sinkList,
+                                               (.|))
 import           Control.Monad.Except         (runExceptT, throwError)
 import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
+import qualified Data.ByteString              as BS
 import           Data.Default                 (def)
 import           Data.Function                (on)
 import           Data.List                    (sortBy)
@@ -26,8 +28,9 @@ import           Data.Maybe                   (fromMaybe)
 import           Data.Word                    (Word32)
 import           Database.RocksDB             (ColumnFamily, Config (..),
                                                DB (..), withDBCF, withIterCF)
-import           Database.RocksDB.Query       (insert, matching, matchingSkip,
-                                               retrieve, retrieveCF)
+import           Database.RocksDB.Query       (firstMatchingSkipCF, insert,
+                                               matching, matchingSkip, retrieve,
+                                               retrieveCF)
 import           Haskoin                      (Address, BlockHash, BlockHeight,
                                                Network, OutPoint (..), TxHash)
 import           Haskoin.Store.Common
@@ -139,6 +142,16 @@ getTxDataDB :: MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
 getTxDataDB th DatabaseReader{databaseHandle = db} =
     retrieveCF db (txCF db) (TxKey th)
 
+getNumTxDataDB :: MonadIO m => Integer -> DatabaseReader -> m (Maybe TxData)
+getNumTxDataDB i r@DatabaseReader{databaseHandle = db} =
+    case decodeTxKey i of
+        (th, Just sk) ->
+            fmap snd <$>
+            liftIO (firstMatchingSkipCF db (txCF db) (TxKeyS sk) (TxKey th))
+        (th, Nothing) ->
+            getTxDataDB th r
+
+
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
 getSpenderDB op DatabaseReader{databaseHandle = db} =
     retrieveCF db (spenderCF db) $ SpenderKey op
@@ -176,7 +189,7 @@ getAddressTxsDB a limits bdb@DatabaseReader{databaseHandle = db} =
         case start limits of
             Nothing -> matching it (AddrTxKeyA a)
             Just (AtTx txh) ->
-                getTxDataDB txh bdb >>= \case
+                lift (getTxDataDB txh bdb) >>= \case
                     Just TxData {txDataBlock = b@BlockRef {}} ->
                         matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
                     _ -> matching it (AddrTxKeyA a)
@@ -216,14 +229,15 @@ getAddressUnspentsDB a limits bdb@DatabaseReader{databaseHandle = db} =
     x it .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
   where
     x it = case start limits of
-        Nothing -> matching it (AddrOutKeyA a)
+        Nothing ->
+            matching it (AddrOutKeyA a)
         Just (AtBlock h) ->
             matchingSkip
                 it
                 (AddrOutKeyA a)
                 (AddrOutKeyB a (BlockRef h maxBound))
         Just (AtTx txh) ->
-            getTxDataDB txh bdb >>= \case
+            lift (getTxDataDB txh bdb) >>= \case
                 Just TxData {txDataBlock = b@BlockRef {}} ->
                     matchingSkip it (AddrOutKeyA a) (AddrOutKeyB a b)
                 _ -> matching it (AddrOutKeyA a)
@@ -246,3 +260,4 @@ instance MonadIO m => StoreReadExtra (DatabaseReaderT m) where
     getAddressTxs a limits = ask >>= getAddressTxsDB a limits
     getMaxGap = asks databaseMaxGap
     getInitialGap = asks databaseInitialGap
+    getNumTxData t = ask >>= getNumTxDataDB t
