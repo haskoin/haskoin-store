@@ -159,13 +159,10 @@ instance Serialize TxKey where
 decodeTxKey :: Word64 -> ((Word32, Word16), TxHash)
 decodeTxKey i =
     let masked = i .&. 0x001fffffffffffff
-        w1 = fromIntegral (masked `shift` (-32))
-        w2 = fromIntegral masked
         wb = masked `shift` 11
-        bs = runPut $ do
-            putWord64be wb
-            sequence_ $ replicate 3 $ putWord64be 0x0000000000000000
+        bs = runPut (putWord64be wb)
         Right h = decode bs
+        Right (w1, w2) = runGet ((,) <$> getWord32be <*> getWord16be) bs
     in ((w1, w2), h)
 
 instance Key TxKey

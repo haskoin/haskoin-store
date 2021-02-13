@@ -1559,11 +1559,9 @@ instance FromJSON Except where
 
 toIntTxId :: TxHash -> Word64
 toIntTxId h =
-    let xs = S.encode h
-        b = B.head xs .&. 0x1f
-        bs = B.tail xs
-        Right w64 = S.decode (0x00 `B.cons` b `B.cons` bs)
-    in w64
+    let bs = S.encode h
+        Right w64 = S.runGet getWord64be bs
+    in w64 `shift` (-11)
 
 ---------------------------------------
 -- Blockchain.info API Compatibility --
