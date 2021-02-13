@@ -161,7 +161,7 @@ decodeTxKey i =
     let masked = i .&. 0x001fffffffffffff
         wb = masked `shift` 11
         bs = runPut (putWord64be wb)
-        Right h = decode bs
+        Right h = decode (bs <> BS.replicate 24 0x00)
         Right (w1, w2) = runGet ((,) <$> getWord32be <*> getWord16be) bs
     in ((w1, w2), h)
 
