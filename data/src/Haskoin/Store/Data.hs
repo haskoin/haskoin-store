@@ -88,11 +88,11 @@ module Haskoin.Store.Data
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
     , binfoMultiAddrParseJSON
-    , BinfoAddress(..)
+    , BinfoBalance(..)
     , toBinfoAddrs
-    , binfoAddressToJSON
-    , binfoAddressToEncoding
-    , binfoAddressParseJSON
+    , binfoBalanceToJSON
+    , binfoBalanceToEncoding
+    , binfoBalanceParseJSON
     , BinfoAddr(..)
     , parseBinfoAddr
     , BinfoWallet(..)
@@ -1615,7 +1615,7 @@ instance FromJSON BinfoTxId where
 
 data BinfoMultiAddr
     = BinfoMultiAddr
-        { getBinfoMultiAddrAddresses    :: ![BinfoAddress]
+        { getBinfoMultiAddrAddresses    :: ![BinfoBalance]
         , getBinfoMultiAddrWallet       :: !BinfoWallet
         , getBinfoMultiAddrTxs          :: ![BinfoTx]
         , getBinfoMultiAddrInfo         :: !BinfoInfo
@@ -1627,7 +1627,7 @@ data BinfoMultiAddr
 binfoMultiAddrToJSON :: Network -> BinfoMultiAddr -> Value
 binfoMultiAddrToJSON net' BinfoMultiAddr {..} =
     object $
-        [ "addresses" .= map (binfoAddressToJSON net) getBinfoMultiAddrAddresses
+        [ "addresses" .= map (binfoBalanceToJSON net) getBinfoMultiAddrAddresses
         , "wallet"    .= getBinfoMultiAddrWallet
         , "txs"       .= map (binfoTxToJSON net) getBinfoMultiAddrTxs
         , "info"      .= getBinfoMultiAddrInfo
@@ -1640,7 +1640,7 @@ binfoMultiAddrToJSON net' BinfoMultiAddr {..} =
 binfoMultiAddrParseJSON :: Network -> Value -> Parser BinfoMultiAddr
 binfoMultiAddrParseJSON net = withObject "multiaddr" $ \o -> do
     getBinfoMultiAddrAddresses <-
-        mapM (binfoAddressParseJSON net) =<< o .: "addresses"
+        mapM (binfoBalanceParseJSON net) =<< o .: "addresses"
     getBinfoMultiAddrWallet <- o .: "wallet"
     getBinfoMultiAddrTxs <-
         mapM (binfoTxParseJSON net) =<< o .: "txs"
@@ -1660,19 +1660,19 @@ binfoMultiAddrToEncoding net' BinfoMultiAddr {..} =
         <> if getBinfoMultiAddrCashAddr then "cash_addr" .= True else mempty
         )
   where
-    as = list (binfoAddressToEncoding net) getBinfoMultiAddrAddresses
+    as = list (binfoBalanceToEncoding net) getBinfoMultiAddrAddresses
     ts = list (binfoTxToEncoding net) getBinfoMultiAddrTxs
     net = if not getBinfoMultiAddrCashAddr && net' == bch then btc else net'
 
-data BinfoAddress
-    = BinfoAddress
+data BinfoBalance
+    = BinfoAddrBalance
         { getBinfoAddress      :: !Address
         , getBinfoAddrTxCount  :: !Word64
         , getBinfoAddrReceived :: !Word64
         , getBinfoAddrSent     :: !Word64
         , getBinfoAddrBalance  :: !Word64
         }
-    | BinfoXPubKey
+    | BinfoXPubBalance
         { getBinfoXPubKey          :: !XPubKey
         , getBinfoAddrTxCount      :: !Word64
         , getBinfoAddrReceived     :: !Word64
@@ -1683,8 +1683,8 @@ data BinfoAddress
         }
     deriving (Eq, Show, Generic, Serialize, NFData)
 
-binfoAddressToJSON :: Network -> BinfoAddress -> Value
-binfoAddressToJSON net BinfoAddress {..} =
+binfoBalanceToJSON :: Network -> BinfoBalance -> Value
+binfoBalanceToJSON net BinfoAddrBalance {..} =
     object
         [ "address"        .= addrToJSON net getBinfoAddress
         , "final_balance"  .= getBinfoAddrBalance
@@ -1692,7 +1692,7 @@ binfoAddressToJSON net BinfoAddress {..} =
         , "total_received" .= getBinfoAddrReceived
         , "total_sent"     .= getBinfoAddrSent
         ]
-binfoAddressToJSON net BinfoXPubKey {..} =
+binfoBalanceToJSON net BinfoXPubBalance {..} =
     object
         [ "address"        .= xPubToJSON net getBinfoXPubKey
         , "change_index"   .= getBinfoXPubChangeIndex
@@ -1703,8 +1703,8 @@ binfoAddressToJSON net BinfoXPubKey {..} =
         , "total_sent"     .= getBinfoAddrSent
         ]
 
-binfoAddressParseJSON :: Network -> Value -> Parser BinfoAddress
-binfoAddressParseJSON net = withObject "address" $ \o -> x o <|> a o
+binfoBalanceParseJSON :: Network -> Value -> Parser BinfoBalance
+binfoBalanceParseJSON net = withObject "address" $ \o -> x o <|> a o
   where
     x o = do
         getBinfoXPubKey <- xPubFromJSON net =<< o .: "address"
@@ -1714,17 +1714,17 @@ binfoAddressParseJSON net = withObject "address" $ \o -> x o <|> a o
         getBinfoAddrTxCount <- o .: "n_tx"
         getBinfoAddrReceived <- o .: "total_received"
         getBinfoAddrSent <- o .: "total_sent"
-        return BinfoXPubKey{..}
+        return BinfoXPubBalance{..}
     a o = do
         getBinfoAddress <- addrFromJSON net =<< o .: "address"
         getBinfoAddrBalance <- o .: "final_balance"
         getBinfoAddrTxCount <- o .: "n_tx"
         getBinfoAddrReceived <- o .: "total_received"
         getBinfoAddrSent <- o .: "total_sent"
-        return BinfoAddress{..}
+        return BinfoAddrBalance{..}
 
-binfoAddressToEncoding :: Network -> BinfoAddress -> Encoding
-binfoAddressToEncoding net BinfoAddress {..} =
+binfoBalanceToEncoding :: Network -> BinfoBalance -> Encoding
+binfoBalanceToEncoding net BinfoAddrBalance {..} =
     pairs
         (  "address"         `pair` addrToEncoding net getBinfoAddress
         <> "final_balance"   .= getBinfoAddrBalance
@@ -1732,7 +1732,7 @@ binfoAddressToEncoding net BinfoAddress {..} =
         <> "total_received"  .= getBinfoAddrReceived
         <> "total_sent"      .= getBinfoAddrSent
         )
-binfoAddressToEncoding net BinfoXPubKey {..} =
+binfoBalanceToEncoding net BinfoXPubBalance {..} =
     pairs
         (  "address"         `pair` xPubToEncoding net getBinfoXPubKey
         <> "change_index"    .= getBinfoXPubChangeIndex
@@ -2297,7 +2297,7 @@ relevantTxs addrs prune t@Transaction{..} =
 toBinfoAddrs :: HashMap Address Balance
              -> HashMap XPubKey [XPubBal]
              -> HashMap XPubKey Int
-             -> [BinfoAddress]
+             -> [BinfoBalance]
 toBinfoAddrs only_addrs only_xpubs xpub_txs =
     xpub_bals <> addr_bals
   where
@@ -2317,14 +2317,14 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
                 Just i  -> fromIntegral i
             ax = foldl max 0 (map (i 0) xs)
             cx = foldl max 0 (map (i 1) xs)
-        in BinfoXPubKey{ getBinfoXPubKey = k
-                       , getBinfoAddrTxCount = count
-                       , getBinfoAddrReceived = received
-                       , getBinfoAddrSent = sent
-                       , getBinfoAddrBalance = bal
-                       , getBinfoXPubAccountIndex = ax
-                       , getBinfoXPubChangeIndex = cx
-                       }
+        in BinfoXPubBalance{ getBinfoXPubKey = k
+                           , getBinfoAddrTxCount = count
+                           , getBinfoAddrReceived = received
+                           , getBinfoAddrSent = sent
+                           , getBinfoAddrBalance = bal
+                           , getBinfoXPubAccountIndex = ax
+                           , getBinfoXPubChangeIndex = cx
+                           }
     xpub_bals = map (uncurry xpub_bal) (HashMap.toList only_xpubs)
     addr_bals =
         let f Balance{..} =
@@ -2333,12 +2333,12 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
                     recv = balanceTotalReceived
                     tx_count = balanceTxCount
                     bal = balanceAmount + balanceZero
-                in BinfoAddress{ getBinfoAddress = addr
-                               , getBinfoAddrTxCount = tx_count
-                               , getBinfoAddrReceived = recv
-                               , getBinfoAddrSent = sent
-                               , getBinfoAddrBalance = bal
-                               }
+                in BinfoAddrBalance{ getBinfoAddress = addr
+                                   , getBinfoAddrTxCount = tx_count
+                                   , getBinfoAddrReceived = recv
+                                   , getBinfoAddrSent = sent
+                                   , getBinfoAddrBalance = bal
+                                   }
          in map f $ HashMap.elems only_addrs
 
 toBinfoTxSimple :: Bool

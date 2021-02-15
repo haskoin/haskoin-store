@@ -49,7 +49,7 @@ serialVals =
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
     , SerialBox (arbitrary :: Gen Except)
     , SerialBox (arbitrary :: Gen BinfoWallet)
-    , SerialBox (arbitrary :: Gen BinfoAddress)
+    , SerialBox (arbitrary :: Gen BinfoBalance)
     , SerialBox (arbitrary :: Gen BinfoBlockInfo)
     , SerialBox (arbitrary :: Gen BinfoXPubPath)
     , SerialBox (arbitrary :: Gen BinfoSpender)
@@ -122,9 +122,9 @@ netVals =
              , binfoMultiAddrToEncoding
              , binfoMultiAddrParseJSON
              , arbitraryNetData)
-    , NetBox ( binfoAddressToJSON
-             , binfoAddressToEncoding
-             , binfoAddressParseJSON
+    , NetBox ( binfoBalanceToJSON
+             , binfoBalanceToEncoding
+             , binfoBalanceParseJSON
              , arbitraryNetData)
     , NetBox ( binfoTxToJSON
              , binfoTxToEncoding
@@ -416,7 +416,7 @@ instance Arbitrary BinfoMultiAddr where
         getBinfoMultiAddrCashAddr <- arbitrary
         return BinfoMultiAddr {..}
 
-instance Arbitrary BinfoAddress where
+instance Arbitrary BinfoBalance where
     arbitrary = do
         getBinfoAddress <- arbitraryAddress
         getBinfoAddrTxCount <- arbitrary
@@ -426,7 +426,7 @@ instance Arbitrary BinfoAddress where
         getBinfoXPubKey <- snd <$> arbitraryXPubKey
         getBinfoXPubAccountIndex <- arbitrary
         getBinfoXPubChangeIndex <- arbitrary
-        elements [BinfoAddress {..}, BinfoXPubKey {..}]
+        elements [BinfoAddrBalance {..}, BinfoXPubBalance {..}]
 
 instance Arbitrary BinfoWallet where
     arbitrary = do
