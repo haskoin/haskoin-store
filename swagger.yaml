@@ -2576,7 +2576,7 @@ components:
         activeBech32:
           type: string
         onlyShow:
-          type: boolean
+          type: string
         n:
           type: integer
         offset:
