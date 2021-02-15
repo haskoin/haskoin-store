@@ -35,6 +35,7 @@ module Haskoin.Store.Common
 import           Conduit                    (ConduitT, dropC, mapC, takeC)
 import           Control.DeepSeq            (NFData)
 import           Control.Exception          (Exception)
+import           Control.Monad              (forM)
 import           Control.Monad.Trans        (lift)
 import           Control.Monad.Trans.Maybe  (MaybeT (..), runMaybeT)
 import           Control.Monad.Trans.Reader (runReaderT)
@@ -125,7 +126,7 @@ class StoreReadBase m => StoreReadExtra m where
     getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
-    getNumTxData :: Word64 -> m (Maybe TxData)
+    getNumTxData :: Word64 -> m [TxData]
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
@@ -280,11 +281,12 @@ getTransaction h = runMaybeT $ do
     return $ toTransaction d sm
 
 getNumTransaction ::
-    (Monad m, StoreReadExtra m) => Word64 -> m (Maybe Transaction)
-getNumTransaction i = runMaybeT $ do
-    d <- MaybeT $ getNumTxData i
-    sm <- lift $ getSpenders (txHash (txData d))
-    return $ toTransaction d sm
+    (Monad m, StoreReadExtra m) => Word64 -> m [Transaction]
+getNumTransaction i = do
+    ds <- getNumTxData i
+    forM ds $ \d -> do
+        sm <- getSpenders (txHash (txData d))
+        return $ toTransaction d sm
 
 blockAtOrBefore :: (MonadIO m, StoreReadExtra m)
                 => Chain

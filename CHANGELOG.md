@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.45.0
+### Added
+- Using a tx_index that results in a txid conflict returns a 409 - Conflict.
+
 ## 0.44.0
 ### Changed
 - Numeric txid now 53 bits long and doesn't return transactions when hashes collide.

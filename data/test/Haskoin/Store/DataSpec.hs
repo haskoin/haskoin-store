@@ -393,6 +393,7 @@ instance Arbitrary Except where
         , UserError <$> arbitrary
         , StringError <$> arbitrary
         , return BlockTooLarge
+        , TxIndexConflict <$> listOf1 arbitraryTxHash
         ]
 
 ---------------------------------------

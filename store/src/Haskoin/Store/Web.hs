@@ -50,7 +50,8 @@ import           Data.Int                      (Int64)
 import           Data.List                     (nub, sortBy)
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
-                                                listToMaybe, mapMaybe)
+                                                listToMaybe, mapMaybe,
+                                                maybeToList)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
 import qualified Data.Set                      as Set
@@ -87,8 +88,9 @@ import           Haskoin.Util
 import           NQE                           (Inbox, receive,
                                                 withSubscription)
 import           Network.HTTP.Types            (Status (..), status400,
-                                                status403, status404, status500,
-                                                status503, statusIsClientError,
+                                                status403, status404, status409,
+                                                status500, status503,
+                                                statusIsClientError,
                                                 statusIsServerError,
                                                 statusIsSuccessful)
 import           Network.Wai                   (Middleware, Request (..),
@@ -417,12 +419,13 @@ raise metric err =
         S.raise err
 
 errStatus :: Except -> Status
-errStatus ThingNotFound = status404
-errStatus BadRequest    = status400
-errStatus UserError{}   = status400
-errStatus StringError{} = status400
-errStatus ServerError   = status500
-errStatus BlockTooLarge = status403
+errStatus ThingNotFound     = status404
+errStatus BadRequest        = status400
+errStatus UserError{}       = status400
+errStatus StringError{}     = status400
+errStatus ServerError       = status500
+errStatus BlockTooLarge     = status403
+errStatus TxIndexConflict{} = status409
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
@@ -1533,13 +1536,16 @@ scottyBinfoTx =
         setHeaders
         S.text . TL.fromStrict . encodeHex . encode $ transactionData t
     go numtxid txid =
-        let f (BinfoTxIdHash h)  = getTransaction h
+        let f (BinfoTxIdHash h)  = maybeToList <$> getTransaction h
             f (BinfoTxIdIndex i) = getNumTransaction i
         in f txid >>= \case
-            Nothing -> raise rawtxErrors ThingNotFound
-            Just t -> get_format >>= \case
+            [] -> raise rawtxErrors ThingNotFound
+            [t] -> get_format >>= \case
                 "hex" -> hex t
                 _     -> js numtxid t
+            ts ->
+                let tids = map (txHash . transactionData) ts
+                in raise rawtxErrors (TxIndexConflict tids)
 
 -- GET Network Information --
 

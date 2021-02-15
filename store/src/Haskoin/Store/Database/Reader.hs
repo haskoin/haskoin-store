@@ -145,7 +145,7 @@ getTxDataDB :: MonadIO m => TxHash -> DatabaseReader -> m (Maybe TxData)
 getTxDataDB th DatabaseReader{databaseHandle = db} =
     retrieveCF db (txCF db) (TxKey th)
 
-getNumTxDataDB :: MonadIO m => Word64 -> DatabaseReader -> m (Maybe TxData)
+getNumTxDataDB :: MonadIO m => Word64 -> DatabaseReader -> m [TxData]
 getNumTxDataDB i r@DatabaseReader{databaseHandle = db} = do
     let (sk, w) = decodeTxKey i
     ls <- liftIO $ matchingAsListCF db (txCF db) (TxKeyS sk)
@@ -153,10 +153,7 @@ getNumTxDataDB i r@DatabaseReader{databaseHandle = db} = do
                   b = BS.head (BS.drop 6 bs)
                   w' = b .&. 0xf8
               in w == w'
-        xs = filter f $ map snd ls
-    case xs of
-        [x] -> return $ Just x
-        _   -> return Nothing
+    return $ filter f $ map snd ls
 
 getSpenderDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Spender)
 getSpenderDB op DatabaseReader{databaseHandle = db} =

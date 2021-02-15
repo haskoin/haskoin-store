@@ -1514,6 +1514,7 @@ data Except
     | UserError !String
     | StringError !String
     | BlockTooLarge
+    | TxIndexConflict ![TxHash]
     deriving (Show, Eq, Ord, Serialize, Generic, NFData)
 
 instance Exception Except
@@ -1527,35 +1528,51 @@ instance ToJSON Except where
         object $
         case e of
             ThingNotFound ->
-                ["error" .= String "not-found"]
+                [ "error" .= String "not-found-or-invalid-arg"
+                , "message" .= String "Item not found or argument invalid"
+                ]
             ServerError ->
-                ["error" .= String "server-error"]
+                [ "error" .= String "server-error"
+                , "message" .= String "Server error" ]
             BadRequest ->
-                ["error" .= String "bad-request"]
+                [ "error" .= String "bad-request"
+                , "message" .= String "Invalid request" ]
             UserError msg ->
                 [ "error" .= String "user-error"
-                , "message" .= String (cs msg)
-                ]
+                , "message" .= String (cs msg) ]
             StringError msg ->
                 [ "error" .= String "string-error"
-                , "message" .= String (cs msg)
-                ]
+                , "message" .= String (cs msg) ]
             BlockTooLarge ->
-                ["error" .= String "block-too-large"]
+                [ "error" .= String "block-too-large"
+                , "message" .= String "Block is too large to get all txs" ]
+            TxIndexConflict txids ->
+                [ "error" .= String "multiple-tx-index"
+                , "message" .= String "Many txs match that tx_index"
+                , "txids" .= txids ]
 
 instance FromJSON Except where
     parseJSON =
         A.withObject "Except" $ \o -> do
             ctr <- o .: "error"
-            msg <- fromMaybe "" <$> o .:? "message"
+            msg <- o .:? "message" .!= ""
             case ctr of
-                String "not-found"       -> return ThingNotFound
-                String "server-error"    -> return ServerError
-                String "bad-request"     -> return BadRequest
-                String "user-error"      -> return $ UserError msg
-                String "string-error"    -> return $ StringError msg
-                String "block-too-large" -> return BlockTooLarge
-                _                        -> mzero
+                String "not-found-or-invalid-arg" ->
+                    return ThingNotFound
+                String "server-error" ->
+                    return ServerError
+                String "bad-request" ->
+                    return BadRequest
+                String "user-error" ->
+                    return $ UserError msg
+                String "string-error" ->
+                    return $ StringError msg
+                String "block-too-large" ->
+                    return BlockTooLarge
+                String "multiple-tx-index" -> do
+                    txids <- o .: "txids"
+                    return $ TxIndexConflict txids
+                _ -> mzero
 
 toIntTxId :: TxHash -> Word64
 toIntTxId h =
