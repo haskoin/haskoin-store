@@ -7,10 +7,10 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.39.0
+  version: &version 0.45.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
-    name: Jean-Pierre Rupp
+    name: JP Rupp
     url: https://github.com/haskoin/haskoin-store
     email: jprupp@protonmail.ch
   license:
@@ -1380,7 +1380,125 @@ paths:
                 type: string
                 format: binary
                 
-                
+  '/blockchain/multiaddr':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoMultiAddr
+      summary: Wallet Data
+      parameters:
+        - $ref: '#/components/parameters/binfoActive'
+        - $ref: '#/components/parameters/binfoActiveP2SH'
+        - $ref: '#/components/parameters/binfoActiveBech32'
+        - $ref: '#/components/parameters/binfoOnlyShow'
+        - $ref: '#/components/parameters/binfoCount'
+        - $ref: '#/components/parameters/binfoOffset'
+        - $ref: '#/components/parameters/binfoNoCompact'
+        - $ref: '#/components/parameters/binfoCurrency'
+        - $ref: '#/components/parameters/binfoCashAddr'
+        - $ref: '#/components/parameters/binfoTxIdIndex'
+      responses:
+        '200':
+          description: Wallet information object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoMultiAddr'
+        '404':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Blockchain
+      operationId: postBinfoMultiAddr
+      summary: Wallet Data
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BinfoMultiAddrReq'
+      responses:
+        '200':
+          description: Wallet information object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoMultiAddr'
+        '404':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/rawtx/{txid}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoRawTx
+      summary: Transaction Data
+      parameters:
+        - $ref: '#/components/parameters/binfoTxId'
+        - $ref: '#/components/parameters/binfoFormat'
+      responses:
+        '200':
+          description: Transaction data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoTx'
+            application/text:
+              schema:
+                type: string
+                example: '010000000396997b6d709f04ecb91ef389421153d9cb5c4561fbebe717f3cae3cb62aa0a8b010000006b4830450221008bbcfc0ca16cec7f8f2a5303e1052bcc765274ff9eeeff54353aa0150edc4df10220178fb7340eae165688f45571b7b33d6d6b2e9e486008a84a5894beec907d7933412102761b22b06bbdae91162367aa3d85fe52b32a15f762c1dc7f421a01b4afd29931ffffffff5e1e58c91c197fbe359c8576ead6f6cbc2e8b261f7d037e7815150f67b868ef6000000006b483045022100ae349f01139deabd0de7dc27e8feaf1f37c40c1f8b4f7b2e39b2fd463d32bce0022074e36438751b93dcada9b9df03fadc20e126880f4f033751c92e4bb80fbd17e64121025085f19449fbe37a9eccdce56d41fc2d2d42971f5936e5bda6c4dcb8c4d7d271ffffffff6341b0c2a1c969ced40ccf348ae2f47d9bf4d7dfe42e28215f16549e58ee1aaf010000006a473044022072bc9402f43186f7b5522f8124857561ccf47df6f5dd35ce1a51bd33336915cc022072418ca96f3ec5228acbca67735c47c337a03d53ac39ec66b0c41c0e2133b16f4121024641e34d30ae4bde842925db6fcc95a8d2e515fdd2ca85b8c462cc8ba9cfa413ffffffff03581b0000000000001976a9141369d9bd3ea79896797c4143c97e9748cc06262d88aca4b20000000000001976a9148ecd9c021c8650db874940103f1f77e6da14d88e88ac22020000000000001976a91455298af255797243ac6a68b81d006b0a56f5d05188ac00000000'
+        '404':
+          description: Transaction not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Transaction index conflict.
+          content:
+            applicaton/json:
+              schema:
+                $ref: '#/components/schemas/BinfoTxIndexConflict'
+
+  '/blockchain/unspent':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoUnspent
+      summary: Unspent Outputs
+      parameters:
+        - $ref: '#/components/parameters/binfoActive'
+        - $ref: '#/components/parameters/binfoActiveP2SH'
+        - $ref: '#/components/parameters/binfoActiveBech32'
+        - $ref: '#/components/parameters/binfoLimit'
+        - $ref: '#/components/parameters/binfoConfirmations'
+      responses:
+        '200':
+          description: Unspent outputs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - unspent_outputs
+                properties:
+                  unspent_outputs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BinfoUnspent'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
                 
 components:
   schemas:
@@ -2001,6 +2119,477 @@ components:
           type: string
           example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
 
+    BinfoTxIdHash:
+      type: string
+      example: '000000000000069cc8b7d9cb759a59f754692d9cb5b4e4b7a9dba37c57ab65e8'
+
+    BinfoTxIdIndex:
+      type: integer
+      example: 1254181078042813
+
+    BinfoTxId:
+      oneOf:
+        - $ref: '#/components/schemas/BinfoTxIdHash'
+        - $ref: '#/components/schemas/BinfoTxIdIndex'
+
+    BinfoWallet:
+      type: object
+      required:
+        - final_balance
+        - n_tx
+        - n_tx_filtered
+        - total_received
+        - total_sent
+      properties:
+        final_balance:
+          type: integer
+        n_tx:
+          type: integer
+        n_tx_filtered:
+          type: integer
+        total_received:
+          type: integer
+        total_sent:
+          type: integer
+      example:
+        final_balance: 93247
+        n_tx: 0
+        n_tx_filtered: 0
+        total_received: 0
+        total_sent: 0
+
+
+    BinfoSymbol:
+      type: object
+      required:
+        - code
+        - symbol
+        - name
+        - conversion
+        - symbolAppearsAfter
+        - local
+      properties:
+        code:
+          type: string
+        symbol:
+          type: string
+        name:
+          type: string
+        conversion:
+          type: number
+          format: double
+        symbolAppearsAfter:
+          type: boolean
+        local:
+          type: boolean
+      example:
+        code: USD
+        symbol: '$'
+        name: 'U.S. dollar'
+        conversion: 2076.3244406433864
+        symbolAppearsAfter: false
+        local: true
+
+    BinfoBlockInfo:
+      type: object
+      required:
+        - hash
+        - height
+        - time
+        - block_index
+      properties:
+        hash:
+          type: string
+        height:
+          type: integer
+        time:
+          type: integer
+        block_index:
+          type: integer
+      example:
+        hash: '00000000000000000002fff9a97907f214be1212445de95e8afe94de76e23f01'
+        height: 670722
+        time: 1613394320
+        block_index: 670722
+
+    BinfoInfo:
+      type: object
+      required:
+        - nconnected
+        - conversion
+        - symbol_local
+        - symbol_btc
+        - latest_block
+      properties:
+        nconnected:
+          type: integer
+        conversion:
+          type: number
+          format: double
+        symbol_local:
+          $ref: '#/components/schemas/BinfoSymbol'
+        symbol_btc:
+          $ref: '#/components/schemas/BinfoSymbol'
+        latest_block:
+          $ref: '#/components/schemas/BinfoBlockInfo'
+
+    BinfoXPubBalance:
+      type: object
+      required:
+        - address
+        - final_balance
+        - n_tx
+        - total_received
+        - total_sent
+        - account_index
+        - change_index
+      properties:
+        address:
+          type: string
+        final_balance:
+          type: integer
+          format: int64
+        n_tx:
+          type: integer
+        total_received:
+          type: integer
+          format: int64
+        total_sent:
+          type: integer
+          format: int64
+        account_index:
+          type: integer
+        change_index:
+          type: integer
+      example:
+        address: "xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ"
+        final_balance: 93247
+        change_index: 21
+        account_index: 67
+        n_tx: 0
+        total_received: 0
+        total_sent: 0
+
+
+    BinfoAddrBalance:
+      type: object
+      required:
+        - address
+        - final_balance
+        - n_tx
+        - total_received
+        - total_sent
+      properties:
+        address:
+          type: string
+        final_balance:
+          type: integer
+          format: int64
+        n_tx:
+          type: integer
+        total_received:
+          type: integer
+          format: int64
+        total_sent:
+          type: integer
+          format: int64
+      example:
+        address: "1Nu4yKECn2XwWBvix9xHenw883T4L7pkqe"
+        final_balance: 0
+        n_tx: 2
+        total_received: 546
+        total_sent: 546
+
+
+    BinfoBalance:
+      oneOf:
+        - $ref: '#/components/schemas/BinfoXPubBalance'
+        - $ref: '#/components/schemas/BinfoAddrBalance'
+
+    BinfoMultiAddr:
+      type: object
+      required:
+        - wallet
+        - info
+        - addresses
+        - recommend_include_fee
+      properties:
+        wallet:
+          $ref: '#/components/schemas/BinfoWallet'
+        info:
+          $ref: '#/components/schemas/BinfoInfo'
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoBalance'
+        txs:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoTx'
+        recommend_include_fee:
+          type: boolean
+        cash_addr:
+          type: boolean
+
+    BinfoTxInput:
+      type: object
+      required:
+        - index
+        - script
+        - prev_out
+        - sequence
+        - witness
+      properties:
+        index:
+          type: integer
+        script:
+          type: string
+        prev_out:
+          $ref: '#/components/schemas/BinfoTxOutput'
+        sequence:
+          type: integer
+        witness:
+          type: string
+      example:
+        sequence: 4294967295
+        witness: ''
+        script: 483045022100bd1861957b8f72b5a8b6b75e483b62e9c8692b65db26fd4a480210487bf247f10220049af754f49db585b36aa858f11ea9c79b3eaeabf57f1e5fab6c1f2ad399432d412102306ce056059dc6df45d8aa806f8af6fd4cb1503d690a5cf7dd3f688d62417779
+        index: 0
+        prev_out:
+          spent: true
+          script: 76a914a94adb862a6b6904fd849929032de80777612f9188ac
+          xpub:
+            path: M/1/18
+            m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+          spending_outpoints:
+          - tx_index: 6121962258386897
+            n: 0
+          tx_index: 5298750237840352
+          value: 41190
+          addr: 1GS8scRWFavFrCoa2XQpSagARVpin66psR
+          n: 0
+          type: 0
+
+    BinfoXPubPath:
+      type: object
+      required:
+        - 'm'
+        - path
+      properties:
+        m:
+          type: string
+        path:
+          type: string
+      example:
+        m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+        path: M/1/18
+
+    BinfoSpender:
+      type: object
+      required:
+        - tx_index
+        - 'n'
+      properties:
+        tx_index:
+          $ref: '#/components/schemas/BinfoTxId'
+        n:
+          type: integer
+      example:
+        tx_index: 6121962258386897
+        n: 0
+
+    BinfoTxOutput:
+      type: object
+      required:
+        - 'n'
+        - type
+        - spent
+        - value
+        - spending_outpoints
+        - tx_index
+        - script
+      properties:
+        type:
+          type: integer
+        spent:
+          type: boolean
+        value:
+          type: integer
+          format: int64
+        spending_outpoints:
+          $ref: '#/components/schemas/BinfoSpender'
+        n:
+          type: integer
+        tx_index:
+          $ref: '#/components/schemas/BinfoTxId'
+        script:
+          type: string
+        addr:
+          type: string
+        xpub:
+          $ref: '#/components/schemas/BinfoXPubPath'
+      example:
+        type: 0
+        spent: false
+        value: 19515
+        spending_outpoints: []
+        n: 0
+        tx_index: 6121962258386897
+        script: 76a914bcd2b9001eea656e1a69f280cdc8dd86dbc8bf9288ac
+        addr: 1JDQULCm39kjsiFsbd2z9pnMq22a5xUzGt
+        xpub:
+          path: M/1/20
+          m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+
+
+    BinfoTx:
+      type: object
+      required:
+        - hash
+        - ver
+        - vin_sz
+        - vout_sz
+        - size
+        - weight
+        - fee
+        - relayed_by
+        - lock_time
+        - tx_index
+        - double_spend
+        - time
+        - block_index
+        - block_height
+        - inputs
+        - out
+      properties:
+        hash:
+          type: string
+        ver:
+          type: integer
+        vin_sz:
+          type: integer
+        vout_sz:
+          type: integer
+        size:
+          type: integer
+        weight:
+          type: integer
+        fee:
+          type: integer
+          format: int64
+        relayed_by:
+          type: string
+        lock_time:
+          type: integer
+        tx_index:
+          $ref: '#/components/schemas/BinfoTxId'
+        double_spend:
+          type: boolean
+        time:
+          type: integer
+        block_index:
+          type: integer
+        block_height:
+          type: integer
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoTxInput'
+        out:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoTxOutput'
+        result:
+          type: integer
+          format: int64
+        balance:
+          type: integer
+          format: int64
+        rbf:
+          type: boolean
+
+    BinfoUnspent:
+      type: object
+      required:
+        - tx_hash_big_endian
+        - tx_hash
+        - tx_output_n
+        - script
+        - value
+        - value_hex
+        - confirmations
+        - tx_index
+      properties:
+        tx_hash_big_endian:
+          type: string
+        tx_hash:
+          type: string
+        tx_output_n:
+          type: integer
+        script:
+          type: string
+        value:
+          type: integer
+          format: int64
+        value_hex:
+          type: string
+        confirmations:
+          type: integer
+        tx_index:
+          $ref: '#/components/schemas/BinfoTxId'
+      example:
+        tx_hash_big_endian: 4890ab0fed725daa08879afcea302a4c7925c094c98676cab3edcaa186adbc41
+        tx_hash: 41bcad86a1caedb3ca7686c994c025794c2a30eafc9a8708aa5d72ed0fab9048
+        tx_output_n: 1
+        script: 76a9148ecd9c021c8650db874940103f1f77e6da14d88e88ac
+        value: 45732
+        value_hex: b2a4
+        confirmations: 1708
+        tx_index: 2312915870038365
+        xpub:
+          m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+          path: M/1/19
+
+    BinfoTxIndexConflict:
+      type: object
+      required:
+        - error
+        - message
+        - txids
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        txids:
+          type: array
+          items:
+            type: string
+            
+    BinfoMultiAddrReq:
+      type: object
+      properties:
+        active:
+          type: string
+        activeP2SH:
+          type: string
+        activeBech32:
+          type: string
+        onlyShow:
+          type: boolean
+        n:
+          type: integer
+        offset:
+          type: integer
+        noCompact:
+          type: boolean
+        currency:
+          type: string
+        cashaddr:
+          type: boolean
+        txidindex:
+          type: boolean
+
   parameters:
 
     addressParam:
@@ -2170,3 +2759,136 @@ components:
       schema:
         type: boolean
       description: Pretty-print JSON output.
+
+    binfoActive:
+      name: active
+      in: query
+      required: false
+      schema:
+        type: string
+        example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+      description: Address or extended public key.
+  
+    binfoActiveP2SH:
+      name: activeP2SH
+      in: query
+      required: false
+      schema:
+        type: string
+        example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+      description: Extended public key for P2WPKH-on-P2SH address derivation.
+  
+    binfoActiveBech32:
+      name: activeBech32
+      in: query
+      required: false
+      schema:
+        type: string
+        example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+      description: Extended public key for P2WPKH Bech32 address derivation.
+  
+    binfoOnlyShow:
+      name: onlyShow
+      in: query
+      required: false
+      schema:
+        type: string
+        example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
+      description: >
+        Extended public keys and addresses for computing balances in transactions
+        and showing in the address section of the wallet.
+        If omitted use all active* addresses.
+  
+    binfoLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        example: 50
+      description: Only retrieve up to this many items.
+  
+    binfoCount:
+      name: count
+      in: query
+      required: false
+      schema:
+        type: integer
+        example: 100
+      description: Only retrieve up to this many items.
+  
+    binfoOffset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        example: 0
+      description: Skip this many items at the beginning.
+  
+    binfoConfirmations:
+      name: confirmations
+      in: query
+      required: false
+      schema:
+        type: integer
+        example: 6
+      description: Only return items with at least this many confirmations.
+  
+    binfoNoCompact:
+      name: noCompact
+      in: query
+      required: false
+      schema:
+        type: integer
+        example: true
+      description: >
+        Filter out outputs not going to this wallet on incoming transactions.
+  
+    binfoCurrency:
+      name: currency
+      in: query
+      required: false
+      schema:
+        type: string
+        example: EUR
+      description: Local currency to display in info section.
+  
+    binfoCashAddr:
+      name: cashaddr
+      in: query
+      required: false
+      schema:
+        type: boolean
+        example: true
+      description: Show Bitcoin Cash addresses in CashAddr format.
+  
+    binfoTxIdIndex:
+      name: txidindex
+      in: query
+      required: false
+      schema:
+        type: boolean
+        example: true
+      description: Use string with hex-encoded txid in tx_index field.
+  
+    binfoTxId:
+      name: txid
+      in: path
+      required: true
+      schema:
+        oneOf:
+          - type: string
+          - type: integer
+        example: 1254181078042813
+      description: Hex-encoded txid or integer from tx_index.
+  
+    binfoFormat:
+      name: format
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - json
+          - hex
