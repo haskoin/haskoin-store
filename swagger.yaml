@@ -2840,7 +2840,7 @@ components:
       in: query
       required: false
       schema:
-        type: integer
+        type: boolean
         example: true
       description: >
         Filter out outputs not going to this wallet on incoming transactions.
