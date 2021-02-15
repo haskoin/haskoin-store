@@ -2812,6 +2812,7 @@ components:
       description: |
         Filter only these types of transaction with respect to active addresses:
 
+        0. All
         1. Sent (result + fee < 0)
         2. Received (result + fee > 0)
         3. Transfer (result + fee = 0)
