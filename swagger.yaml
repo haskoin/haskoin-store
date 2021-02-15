@@ -1397,6 +1397,7 @@ paths:
         - $ref: '#/components/parameters/binfoCurrency'
         - $ref: '#/components/parameters/binfoCashAddr'
         - $ref: '#/components/parameters/binfoTxIdIndex'
+        - $ref: '#/components/parameters/binfoFilter'
       responses:
         '200':
           description: Wallet information object.
@@ -2589,6 +2590,8 @@ components:
           type: boolean
         txidindex:
           type: boolean
+        filter:
+          type: integer
 
   parameters:
 
@@ -2798,6 +2801,22 @@ components:
         Extended public keys and addresses for computing balances in transactions
         and showing in the address section of the wallet.
         If omitted use all active* addresses.
+
+    binfoFilter:
+      name: filter
+      in: query
+      required: false
+      schema:
+        type: integer
+        enum: [1,2,3,5,7]
+      description: |
+        Filter only these types of transaction with respect to active addresses:
+
+        1. Only outgoing transactions (result + fee < 0).
+        2. Only incoming transactions (result + fee > 0).
+        3. Only internal transfers (result + fee = 0).
+        5. Only confirmed.
+        7. Only unconfirmed.
   
     binfoLimit:
       name: limit

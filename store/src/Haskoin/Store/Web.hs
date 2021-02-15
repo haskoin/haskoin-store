@@ -50,7 +50,7 @@ import           Data.Int                      (Int64)
 import           Data.List                     (nub, sortBy)
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
-                                                listToMaybe, mapMaybe,
+                                                isJust, listToMaybe, mapMaybe,
                                                 maybeToList)
 import           Data.Proxy                    (Proxy (..))
 import           Data.Serialize                as Serialize
@@ -1314,6 +1314,7 @@ scottyMultiAddr =
     get_offset >>= \offset ->
     get_count >>= \n ->
     get_prune >>= \prune ->
+    get_filter >>= \fltr ->
     let len = HashSet.size addrs + HashSet.size xpubs
     in withMetrics multiaddrResponseTime len $ do
     xbals <- get_xbals xspecs
@@ -1339,13 +1340,12 @@ scottyMultiAddr =
         alltrs = xtrset <> nosatrs <> satrs
         salltrs = sxtrset <> satrs
         stxids = compute_txids salltrs
-    stxs <- catMaybes <$> mapM getTransaction (take (n + offset) stxids)
+    let ibal = fromIntegral sbal
+    btxs <- binfo_txs (n + offset) fltr numtxid salladdrs abook prune ibal stxids
     best <- get_best_block
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    let ibal = fromIntegral sbal
-        btxs = binfo_txs numtxid salladdrs abook prune ibal stxs
-        ftxs = drop offset btxs
+    let ftxs = drop offset btxs
         baddrs = toBinfoAddrs sabals sxbals xtns
         abaddrs = toBinfoAddrs abals xbals xtns
         recv = sum $ map getBinfoAddrReceived abaddrs
@@ -1386,6 +1386,7 @@ scottyMultiAddr =
         , getBinfoMultiAddrCashAddr = cashaddr
         }
   where
+    get_filter = S.param "filter" `S.rescue` const (return BinfoFilterAll)
     get_best_block =
         getBestBlock >>= \case
         Nothing -> raise multiaddrErrors ThingNotFound
@@ -1430,11 +1431,31 @@ scottyMultiAddr =
                                 else negate val
                               | otherwise -> 0
         in sum $ map (f False) ins <> map (f True) out
-    binfo_txs _ _ _ _ _ [] = []
-    binfo_txs numtxid salladdrs abook prune ibal (t:ts) =
-        let b = toBinfoTx numtxid abook prune ibal t
-            nbal = ibal - compute_bal_change salladdrs b
-         in b : binfo_txs numtxid salladdrs abook prune nbal ts
+    binfo_txs _ _ _ _ _ _ _ [] = return []
+    binfo_txs 0 _ _ _ _ _ _ _ = return []
+    binfo_txs i f n s o p b (t:ts) =
+        getTransaction t >>= \case
+        Nothing -> binfo_txs i f n s o p b ts
+        Just x -> do
+            let a = toBinfoTx n o p b x
+                b' = b - compute_bal_change s a
+                c = isJust (getBinfoTxBlockHeight a)
+                Just (d, _) = getBinfoTxResultBal a
+                r = d + fromIntegral (getBinfoTxFee a)
+                y = (a:) <$> binfo_txs (i-1) f n s o p b' ts
+                z = binfo_txs i f n s o p b' ts
+            case f of
+                BinfoFilterAll -> y
+                BinfoFilterSent ->
+                    if r < 0 then y else z
+                BinfoFilterReceived ->
+                    if r > 0 then y else z
+                BinfoFilterMoved ->
+                    if r == 0 then y else z
+                BinfoFilterConfirmed ->
+                    if c then y else z
+                BinfoFilterMempool ->
+                    if not c then y else return []
     get_addrs = do
         (xspecs, addrs) <- getBinfoActive multiaddrErrors
         sh <- getBinfoAddrsParam multiaddrErrors "onlyShow"

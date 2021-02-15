@@ -1,10 +1,11 @@
-{-# LANGUAGE DeriveAnyClass    #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Haskoin.Store.Data
     ( -- * Address Balances
       Balance(..)
@@ -84,6 +85,7 @@ module Haskoin.Store.Data
      -- * Blockchain.info API
     , BinfoTxId(..)
     , encodeBinfoTxId
+    , BinfoFilter(..)
     , BinfoMultiAddr(..)
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
@@ -1600,7 +1602,7 @@ instance Parsable BinfoTxId where
         hex =
             case hexToTxHash (TL.toStrict t) of
                 Nothing -> Left "could not decode txid"
-                Just h -> Right $ BinfoTxIdHash h
+                Just h  -> Right $ BinfoTxIdHash h
         igr = BinfoTxIdIndex <$> parseParam t
 
 instance ToJSON BinfoTxId where
@@ -1612,6 +1614,27 @@ instance ToJSON BinfoTxId where
 instance FromJSON BinfoTxId where
     parseJSON v = BinfoTxIdHash <$> parseJSON v <|>
                   BinfoTxIdIndex <$> parseJSON v
+
+data BinfoFilter
+    = BinfoFilterAll
+    | BinfoFilterSent
+    | BinfoFilterReceived
+    | BinfoFilterMoved
+    | BinfoFilterConfirmed
+    | BinfoFilterMempool
+    deriving (Eq, Show, Generic, Serialize, NFData)
+
+instance Parsable BinfoFilter where
+    parseParam t =
+        parseParam t >>= \case
+        (0 :: Int) -> return BinfoFilterAll
+        1          -> return BinfoFilterSent
+        2          -> return BinfoFilterReceived
+        3          -> return BinfoFilterMoved
+        5          -> return BinfoFilterConfirmed
+        6          -> return BinfoFilterAll
+        7          -> return BinfoFilterMempool
+        _          -> Left "could not parse filter parameter"
 
 data BinfoMultiAddr
     = BinfoMultiAddr
