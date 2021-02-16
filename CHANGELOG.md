@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Fixed
 - Do not compute balances separately for loose addresses when part of an xpub.
 
+### Changed
+- Do not fetch entire transaction list for loose addresses.
+- Transaction count in wallet object is just a synonym for filtered tx count.
+- Use conduits to prevent over-fetching transactions from database.
+
 ## 0.46.3
 ### Fixed
 - Make hex value encoding compatible with Java BigInteger decoder.
