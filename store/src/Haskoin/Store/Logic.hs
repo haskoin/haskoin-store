@@ -692,9 +692,11 @@ streamThings f g l =
         lift (f (Limits 50 0 (Just (AtTx (g x))))) >>= \case
         [] -> return ()
         ls -> do
-            let ls' = dropWhile ((== g x) . g) ls
-            mapM yield ls'
-            go (last ls')
+            case dropWhile ((== g x) . g) ls of
+                [] -> return ()
+                ls' -> do
+                    mapM yield ls'
+                    go (last ls')
 
 joinStreams :: Monad m
             => (a -> a -> Ordering)
