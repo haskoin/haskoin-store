@@ -1306,7 +1306,7 @@ scottyBinfoUnspent =
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
-    get_addrs >>= \(addrs, xpubs, saddrs, sxpubs, xspecs) ->
+    get_addrs >>= \(addrs', xpubs, saddrs', sxpubs, xspecs) ->
     getNumTxId >>= \numtxid ->
     lift (asks webTicker) >>= \ticker ->
     get_price ticker >>= \local ->
@@ -1315,10 +1315,13 @@ scottyMultiAddr =
     get_count >>= \n ->
     get_prune >>= \prune ->
     get_filter >>= \fltr ->
-    let len = HashSet.size addrs + HashSet.size xpubs
+    let len = HashSet.size addrs' + HashSet.size xpubs
     in withMetrics multiaddrResponseTime len $ do
     xbals <- get_xbals xspecs
     let sxbals = subset sxpubs xbals
+        xabals = compute_xabals xbals
+        addrs = addrs' `HashSet.difference` HashMap.keysSet xabals
+        saddrs = saddrs' `HashSet.difference` HashMap.keysSet xabals
     xtrs <- get_xtrs xspecs
     let sxtrs = subset sxpubs xtrs
     abals <- get_abals addrs
@@ -1327,7 +1330,6 @@ scottyMultiAddr =
     let xtns = HashMap.map length xtrs
         xtrset = Set.fromList (concat (HashMap.elems xtrs))
         sxtrset = Set.fromList (concat (HashMap.elems sxtrs))
-        xabals = compute_xabals xbals
         sxabals = compute_xabals sxbals
         sabals = subset saddrs abals
         sallbals = sabals <> sxabals
@@ -1335,7 +1337,7 @@ scottyMultiAddr =
         allbals = abals <> xabals
         abook = compute_abook addrs xbals
         sxaddrs = compute_xaddrs sxbals
-        salladdrs = sxaddrs <> saddrs
+        salladdrs = saddrs <> sxaddrs
         bal = compute_bal allbals
         alltrs = xtrset <> nosatrs <> satrs
         salltrs = sxtrset <> satrs

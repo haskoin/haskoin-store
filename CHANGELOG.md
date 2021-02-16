@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.46.4
+### Fixed
+- Filter out active and onlyShow loose addresses that are part of active xpubs.
+
 ## 0.46.3
 ### Fixed
 - Make hex value encoding compatible with Java BigInteger decoder.
