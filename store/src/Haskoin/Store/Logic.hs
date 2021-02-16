@@ -714,4 +714,4 @@ joinStreams c xs = do
             yield x
             j <$> lift (i $$++ await) >>= \case
                 Nothing -> go ys'
-                Just y -> go (y:ys)
+                Just y -> go (y:ys')

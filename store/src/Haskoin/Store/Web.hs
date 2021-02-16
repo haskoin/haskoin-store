@@ -1316,12 +1316,12 @@ getBinfoTxs :: (StoreReadExtra m, MonadIO m)
             -> Bool -- prune outputs
             -> Int64 -- starting balance
             -> ConduitT () BinfoTx m ()
-getBinfoTxs abook sxpubs saddrs baddrs bfilter numtxid prune bal =
+getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal =
     joinStreams (flip compare) conduits .| go bal
   where
-    sxpubs_ls = HashSet.toList sxpubs
+    sxspecs_ls = HashSet.toList sxspecs
     saddrs_ls = HashSet.toList saddrs
-    conduits = map xpub_c sxpubs_ls <> map addr_c saddrs_ls
+    conduits = map xpub_c sxspecs_ls <> map addr_c saddrs_ls
     xpub_c x = streamThings (xPubTxs x) txRefHash def
     addr_c a = streamThings (getAddressTxs a) txRefHash def
     binfo_tx b = toBinfoTx numtxid abook prune b
