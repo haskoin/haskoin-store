@@ -1297,7 +1297,7 @@ scottyBinfoUnspent =
            , getBinfoUnspentOutputIndex = idx
            , getBinfoUnspentScript = script
            , getBinfoUnspentValue = val
-           , getBinfoUnspentConfirmations = conf
+           , getBinfoUnspentConfirmations = fromIntegral conf
            , getBinfoUnspentTxIndex = txi
            , getBinfoUnspentXPub = Nothing
            }

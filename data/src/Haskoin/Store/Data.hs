@@ -162,7 +162,7 @@ import qualified Data.HashMap.Strict     as HashMap
 import           Data.HashSet            (HashSet)
 import qualified Data.HashSet            as HashSet
 import           Data.Hashable           (Hashable (..))
-import           Data.Int                (Int64)
+import           Data.Int                (Int32, Int64)
 import qualified Data.IntMap             as IntMap
 import           Data.IntMap.Strict      (IntMap)
 import           Data.Map.Strict         (Map)
@@ -1809,7 +1809,7 @@ data BinfoUnspent
       , getBinfoUnspentOutputIndex   :: !Word32
       , getBinfoUnspentScript        :: !ByteString
       , getBinfoUnspentValue         :: !Word64
-      , getBinfoUnspentConfirmations :: !Word32
+      , getBinfoUnspentConfirmations :: !Int32
       , getBinfoUnspentTxIndex       :: !BinfoTxId
       , getBinfoUnspentXPub          :: !(Maybe BinfoXPubPath)
       } deriving (Eq, Show, Generic, Serialize, NFData)
