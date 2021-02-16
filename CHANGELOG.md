@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.46.4
 ### Fixed
-- Filter out active and onlyShow loose addresses that are part of active xpubs.
+- Do not compute balances separately for loose addresses when part of an xpub.
 
 ## 0.46.3
 ### Fixed

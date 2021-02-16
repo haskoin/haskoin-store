@@ -1306,7 +1306,7 @@ scottyBinfoUnspent =
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
-    get_addrs >>= \(addrs', xpubs, saddrs', sxpubs, xspecs) ->
+    get_addrs >>= \(addrs', xpubs, saddrs, sxpubs, xspecs) ->
     getNumTxId >>= \numtxid ->
     lift (asks webTicker) >>= \ticker ->
     get_price ticker >>= \local ->
@@ -1321,13 +1321,6 @@ scottyMultiAddr =
     let sxbals = subset sxpubs xbals
         xabals = compute_xabals xbals
         addrs = addrs' `HashSet.difference` HashMap.keysSet xabals
-        saddrs = saddrs' `HashSet.difference` HashMap.keysSet xabals
-    when (addrs /= addrs') $
-        raise multiaddrErrors $
-        UserError "no individual address must be part of an xpub"
-    when (saddrs /= saddrs') $
-        raise multiaddrErrors $
-        UserError "no individual onlyShow address must be part of an xpub"
     xtrs <- get_xtrs xspecs
     let sxtrs = subset sxpubs xtrs
     abals <- get_abals addrs
@@ -1470,14 +1463,9 @@ scottyMultiAddr =
         let xpubs = HashMap.keysSet xspecs
             actives = HashSet.map BinfoAddr addrs <>
                       HashSet.map BinfoXpub xpubs
-            sh' = if HashSet.null sh
-                  then actives
-                  else sh `HashSet.intersection` actives
+            sh' = if HashSet.null sh then actives else sh
             saddrs = HashSet.fromList . mapMaybe addr $ HashSet.toList sh'
             sxpubs = HashSet.fromList . mapMaybe xpub $ HashSet.toList sh'
-        when (not (HashSet.null sh) && sh /= sh') $
-            raise multiaddrErrors $
-            UserError "all onlyShow addresses must be in active set"
         return (addrs, xpubs, saddrs, sxpubs, xspecs)
     get_xbals =
         let f = not . nullBalance . xPubBal
