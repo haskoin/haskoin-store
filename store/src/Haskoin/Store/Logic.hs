@@ -706,14 +706,18 @@ joinStreams c xs = do
     let ss = map sealConduitT xs
     ys <- mapMaybe j <$>
           lift (traverse ($$++ await) ss)
-    go ys
+    go Nothing ys
   where
     j (x, y) = (,) x <$> y
-    go ys =
+    go m ys =
         case sortBy (c `on` snd) ys of
         [] -> return ()
         (i,x):ys' -> do
-            yield x
+            case m of
+                Nothing -> yield x
+                Just x'
+                  | c x x' == EQ -> return ()
+                  | otherwise -> yield x
             j <$> lift (i $$++ await) >>= \case
-                Nothing -> go ys'
-                Just y -> go (y:ys')
+                Nothing -> go (Just x) ys'
+                Just y -> go (Just x) (y:ys')
