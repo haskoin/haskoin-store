@@ -1402,12 +1402,8 @@ scottyMultiAddr =
     best <- get_best_block
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    let baddrs =
-            toBinfoAddrs sabals sxbals $
-            fmap (const 0) sxbals
-        abaddrs =
-            toBinfoAddrs abals xbals $
-            fmap (const 0) xbals
+    let baddrs = toBinfoAddrs sabals sxbals xtxns
+        abaddrs = toBinfoAddrs abals xbals xtxns
         recv = sum $ map getBinfoAddrReceived abaddrs
         sent = sum $ map getBinfoAddrSent abaddrs
         txn = fromIntegral $ length ftxs
