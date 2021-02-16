@@ -17,8 +17,9 @@ module Haskoin.Store.Web
     , runWeb
     ) where
 
-import           Conduit                       (await, runConduit, takeC, yield,
-                                                (.|))
+import           Conduit                       (ConduitT, await, dropC,
+                                                runConduit, sinkList, takeC,
+                                                yield, (.|))
 import           Control.Applicative           ((<|>))
 import           Control.Arrow                 (second)
 import           Control.Lens
@@ -80,6 +81,7 @@ import           Haskoin.Store.Cache
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Reader
+import           Haskoin.Store.Logic
 import           Haskoin.Store.Manager
 import           Haskoin.Store.Stats
 import           Haskoin.Store.WebCommon
@@ -1304,6 +1306,65 @@ scottyBinfoUnspent =
     get_xpub_unspents = mapM (`xPubUnspents` def)
     get_addr_unspents = (`getAddressesUnspents` def) . HashSet.toList
 
+getBinfoTxs :: (StoreReadExtra m, MonadIO m)
+            => HashMap Address (Maybe BinfoXPubPath) -- address book
+            -> HashSet XPubSpec -- show xpubs
+            -> HashSet Address -- show addrs
+            -> HashSet Address -- balance addresses
+            -> BinfoFilter
+            -> Bool -- numtxid
+            -> Bool -- prune outputs
+            -> Int64 -- starting balance
+            -> ConduitT () BinfoTx m ()
+getBinfoTxs abook sxpubs saddrs baddrs bfilter numtxid prune bal =
+    joinStreams (flip compare) conduits .| go bal
+  where
+    sxpubs_ls = HashSet.toList sxpubs
+    saddrs_ls = HashSet.toList saddrs
+    conduits = map xpub_c sxpubs_ls <> map addr_c saddrs_ls
+    xpub_c x = streamThings (xPubTxs x) txRefHash def
+    addr_c a = streamThings (getAddressTxs a) txRefHash def
+    binfo_tx b = toBinfoTx numtxid abook prune b
+    compute_bal_change BinfoTx{..} =
+        let ins = mapMaybe getBinfoTxInputPrevOut getBinfoTxInputs
+            out = getBinfoTxOutputs
+            f b BinfoTxOutput{..} =
+                let val = fromIntegral getBinfoTxOutputValue
+                in case getBinfoTxOutputAddress of
+                       Nothing -> 0
+                       Just a | a `HashSet.member` baddrs ->
+                                    if b then val else negate val
+                              | otherwise -> 0
+        in sum $ map (f False) ins <> map (f True) out
+    go b = await >>= \case
+        Nothing -> return ()
+        Just (TxRef _ t) -> lift (getTransaction t) >>= \case
+            Nothing -> go b
+            Just x -> do
+                let a = binfo_tx b x
+                    b' = b - compute_bal_change a
+                    c = isJust (getBinfoTxBlockHeight a)
+                    Just (d, _) = getBinfoTxResultBal a
+                    r = d + fromIntegral (getBinfoTxFee a)
+                case bfilter of
+                    BinfoFilterAll ->
+                        yield a >> go b'
+                    BinfoFilterSent
+                        | 0 > r -> yield a >> go b'
+                        | otherwise -> go b'
+                    BinfoFilterReceived
+                        | r > 0 -> yield a >> go b'
+                        | otherwise -> go b'
+                    BinfoFilterMoved
+                        | r == 0 -> yield a >> go b'
+                        | otherwise -> go b'
+                    BinfoFilterConfirmed
+                        | c -> yield a >> go b'
+                        | otherwise -> go b'
+                    BinfoFilterMempool
+                        | c -> return ()
+                        | otherwise -> yield a >> go b'
+
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
     get_addrs >>= \(addrs', xpubs, saddrs, sxpubs, xspecs) ->
@@ -1321,14 +1382,8 @@ scottyMultiAddr =
     let sxbals = subset sxpubs xbals
         xabals = compute_xabals xbals
         addrs = addrs' `HashSet.difference` HashMap.keysSet xabals
-    xtrs <- get_xtrs xspecs
-    let sxtrs = subset sxpubs xtrs
     abals <- get_abals addrs
-    satrs <- get_atrs saddrs
-    nosatrs <- get_atrs (addrs `HashSet.difference` saddrs)
-    let xtns = HashMap.map length xtrs
-        xtrset = Set.fromList (concat (HashMap.elems xtrs))
-        sxtrset = Set.fromList (concat (HashMap.elems sxtrs))
+    let sxspecs = compute_sxspecs sxpubs xspecs
         sxabals = compute_xabals sxbals
         sabals = subset saddrs abals
         sallbals = sabals <> sxabals
@@ -1338,25 +1393,28 @@ scottyMultiAddr =
         sxaddrs = compute_xaddrs sxbals
         salladdrs = saddrs <> sxaddrs
         bal = compute_bal allbals
-        alltrs = xtrset <> nosatrs <> satrs
-        salltrs = sxtrset <> satrs
-        stxids = compute_txids salltrs
     let ibal = fromIntegral sbal
-    btxs <- binfo_txs (n + offset) fltr numtxid salladdrs abook prune ibal stxids
+    ftxs <-
+        lift . runConduit $
+        getBinfoTxs abook sxspecs saddrs salladdrs fltr numtxid prune ibal .|
+        (dropC offset >> takeC n .| sinkList)
     best <- get_best_block
     peers <- get_peers
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    let ftxs = drop offset btxs
-        baddrs = toBinfoAddrs sabals sxbals xtns
-        abaddrs = toBinfoAddrs abals xbals xtns
+    let baddrs =
+            toBinfoAddrs sabals sxbals $
+            fmap (const 0) sxbals
+        abaddrs =
+            toBinfoAddrs abals xbals $
+            fmap (const 0) xbals
         recv = sum $ map getBinfoAddrReceived abaddrs
         sent = sum $ map getBinfoAddrSent abaddrs
-        txn = fromIntegral $ Set.size alltrs
+        txn = fromIntegral $ length ftxs
         wallet =
             BinfoWallet
             { getBinfoWalletBalance = bal
             , getBinfoWalletTxCount = txn
-            , getBinfoWalletFilteredCount = fromIntegral (length ftxs)
+            , getBinfoWalletFilteredCount = txn
             , getBinfoWalletTotalReceived = recv
             , getBinfoWalletTotalSent = sent
             }
@@ -1415,48 +1473,12 @@ scottyMultiAddr =
         return (fromIntegral o :: Int)
     subset ks =
         HashMap.filterWithKey (\k _ -> k `HashSet.member` ks)
+    compute_sxspecs sxpubs =
+        HashSet.fromList . HashMap.elems . subset sxpubs
     addr (BinfoAddr a) = Just a
     addr (BinfoXpub x) = Nothing
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
-    compute_bal_change addrs BinfoTx{..} =
-        let ins = mapMaybe getBinfoTxInputPrevOut getBinfoTxInputs
-            out = getBinfoTxOutputs
-            f b BinfoTxOutput{..} =
-                let val = fromIntegral getBinfoTxOutputValue
-                in case getBinfoTxOutputAddress of
-                       Nothing -> 0
-                       Just a | a `HashSet.member` addrs ->
-                                if b
-                                then val
-                                else negate val
-                              | otherwise -> 0
-        in sum $ map (f False) ins <> map (f True) out
-    binfo_txs _ _ _ _ _ _ _ [] = return []
-    binfo_txs 0 _ _ _ _ _ _ _ = return []
-    binfo_txs i f n s o p b (t:ts) =
-        getTransaction t >>= \case
-        Nothing -> binfo_txs i f n s o p b ts
-        Just x -> do
-            let a = toBinfoTx n o p b x
-                b' = b - compute_bal_change s a
-                c = isJust (getBinfoTxBlockHeight a)
-                Just (d, _) = getBinfoTxResultBal a
-                r = d + fromIntegral (getBinfoTxFee a)
-                y = (a:) <$> binfo_txs (i-1) f n s o p b' ts
-                z = binfo_txs i f n s o p b' ts
-            case f of
-                BinfoFilterAll -> y
-                BinfoFilterSent ->
-                    if r < 0 then y else z
-                BinfoFilterReceived ->
-                    if r > 0 then y else z
-                BinfoFilterMoved ->
-                    if r == 0 then y else z
-                BinfoFilterConfirmed ->
-                    if c then y else z
-                BinfoFilterMempool ->
-                    if not c then y else return []
     get_addrs = do
         (xspecs, addrs) <- getBinfoActive multiaddrErrors
         sh <- getBinfoAddrsParam multiaddrErrors "onlyShow"
@@ -1476,21 +1498,6 @@ scottyMultiAddr =
         let f b = (balanceAddress b, b)
             g = HashMap.fromList . map f
         in fmap g . getBalances . HashSet.toList
-    get_xtrs =
-        let f (k, s) = (,) k <$> xPubTxs s def
-        in fmap HashMap.fromList . mapM f . HashMap.toList
-    get_atrs =
-        let f x = getAddressesTxs x def
-        in fmap Set.fromList . f . HashSet.toList
-    get_txs _ _ [] = return []
-    get_txs _ 0 _ = return []
-    get_txs s n (i:is) =
-        getTransaction i >>= \case
-        Nothing -> get_txs s n is
-        Just t ->
-            if addr_in_set s t
-            then ((t, True):) <$> get_txs s (n - 1) is
-            else ((t, False):) <$> get_txs s n is
     addr_in_set s t =
         let f StoreCoinbase{}                    = False
             f StoreInput{inputAddress = Nothing} = False

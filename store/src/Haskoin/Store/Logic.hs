@@ -13,8 +13,12 @@ module Haskoin.Store.Logic
     , importBlock
     , newMempoolTx
     , deleteUnconfirmedTx
+    , streamThings
+    , joinStreams
     ) where
 
+import           Conduit               (ConduitT, await, lift, sealConduitT,
+                                        yield, ($$++))
 import           Control.Monad         (forM, forM_, guard, unless, void, when,
                                         zipWithM_)
 import           Control.Monad.Except  (MonadError, throwError)
@@ -23,9 +27,11 @@ import           Control.Monad.Logger  (MonadLoggerIO (..), logDebugS,
 import qualified Data.ByteString       as B
 import qualified Data.ByteString.Short as B.Short
 import           Data.Either           (rights)
+import           Data.Function         (on)
 import qualified Data.IntMap.Strict    as I
-import           Data.List             (nub)
-import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing)
+import           Data.List             (nub, sortBy)
+import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing,
+                                        mapMaybe)
 import           Data.Serialize        (encode)
 import           Data.Word             (Word32, Word64)
 import           Haskoin               (Address, Block (..), BlockHash,
@@ -162,7 +168,7 @@ importOrConfirm bn txns = do
     action i tx =
         testPresent tx >>= \case
             False -> import_it i tx
-            True -> confirm_it i tx
+            True  -> confirm_it i tx
     confirm_it i tx =
         getActiveTxData (txHash tx) >>= \case
             Just t -> do
@@ -577,7 +583,7 @@ getTxOut i tx = do
 spendOutput :: MonadImport m => TxHash -> Word32 -> OutPoint -> m ()
 spendOutput th ix op = do
     u <- getUnspent op >>= \case
-        Just u -> return u
+        Just u  -> return u
         Nothing -> error $ "Could not find UTXO to spend: " <> show op
     deleteUnspent op
     insertSpender op (Spender th ix)
@@ -596,7 +602,7 @@ unspendOutput :: MonadImport m => OutPoint -> m ()
 unspendOutput op = do
     t <- getActiveTxData (outPointHash op) >>= \case
         Nothing -> error $ "Could not find tx data: " <> show (outPointHash op)
-        Just t -> return t
+        Just t  -> return t
     let o = fromMaybe
             (error ("Could not find output: " <> show op))
             (getTxOut (outPointIndex op) (txData t))
@@ -669,3 +675,43 @@ prevOuts tx = filter (/= nullOutPoint) (map prevOutput (txIn tx))
 
 testPresent :: StoreReadBase m => Tx -> m Bool
 testPresent tx = isJust <$> getActiveTxData (txHash tx)
+
+streamThings :: Monad m
+             => (Limits -> m [a])
+             -> (a -> TxHash)
+             -> Limits
+             -> ConduitT () a m ()
+streamThings f g l =
+    lift (f l{limit = 50}) >>= \case
+    [] -> return ()
+    ls -> do
+        mapM yield ls
+        go (last ls)
+  where
+    go x =
+        lift (f (Limits 50 0 (Just (AtTx (g x))))) >>= \case
+        [] -> return ()
+        ls -> do
+            let ls' = dropWhile ((== g x) . g) ls
+            mapM yield ls'
+            go (last ls')
+
+joinStreams :: Monad m
+            => (a -> a -> Ordering)
+            -> [ConduitT () a m ()]
+            -> ConduitT () a m ()
+joinStreams c xs = do
+    let ss = map sealConduitT xs
+    ys <- mapMaybe j <$>
+          lift (traverse ($$++ await) ss)
+    go ys
+  where
+    j (x, y) = (,) x <$> y
+    go ys =
+        case sortBy (c `on` snd) ys of
+        [] -> return ()
+        (i,x):ys' -> do
+            yield x
+            j <$> lift (i $$++ await) >>= \case
+                Nothing -> go ys'
+                Just y -> go (y:ys)
