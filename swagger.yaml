@@ -1494,6 +1494,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/BinfoUnspent'
+                  notice:
+                    type: string
         '400':
           description: Invalid argument.
           content:
