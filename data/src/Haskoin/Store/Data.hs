@@ -102,6 +102,7 @@ module Haskoin.Store.Data
     , binfoUnspentToJSON
     , binfoUnspentToEncoding
     , binfoUnspentParseJSON
+    , binfoHexValue
     , BinfoUnspents(..)
     , binfoUnspentsToJSON
     , binfoUnspentsToEncoding
@@ -1803,6 +1804,14 @@ instance FromJSON BinfoWallet where
         getBinfoWalletTotalSent <- o .: "total_sent"
         return BinfoWallet {..}
 
+binfoHexValue :: Word64 -> Text
+binfoHexValue w64 =
+    let bs = B.dropWhile (== 0x00) (S.encode w64)
+    in encodeHex $
+       if B.null bs || B.head bs `testBit` 7
+       then B.cons 0x00 bs
+       else bs
+
 data BinfoUnspent
     = BinfoUnspent
       { getBinfoUnspentHash          :: !TxHash
@@ -1822,7 +1831,7 @@ binfoUnspentToJSON net BinfoUnspent{..} =
         , "tx_output_n" .= getBinfoUnspentOutputIndex
         , "script" .= encodeHex getBinfoUnspentScript
         , "value" .= getBinfoUnspentValue
-        , "value_hex" .= (printf "%x" getBinfoUnspentValue :: String)
+        , "value_hex" .= binfoHexValue getBinfoUnspentValue
         , "confirmations" .= getBinfoUnspentConfirmations
         , "tx_index" .= getBinfoUnspentTxIndex
         ] <>
@@ -1838,7 +1847,7 @@ binfoUnspentToEncoding net BinfoUnspent{..} =
         "tx_output_n" .= getBinfoUnspentOutputIndex <>
         "script" .= encodeHex getBinfoUnspentScript <>
         "value" .= getBinfoUnspentValue <>
-        "value_hex" .= (printf "%x" getBinfoUnspentValue :: String) <>
+        "value_hex" .= binfoHexValue getBinfoUnspentValue <>
         "confirmations" .= getBinfoUnspentConfirmations <>
         "tx_index" .= getBinfoUnspentTxIndex <>
         maybe mempty (("xpub" `pair`) . binfoXPubPathToEncoding net) getBinfoUnspentXPub
