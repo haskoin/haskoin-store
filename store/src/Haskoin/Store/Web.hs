@@ -1467,7 +1467,10 @@ scottyMultiAddr =
         return (fromIntegral i :: Int)
     get_offset = do
         x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
-        o <- min x <$> (S.param "offset" `S.rescue` const (return 0))
+        o <- S.param "offset" `S.rescue` const (return 0)
+        when (o > x) $
+            raise multiaddrErrors $
+            UserError $ "offset exceeded: " <> show o <> " > " <> show x
         return (fromIntegral o :: Int)
     subset ks =
         HashMap.filterWithKey (\k _ -> k `HashSet.member` ks)
