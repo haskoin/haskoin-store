@@ -2533,6 +2533,7 @@ data BinfoAddr
 parseBinfoAddr :: Network -> Text -> Maybe [BinfoAddr]
 parseBinfoAddr _ "" = Just []
 parseBinfoAddr net s =
-    mapM f $ T.splitOn "|" s
+    mapM f $ filter (not . T.null) $
+    concatMap (T.splitOn ",") (T.splitOn "|" s)
   where
     f x = BinfoAddr <$> textToAddr net x <|> BinfoXpub <$> xPubImport net x

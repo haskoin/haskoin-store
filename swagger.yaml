@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.46.1
+  version: &version 0.46.6
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -2772,7 +2772,9 @@ components:
       schema:
         type: string
         example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
-      description: Address or extended public key.
+      description: >
+        Addresses or extended public keys.
+        Separate by vertical line `|` or comma `,`.
   
     binfoActiveP2SH:
       name: activeP2SH
@@ -2781,7 +2783,9 @@ components:
       schema:
         type: string
         example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
-      description: Extended public key for P2WPKH-on-P2SH address derivation.
+      description: >
+        Extended public keys for P2WPKH-on-P2SH address derivation.
+        Separate by vertical line `|` or comma `,`.
   
     binfoActiveBech32:
       name: activeBech32
@@ -2790,7 +2794,9 @@ components:
       schema:
         type: string
         example: tpubD8XsNAGEy3Pzeeq6hmbRjwrP7G6Goobw4jWvu68tKzxDSFE5VmgpKoDeSFjnmgCLPrijuQwHVodUv7oZDqPNJbzC4mxZStZisGAEwgbpccH
-      description: Extended public key for P2WPKH Bech32 address derivation.
+      description: >
+        Extended public keys for P2WPKH Bech32 address derivation.
+        Separate by vertical line `|` or comma `,`.
   
     binfoOnlyShow:
       name: onlyShow
@@ -2803,6 +2809,7 @@ components:
         Extended public keys and addresses for computing balances in transactions
         and showing in the address section of the wallet.
         If omitted use all active* addresses.
+        Separate by vertical line `|` or comma `,`.
 
     binfoFilter:
       name: filter
