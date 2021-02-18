@@ -83,6 +83,7 @@ module Haskoin.Store.Data
     , Except(..)
 
      -- * Blockchain.info API
+    , BinfoBlockId(..)
     , BinfoTxId(..)
     , encodeBinfoTxId
     , BinfoFilter(..)
@@ -107,6 +108,11 @@ module Haskoin.Store.Data
     , binfoUnspentsToJSON
     , binfoUnspentsToEncoding
     , binfoUnspentsParseJSON
+    , BinfoBlock(..)
+    , toBinfoBlock
+    , binfoBlockToJSON
+    , binfoBlockToEncoding
+    , binfoBlockParseJSON
     , BinfoTx(..)
     , relevantTxs
     , toBinfoTx
@@ -182,14 +188,15 @@ import           Data.Word               (Word32, Word64)
 import           GHC.Generics            (Generic)
 import           Haskoin                 (Address, BlockHash, BlockHeader (..),
                                           BlockHeight, BlockWork, Coin (..),
-                                          KeyIndex, Network (..), OutPoint (..),
-                                          PubKeyI (..), SoftPath, Tx (..),
-                                          TxHash (..), TxIn (..), TxOut (..),
-                                          WitnessStack, XPubKey (..),
-                                          addrFromJSON, addrToEncoding,
-                                          addrToJSON, bch, blockHashToHex, btc,
-                                          decodeHex, eitherToMaybe, encodeHex,
-                                          headerHash, hexToTxHash,
+                                          Hash256, KeyIndex, Network (..),
+                                          OutPoint (..), PubKeyI (..), SoftPath,
+                                          Tx (..), TxHash (..), TxIn (..),
+                                          TxOut (..), WitnessStack,
+                                          XPubKey (..), addrFromJSON,
+                                          addrToEncoding, addrToJSON, bch,
+                                          blockHashToHex, btc, decodeHex,
+                                          eitherToMaybe, encodeHex, headerHash,
+                                          hexToBlockHash, hexToTxHash,
                                           maybeToEither, parseSoft, pathToList,
                                           pathToStr, putVarInt,
                                           scriptToAddressBS, textToAddr, txHash,
@@ -1587,6 +1594,22 @@ toIntTxId h =
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
+
+data BinfoBlockId
+    = BinfoBlockHash !BlockHash
+    | BinfoBlockIndex !Word32
+    deriving (Eq, Show, Read, Generic, Serialize, NFData)
+
+instance Parsable BinfoBlockId where
+    parseParam t =
+        hex <> igr
+      where
+        hex =
+            case hexToBlockHash (TL.toStrict t) of
+                Nothing -> Left "could not decode txid"
+                Just h  -> Right $ BinfoBlockHash h
+        igr = BinfoBlockIndex <$> parseParam t
+
 data BinfoTxId
     = BinfoTxIdHash !TxHash
     | BinfoTxIdIndex !Word64
@@ -1883,6 +1906,109 @@ binfoUnspentsParseJSON :: Network -> Value -> Parser BinfoUnspents
 binfoUnspentsParseJSON net = withObject "unspents" $ \o -> do
     us <- mapM (binfoUnspentParseJSON net) =<< o .: "unspent_outputs"
     return (BinfoUnspents us)
+
+toBinfoBlock :: BlockData -> [BinfoTx] -> [BlockHash] -> BinfoBlock
+toBinfoBlock BlockData{..} txs next_blocks =
+    BinfoBlock
+        { getBinfoBlockHash = headerHash blockDataHeader
+        , getBinfoBlockVer = blockVersion blockDataHeader
+        , getBinfoPrevBlock = prevBlock blockDataHeader
+        , getBinfoMerkleRoot = merkleRoot blockDataHeader
+        , getBinfoBlockTime = blockTimestamp blockDataHeader
+        , getBinfoBlockBits = blockBits blockDataHeader
+        , getBinfoNextBlock = next_blocks
+        , getBinfoBlockFee = blockDataFees
+        , getBinfoBlockNonce = bhNonce blockDataHeader
+        , getBinfoBlockTxCount = fromIntegral (length txs)
+        , getBinfoBlockSize = blockDataSize
+        , getBinfoBlockIndex = blockDataHeight
+        , getBinfoBlockMain = blockDataMainChain
+        , getBinfoBlockHeight = blockDataHeight
+        , getBinfoBlockWeight = blockDataWeight
+        , getBinfoBlockTx = txs
+        }
+
+data BinfoBlock
+    = BinfoBlock
+        { getBinfoBlockHash    :: !BlockHash
+        , getBinfoBlockVer     :: !Word32
+        , getBinfoPrevBlock    :: !BlockHash
+        , getBinfoMerkleRoot   :: !Hash256
+        , getBinfoBlockTime    :: !Word32
+        , getBinfoBlockBits    :: !Word32
+        , getBinfoNextBlock    :: ![BlockHash]
+        , getBinfoBlockFee     :: !Word64
+        , getBinfoBlockNonce   :: !Word32
+        , getBinfoBlockTxCount :: !Word32
+        , getBinfoBlockSize    :: !Word32
+        , getBinfoBlockIndex   :: !Word32
+        , getBinfoBlockMain    :: !Bool
+        , getBinfoBlockHeight  :: !Word32
+        , getBinfoBlockWeight  :: !Word32
+        , getBinfoBlockTx      :: ![BinfoTx]
+        }
+    deriving (Eq, Show, Generic, Serialize, NFData)
+
+binfoBlockToJSON :: Network -> BinfoBlock -> Value
+binfoBlockToJSON net BinfoBlock{..} =
+    object $
+    [ "hash" .= getBinfoBlockHash
+    , "ver" .= getBinfoBlockVer
+    , "prev_block" .= getBinfoPrevBlock
+    , "mrkl_root" .= TxHash getBinfoMerkleRoot
+    , "time" .= getBinfoBlockTime
+    , "bits" .= getBinfoBlockBits
+    , "next_block" .= getBinfoNextBlock
+    , "fee" .= getBinfoBlockFee
+    , "nonce" .= getBinfoBlockNonce
+    , "n_tx" .= getBinfoBlockTxCount
+    , "size" .= getBinfoBlockSize
+    , "block_index" .= getBinfoBlockIndex
+    , "main_chain" .= getBinfoBlockMain
+    , "height" .= getBinfoBlockHeight
+    , "weight" .= getBinfoBlockWeight
+    , "tx" .= map (binfoTxToJSON net) getBinfoBlockTx
+    ]
+
+binfoBlockToEncoding :: Network -> BinfoBlock -> Encoding
+binfoBlockToEncoding net BinfoBlock{..} =
+    pairs $
+    "hash" .= getBinfoBlockHash <>
+    "ver" .= getBinfoBlockVer <>
+    "prev_block" .= getBinfoPrevBlock <>
+    "mrkl_root" .= TxHash getBinfoMerkleRoot <>
+    "time" .= getBinfoBlockTime <>
+    "bits" .= getBinfoBlockBits <>
+    "next_block" .= getBinfoNextBlock <>
+    "fee" .= getBinfoBlockFee <>
+    "nonce" .= getBinfoBlockNonce <>
+    "n_tx" .= getBinfoBlockTxCount <>
+    "size" .= getBinfoBlockSize <>
+    "block_index" .= getBinfoBlockIndex <>
+    "main_chain" .= getBinfoBlockMain <>
+    "height" .= getBinfoBlockHeight <>
+    "weight" .= getBinfoBlockWeight <>
+    "tx" `pair` list (binfoTxToEncoding net) getBinfoBlockTx
+
+binfoBlockParseJSON :: Network -> Value -> Parser BinfoBlock
+binfoBlockParseJSON net = withObject "block" $ \o -> do
+    getBinfoBlockHash <- o .: "hash"
+    getBinfoBlockVer <- o .: "ver"
+    getBinfoPrevBlock <- o .: "prev_block"
+    getBinfoMerkleRoot <- getTxHash <$> o .: "mrkl_root"
+    getBinfoBlockTime <- o .: "time"
+    getBinfoBlockBits <- o .: "bits"
+    getBinfoNextBlock <- o .: "next_block"
+    getBinfoBlockFee <- o .: "fee"
+    getBinfoBlockNonce <- o .: "nonce"
+    getBinfoBlockTxCount <- o .: "n_tx"
+    getBinfoBlockSize <- o .: "size"
+    getBinfoBlockIndex <- o .: "block_index"
+    getBinfoBlockMain <- o .: "main_chain"
+    getBinfoBlockHeight <- o .: "height"
+    getBinfoBlockWeight <- o .: "weight"
+    getBinfoBlockTx <- o .: "tx" >>= mapM (binfoTxParseJSON net)
+    return BinfoBlock{..}
 
 data BinfoTx
     = BinfoTx

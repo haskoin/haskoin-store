@@ -55,6 +55,7 @@ serialVals =
     , SerialBox (arbitrary :: Gen BinfoSpender)
     , SerialBox (arbitrary :: Gen BinfoTxOutput)
     , SerialBox (arbitrary :: Gen BinfoTxInput)
+    , SerialBox (arbitrary :: Gen BinfoBlock)
     , SerialBox (arbitrary :: Gen BinfoTx)
     , SerialBox (arbitrary :: Gen BinfoTxId)
     , SerialBox (arbitrary :: Gen BinfoUnspent)
@@ -125,6 +126,10 @@ netVals =
     , NetBox ( binfoBalanceToJSON
              , binfoBalanceToEncoding
              , binfoBalanceParseJSON
+             , arbitraryNetData)
+    , NetBox ( binfoBlockToJSON
+             , binfoBlockToEncoding
+             , binfoBlockParseJSON
              , arbitraryNetData)
     , NetBox ( binfoTxToJSON
              , binfoTxToEncoding
@@ -436,6 +441,26 @@ instance Arbitrary BinfoWallet where
         getBinfoWalletTotalReceived <- arbitrary
         getBinfoWalletTotalSent <- arbitrary
         return BinfoWallet {..}
+
+instance Arbitrary BinfoBlock where
+    arbitrary = do
+        getBinfoBlockHash <- arbitraryBlockHash
+        getBinfoBlockVer <- arbitrary
+        getBinfoPrevBlock <- arbitraryBlockHash
+        getBinfoMerkleRoot <- getTxHash <$> arbitraryTxHash
+        getBinfoBlockTime <- arbitrary
+        getBinfoBlockBits <- arbitrary
+        getBinfoNextBlock <- listOf arbitraryBlockHash
+        getBinfoBlockTxCount <- arbitrary
+        getBinfoBlockFee <- arbitrary
+        getBinfoBlockNonce <- arbitrary
+        getBinfoBlockSize <- arbitrary
+        getBinfoBlockIndex <- arbitrary
+        getBinfoBlockMain <- arbitrary
+        getBinfoBlockHeight <- arbitrary
+        getBinfoBlockWeight <- arbitrary
+        getBinfoBlockTx <- arbitrary
+        return BinfoBlock{..}
 
 instance Arbitrary BinfoTx where
     arbitrary = do

@@ -823,35 +823,6 @@ paths:
                 type: string
                 format: binary
 
-  '/xpub/{xpub}/evict':
-    get:
-      tags:
-        - Address
-      operationId: evictXPub
-      summary: Evict Extended Public Key from Cache
-      parameters:
-        - $ref: '#/components/parameters/xpubParam'
-        - $ref: '#/components/parameters/xpubDerive'
-        - $ref: '#/components/parameters/prettyParam'
-      responses:
-        '200':
-          description: >-
-            Extended public key successfully evicted from cache.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - result
-                properties:
-                  result:
-                    type: boolean
-                    example: true
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-
   '/transaction/{txid}/after/{height}':
     get:
       tags:
@@ -1430,6 +1401,32 @@ paths:
                 $ref: '#/components/schemas/BinfoMultiAddr'
         '404':
           description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/rawblock/{block}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoBlock
+      summary: Raw Block
+      parameters:
+        - $ref: '#/components/parameters/binfoBlockId'
+        - $ref: '#/components/parameters/binfoFormat'
+      responses:
+        '200':
+          description: Raw block with transaction data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoBlock'
+            application/text:
+              schema:
+                type: string
+        '404':
+          description: Block not found.
           content:
             application/json:
               schema:
@@ -2444,6 +2441,78 @@ components:
           path: M/1/20
           m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
 
+    BinfoBlock:
+      type: object
+      required:
+        - hash
+        - ver
+        - prev_block
+        - mrkl_root
+        - time
+        - bits
+        - next_block
+        - fee
+        - nonce
+        - n_tx
+        - size
+        - block_index
+        - main_chain
+        - height
+        - weight
+        - tx
+      properties:
+        hash:
+          type: string
+          example: '0000000000000000000002625d8d469c8dfe7c79d9d2686902c1150a5cc03982'
+        ver:
+          type: integer
+          example: 541065216
+        prev_block:
+          type: string
+          example: '0000000000000000000b96de5fee92b229ba6ef4b38028808a05c9e82bf31eb2'
+        mrkl_root:
+          type: string
+          example: '0e5348e05eab4790e1d59f42fdb55b197d281740e95c5adb3558b548d18aa5cf'
+        time:
+          type: integer
+          example: 1613563854
+        bits:
+          type: integer
+          example: 386736569
+        next_block:
+          type: array
+          items:
+            type: string
+          example: []
+        fee:
+          type: integer
+          format: int64
+          example: 103472209
+        nonce:
+          type: integer
+          example: 3006370875
+        n_tx:
+          type: integer
+          example: 512
+        size:
+          type: integer
+          example: 1102537
+        block_index:
+          type: integer
+          example: 670976
+        main_chain:
+          type: boolean
+          example: true
+        height:
+          type: integer
+          example: 670976
+        weight:
+          type: integer
+          example: 3998653
+        tx:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoTx'
 
     BinfoTx:
       type: object
@@ -2901,6 +2970,17 @@ components:
         type: boolean
         example: true
       description: Use string with hex-encoded txid in tx_index field.
+
+    binfoBlockId:
+      name: block
+      in: path
+      required: true
+      schema:
+        oneOf:
+          - type: string
+          - type: integer
+        example: 151244
+      description: Hex-encoded txid or integer block height.
   
     binfoTxId:
       name: txid

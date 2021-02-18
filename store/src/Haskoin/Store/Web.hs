@@ -636,6 +636,7 @@ handlePaths = do
     S.post "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get "/blockchain/rawtx/:txid" scottyBinfoTx
+    S.get "/blockchain/rawblock/:block" scottyBinfoBlock
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1549,31 +1550,65 @@ scottyMultiAddr =
       | otherwise = 0
     received _ = 0
 
+getBinfoHex :: Monad m => WebT m Bool
+getBinfoHex =
+    (== ("hex" :: Text)) <$>
+    S.param "format" `S.rescue` const (return "json")
+
+scottyBinfoBlock :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoBlock =
+    getNumTxId >>= \numtxid ->
+    getBinfoHex >>= \hex ->
+    withMetrics rawBlockResponseTime 1 $
+    S.param "block" >>= \case
+    BinfoBlockHash bh -> go numtxid hex bh
+    BinfoBlockIndex i ->
+        getBlocksAtHeight i >>= \case
+        [] -> raise blockErrors ThingNotFound
+        bh:_ -> go numtxid hex bh
+  where
+    go numtxid hex bh =
+        getBlock bh >>= \case
+        Nothing -> raise blockErrors ThingNotFound
+        Just b ->
+            sequence <$> mapM getTransaction (blockDataTxs b) >>= \case
+            Nothing -> raise blockErrors ThingNotFound
+            Just txs -> do
+                nxt <- getBlocksAtHeight (blockDataHeight b + 1)
+                let btxs = map (toBinfoTxSimple numtxid) txs
+                    y = toBinfoBlock b btxs nxt
+                if hex
+                  then do
+                    let x = H.Block (blockDataHeader b) (map transactionData txs)
+                    setHeaders
+                    S.text . TL.fromStrict . encodeHex $ encode x
+                  else do
+                    setHeaders
+                    net <- lift $ asks (storeNetwork . webStore . webConfig)
+                    streamEncoding $ binfoBlockToEncoding net y
+
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
     getNumTxId >>= \numtxid ->
+    getBinfoHex >>= \hex ->
     S.param "txid" >>= \txid ->
-    withMetrics rawtxResponseTime 1 $ go numtxid txid
+    withMetrics rawtxResponseTime 1 $
+    let f (BinfoTxIdHash h)  = maybeToList <$> getTransaction h
+        f (BinfoTxIdIndex i) = getNumTransaction i
+    in f txid >>= \case
+        [] -> raise rawtxErrors ThingNotFound
+        [t] -> if hex then hx t else js numtxid t
+        ts ->
+            let tids = map (txHash . transactionData) ts
+            in raise rawtxErrors (TxIndexConflict tids)
   where
-    get_format = S.param "format" `S.rescue` const (return ("json" :: Text))
     js numtxid t = do
         net <- lift $ asks (storeNetwork . webStore . webConfig)
         setHeaders
         streamEncoding $ binfoTxToEncoding net $ toBinfoTxSimple numtxid t
-    hex t = do
+    hx t = do
         setHeaders
         S.text . TL.fromStrict . encodeHex . encode $ transactionData t
-    go numtxid txid =
-        let f (BinfoTxIdHash h)  = maybeToList <$> getTransaction h
-            f (BinfoTxIdIndex i) = getNumTransaction i
-        in f txid >>= \case
-            [] -> raise rawtxErrors ThingNotFound
-            [t] -> get_format >>= \case
-                "hex" -> hex t
-                _     -> js numtxid t
-            ts ->
-                let tids = map (txHash . transactionData) ts
-                in raise rawtxErrors (TxIndexConflict tids)
 
 -- GET Network Information --
 
