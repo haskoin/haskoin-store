@@ -1663,7 +1663,7 @@ blockHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                  => WebConfig -> m BlockHealth
 blockHealthCheck cfg = do
     let ch = storeChain $ webStore cfg
-        blockHealthMaxDiff = webMaxDiff cfg
+        blockHealthMaxDiff = fromIntegral $ webMaxDiff cfg
     blockHealthHeaders <-
         H.nodeHeight <$> chainGetBest ch
     blockHealthBlocks <-
@@ -1699,15 +1699,17 @@ lastTxHealthCheck WebConfig {..} = do
 pendingTxsHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                       => WebConfig -> m MaxHealth
 pendingTxsHealthCheck cfg = do
-    let maxHealthMax = webMaxPending cfg
-    maxHealthNum <- blockStorePendingTxs (storeBlock (webStore cfg))
+    let maxHealthMax = fromIntegral $ webMaxPending cfg
+    maxHealthNum <-
+        fromIntegral <$>
+        blockStorePendingTxs (storeBlock (webStore cfg))
     return MaxHealth {..}
 
 peerHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                 => PeerManager -> m CountHealth
 peerHealthCheck mgr = do
     let countHealthMin = 1
-    countHealthNum <- length <$> getPeers mgr
+    countHealthNum <- fromIntegral . length <$> getPeers mgr
     return CountHealth {..}
 
 healthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)

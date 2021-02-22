@@ -1598,21 +1598,21 @@ data BlockHealth =
     BlockHealth
         { blockHealthHeaders :: !BlockHeight
         , blockHealthBlocks  :: !BlockHeight
-        , blockHealthMaxDiff :: !Int
+        , blockHealthMaxDiff :: !Int32
         }
     deriving (Show, Eq, Generic, NFData)
 
 instance Serial BlockHealth where
     serialize h@BlockHealth{..} = do
         serialize (isOK h)
-        serialize blockHealthHeaders
-        serialize blockHealthBlocks
-        serialize blockHealthMaxDiff
+        putWord32be blockHealthHeaders
+        putWord32be blockHealthBlocks
+        putInt32be blockHealthMaxDiff
     deserialize = do
         k                  <- deserialize
-        blockHealthHeaders <- deserialize
-        blockHealthBlocks  <- deserialize
-        blockHealthMaxDiff <- deserialize
+        blockHealthHeaders <- getWord32be
+        blockHealthBlocks  <- getWord32be
+        blockHealthMaxDiff <- getInt32be
         let h = BlockHealth{..}
         unless (k == isOK h) $ fail "Inconsistent health check"
         return h
@@ -1654,20 +1654,20 @@ instance FromJSON BlockHealth where
 
 data TimeHealth =
     TimeHealth
-        { timeHealthAge :: !Int
-        , timeHealthMax :: !Int
+        { timeHealthAge :: !Int64
+        , timeHealthMax :: !Int64
         }
     deriving (Show, Eq, Generic, NFData)
 
 instance Serial TimeHealth where
     serialize h@TimeHealth{..} = do
         serialize (isOK h)
-        serialize timeHealthAge
-        serialize timeHealthMax
+        putInt64be timeHealthAge
+        putInt64be timeHealthMax
     deserialize = do
         k             <- deserialize
-        timeHealthAge <- deserialize
-        timeHealthMax <- deserialize
+        timeHealthAge <- getInt64be
+        timeHealthMax <- getInt64be
         let t = TimeHealth{..}
         unless (k == isOK t) $ fail "Inconsistent health check"
         return t
@@ -1701,20 +1701,20 @@ instance FromJSON TimeHealth where
 
 data CountHealth =
     CountHealth
-        { countHealthNum :: !Int
-        , countHealthMin :: !Int
+        { countHealthNum :: !Int64
+        , countHealthMin :: !Int64
         }
     deriving (Show, Eq, Generic, NFData)
 
 instance Serial CountHealth where
     serialize h@CountHealth{..} = do
         serialize (isOK h)
-        serialize countHealthNum
-        serialize countHealthMin
+        putInt64be countHealthNum
+        putInt64be countHealthMin
     deserialize = do
         k              <- deserialize
-        countHealthNum <- deserialize
-        countHealthMin <- deserialize
+        countHealthNum <- getInt64be
+        countHealthMin <- getInt64be
         let c = CountHealth{..}
         unless (k == isOK c) $ fail "Inconsistent health check"
         return c
@@ -1748,20 +1748,20 @@ instance FromJSON CountHealth where
 
 data MaxHealth =
     MaxHealth
-        { maxHealthNum :: !Int
-        , maxHealthMax :: !Int
+        { maxHealthNum :: !Int64
+        , maxHealthMax :: !Int64
         }
     deriving (Show, Eq, Generic, NFData)
 
 instance Serial MaxHealth where
     serialize h@MaxHealth {..} = do
         serialize $ isOK h
-        serialize maxHealthNum
-        serialize maxHealthMax
+        putInt64be maxHealthNum
+        putInt64be maxHealthMax
     deserialize = do
         k            <- deserialize
-        maxHealthNum <- deserialize
-        maxHealthMax <- deserialize
+        maxHealthNum <- getInt64be
+        maxHealthMax <- getInt64be
         let h = MaxHealth{..}
         unless (k == isOK h) $ fail "Inconsistent health check"
         return h
@@ -1812,8 +1812,8 @@ instance Serial HealthCheck where
         serialize healthLastTx
         serialize healthPendingTxs
         serialize healthPeers
-        serialize healthNetwork
-        serialize healthVersion
+        putLengthBytes ((TE.encodeUtf8 . T.pack) healthNetwork)
+        putLengthBytes ((TE.encodeUtf8 . T.pack) healthVersion)
     deserialize = do
         k                   <- deserialize
         healthBlocks        <- deserialize
@@ -1821,8 +1821,8 @@ instance Serial HealthCheck where
         healthLastTx        <- deserialize
         healthPendingTxs    <- deserialize
         healthPeers         <- deserialize
-        healthNetwork       <- deserialize
-        healthVersion       <- deserialize
+        healthNetwork       <- T.unpack . TE.decodeUtf8 <$> getLengthBytes
+        healthVersion       <- T.unpack . TE.decodeUtf8 <$> getLengthBytes
         let h = HealthCheck {..}
         unless (k == isOK h) $ fail "Inconsistent health check"
         return h
