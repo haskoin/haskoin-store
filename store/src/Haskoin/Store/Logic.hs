@@ -25,7 +25,6 @@ import           Control.Monad.Except  (MonadError, throwError)
 import           Control.Monad.Logger  (MonadLoggerIO (..), logDebugS,
                                         logErrorS)
 import qualified Data.ByteString       as B
-import qualified Data.ByteString.Short as B.Short
 import           Data.Either           (rights)
 import           Data.Function         (on)
 import qualified Data.IntMap.Strict    as I
@@ -277,7 +276,7 @@ prepareTxData rbf br tt tx us =
            , txDataTime = tt
            }
   where
-    mkprv u = Prev (B.Short.fromShort (unspentScript u)) (unspentAmount u)
+    mkprv u = Prev (unspentScript u) (unspentAmount u)
     ps = I.fromList $ zip [0 ..] $ map mkprv us
 
 importTx
@@ -335,7 +334,7 @@ adjustAddressOutput op o old new = do
                 { unspentBlock = new
                 , unspentPoint = op
                 , unspentAmount = outValue o
-                , unspentScript = B.Short.toShort pk
+                , unspentScript = pk
                 , unspentAddress = ma
                 }
         forM_ ma $ replace_addr_unspent pk
@@ -346,7 +345,7 @@ adjustAddressOutput op o old new = do
                 { unspentBlock = old
                 , unspentPoint = op
                 , unspentAmount = outValue o
-                , unspentScript = B.Short.toShort pk
+                , unspentScript = pk
                 , unspentAddress = Just a
                 }
         insertAddrUnspent
@@ -355,7 +354,7 @@ adjustAddressOutput op o old new = do
                 { unspentBlock = new
                 , unspentPoint = op
                 , unspentAmount = outValue o
-                , unspentScript = B.Short.toShort pk
+                , unspentScript = pk
                 , unspentAddress = Just a
                 }
         decreaseBalance (confirmed old) a (outValue o)
@@ -550,7 +549,7 @@ modOutput add br op o = do
     v | add = (+ outValue o)
       | otherwise = subtract (outValue o)
     ma = eitherToMaybe (scriptToAddressBS (scriptOutput o))
-    u = Unspent { unspentScript = B.Short.toShort (scriptOutput o)
+    u = Unspent { unspentScript = scriptOutput o
                 , unspentBlock = br
                 , unspentPoint = op
                 , unspentAmount = outValue o
@@ -587,7 +586,7 @@ spendOutput th ix op = do
         Nothing -> error $ "Could not find UTXO to spend: " <> show op
     deleteUnspent op
     insertSpender op (Spender th ix)
-    let pk = B.Short.fromShort (unspentScript u)
+    let pk = unspentScript u
     forM_ (scriptToAddressBS pk) $ \a -> do
         decreaseBalance
             (confirmed (unspentBlock u))
@@ -609,7 +608,7 @@ unspendOutput op = do
         m = eitherToMaybe (scriptToAddressBS (scriptOutput o))
         u = Unspent { unspentAmount = outValue o
                     , unspentBlock = txDataBlock t
-                    , unspentScript = B.Short.toShort (scriptOutput o)
+                    , unspentScript = scriptOutput o
                     , unspentPoint = op
                     , unspentAddress = m
                     }

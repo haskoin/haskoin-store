@@ -66,9 +66,11 @@ import           Control.Arrow             (second)
 import           Control.Exception
 import           Control.Lens              ((.~), (?~), (^.))
 import           Control.Monad.Except
+import           Data.Bytes.Get
+import           Data.Bytes.Put
+import           Data.Bytes.Serial
 import           Data.Default              (Default, def)
 import           Data.Monoid               (Endo (..), appEndo)
-import qualified Data.Serialize            as S
 import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
 import qualified Data.Text                 as Text
@@ -195,7 +197,7 @@ applyOpt :: Text -> [Text] -> Endo HTTP.Options
 applyOpt p t = Endo $ HTTP.param p .~ [Text.intercalate "," t]
 
 getBinary ::
-       S.Serialize a
+       Serial a
     => Endo HTTP.Options
     -> String
     -> IO (Either Store.Except a)
@@ -203,19 +205,19 @@ getBinary opts url = do
     resE <- try $ HTTP.getWith (binaryOpts opts) url
     return $ do
         res <- resE
-        toExcept $ S.decodeLazy $ res ^. HTTP.responseBody
+        toExcept $ runGetL deserialize $ res ^. HTTP.responseBody
 
 postBinary ::
-       (S.Serialize a, S.Serialize r)
+       (Serial a, Serial r)
     => Endo HTTP.Options
     -> String
     -> a
     -> IO (Either Store.Except r)
 postBinary opts url body = do
-    resE <- try $ HTTP.postWith (binaryOpts opts) url (S.encode body)
+    resE <- try $ HTTP.postWith (binaryOpts opts) url (runPutL (serialize body))
     return $ do
         res <- resE
-        toExcept $ S.decodeLazy $ res ^. HTTP.responseBody
+        toExcept $ runGetL deserialize $ res ^. HTTP.responseBody
 
 binaryOpts :: Endo HTTP.Options -> HTTP.Options
 binaryOpts opts =
@@ -229,11 +231,11 @@ checkStatus req res
     | statusIsSuccessful status = return ()
     | isHealthPath && code == 503 = return () -- Ignore health checks
     | otherwise = do
-        e <- S.decode <$> res ^. HTTP.responseBody
+        e <- runGetS deserialize <$> res ^. HTTP.responseBody
         throwIO $
             case e of
                 Right except -> except :: Store.Except
-                _ -> Store.StringError err
+                _            -> Store.StringError err
   where
     code = res ^. HTTP.responseStatus . HTTP.statusCode
     message = res ^. HTTP.responseStatus . HTTP.statusMessage

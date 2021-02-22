@@ -14,9 +14,11 @@ where
 
 import           Control.Applicative     ((<|>))
 import           Control.Monad           (guard)
+import           Data.Bytes.Get
+import           Data.Bytes.Put
+import           Data.Bytes.Serial
 import           Data.Default            (Default, def)
 import           Data.Proxy              (Proxy (..))
-import qualified Data.Serialize          as S
 import           Data.String             (IsString (..))
 import           Data.String.Conversions (cs)
 import           Data.Text               (Text)
@@ -38,7 +40,7 @@ import qualified Web.Scotty.Trans        as Scotty
 -- API Resources --
 -------------------
 
-class S.Serialize b => ApiResource a b | a -> b where
+class Serial b => ApiResource a b | a -> b where
     resourceMethod :: Proxy a -> StdMethod
     resourceMethod _ = GET
     resourcePath :: Proxy a -> ([Text] -> Text)
@@ -49,7 +51,7 @@ class S.Serialize b => ApiResource a b | a -> b where
     resourceBody :: a -> Maybe PostBox
     resourceBody = const Nothing
 
-data PostBox = forall s . S.Serialize s => PostBox !s
+data PostBox = forall s . Serial s => PostBox !s
 data ParamBox = forall p . (Eq p, Param p) => ParamBox !p
 data ProxyBox = forall p . Param p => ProxyBox !(Proxy p)
 
@@ -513,9 +515,9 @@ instance Param NoCache where
     encodeParam _ (NoCache True)  = Just ["true"]
     encodeParam _ (NoCache False) = Just ["false"]
     parseParam _ = \case
-        ["true"] -> Just $ NoCache True
+        ["true"]  -> Just $ NoCache True
         ["false"] -> Just $ NoCache False
-        _ -> Nothing
+        _         -> Nothing
 
 newtype NoTx = NoTx
     { getNoTx :: Bool
@@ -529,9 +531,9 @@ instance Param NoTx where
     encodeParam _ (NoTx True)  = Just ["true"]
     encodeParam _ (NoTx False) = Just ["false"]
     parseParam _ = \case
-        ["true"] -> Just $ NoTx True
+        ["true"]  -> Just $ NoTx True
         ["false"] -> Just $ NoTx False
-        _ -> Nothing
+        _         -> Nothing
 
 instance Param BlockHash where
     proxyLabel = const "block"

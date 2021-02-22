@@ -6,7 +6,6 @@ module Haskoin.Store.Database.Writer (WriterT , runWriter) where
 
 import           Control.Monad.Reader          (ReaderT (..))
 import qualified Control.Monad.Reader          as R
-import qualified Data.ByteString.Short         as B.Short
 import           Data.HashMap.Strict           (HashMap)
 import qualified Data.HashMap.Strict           as M
 import           Data.List                     (sortOn)
@@ -346,7 +345,7 @@ insertAddrUnspentH :: Address -> Unspent -> Memory -> Memory
 insertAddrUnspentH a u db =
     let k = (a, unspentBlock u, unspentPoint u)
         v = OutVal { outValAmount = unspentAmount u
-                   , outValScript = B.Short.fromShort (unspentScript u)
+                   , outValScript = unspentScript u
                    }
      in db { hAddrOut = M.insert k (Just v) (hAddrOut db) }
 

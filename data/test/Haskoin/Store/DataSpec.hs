@@ -48,18 +48,6 @@ serialVals =
     , SerialBox (arbitrary :: Gen (RawResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
     , SerialBox (arbitrary :: Gen Except)
-    , SerialBox (arbitrary :: Gen BinfoWallet)
-    , SerialBox (arbitrary :: Gen BinfoBalance)
-    , SerialBox (arbitrary :: Gen BinfoBlockInfo)
-    , SerialBox (arbitrary :: Gen BinfoXPubPath)
-    , SerialBox (arbitrary :: Gen BinfoSpender)
-    , SerialBox (arbitrary :: Gen BinfoTxOutput)
-    , SerialBox (arbitrary :: Gen BinfoTxInput)
-    , SerialBox (arbitrary :: Gen BinfoBlock)
-    , SerialBox (arbitrary :: Gen BinfoTx)
-    , SerialBox (arbitrary :: Gen BinfoTxId)
-    , SerialBox (arbitrary :: Gen BinfoUnspent)
-    , SerialBox (arbitrary :: Gen BinfoUnspents)
     ]
 
 jsonVals :: [JsonBox]
@@ -155,11 +143,11 @@ netVals =
 
 spec :: Spec
 spec = do
-    describe "Data.Serialize Encoding" $
+    describe "Binary Encoding" $
         forM_ serialVals $ \(SerialBox g) -> testSerial g
-    describe "Data.Aeson Encoding" $
+    describe "JSON Encoding" $
         forM_ jsonVals $ \(JsonBox g) -> testJson g
-    describe "Data.Aeson Encoding with Network" $
+    describe "JSON Encoding with Network" $
         forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
 
 instance Arbitrary BlockRef where
@@ -332,7 +320,7 @@ instance Arbitrary Unspent where
             <$> arbitrary
             <*> arbitraryOutPoint
             <*> arbitrary
-            <*> (BSS.toShort <$> arbitraryBS1)
+            <*> arbitraryBS1
             <*> arbitraryMaybe arbitraryAddress
 
 instance Arbitrary BlockData where
@@ -340,7 +328,7 @@ instance Arbitrary BlockData where
         BlockData
         <$> arbitrary
         <*> arbitrary
-        <*> arbitrary
+        <*> (fromInteger <$> suchThat arbitrary (0<=))
         <*> arbitraryBlockHeader
         <*> arbitrary
         <*> arbitrary
@@ -397,7 +385,6 @@ instance Arbitrary Except where
         , return BadRequest
         , UserError <$> arbitrary
         , StringError <$> arbitrary
-        , return BlockTooLarge
         , TxIndexConflict <$> listOf1 arbitraryTxHash
         ]
 

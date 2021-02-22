@@ -11,5 +11,5 @@ packages:
   - store
   - data
 extra-deps:
-  - haskoin-core-0.19.0@sha256:8edd4bd3f0fd658c290bd0b44c2aeb4195789de9510c4f31f67936320810f2bb,4782
+  - haskoin-core-0.20.0@sha256:06f3257d9290d3407950f2a32f2ae51868b611f6898602af91135503887de636,4836
   - haskoin-node-0.17.1@sha256:a835e166fef1e781b635fc9b9a0febfddbf2c986c5a44b84c1eae901ba18932f,2279

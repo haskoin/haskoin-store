@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2bc16e2ce724733b4728245a7481f0f90236a91d2853eda197dec9cf47d70663
+-- hash: 936d1c352473fe70b8f245dc68fdf18244c111477e0489bfdcf6e6443727962f
 
 name:           haskoin-store
-version:        0.46.7-dev
+version:        0.47.0
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -47,6 +47,8 @@ library
       aeson >=1.4.7.1
     , aeson-pretty >=0.8.8
     , base >=4.9 && <5
+    , base16 >=0.3.0
+    , bytes >=0.17
     , bytestring >=0.10.10.0
     , cereal >=0.5.8.1
     , conduit >=1.3.2
@@ -59,7 +61,7 @@ library
     , hashable >=1.3.0.0
     , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
-    , haskoin-store-data ==0.46.7
+    , haskoin-store-data ==0.47.0
     , hedis >=0.12.13
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -95,6 +97,8 @@ executable haskoin-store
       aeson >=1.4.7.1
     , aeson-pretty >=0.8.8
     , base >=4.9 && <5
+    , base16 >=0.3.0
+    , bytes >=0.17
     , bytestring >=0.10.10.0
     , cereal >=0.5.8.1
     , conduit >=1.3.2
@@ -109,7 +113,7 @@ executable haskoin-store
     , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
     , haskoin-store
-    , haskoin-store-data ==0.46.7
+    , haskoin-store-data ==0.47.0
     , hedis >=0.12.13
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -150,7 +154,9 @@ test-suite haskoin-store-test
     , aeson >=1.4.7.1
     , aeson-pretty >=0.8.8
     , base >=4.9 && <5
+    , base16 >=0.3.0
     , base64 >=0.4.1
+    , bytes >=0.17
     , bytestring >=0.10.10.0
     , cereal >=0.5.8.1
     , conduit >=1.3.2
@@ -164,7 +170,7 @@ test-suite haskoin-store-test
     , haskoin-core >=0.19.0
     , haskoin-node >=0.17.0
     , haskoin-store
-    , haskoin-store-data ==0.46.7
+    , haskoin-store-data ==0.47.0
     , hedis >=0.12.13
     , hspec >=2.7.1
     , http-types >=0.12.3

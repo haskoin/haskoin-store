@@ -1,5 +1,5 @@
 name: haskoin-store-data
-version: 0.46.7-dev
+version: 0.47.0
 synopsis: Data for Haskoin Store
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
@@ -16,6 +16,8 @@ extra-source-files:
 dependencies:
   - aeson >= 1.4.7.1
   - base >=4.9 && <5
+  - binary >= 0.8.8.0
+  - bytes >= 0.17
   - bytestring >= 0.10.10.0
   - cereal >= 0.5.8.1
   - containers >= 0.6.2.1

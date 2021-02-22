@@ -31,8 +31,6 @@ import           Data.Bits              (Bits, shift, shiftL, shiftR, (.&.),
                                          (.|.))
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as BS
-import           Data.ByteString.Short  (ShortByteString)
-import qualified Data.ByteString.Short  as BSS
 import           Data.Default           (Default (..))
 import           Data.Either            (fromRight)
 import           Data.Hashable          (Hashable)
@@ -227,7 +225,7 @@ toUnspent b v =
     Unspent
         { unspentBlock = addrOutKeyB b
         , unspentAmount = outValAmount v
-        , unspentScript = BSS.toShort (outValScript v)
+        , unspentScript = outValScript v
         , unspentPoint = addrOutKeyP b
         , unspentAddress = eitherToMaybe (scriptToAddressBS (outValScript v))
         }
@@ -386,7 +384,7 @@ instance Default BalVal where
 data UnspentVal = UnspentVal
     { unspentValBlock  :: !BlockRef
     , unspentValAmount :: !Word64
-    , unspentValScript :: !ShortByteString
+    , unspentValScript :: !ByteString
     } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 unspentToVal :: Unspent -> (OutPoint, UnspentVal)
@@ -409,5 +407,5 @@ valToUnspent p UnspentVal { unspentValBlock = b
         , unspentPoint = p
         , unspentAmount = v
         , unspentScript = s
-        , unspentAddress = eitherToMaybe (scriptToAddressBS (BSS.fromShort s))
+        , unspentAddress = eitherToMaybe (scriptToAddressBS s)
         }

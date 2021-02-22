@@ -39,8 +39,11 @@ import           Data.Aeson.Text               (encodeToLazyText)
 import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Char8    as C
-import           Data.ByteString.Short         (fromShort)
+import           Data.Bytes.Get
+import           Data.Bytes.Put
+import           Data.Bytes.Serial
 import           Data.Char                     (isSpace)
+import qualified Data.ByteString.Lazy.Base16 as BL16
 import           Data.Default                  (Default (..))
 import           Data.Function                 (on, (&))
 import           Data.HashMap.Strict           (HashMap)
@@ -54,7 +57,6 @@ import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
                                                 isJust, listToMaybe, mapMaybe,
                                                 maybeToList)
 import           Data.Proxy                    (Proxy (..))
-import           Data.Serialize                as Serialize
 import qualified Data.Set                      as Set
 import           Data.String                   (fromString)
 import           Data.String.Conversions       (cs)
@@ -100,6 +102,7 @@ import           Network.Wai                   (Middleware, Request (..),
 import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
                                                 setPort)
 import qualified Network.Wreq                  as Wreq
+import           System.IO.Unsafe              (unsafeInterleaveIO)
 import qualified System.Metrics                as Metrics
 import qualified System.Metrics.Counter        as Metrics (Counter)
 import qualified System.Metrics.Counter        as Metrics.Counter
@@ -110,7 +113,8 @@ import           UnliftIO                      (MonadIO, MonadUnliftIO, TVar,
                                                 askRunInIO, atomically, bracket,
                                                 bracket_, handleAny, liftIO,
                                                 newTVarIO, readTVarIO, timeout,
-                                                withAsync, writeTVar)
+                                                withAsync, withRunInIO,
+                                                writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 import           Web.Scotty.Internal.Types     (ActionT)
 import           Web.Scotty.Trans              (Parsable)
@@ -426,7 +430,6 @@ errStatus BadRequest        = status400
 errStatus UserError{}       = status400
 errStatus StringError{}     = status400
 errStatus ServerError       = status500
-errStatus BlockTooLarge     = status403
 errStatus TxIndexConflict{} = status409
 
 defHandler :: Monad m => Except -> WebT m ()
@@ -687,13 +690,13 @@ streamEncoding e = do
    S.raw (encodingToLazyByteString e)
 
 protoSerial
-    :: Serialize a
+    :: Serial a
     => SerialAs
     -> (a -> Encoding)
     -> (a -> Value)
     -> a
     -> L.ByteString
-protoSerial SerialAsBinary _ _     = runPutLazy . put
+protoSerial SerialAsBinary _ _     = runPutL . serialize
 protoSerial SerialAsJSON f _       = encodingToLazyByteString . f
 protoSerial SerialAsPrettyJSON _ g =
     encodePretty' defConfig {confTrailingNewline = True} . g
@@ -755,22 +758,19 @@ getRawBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => H.BlockHash -> WebT m H.Block
 getRawBlock h = do
     b <- maybe (raise blockErrors ThingNotFound) return =<< getBlock h
-    refuseLargeBlock blockErrors b
-    toRawBlock b
+    lift (toRawBlock b)
 
-toRawBlock :: (Monad m, StoreReadBase m) => BlockData -> m H.Block
+toRawBlock :: (MonadUnliftIO m, StoreReadBase m) => BlockData -> m H.Block
 toRawBlock b = do
     let ths = blockDataTxs b
-    txs <- map transactionData . catMaybes <$> mapM getTransaction ths
+    txs <- mapM f ths
     return H.Block {H.blockHeader = blockDataHeader b, H.blockTxns = txs}
-
-refuseLargeBlock :: MonadIO m
-                 => (WebMetrics -> ErrorCounter)
-                 -> BlockData
-                 -> WebT m ()
-refuseLargeBlock metric BlockData {blockDataTxs = txs} = do
-    WebLimits {maxLimitFull = f} <- lift $ asks (webMaxLimits . webConfig)
-    when (length txs > fromIntegral f) $ raise metric BlockTooLarge
+  where
+    f x = withRunInIO $ \run ->
+          unsafeInterleaveIO . run $
+          getTransaction x >>= \case
+              Nothing -> undefined
+              Just t -> return $ transactionData t
 
 -- GET BlockBest / BlockBestRaw --
 
@@ -861,8 +861,7 @@ scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) =
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrBefore ch t
     b <- maybe (raise blockErrors ThingNotFound) return m
-    refuseLargeBlock blockErrors b
-    RawResult <$> toRawBlock b
+    RawResult <$> lift (toRawBlock b)
 
 scottyBlockMTPRaw :: (MonadUnliftIO m, MonadLoggerIO m)
                   => GetBlockMTPRaw -> WebT m (RawResult H.Block)
@@ -871,8 +870,7 @@ scottyBlockMTPRaw (GetBlockMTPRaw (TimeParam t)) =
     ch <- lift $ asks (storeChain . webStore . webConfig)
     m <- blockAtOrAfterMTP ch t
     b <- maybe (raise blockErrors ThingNotFound) return m
-    refuseLargeBlock blockErrors b
-    RawResult <$> toRawBlock b
+    RawResult <$> lift (toRawBlock b)
 
 -- GET Transactions --
 
@@ -900,16 +898,25 @@ scottyTxsRaw ::
     -> WebT m (RawResultList Tx)
 scottyTxsRaw (GetTxsRaw txids) =
     withMetrics txResponseTime (length txids) $ do
-    txs <- catMaybes <$> mapM getTransaction (nub txids)
+    txs <- catMaybes <$> mapM f (nub txids)
     return $ RawResultList $ transactionData <$> txs
+  where
+    f x = lift $ withRunInIO $ \run ->
+          unsafeInterleaveIO . run $
+          getTransaction x
 
 getTxsBlock :: (MonadUnliftIO m, MonadLoggerIO m)
             => H.BlockHash
             -> WebT m [Transaction]
 getTxsBlock h = do
     b <- maybe (raise txErrors ThingNotFound) return =<< getBlock h
-    refuseLargeBlock txErrors b
-    catMaybes <$> mapM getTransaction (blockDataTxs b)
+    mapM f (blockDataTxs b)
+  where
+    f x = lift $ withRunInIO $ \run ->
+          unsafeInterleaveIO . run $
+          getTransaction x >>= \case
+              Nothing -> undefined
+              Just t -> return t
 
 scottyTxsBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxsBlock -> WebT m [Transaction]
@@ -1293,7 +1300,7 @@ scottyBinfoUnspent =
             hash = outPointHash unspentPoint
             idx = outPointIndex unspentPoint
             val = unspentAmount
-            script = fromShort unspentScript
+            script = unspentScript
             txi = encodeBinfoTxId numtxid hash
         in BinfoUnspent
            { getBinfoUnspentHash = hash
@@ -1504,7 +1511,7 @@ scottyMultiAddr =
         let f StoreCoinbase{}                    = False
             f StoreInput{inputAddress = Nothing} = False
             f StoreInput{inputAddress = Just a}  = a `HashSet.member` s
-            g StoreOutput{outputAddress = m} = case m of
+            g StoreOutput{outputAddr = m} = case m of
                 Nothing -> False
                 Just a  -> a `HashSet.member` s
             i = any f (transactionInputs t)
@@ -1564,28 +1571,30 @@ scottyBinfoBlock =
     BinfoBlockHash bh -> go numtxid hex bh
     BinfoBlockIndex i ->
         getBlocksAtHeight i >>= \case
-        [] -> raise blockErrors ThingNotFound
+        []   -> raise blockErrors ThingNotFound
         bh:_ -> go numtxid hex bh
   where
+    get_tx th =
+        withRunInIO $ \run ->
+        unsafeInterleaveIO $
+        run $ fromJust <$> getTransaction th
     go numtxid hex bh =
         getBlock bh >>= \case
         Nothing -> raise blockErrors ThingNotFound
-        Just b ->
-            sequence <$> mapM getTransaction (blockDataTxs b) >>= \case
-            Nothing -> raise blockErrors ThingNotFound
-            Just txs -> do
-                nxt <- getBlocksAtHeight (blockDataHeight b + 1)
+        Just b -> do
+            txs <- lift $ mapM get_tx (blockDataTxs b)
+            nxt <- getBlocksAtHeight (blockDataHeight b + 1)
+            if hex
+              then do
+                let x = H.Block (blockDataHeader b) (map transactionData txs)
+                setHeaders
+                S.text . encodeHexLazy . runPutL $ serialize x
+              else do
                 let btxs = map (toBinfoTxSimple numtxid) txs
                     y = toBinfoBlock b btxs nxt
-                if hex
-                  then do
-                    let x = H.Block (blockDataHeader b) (map transactionData txs)
-                    setHeaders
-                    S.text . TL.fromStrict . encodeHex $ encode x
-                  else do
-                    setHeaders
-                    net <- lift $ asks (storeNetwork . webStore . webConfig)
-                    streamEncoding $ binfoBlockToEncoding net y
+                setHeaders
+                net <- lift $ asks (storeNetwork . webStore . webConfig)
+                streamEncoding $ binfoBlockToEncoding net y
 
 scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTx =
@@ -1608,7 +1617,7 @@ scottyBinfoTx =
         streamEncoding $ binfoTxToEncoding net $ toBinfoTxSimple numtxid t
     hx t = do
         setHeaders
-        S.text . TL.fromStrict . encodeHex . encode $ transactionData t
+        S.text . encodeHexLazy . runPutL . serialize $ transactionData t
 
 -- GET Network Information --
 
@@ -1771,15 +1780,15 @@ paramLazy = do
     resM <- paramOptional `S.rescue` const (return Nothing)
     maybe S.next return resM
 
-parseBody :: (MonadIO m, Serialize a) => WebT m a
+parseBody :: (MonadIO m, Serial a) => WebT m a
 parseBody = do
     b <- S.body
-    case hex b <|> bin (L.toStrict b) of
-        Nothing -> raise_ $ UserError "Failed to parse request body"
-        Just x  -> return x
+    case hex b <> bin b of
+        Left _ -> raise_ $ UserError "Failed to parse request body"
+        Right x -> return x
   where
-    bin = eitherToMaybe . Serialize.decode
-    hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
+    bin = runGetL deserialize
+    hex = bin <=< BL16.decodeBase16 . C.filter (not . isSpace)
 
 parseOffset :: MonadIO m => WebT m OffsetParam
 parseOffset = do

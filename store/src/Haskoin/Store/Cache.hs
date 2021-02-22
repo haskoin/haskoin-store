@@ -36,7 +36,6 @@ import           Control.Monad.Trans         (lift)
 import           Control.Monad.Trans.Maybe   (MaybeT (..), runMaybeT)
 import           Data.Bits                   (shift, (.&.), (.|.))
 import           Data.ByteString             (ByteString)
-import qualified Data.ByteString.Short       as BSS
 import           Data.Default                (def)
 import           Data.Either                 (rights)
 import           Data.HashMap.Strict         (HashMap)
@@ -281,8 +280,7 @@ getXPubUnspents xpub limits = do
                          either
                              (const Nothing)
                              (\a -> Just (a, u))
-                             (scriptToAddressBS
-                                  (BSS.fromShort (unspentScript u))))
+                             (scriptToAddressBS (unspentScript u)))
                     uns
             xpubutxo =
                 mapMaybe
