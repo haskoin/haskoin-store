@@ -150,30 +150,36 @@ apiBatch i conf res = mconcat <$> mapM (apiCall conf) (resourceBatch i res)
 class (ApiResource a b, Monoid b) => Batchable a b where
     resourceBatch :: Natural -> a -> [a]
 
-instance Batchable GetBlocks [Store.BlockData] where
-    resourceBatch i (GetBlocks hs t) = (`GetBlocks` t) <$> chunksOf i hs
+instance Batchable GetBlocks (Store.SerialList Store.BlockData) where
+    resourceBatch i (GetBlocks hs t) =
+        (`GetBlocks` t) <$> chunksOf i hs
 
-instance Batchable GetBlockHeights [Store.BlockData] where
+instance Batchable GetBlockHeights (Store.SerialList Store.BlockData) where
     resourceBatch i (GetBlockHeights (HeightsParam hs) n) =
-        (`GetBlockHeights` n) <$> (HeightsParam <$> chunksOf i hs)
+        (`GetBlockHeights` n) <$>
+        (HeightsParam <$> chunksOf i hs)
 
-instance Batchable GetTxs [Store.Transaction] where
-    resourceBatch i (GetTxs ts) = GetTxs <$> chunksOf i ts
+instance Batchable GetTxs (Store.SerialList Store.Transaction) where
+    resourceBatch i (GetTxs ts) =
+        GetTxs <$> chunksOf i ts
 
 instance Batchable GetTxsRaw (Store.RawResultList Tx) where
-    resourceBatch i (GetTxsRaw ts) = GetTxsRaw <$> chunksOf i ts
+    resourceBatch i (GetTxsRaw ts) =
+        GetTxsRaw <$> chunksOf i ts
 
-instance Batchable GetAddrsTxs [Store.TxRef] where
-    resourceBatch i (GetAddrsTxs as l) = (`GetAddrsTxs` l) <$> chunksOf i as
+instance Batchable GetAddrsTxs (Store.SerialList Store.TxRef) where
+    resourceBatch i (GetAddrsTxs as l) =
+        (`GetAddrsTxs` l) <$> chunksOf i as
 
-instance Batchable GetAddrsTxsFull [Store.Transaction] where
+instance Batchable GetAddrsTxsFull (Store.SerialList Store.Transaction) where
     resourceBatch i (GetAddrsTxsFull as l) =
         (`GetAddrsTxsFull` l) <$> chunksOf i as
 
-instance Batchable GetAddrsBalance [Store.Balance] where
-    resourceBatch i (GetAddrsBalance as) = GetAddrsBalance <$> chunksOf i as
+instance Batchable GetAddrsBalance (Store.SerialList Store.Balance) where
+    resourceBatch i (GetAddrsBalance as) =
+        GetAddrsBalance <$> chunksOf i as
 
-instance Batchable GetAddrsUnspent [Store.Unspent] where
+instance Batchable GetAddrsUnspent (Store.SerialList Store.Unspent) where
     resourceBatch i (GetAddrsUnspent as l) =
         (`GetAddrsUnspent` l) <$> chunksOf i as
 

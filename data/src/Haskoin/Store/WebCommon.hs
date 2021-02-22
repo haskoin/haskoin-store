@@ -112,7 +112,7 @@ instance ApiResource GetBlock Store.BlockData where
     queryParams (GetBlock h t) = ([ParamBox h], noDefBox t)
     captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
 
-instance ApiResource GetBlocks [Store.BlockData] where
+instance ApiResource GetBlocks (Store.SerialList Store.BlockData) where
     resourcePath _ _ = "/blocks"
     queryParams (GetBlocks hs t) = ([], [ParamBox hs] <> noDefBox t)
 
@@ -128,16 +128,16 @@ instance ApiResource GetBlockBest Store.BlockData where
 instance ApiResource GetBlockBestRaw (Store.RawResult Block) where
     resourcePath _ _ = "/block/best/raw"
 
-instance ApiResource GetBlockLatest [Store.BlockData] where
+instance ApiResource GetBlockLatest (Store.SerialList Store.BlockData) where
     resourcePath _ _ = "/block/latest"
     queryParams (GetBlockLatest t) = ([], noDefBox t)
 
-instance ApiResource GetBlockHeight [Store.BlockData] where
+instance ApiResource GetBlockHeight (Store.SerialList Store.BlockData) where
     resourcePath _ = ("/block/height/" <:>)
     queryParams (GetBlockHeight h t) = ([ParamBox h], noDefBox t)
     captureParams _ = [ProxyBox (Proxy :: Proxy HeightParam)]
 
-instance ApiResource GetBlockHeights [Store.BlockData] where
+instance ApiResource GetBlockHeights (Store.SerialList Store.BlockData) where
     resourcePath _ _ = "/block/heights"
     queryParams (GetBlockHeights hs t) = ([], [ParamBox hs] <> noDefBox t)
 
@@ -175,7 +175,7 @@ instance ApiResource GetTx Store.Transaction where
     queryParams (GetTx h) = ([ParamBox h], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy TxHash)]
 
-instance ApiResource GetTxs [Store.Transaction] where
+instance ApiResource GetTxs (Store.SerialList Store.Transaction) where
     resourcePath _ _ = "/transactions"
     queryParams (GetTxs hs) = ([], [ParamBox hs])
 
@@ -188,7 +188,7 @@ instance ApiResource GetTxsRaw (Store.RawResultList Tx) where
     resourcePath _ _ = "/transactions/raw"
     queryParams (GetTxsRaw hs) = ([], [ParamBox hs])
 
-instance ApiResource GetTxsBlock [Store.Transaction] where
+instance ApiResource GetTxsBlock (Store.SerialList Store.Transaction) where
     resourcePath _ = ("/transactions/block/" <:>)
     queryParams (GetTxsBlock h) = ([ParamBox h], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy BlockHash)]
@@ -211,35 +211,35 @@ instance ApiResource PostTx Store.TxId where
     resourcePath _ _ = "/transactions"
     resourceBody (PostTx tx) = Just $ PostBox tx
 
-instance ApiResource GetMempool [TxHash] where
+instance ApiResource GetMempool (Store.SerialList TxHash) where
     resourcePath _ _ = "/mempool"
     queryParams (GetMempool l o) = ([], noMaybeBox l <> noDefBox o)
 
-instance ApiResource GetEvents [Store.Event] where
+instance ApiResource GetEvents (Store.SerialList Store.Event) where
     resourcePath _ _ = "/events"
 
 -------------
 -- Address --
 -------------
 
-instance ApiResource GetAddrTxs [Store.TxRef] where
+instance ApiResource GetAddrTxs (Store.SerialList Store.TxRef) where
     resourcePath _ = "/address/" <+> "/transactions"
     queryParams (GetAddrTxs a (LimitsParam l o sM)) =
         ([ParamBox a], noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
-instance ApiResource GetAddrsTxs [Store.TxRef] where
+instance ApiResource GetAddrsTxs (Store.SerialList Store.TxRef) where
     resourcePath _ _ = "/address/transactions"
     queryParams (GetAddrsTxs as (LimitsParam l o sM)) =
         ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
 
-instance ApiResource GetAddrTxsFull [Store.Transaction] where
+instance ApiResource GetAddrTxsFull (Store.SerialList Store.Transaction) where
     resourcePath _ = "/address/" <+> "/transactions/full"
     queryParams (GetAddrTxsFull a (LimitsParam l o sM)) =
         ([ParamBox a], noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
-instance ApiResource GetAddrsTxsFull [Store.Transaction] where
+instance ApiResource GetAddrsTxsFull (Store.SerialList Store.Transaction) where
     resourcePath _ _ = "/address/transactions/full"
     queryParams (GetAddrsTxsFull as (LimitsParam l o sM)) =
         ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
@@ -249,17 +249,17 @@ instance ApiResource GetAddrBalance Store.Balance where
     queryParams (GetAddrBalance a) = ([ParamBox a], [])
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
-instance ApiResource GetAddrsBalance [Store.Balance] where
+instance ApiResource GetAddrsBalance (Store.SerialList Store.Balance) where
     resourcePath _ _ = "/address/balances"
     queryParams (GetAddrsBalance as) = ([] , [ParamBox as])
 
-instance ApiResource GetAddrUnspent [Store.Unspent] where
+instance ApiResource GetAddrUnspent (Store.SerialList Store.Unspent) where
     resourcePath _ = "/address/" <+> "/unspent"
     queryParams (GetAddrUnspent a (LimitsParam l o sM)) =
         ([ParamBox a], noMaybeBox l <> noDefBox o <> noMaybeBox sM)
     captureParams _ = [ProxyBox (Proxy :: Proxy Address)]
 
-instance ApiResource GetAddrsUnspent [Store.Unspent] where
+instance ApiResource GetAddrsUnspent (Store.SerialList Store.Unspent) where
     resourcePath _ _ = "/address/unspent"
     queryParams (GetAddrsUnspent as (LimitsParam l o sM)) =
         ([] , [ParamBox as] <> noMaybeBox l <> noDefBox o <> noMaybeBox sM)
@@ -273,7 +273,7 @@ instance ApiResource GetXPub Store.XPubSummary where
     queryParams (GetXPub p d n) = ([ParamBox p], noDefBox d <> noDefBox n)
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
-instance ApiResource GetXPubTxs [Store.TxRef] where
+instance ApiResource GetXPubTxs (Store.SerialList Store.TxRef) where
     resourcePath _ = "/xpub/" <+> "/transactions"
     queryParams (GetXPubTxs p d (LimitsParam l o sM) n) =
         ( [ParamBox p]
@@ -281,7 +281,7 @@ instance ApiResource GetXPubTxs [Store.TxRef] where
         )
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
-instance ApiResource GetXPubTxsFull [Store.Transaction] where
+instance ApiResource GetXPubTxsFull (Store.SerialList Store.Transaction) where
     resourcePath _ = "/xpub/" <+> "/transactions/full"
     queryParams (GetXPubTxsFull p d (LimitsParam l o sM) n) =
         ( [ParamBox p]
@@ -289,12 +289,12 @@ instance ApiResource GetXPubTxsFull [Store.Transaction] where
         )
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
-instance ApiResource GetXPubBalances [Store.XPubBal] where
+instance ApiResource GetXPubBalances (Store.SerialList Store.XPubBal) where
     resourcePath _ = "/xpub/" <+> "/balances"
     queryParams (GetXPubBalances p d n) = ([ParamBox p], noDefBox d <> noDefBox n)
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
-instance ApiResource GetXPubUnspent [Store.XPubUnspent] where
+instance ApiResource GetXPubUnspent (Store.SerialList Store.XPubUnspent) where
     resourcePath _ = "/xpub/" <+> "/unspent"
     queryParams (GetXPubUnspent p d (LimitsParam l o sM) n) =
         ( [ParamBox p]
@@ -306,7 +306,7 @@ instance ApiResource GetXPubUnspent [Store.XPubUnspent] where
 -- Network --
 -------------
 
-instance ApiResource GetPeers [Store.PeerInformation] where
+instance ApiResource GetPeers (Store.SerialList Store.PeerInformation) where
     resourcePath _ _ = "/peers"
 
 instance ApiResource GetHealth Store.HealthCheck where

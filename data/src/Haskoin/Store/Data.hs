@@ -70,6 +70,7 @@ module Haskoin.Store.Data
       -- * Other Data
     , TxId(..)
     , GenericResult(..)
+    , SerialList(..)
     , RawResult(..)
     , RawResultList(..)
     , PeerInformation(..)
@@ -1989,6 +1990,26 @@ instance Serial a => FromJSON (RawResult a) where
             let m = eitherToMaybe . Bytes.Get.runGetS deserialize =<<
                     decodeHex res
             maybe mzero (return . RawResult) m
+
+newtype SerialList a = SerialList{ getSerialList :: [a] }
+    deriving (Show, Eq, Generic, NFData)
+
+instance Semigroup (SerialList a) where
+    SerialList a <> SerialList b = SerialList (a <> b)
+
+instance Monoid (SerialList a) where
+    mempty = SerialList mempty
+
+instance Serial a => Serial (SerialList a) where
+    serialize (SerialList ls) = putList serialize ls
+    deserialize = SerialList <$> getList deserialize
+
+instance ToJSON a => ToJSON (SerialList a) where
+    toJSON (SerialList ls) = toJSON ls
+    toEncoding (SerialList ls) = toEncoding ls
+
+instance FromJSON a => FromJSON (SerialList a) where
+    parseJSON = fmap SerialList . parseJSON
 
 newtype RawResultList a =
     RawResultList
