@@ -237,27 +237,26 @@ instance Hashable XPubSpec where
 
 instance Serial XPubSpec where
     serialize XPubSpec {xPubSpecKey = k, xPubDeriveType = t} = do
-        serialize (xPubDepth k)
-        serialize (xPubParent k)
-        serialize (xPubIndex k)
+        putWord8 (xPubDepth k)
+        putWord32be (xPubParent k)
+        putWord32be (xPubIndex k)
         serialize (xPubChain k)
         serialize (wrapPubKey True (xPubKey k))
         serialize t
     deserialize = do
-        d <- deserialize
-        p <- deserialize
-        i <- deserialize
+        d <- getWord8
+        p <- getWord32be
+        i <- getWord32be
         c <- deserialize
         k <- deserialize
         t <- deserialize
-        let x =
-                XPubKey
-                    { xPubDepth = d
-                    , xPubParent = p
-                    , xPubIndex = i
-                    , xPubChain = c
-                    , xPubKey = pubKeyPoint k
-                    }
+        let x = XPubKey
+                { xPubDepth = d
+                , xPubParent = p
+                , xPubIndex = i
+                , xPubChain = c
+                , xPubKey = pubKeyPoint k
+                }
         return XPubSpec {xPubSpecKey = x, xPubDeriveType = t}
 
 instance Serialize XPubSpec where
@@ -511,14 +510,14 @@ instance Serial Unspent where
         serialize unspentBlock
         serialize unspentPoint
         putWord64be unspentAmount
-        serialize unspentScript
+        putLengthBytes unspentScript
         putMaybe serialize unspentAddress
 
     deserialize = do
         unspentBlock <- deserialize
         unspentPoint <- deserialize
         unspentAmount <- getWord64be
-        unspentScript <- deserialize
+        unspentScript <- getLengthBytes
         unspentAddress <- getMaybe deserialize
         return Unspent{..}
 
@@ -746,7 +745,7 @@ instance Serial StoreInput where
     serialize StoreInput{..} = do
         putWord8 0x01
         serialize inputPoint
-        serialize inputSequence
+        putWord32be inputSequence
         putLengthBytes inputSigScript
         putLengthBytes inputPkScript
         putWord64be inputAmount
@@ -958,7 +957,7 @@ data StoreOutput =
         { outputAmount  :: !Word64
         , outputScript  :: !ByteString
         , outputSpender :: !(Maybe Spender)
-        , outputAddr :: !(Maybe Address)
+        , outputAddr    :: !(Maybe Address)
         }
     deriving (Show, Read, Eq, Ord, Generic, Hashable, NFData)
 
