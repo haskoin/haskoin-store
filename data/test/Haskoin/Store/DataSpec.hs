@@ -139,6 +139,10 @@ netVals =
              , binfoUnspentToEncoding
              , binfoUnspentParseJSON
              , arbitraryNetData)
+    , NetBox ( binfoBlocksToJSON
+             , binfoBlocksToEncoding
+             , binfoBlocksParseJSON
+             , arbitraryNetData)
     ]
 
 spec :: Spec
@@ -402,7 +406,7 @@ instance Arbitrary BinfoMultiAddr where
     arbitrary = do
         getBinfoMultiAddrAddresses <- arbitrary
         getBinfoMultiAddrWallet <- arbitrary
-        getBinfoMultiAddrTxs <- arbitrary
+        getBinfoMultiAddrTxs <- resize 10 arbitrary
         getBinfoMultiAddrInfo <- arbitrary
         getBinfoMultiAddrRecommendFee <- arbitrary
         getBinfoMultiAddrCashAddr <- arbitrary
@@ -446,15 +450,15 @@ instance Arbitrary BinfoBlock where
         getBinfoBlockMain <- arbitrary
         getBinfoBlockHeight <- arbitrary
         getBinfoBlockWeight <- arbitrary
-        getBinfoBlockTx <- arbitrary
+        getBinfoBlockTx <- resize 5 arbitrary
         return BinfoBlock{..}
 
 instance Arbitrary BinfoTx where
     arbitrary = do
         getBinfoTxHash <- arbitraryTxHash
         getBinfoTxVer <- arbitrary
-        getBinfoTxInputs <- resize 10 $ listOf1 arbitrary
-        getBinfoTxOutputs <- resize 10 $ listOf1 arbitrary
+        getBinfoTxInputs <- resize 5 $ listOf1 arbitrary
+        getBinfoTxOutputs <- resize 5 $ listOf1 arbitrary
         let getBinfoTxVinSz = fromIntegral (length getBinfoTxInputs)
             getBinfoTxVoutSz = fromIntegral (length getBinfoTxOutputs)
         getBinfoTxSize <- arbitrary

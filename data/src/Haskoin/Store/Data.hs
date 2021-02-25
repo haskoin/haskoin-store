@@ -114,6 +114,9 @@ module Haskoin.Store.Data
     , binfoBlockToJSON
     , binfoBlockToEncoding
     , binfoBlockParseJSON
+    , binfoBlocksToJSON
+    , binfoBlocksToEncoding
+    , binfoBlocksParseJSON
     , BinfoTx(..)
     , relevantTxs
     , toBinfoTx
@@ -2509,6 +2512,19 @@ binfoUnspentsParseJSON :: Network -> Value -> Parser BinfoUnspents
 binfoUnspentsParseJSON net = A.withObject "unspents" $ \o -> do
     us <- mapM (binfoUnspentParseJSON net) =<< o .: "unspent_outputs"
     return (BinfoUnspents us)
+
+binfoBlocksToJSON :: Network -> [BinfoBlock] -> Value
+binfoBlocksToJSON net blocks =
+    A.object [ "blocks" .= map (binfoBlockToJSON net) blocks ]
+
+binfoBlocksToEncoding :: Network -> [BinfoBlock] -> Encoding
+binfoBlocksToEncoding net blocks =
+    AE.pairs $ "blocks" `AE.pair` AE.list (binfoBlockToEncoding net) blocks
+
+binfoBlocksParseJSON :: Network -> Value -> Parser [BinfoBlock]
+binfoBlocksParseJSON net =
+    A.withObject "blocks" $ \o ->
+    mapM (binfoBlockParseJSON net) =<< o .: "blocks"
 
 toBinfoBlock :: BlockData -> [BinfoTx] -> [BlockHash] -> BinfoBlock
 toBinfoBlock BlockData{..} txs next_blocks =

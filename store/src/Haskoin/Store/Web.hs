@@ -640,6 +640,7 @@ handlePaths = do
     S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get "/blockchain/rawtx/:txid" scottyBinfoTx
     S.get "/blockchain/rawblock/:block" scottyBinfoBlock
+    S.get "/blockchain/block-height/:height" scottyBinfoBlockHeight
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1562,6 +1563,37 @@ getBinfoHex =
     (== ("hex" :: Text)) <$>
     S.param "format" `S.rescue` const (return "json")
 
+scottyBinfoBlockHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoBlockHeight =
+    getNumTxId >>= \numtxid ->
+    withMetrics rawBlockResponseTime 1 $
+    S.param "height" >>= \height ->
+    getBlocksAtHeight height >>= \block_hashes -> do
+    block_headers <- catMaybes <$> mapM getBlock block_hashes
+    next_block_hashes <- getBlocksAtHeight (height + 1)
+    next_block_headers <- catMaybes <$> mapM getBlock next_block_hashes
+    binfo_blocks <-
+        mapM (get_binfo_blocks numtxid next_block_headers) block_headers
+    setHeaders
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    streamEncoding $ binfoBlocksToEncoding net binfo_blocks
+  where
+    get_tx th =
+        withRunInIO $ \run ->
+        unsafeInterleaveIO $
+        run $ fromJust <$> getTransaction th
+    get_binfo_blocks numtxid next_block_headers block_header = do
+        let my_hash = H.headerHash (blockDataHeader block_header)
+            get_prev = H.prevBlock . blockDataHeader
+            get_hash = H.headerHash . blockDataHeader
+        txs <- lift $ mapM get_tx (blockDataTxs block_header)
+        let next_blocks = map get_hash $
+                          filter ((== my_hash) . get_prev)
+                          next_block_headers
+        let binfo_txs = map (toBinfoTxSimple numtxid) txs
+            binfo_block = toBinfoBlock block_header binfo_txs next_blocks
+        return binfo_block
+
 scottyBinfoBlock :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoBlock =
     getNumTxId >>= \numtxid ->
@@ -1583,7 +1615,16 @@ scottyBinfoBlock =
         Nothing -> raise blockErrors ThingNotFound
         Just b -> do
             txs <- lift $ mapM get_tx (blockDataTxs b)
-            nxt <- getBlocksAtHeight (blockDataHeight b + 1)
+            let my_hash = H.headerHash (blockDataHeader b)
+                get_prev = H.prevBlock . blockDataHeader
+                get_hash = H.headerHash . blockDataHeader
+            nxt_headers <-
+                fmap catMaybes $
+                mapM getBlock =<<
+                getBlocksAtHeight (blockDataHeight b + 1)
+            let nxt = map get_hash $
+                      filter ((== my_hash) . get_prev)
+                      nxt_headers
             if hex
               then do
                 let x = H.Block (blockDataHeader b) (map transactionData txs)

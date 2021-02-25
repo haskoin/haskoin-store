@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.47.0
+  version: &version 0.47.4
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1425,6 +1425,39 @@ paths:
             application/text:
               schema:
                 type: string
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/block-height/{height}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoBlockHeight
+      summary: Blocks at Height
+      parameters:
+        - name: height
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of blocks with transaction data.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - blocks
+                properties:
+                  blocks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BinfoBlock'
         '404':
           description: Block not found.
           content:
