@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Endpoint for block height.
 
+### Changed
+- Use compact JSON serialization by default everywhere.
+
 ## 0.47.3
 ### Fixed
 - Fix serialization bug with unspents.

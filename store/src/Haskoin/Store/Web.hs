@@ -442,7 +442,7 @@ handlePaths :: (MonadUnliftIO m, MonadLoggerIO m)
             => S.ScottyT Except (ReaderT WebState m) ()
 handlePaths = do
     -- Block Paths
-    pathPretty
+    pathCompact
         (GetBlock <$> paramLazy <*> paramDef)
         scottyBlock
         blockDataToEncoding
@@ -457,7 +457,7 @@ handlePaths = do
         scottyBlockRaw
         (const toEncoding)
         (const toJSON)
-    pathPretty
+    pathCompact
         (GetBlockBest <$> paramDef)
         scottyBlockBest
         blockDataToEncoding
@@ -472,7 +472,7 @@ handlePaths = do
         (fmap SerialList . scottyBlockLatest)
         (\n -> list (blockDataToEncoding n) . getSerialList)
         (\n -> json_list blockDataToJSON n . getSerialList)
-    pathPretty
+    pathCompact
         (GetBlockHeight <$> paramLazy <*> paramDef)
         (fmap SerialList . scottyBlockHeight)
         (\n -> list (blockDataToEncoding n) . getSerialList)
@@ -487,7 +487,7 @@ handlePaths = do
         scottyBlockHeightRaw
         (const toEncoding)
         (const toJSON)
-    pathPretty
+    pathCompact
         (GetBlockTime <$> paramLazy <*> paramDef)
         scottyBlockTime
         blockDataToEncoding
@@ -497,7 +497,7 @@ handlePaths = do
         scottyBlockTimeRaw
         (const toEncoding)
         (const toJSON)
-    pathPretty
+    pathCompact
         (GetBlockMTP <$> paramLazy <*> paramDef)
         scottyBlockMTP
         blockDataToEncoding
@@ -508,7 +508,7 @@ handlePaths = do
         (const toEncoding)
         (const toJSON)
     -- Transaction Paths
-    pathPretty
+    pathCompact
         (GetTx <$> paramLazy)
         scottyTx
         transactionToEncoding
@@ -548,13 +548,13 @@ handlePaths = do
         scottyPostTx
         (const toEncoding)
         (const toJSON)
-    pathPretty
+    pathCompact
         (GetMempool <$> paramOptional <*> parseOffset)
         (fmap SerialList . scottyMempool)
         (const toEncoding)
         (const toJSON)
     -- Address Paths
-    pathPretty
+    pathCompact
         (GetAddrTxs <$> paramLazy <*> parseLimits)
         (fmap SerialList . scottyAddrTxs)
         (const toEncoding)
@@ -574,7 +574,7 @@ handlePaths = do
         (fmap SerialList . scottyAddrsTxsFull)
         (\n -> list (transactionToEncoding n) . getSerialList)
         (\n -> json_list transactionToJSON n . getSerialList)
-    pathPretty
+    pathCompact
         (GetAddrBalance <$> paramLazy)
         scottyAddrBalance
         balanceToEncoding
@@ -584,7 +584,7 @@ handlePaths = do
         (fmap SerialList . scottyAddrsBalance)
         (\n -> list (balanceToEncoding n) . getSerialList)
         (\n -> json_list balanceToJSON n . getSerialList)
-    pathPretty
+    pathCompact
         (GetAddrUnspent <$> paramLazy <*> parseLimits)
         (fmap SerialList . scottyAddrUnspent)
         (\n -> list (unspentToEncoding n) . getSerialList)
@@ -595,12 +595,12 @@ handlePaths = do
         (\n -> list (unspentToEncoding n) . getSerialList)
         (\n -> json_list unspentToJSON n . getSerialList)
     -- XPubs
-    pathPretty
+    pathCompact
         (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
         scottyXPub
         (const toEncoding)
         (const toJSON)
-    pathPretty
+    pathCompact
         (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
         (fmap SerialList . scottyXPubTxs)
         (const toEncoding)
@@ -610,23 +610,23 @@ handlePaths = do
         (fmap SerialList . scottyXPubTxsFull)
         (\n -> list (transactionToEncoding n) . getSerialList)
         (\n -> json_list transactionToJSON n . getSerialList)
-    pathPretty
+    pathCompact
         (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
         (fmap SerialList . scottyXPubBalances)
         (\n -> list (xPubBalToEncoding n) . getSerialList)
         (\n -> json_list xPubBalToJSON n . getSerialList)
-    pathPretty
+    pathCompact
         (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
         (fmap SerialList . scottyXPubUnspent)
         (\n -> list (xPubUnspentToEncoding n) . getSerialList)
         (\n -> json_list xPubUnspentToJSON n . getSerialList)
     -- Network
-    pathPretty
+    pathCompact
         (GetPeers & return)
         (fmap SerialList . scottyPeers)
         (const toEncoding)
         (const toJSON)
-    pathPretty
+    pathCompact
          (GetHealth & return)
          scottyHealth
          (const toEncoding)
