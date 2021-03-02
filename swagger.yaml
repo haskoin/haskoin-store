@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.47.4
+  version: &version 0.47.5
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1350,7 +1350,31 @@ paths:
               schema:
                 type: string
                 format: binary
-                
+
+  '/blockchain/rawaddr/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoRawAddr
+      summary: Address Balance & Transactions
+      parameters:
+        - $ref: '#/components/parameters/binfoAddr'
+        - $ref: '#/components/parameters/binfoCount'
+        - $ref: '#/components/parameters/binfoOffset'
+      responses:
+        '200':
+          description: Address balance & transactions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoRawAddr'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   '/blockchain/multiaddr':
     get:
       tags:
@@ -2333,6 +2357,39 @@ components:
         total_received: 546
         total_sent: 546
 
+    BinfoRawAddr:
+      type: object
+      required:
+        - hash160
+        - address
+        - n_tx
+        - n_unredeemed
+        - total_received
+        - total_sent
+        - final_balance
+        - txs
+      properties:
+        hash160:
+          type: string
+        address:
+          type: string
+        n_tx:
+          type: integer
+        n_unredeemed:
+          type: integer
+        total_received:
+          type: integer
+          format: int64
+        total_sent:
+          type: integer
+          format: int64
+        final_balance:
+          type: integer
+          format: int64
+        txs:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoTx'
 
     BinfoBalance:
       oneOf:
@@ -2866,6 +2923,14 @@ components:
       schema:
         type: boolean
       description: Pretty-print JSON output.
+
+    binfoAddr:
+      name: address
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Address in whatever format the network accepts.
 
     binfoActive:
       name: active

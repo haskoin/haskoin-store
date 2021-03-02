@@ -199,6 +199,8 @@ data WebMetrics = WebMetrics
     , xPubUnspentResponseTime :: !StatDist
     , multiaddrResponseTime   :: !StatDist
     , multiaddrErrors         :: !ErrorCounter
+    , rawaddrResponseTime     :: !StatDist
+    , rawaddrErrors           :: !ErrorCounter
     , unspentResponseTime     :: !StatDist
     , unspentErrors           :: !ErrorCounter
     , rawtxResponseTime       :: !StatDist
@@ -231,6 +233,8 @@ createMetrics s = liftIO $ do
     xPubTxResponseTime        <- d "xpub_tx.response_time_ms"
     xPubTxFullResponseTime    <- d "xpub_tx_full.response_time_ms"
     xPubUnspentResponseTime   <- d "xpub_unspent.response_time_ms"
+    rawaddrResponseTime       <- d "rawaddr.response_time_ms"
+    rawaddrErrors             <- e "rawaddr.errors"
     multiaddrResponseTime     <- d "multiaddr.response_time_ms"
     multiaddrErrors           <- e "multiaddr.errors"
     rawtxResponseTime         <- d "rawtx.response_time_ms"
@@ -636,11 +640,12 @@ handlePaths = do
     -- Blockchain.info
     S.post "/blockchain/multiaddr" scottyMultiAddr
     S.get  "/blockchain/multiaddr" scottyMultiAddr
+    S.get  "/blockchain/rawaddr/:addr" scottyRawAddr
     S.post "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/unspent" scottyBinfoUnspent
-    S.get "/blockchain/rawtx/:txid" scottyBinfoTx
-    S.get "/blockchain/rawblock/:block" scottyBinfoBlock
-    S.get "/blockchain/block-height/:height" scottyBinfoBlockHeight
+    S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
+    S.get  "/blockchain/rawblock/:block" scottyBinfoBlock
+    S.get  "/blockchain/block-height/:height" scottyBinfoBlockHeight
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1557,6 +1562,45 @@ scottyMultiAddr =
       | r > 0 = fromIntegral r
       | otherwise = 0
     received _ = 0
+
+scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyRawAddr =
+    get_addr >>= \addr ->
+    getNumTxId >>= \numtxid ->
+    get_offset >>= \off ->
+    get_count >>= \n ->
+    withMetrics rawaddrResponseTime 1 $ do
+    bal <- fromMaybe (zeroBalance addr) <$> getBalance addr
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    let abook = HashMap.singleton addr Nothing
+        xspecs = HashSet.empty
+        saddrs = HashSet.singleton addr
+        bfilter = BinfoFilterAll
+        b = fromIntegral $ balanceAmount bal + balanceZero bal
+    txs <- lift . runConduit $
+        getBinfoTxs abook xspecs saddrs saddrs bfilter numtxid False b .|
+        (dropC off >> takeC n .| sinkList)
+    setHeaders
+    streamEncoding $ binfoRawAddrToEncoding net $ BinfoRawAddr bal txs
+  where
+    get_addr = do
+        txt <- S.param "addr"
+        net <- lift $ asks (storeNetwork . webStore . webConfig)
+        case textToAddr net txt of
+            Nothing -> raise rawaddrErrors ThingNotFound
+            Just a -> return a
+    get_count = do
+        d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
+        x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
+        i <- min x <$> (S.param "n" `S.rescue` const (return d))
+        return $ fromIntegral i
+    get_offset = do
+        x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
+        o <- S.param "offset" `S.rescue` const (return 0)
+        when (o > x) $
+            raise rawaddrErrors $
+            UserError $ "offset exceeded: " <> show o <> " > " <> show x
+        return $ fromIntegral o
 
 getBinfoHex :: Monad m => WebT m Bool
 getBinfoHex =

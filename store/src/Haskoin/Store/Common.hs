@@ -81,12 +81,9 @@ type DeriveAddr = XPubKey -> KeyIndex -> Address
 type Offset = Word32
 type Limit = Word32
 
-data Start = AtTx
-    { atTxHash :: !TxHash
-    }
-    | AtBlock
-    { atBlockHeight :: !BlockHeight
-    }
+data Start
+    = AtTx{atTxHash :: !TxHash}
+    | AtBlock{atBlockHeight :: !BlockHeight}
     deriving (Eq, Show)
 
 data Limits = Limits

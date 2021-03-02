@@ -97,6 +97,10 @@ module Haskoin.Store.Data
     , binfoBalanceToJSON
     , binfoBalanceToEncoding
     , binfoBalanceParseJSON
+    , BinfoRawAddr(..)
+    , binfoRawAddrToJSON
+    , binfoRawAddrToEncoding
+    , binfoRawAddrParseJSON
     , BinfoAddr(..)
     , parseBinfoAddr
     , BinfoWallet(..)
@@ -2025,7 +2029,7 @@ instance Serial a => Serial (RawResultList a) where
     deserialize = RawResultList <$> go
       where
         go = isEmpty >>= \case
-            True -> return []
+            True  -> return []
             False -> (:) <$> deserialize <*> go
 
 instance Serial a => Serialize (RawResultList a) where
@@ -2311,6 +2315,71 @@ binfoMultiAddrToEncoding net' BinfoMultiAddr {..} =
     as = AE.list (binfoBalanceToEncoding net) getBinfoMultiAddrAddresses
     ts = AE.list (binfoTxToEncoding net) getBinfoMultiAddrTxs
     net = if not getBinfoMultiAddrCashAddr && net' == bch then btc else net'
+
+data BinfoRawAddr
+    = BinfoRawAddr
+      { getBinfoRawAddrBalance :: !Balance
+      , getBinfoRawAddrTxs     :: ![BinfoTx]
+      }
+    deriving (Eq, Show, Generic, NFData)
+
+binfoRawAddrToJSON :: Network -> BinfoRawAddr -> Value
+binfoRawAddrToJSON net BinfoRawAddr{..} =
+    A.object
+    [
+        "hash160"        .= (encodeHex . runPutS . serialize <$> h160),
+        "address"        .= addrToJSON net balanceAddress,
+        "n_tx"           .= balanceTxCount,
+        "n_unredeemed"   .= balanceUnspentCount,
+        "total_received" .= balanceTotalReceived,
+        "total_sent"     .= (balanceTotalReceived - bal),
+        "final_balance"  .= bal,
+        "txs"            .= map (binfoTxToJSON net) getBinfoRawAddrTxs
+    ]
+  where
+    Balance{..} = getBinfoRawAddrBalance
+    bal = balanceAmount + balanceZero
+    h160 = case balanceAddress of
+               PubKeyAddress h        -> Just h
+               ScriptAddress h        -> Just h
+               WitnessPubKeyAddress h -> Just h
+               _                      -> Nothing
+
+binfoRawAddrToEncoding :: Network -> BinfoRawAddr -> Encoding
+binfoRawAddrToEncoding net BinfoRawAddr{..} =
+    AE.pairs $
+    "hash160"        .= (encodeHex . runPutS . serialize <$> h160) <>
+    "address" `AE.pair` addrToEncoding net balanceAddress <>
+    "n_tx"           .= balanceTxCount <>
+    "n_unredeemed"   .= balanceUnspentCount <>
+    "total_received" .= balanceTotalReceived <>
+    "total_sent"     .= (balanceTotalReceived - bal) <>
+    "final_balance"  .= bal <>
+    "txs"     `AE.pair` AE.list (binfoTxToEncoding net) getBinfoRawAddrTxs
+  where
+    Balance{..} = getBinfoRawAddrBalance
+    bal = balanceAmount + balanceZero
+    h160 = case balanceAddress of
+               PubKeyAddress h        -> Just h
+               ScriptAddress h        -> Just h
+               WitnessPubKeyAddress h -> Just h
+               _                      -> Nothing
+
+binfoRawAddrParseJSON :: Network -> Value -> Parser BinfoRawAddr
+binfoRawAddrParseJSON net = A.withObject "balancetxs" $ \o -> do
+    balanceAddress <- addrFromJSON net =<< o .: "address"
+    balanceAmount <- o .: "final_balance"
+    let balanceZero = 0
+    balanceUnspentCount <- o .: "n_unredeemed"
+    balanceTxCount <- o .: "n_tx"
+    balanceTotalReceived <- o .: "total_received"
+    txs <- mapM (binfoTxParseJSON net) =<< o .: "txs"
+    return
+        BinfoRawAddr
+        {
+            getBinfoRawAddrBalance = Balance{..},
+            getBinfoRawAddrTxs = txs
+        }
 
 data BinfoBalance
     = BinfoAddrBalance

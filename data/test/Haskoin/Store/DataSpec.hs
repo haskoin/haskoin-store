@@ -143,6 +143,10 @@ netVals =
              , binfoBlocksToEncoding
              , binfoBlocksParseJSON
              , arbitraryNetData)
+    , NetBox ( binfoRawAddrToJSON
+             , binfoRawAddrToEncoding
+             , binfoRawAddrParseJSON
+             , arbitraryNetData)
     ]
 
 spec :: Spec
@@ -411,6 +415,12 @@ instance Arbitrary BinfoMultiAddr where
         getBinfoMultiAddrRecommendFee <- arbitrary
         getBinfoMultiAddrCashAddr <- arbitrary
         return BinfoMultiAddr {..}
+
+instance Arbitrary BinfoRawAddr where
+    arbitrary = do
+        balance <- arbitrary
+        txs <- arbitrary
+        return $ BinfoRawAddr balance{balanceZero = 0} txs
 
 instance Arbitrary BinfoBalance where
     arbitrary = do
