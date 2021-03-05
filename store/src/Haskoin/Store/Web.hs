@@ -645,6 +645,8 @@ handlePaths = do
     -- Blockchain.info
     S.post "/blockchain/multiaddr" scottyMultiAddr
     S.get  "/blockchain/multiaddr" scottyMultiAddr
+    S.get  "/blockchain/balance" scottyShortBal
+    S.post "/blockchain/balance" scottyShortBal
     S.get  "/blockchain/rawaddr/:addr" scottyRawAddr
     S.post "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/unspent" scottyBinfoUnspent
