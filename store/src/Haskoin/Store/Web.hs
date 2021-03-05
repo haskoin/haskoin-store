@@ -18,12 +18,13 @@ module Haskoin.Store.Web
     ) where
 
 import           Conduit                       (ConduitT, await, dropC,
-                                                runConduit, sinkList, takeC,
-                                                yield, (.|))
+                                                dropWhileC, mapC, runConduit,
+                                                sinkList, takeC, yield, (.|))
 import           Control.Applicative           ((<|>))
 import           Control.Arrow                 (second)
 import           Control.Lens
-import           Control.Monad                 (forever, unless, when, (<=<))
+import           Control.Monad                 (forM, forever, unless, when,
+                                                (<=<))
 import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
                                                 logErrorS, logInfoS)
 import           Control.Monad.Reader          (ReaderT, ask, asks, local,
@@ -38,12 +39,12 @@ import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
 import           Data.Aeson.Text               (encodeToLazyText)
 import           Data.ByteString.Builder       (lazyByteString)
 import qualified Data.ByteString.Lazy          as L
+import qualified Data.ByteString.Lazy.Base16   as BL16
 import qualified Data.ByteString.Lazy.Char8    as C
 import           Data.Bytes.Get
 import           Data.Bytes.Put
 import           Data.Bytes.Serial
 import           Data.Char                     (isSpace)
-import qualified Data.ByteString.Lazy.Base16 as BL16
 import           Data.Default                  (Default (..))
 import           Data.Function                 (on, (&))
 import           Data.HashMap.Strict           (HashMap)
@@ -201,6 +202,8 @@ data WebMetrics = WebMetrics
     , multiaddrErrors         :: !ErrorCounter
     , rawaddrResponseTime     :: !StatDist
     , rawaddrErrors           :: !ErrorCounter
+    , balanceResponseTime     :: !StatDist
+    , balanceErrors           :: !ErrorCounter
     , unspentResponseTime     :: !StatDist
     , unspentErrors           :: !ErrorCounter
     , rawtxResponseTime       :: !StatDist
@@ -237,6 +240,8 @@ createMetrics s = liftIO $ do
     rawaddrErrors             <- e "rawaddr.errors"
     multiaddrResponseTime     <- d "multiaddr.response_time_ms"
     multiaddrErrors           <- e "multiaddr.errors"
+    balanceResponseTime       <- d "balance.response_time_ms"
+    balanceErrors             <- e "balance.errors"
     rawtxResponseTime         <- d "rawtx.response_time_ms"
     rawtxErrors               <- e "rawtx.errors"
     peerResponseTime          <- d "peer.response_time_ms"
@@ -776,7 +781,7 @@ toRawBlock b = do
           unsafeInterleaveIO . run $
           getTransaction x >>= \case
               Nothing -> undefined
-              Just t -> return $ transactionData t
+              Just t  -> return $ transactionData t
 
 -- GET BlockBest / BlockBestRaw --
 
@@ -922,7 +927,7 @@ getTxsBlock h = do
           unsafeInterleaveIO . run $
           getTransaction x >>= \case
               Nothing -> undefined
-              Just t -> return t
+              Just t  -> return t
 
 scottyTxsBlock ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxsBlock -> WebT m [Transaction]
@@ -1259,6 +1264,10 @@ getBinfoActive metric = do
 getNumTxId :: MonadIO m => WebT m Bool
 getNumTxId = fmap not $ S.param "txidindex" `S.rescue` const (return False)
 
+getChainHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m H.BlockHeight
+getChainHeight =
+    fmap H.nodeHeight $ chainGetBest =<< lift (asks (storeChain . webStore . webConfig))
+
 scottyBinfoUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoUnspent =
     getBinfoActive unspentErrors >>= \(xspecs, addrs) ->
@@ -1267,39 +1276,29 @@ scottyBinfoUnspent =
     get_min_conf >>= \min_conf ->
     let len = HashSet.size addrs + HashMap.size xspecs
     in withMetrics unspentResponseTime len $ do
-    xuns <- get_xpub_unspents xspecs
-    auns <- get_addr_unspents addrs
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    height <- get_height
-    let g k = map (xpub_unspent numtxid height k)
-        xbus = concatMap (uncurry g) (HashMap.toList xuns)
-        abus = map (unspent numtxid height) auns
-        f u@BinfoUnspent{..} =
-            ((getBinfoUnspentHash, getBinfoUnspentOutputIndex), u)
-        busm = HashMap.fromList (map f (xbus ++ abus))
-        bus =
-            take limit $
-            takeWhile ((min_conf <=) . getBinfoUnspentConfirmations) $
-            sortBy
-            (flip compare `on` getBinfoUnspentConfirmations)
-            (HashMap.elems busm)
+    height <- getChainHeight
+    let mn BinfoUnspent{..} = min_conf > getBinfoUnspentConfirmations
+        xspecs' = HashSet.fromList $ HashMap.elems xspecs
+    bus <- lift . runConduit $
+           getBinfoUnspents numtxid height xspecs' addrs .|
+           (dropWhileC mn >> takeC limit .| sinkList)
     setHeaders
     streamEncoding (binfoUnspentsToEncoding net (BinfoUnspents bus))
   where
     get_limit = fmap (min 1000) $ S.param "limit" `S.rescue` const (return 250)
     get_min_conf = S.param "confirmations" `S.rescue` const (return 0)
-    get_height =
-        getBestBlock >>= \case
-        Nothing -> raise unspentErrors ThingNotFound
-        Just bh -> getBlock bh >>= \case
-            Nothing -> raise unspentErrors ThingNotFound
-            Just b  -> return (blockDataHeight b)
-    xpub_unspent numtxid height xpub (XPubUnspent p u) =
-        let path = toSoft (listToPath p)
-            xp = BinfoXPubPath xpub <$> path
-            bu = unspent numtxid height u
-        in bu {getBinfoUnspentXPub = xp}
-    unspent numtxid height Unspent{..} =
+
+getBinfoUnspents :: (StoreReadExtra m, MonadIO m)
+                 => Bool
+                 -> H.BlockHeight
+                 -> HashSet XPubSpec
+                 -> HashSet Address
+                 -> ConduitT () BinfoUnspent m ()
+getBinfoUnspents numtxid height xspecs addrs =
+    joinStreams (flip compare `on` fst) conduits .| mapC (uncurry binfo)
+  where
+    binfo Unspent{..} xp =
         let conf = case unspentBlock of
                        MemRef{}     -> 0
                        BlockRef h _ -> height - h + 1
@@ -1315,10 +1314,25 @@ scottyBinfoUnspent =
            , getBinfoUnspentValue = val
            , getBinfoUnspentConfirmations = fromIntegral conf
            , getBinfoUnspentTxIndex = txi
-           , getBinfoUnspentXPub = Nothing
+           , getBinfoUnspentXPub = xp
            }
-    get_xpub_unspents = mapM (`xPubUnspents` def)
-    get_addr_unspents = (`getAddressesUnspents` def) . HashSet.toList
+    point_hash = outPointHash . unspentPoint
+    conduits = xconduits <> acounduits
+    xconduits =
+        let f x (XPubUnspent p u) =
+                let path = toSoft (listToPath p)
+                    xp = BinfoXPubPath (xPubSpecKey x) <$> path
+                in (u, xp)
+            g x =
+                streamThings (xPubUnspents x) (point_hash . xPubUnspent) def .|
+                mapC (f x)
+        in map g (HashSet.toList xspecs)
+    acounduits =
+        let f u = (u, Nothing)
+            g a =
+                streamThings (getAddressUnspents a) point_hash def .|
+                mapC f
+        in map g (HashSet.toList addrs)
 
 getBinfoTxs :: (StoreReadExtra m, MonadIO m)
             => HashMap Address (Maybe BinfoXPubPath) -- address book
@@ -1588,7 +1602,7 @@ scottyRawAddr =
         net <- lift $ asks (storeNetwork . webStore . webConfig)
         case textToAddr net txt of
             Nothing -> raise rawaddrErrors ThingNotFound
-            Just a -> return a
+            Just a  -> return a
     get_count = do
         d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
         x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
@@ -1601,6 +1615,51 @@ scottyRawAddr =
             raise rawaddrErrors $
             UserError $ "offset exceeded: " <> show o <> " > " <> show x
         return $ fromIntegral o
+
+scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyShortBal =
+    getBinfoActive balanceErrors >>= \(xspecs, addrs) ->
+    getNumTxId >>= \numtxid ->
+    withMetrics balanceResponseTime (hl addrs + ml xspecs) $ do
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    abals <- catMaybes <$> mapM (get_addr_balance net) (HashSet.toList addrs)
+    xbals <- mapM (get_xspec_balance net) (HashMap.elems xspecs)
+    let res = HashMap.fromList (abals <> xbals)
+    setHeaders
+    streamEncoding $ toEncoding res
+  where
+    hl = HashSet.size
+    ml = HashMap.size
+    to_short_bal Balance{..} =
+        BinfoShortBal
+        {
+            binfoShortBalFinal = balanceAmount + balanceZero,
+            binfoShortBalTxCount = balanceTxCount,
+            binfoShortBalReceived = balanceTotalReceived
+        }
+    get_addr_balance net a =
+        case addrToText net a of
+            Nothing -> return Nothing
+            Just a' -> getBalance a >>= \case
+                Nothing -> return $ Just (a', to_short_bal (zeroBalance a))
+                Just b  -> return $ Just (a', to_short_bal b)
+    is_ext XPubBal{xPubBalPath = 0:_} = True
+    is_ext _                          = False
+    get_xspec_balance net xpub = do
+        xbals <- xPubBals xpub
+        xts <- length <$> xPubTxs xpub def
+        let val = sum $ map balanceAmount $ map xPubBal xbals
+            zro = sum $ map balanceZero $ map xPubBal xbals
+            exs = filter is_ext xbals
+            rcv = sum $ map balanceTotalReceived $ map xPubBal exs
+            sbl =
+                BinfoShortBal
+                {
+                    binfoShortBalFinal = val + zro,
+                    binfoShortBalTxCount = fromIntegral xts,
+                    binfoShortBalReceived = rcv
+                }
+        return (xPubExport net (xPubSpecKey xpub), sbl)
 
 getBinfoHex :: Monad m => WebT m Bool
 getBinfoHex =
@@ -1871,7 +1930,7 @@ parseBody :: (MonadIO m, Serial a) => WebT m a
 parseBody = do
     b <- S.body
     case hex b <> bin b of
-        Left _ -> raise_ $ UserError "Failed to parse request body"
+        Left _  -> raise_ $ UserError "Failed to parse request body"
         Right x -> return x
   where
     bin = runGetL deserialize

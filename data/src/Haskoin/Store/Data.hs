@@ -92,6 +92,7 @@ module Haskoin.Store.Data
     , binfoMultiAddrToJSON
     , binfoMultiAddrToEncoding
     , binfoMultiAddrParseJSON
+    , BinfoShortBal(..)
     , BinfoBalance(..)
     , toBinfoAddrs
     , binfoBalanceToJSON
@@ -2380,6 +2381,35 @@ binfoRawAddrParseJSON net = A.withObject "balancetxs" $ \o -> do
             getBinfoRawAddrBalance = Balance{..},
             getBinfoRawAddrTxs = txs
         }
+
+data BinfoShortBal
+    = BinfoShortBal
+      { binfoShortBalFinal    :: !Word64
+      , binfoShortBalTxCount  :: !Word64
+      , binfoShortBalReceived :: !Word64
+      }
+    deriving (Eq, Show, Read, Generic, NFData)
+
+instance ToJSON BinfoShortBal where
+    toJSON BinfoShortBal{..} =
+        A.object
+        [
+            "final_balance" .= binfoShortBalFinal,
+            "n_tx" .= binfoShortBalTxCount,
+            "total_received" .= binfoShortBalReceived
+        ]
+    toEncoding BinfoShortBal{..} =
+        AE.pairs $
+        "final_balance" .= binfoShortBalFinal <>
+        "n_tx" .= binfoShortBalTxCount <>
+        "total_received" .= binfoShortBalReceived
+
+instance FromJSON BinfoShortBal where
+    parseJSON = A.withObject "short_balance" $ \o -> do
+        binfoShortBalFinal <- o .: "final_balance"
+        binfoShortBalTxCount <- o .: "n_tx"
+        binfoShortBalReceived <- o .: "total_received"
+        return BinfoShortBal{..}
 
 data BinfoBalance
     = BinfoAddrBalance

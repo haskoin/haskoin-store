@@ -1351,6 +1351,57 @@ paths:
                 type: string
                 format: binary
 
+  '/blockchain/balance':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoBalance
+      summary: Address or XPub Balances
+      parameters:
+        - $ref: '#/components/parameters/binfoActive'
+        - $ref: '#/components/parameters/binfoActiveP2SH'
+        - $ref: '#/components/parameters/binfoActiveBech32'
+      responses:
+        '200':
+          description: Balance object map.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: '#/components/schemas/BinfoShortBalance'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Blockchain
+      operationId: postBinfoBalance
+      summary: Address or XPubBalances
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BinfoBalanceReq'
+      responses:
+        '200':
+          description: Balance object map.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: '#/components/schemas/BinfoShortBalance'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   '/blockchain/rawaddr/{address}':
     get:
       tags:
@@ -2396,6 +2447,11 @@ components:
         - $ref: '#/components/schemas/BinfoXPubBalance'
         - $ref: '#/components/schemas/BinfoAddrBalance'
 
+    BinfoShortBalance:
+      type: object
+      required:
+        - 
+
     BinfoMultiAddr:
       type: object
       required:
@@ -2728,6 +2784,16 @@ components:
           items:
             type: string
             
+    BinfoBalanceReq:
+      type: object
+      properties:
+        active:
+          type: string
+        activeP2SH:
+          type: string
+        activeBech32:
+          type: string
+
     BinfoMultiAddrReq:
       type: object
       properties:

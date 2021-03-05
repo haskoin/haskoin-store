@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Endpoint for raw address.
 
+### Fixed
+- Make Blockchain.info unspent endpoint more efficient.
+
 ## 0.47.4
 ### Added
 - Endpoint for block height.

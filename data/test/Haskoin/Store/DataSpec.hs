@@ -71,6 +71,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoSpender)
     , JsonBox (arbitrary :: Gen BinfoTicker)
     , JsonBox (arbitrary :: Gen BinfoTxId)
+    , JsonBox (arbitrary :: Gen BinfoShortBal)
     ]
 
 netVals :: [NetBox]
@@ -421,6 +422,9 @@ instance Arbitrary BinfoRawAddr where
         balance <- arbitrary
         txs <- arbitrary
         return $ BinfoRawAddr balance{balanceZero = 0} txs
+
+instance Arbitrary BinfoShortBal where
+    arbitrary = BinfoShortBal <$> arbitrary <*> arbitrary <*> arbitrary
 
 instance Arbitrary BinfoBalance where
     arbitrary = do
