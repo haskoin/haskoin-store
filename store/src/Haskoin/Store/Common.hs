@@ -188,6 +188,8 @@ class StoreReadBase m => StoreReadExtra m where
         bs <- xPubBals xpub
         let as = map (balanceAddress . xPubBal) bs
         getAddressesTxs as limits
+    xPubTxCount :: XPubSpec -> m Word32
+    xPubTxCount xpub = fromIntegral . length <$> xPubTxs xpub def
     getMaxGap :: m Word32
     getInitialGap :: m Word32
 

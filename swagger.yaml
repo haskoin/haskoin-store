@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.47.5
+  version: &version 0.47.4
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1370,6 +1370,16 @@ paths:
                 type: object
                 additionalProperties:
                   $ref: '#/components/schemas/BinfoShortBalance'
+              example:
+                3M3WpRY2Y8GXrcqsGHdE38wKfmNCUch1WM:
+                  final_balance: 200000
+                  n_tx: 1
+                  total_received: 200000
+                xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ:
+                  final_balance: 296529
+                  n_tx: 15
+                  total_received: 1618116
+
         '400':
           description: Invalid argument.
           content:
@@ -2450,7 +2460,18 @@ components:
     BinfoShortBalance:
       type: object
       required:
-        - 
+        - final_balance
+        - n_tx
+        - total_received
+      properties:
+        final_balance:
+          type: integer
+          format: int64
+        n_tx:
+          type: integer
+        total_received:
+          type: integer
+          format: int64
 
     BinfoMultiAddr:
       type: object

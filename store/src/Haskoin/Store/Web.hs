@@ -1409,7 +1409,7 @@ scottyMultiAddr =
     let len = HashSet.size addrs' + HashSet.size xpubs
     in withMetrics multiaddrResponseTime len $ do
     xbals <- get_xbals xspecs
-    xtxns <- mapM count_txs xspecs
+    xtxns <- mapM (fmap fromIntegral . xPubTxCount) xspecs
     let sxbals = subset sxpubs xbals
         xabals = compute_xabals xbals
         addrs = addrs' `HashSet.difference` HashMap.keysSet xabals
@@ -1472,7 +1472,6 @@ scottyMultiAddr =
         , getBinfoMultiAddrCashAddr = cashaddr
         }
   where
-    count_txs xspec = length <$> xPubTxs xspec def
     get_filter = S.param "filter" `S.rescue` const (return BinfoFilterAll)
     get_best_block =
         getBestBlock >>= \case
@@ -1649,7 +1648,7 @@ scottyShortBal =
     is_ext _                          = False
     get_xspec_balance net xpub = do
         xbals <- xPubBals xpub
-        xts <- length <$> xPubTxs xpub def
+        xts <- xPubTxCount xpub
         let val = sum $ map balanceAmount $ map xPubBal xbals
             zro = sum $ map balanceZero $ map xPubBal xbals
             exs = filter is_ext xbals
