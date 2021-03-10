@@ -217,7 +217,7 @@ createMetrics s = liftIO $ do
     peerStat          <- d "peer"
     healthStat        <- d "health"
     dbStatsStat       <- d "dbstats"
-    eventsConnected           <- g "events.connected"
+    eventsConnected   <- g "events.connected"
     return WebMetrics{..}
   where
     d x = createStatDist       ("web." <> x) s

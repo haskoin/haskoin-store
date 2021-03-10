@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.47.4
+  version: &version 0.47.5
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1390,7 +1390,7 @@ paths:
       tags:
         - Blockchain
       operationId: postBinfoBalance
-      summary: Address or XPubBalances
+      summary: Address or XPub Balances
       requestBody:
         content:
           application/x-www-form-urlencoded:
@@ -1595,6 +1595,38 @@ paths:
         - $ref: '#/components/parameters/binfoActiveBech32'
         - $ref: '#/components/parameters/binfoLimit'
         - $ref: '#/components/parameters/binfoConfirmations'
+      responses:
+        '200':
+          description: Unspent outputs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - unspent_outputs
+                properties:
+                  unspent_outputs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BinfoUnspent'
+                  notice:
+                    type: string
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Blockchain
+      operationId: postBinfoUnspent
+      summary: Unspent Outputs
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BinfoUnspentReq'
       responses:
         '200':
           description: Unspent outputs.
@@ -2839,6 +2871,20 @@ components:
         txidindex:
           type: boolean
         filter:
+          type: integer
+
+    BinfoUnspentReq:
+      type: object
+      properties:
+        active:
+          type: string
+        activeP2SH:
+          type: string
+        activeBech32:
+          type: string
+        limit:
+          type: integer
+        confirmations:
           type: integer
 
   parameters:
