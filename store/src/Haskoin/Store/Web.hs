@@ -261,6 +261,9 @@ withMetrics df i go =
     end metrics t1 = do
         t2 <- systemToUTCTime <$> liftIO getSystemTime
         let diff = round $ diffUTCTime t2 t1 * 1000
+        everyStat metrics `addStatTime` diff
+        everyStat metrics `addStatItems` fromIntegral i
+        addStatQuery (everyStat metrics)
         df metrics `addStatTime` diff
         df metrics `addStatItems` fromIntegral i
         addStatQuery (df metrics)
