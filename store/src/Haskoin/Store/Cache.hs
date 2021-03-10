@@ -139,9 +139,9 @@ newCacheMetrics s = liftIO $ do
     cacheLockAcquired    <- c "lock_acquired"
     cacheLockReleased    <- c "lock_released"
     cacheLockFailed      <- c "lock_failed"
-    cacheIndexTime       <- d "index_time_ms"
-    cacheMempoolSyncTime <- d "mempool_sync_time_ms"
-    cacheBlockSyncTime   <- d "block_sync_time_ms"
+    cacheIndexTime       <- d "index"
+    cacheMempoolSyncTime <- d "mempool_sync"
+    cacheBlockSyncTime   <- d "block_sync"
     return CacheMetrics{..}
   where
     c x = Metrics.createCounter ("cache." <> x) s
@@ -163,7 +163,9 @@ withMetrics df go =
     end metrics t1 = do
         t2 <- systemToUTCTime <$> liftIO getSystemTime
         let diff = round $ diffUTCTime t2 t1 * 1000
-        df metrics `addStatEntry` StatEntry diff 1
+        df metrics `addStatTime` diff
+        df metrics `addStatItems` 1
+        addStatQuery (df metrics)
 
 incrementCounter :: MonadIO m
                  => (CacheMetrics -> Metrics.Counter)
