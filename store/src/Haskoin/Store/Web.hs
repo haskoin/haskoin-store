@@ -169,31 +169,32 @@ data WebState = WebState
     }
 
 data WebMetrics = WebMetrics
-    { everyStat       :: !StatDist
-    , blockStat       :: !StatDist
-    , rawBlockStat    :: !StatDist
-    , txStat          :: !StatDist
-    , txsBlockStat    :: !StatDist
-    , txAfterStat     :: !StatDist
-    , postTxStat      :: !StatDist
-    , mempoolStat     :: !StatDist
-    , addrTxStat      :: !StatDist
-    , addrTxFullStat  :: !StatDist
-    , addrBalanceStat :: !StatDist
-    , addrUnspentStat :: !StatDist
-    , xPubStat        :: !StatDist
-    , xPubTxStat      :: !StatDist
-    , xPubTxFullStat  :: !StatDist
-    , xPubUnspentStat :: !StatDist
-    , multiaddrStat   :: !StatDist
-    , rawaddrStat     :: !StatDist
-    , balanceStat     :: !StatDist
-    , unspentStat     :: !StatDist
-    , rawtxStat       :: !StatDist
-    , peerStat        :: !StatDist
-    , healthStat      :: !StatDist
-    , dbStatsStat     :: !StatDist
-    , eventsConnected :: !Metrics.Gauge
+    { everyStat        :: !StatDist
+    , blockStat        :: !StatDist
+    , rawBlockStat     :: !StatDist
+    , txStat           :: !StatDist
+    , txsBlockStat     :: !StatDist
+    , txAfterStat      :: !StatDist
+    , postTxStat       :: !StatDist
+    , mempoolStat      :: !StatDist
+    , addrTxStat       :: !StatDist
+    , addrTxFullStat   :: !StatDist
+    , addrBalanceStat  :: !StatDist
+    , addrUnspentStat  :: !StatDist
+    , xPubStat         :: !StatDist
+    , xPubTxStat       :: !StatDist
+    , xPubTxFullStat   :: !StatDist
+    , xPubUnspentStat  :: !StatDist
+    , multiaddrStat    :: !StatDist
+    , rawaddrStat      :: !StatDist
+    , balanceStat      :: !StatDist
+    , unspentStat      :: !StatDist
+    , rawtxStat        :: !StatDist
+    , peerStat         :: !StatDist
+    , healthStat       :: !StatDist
+    , dbStatsStat      :: !StatDist
+    , eventsConnected  :: !Metrics.Gauge
+    , inFlightRequests :: !Metrics.Gauge
     }
 
 createMetrics :: MonadIO m => Metrics.Store -> m WebMetrics
@@ -223,6 +224,7 @@ createMetrics s = liftIO $ do
     healthStat        <- d "health"
     dbStatsStat       <- d "dbstats"
     eventsConnected   <- g "events.connected"
+    inFlightRequests  <- g "inflight"
     return WebMetrics{..}
   where
     d x = createStatDist       ("web." <> x) s
@@ -255,20 +257,27 @@ withTimeout metric go = do
     m <- liftWith $ \run -> timeout to (run go)
     case m of
         Nothing -> raise metric ServerTimeout
-        Just x -> restoreT $ return x
+        Just x  -> restoreT $ return x
 
 withToken :: MonadUnliftIO m => WebT m a -> WebT m a
 withToken go = do
     tok <- lift $ asks webTokens
+    minf <- lift $ asks (fmap inFlightRequests . webMetrics)
     x <- liftWith $ \run ->
-        bracket_ (t tok) (p tok) $ run go
+        bracket (t tok) (p tok) $ \i -> do
+        let i' = fromIntegral i
+        case minf of
+            Nothing  -> return ()
+            Just inf -> liftIO $ Metrics.Gauge.set inf i'
+        run go
     restoreT $ return x
   where
     t tok = atomically $ do
         ts <- readTVar tok
         check (0 < ts)
         modifyTVar tok (subtract 1)
-    p tok = atomically $ modifyTVar tok (+1)
+        readTVar tok
+    p tok _ = atomically $ modifyTVar tok (+1)
 
 withMetrics :: MonadUnliftIO m
             => (WebMetrics -> StatDist)
