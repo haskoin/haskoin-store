@@ -79,6 +79,9 @@ data Config = Config
     , configStatsdHost      :: !String
     , configStatsdPort      :: !Int
     , configStatsdPrefix    :: !String
+    , configWebRequests     :: !Int
+    , configWebReqTimeout   :: !Int
+    , configWebPriceGet     :: !Int
     }
 
 instance Default Config where
@@ -110,6 +113,9 @@ instance Default Config where
                  , configStatsdHost      = defStatsdHost
                  , configStatsdPort      = defStatsdPort
                  , configStatsdPrefix    = defStatsdPrefix
+                 , configWebRequests     = defWebRequests
+                 , configWebReqTimeout   = defWebReqTimeout
+                 , configWebPriceGet     = defWebPriceGet
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -263,6 +269,21 @@ defStatsdPort :: Int
 defStatsdPort = unsafePerformIO $
     defEnv "STATSD_PORT" 8125 readMaybe
 {-# NOINLINE defStatsdPort #-}
+
+defWebRequests :: Int
+defWebRequests = unsafePerformIO $
+    defEnv "WEB_REQUESTS" 32 readMaybe
+{-# NOINLINE defWebRequests #-}
+
+defWebReqTimeout :: Int
+defWebReqTimeout = unsafePerformIO $
+    defEnv "WEB_REQ_TIMEOUT" (45 * 1000 * 1000) readMaybe
+{-# NOINLINE defWebReqTimeout #-}
+
+defWebPriceGet :: Int
+defWebPriceGet = unsafePerformIO $
+    defEnv "WEB_PRICE_GET" (90 * 1000 * 1000) readMaybe
+{-# NOINLINE defWebPriceGet #-}
 
 defStatsdPrefix :: String
 defStatsdPrefix =
@@ -515,6 +536,27 @@ config = do
         <> help "Prefix for statsd metrics"
         <> showDefault
         <> value (configStatsdPrefix def)
+    configWebRequests <-
+        option auto $
+        metavar "INT"
+        <> long "web-requests"
+        <> help "Simultaneous web requests"
+        <> showDefault
+        <> value (configWebRequests def)
+    configWebReqTimeout <-
+        option auto $
+        metavar "MICROSECONDS"
+        <> long "web-req-timeout"
+        <> help "Web request server timeout"
+        <> showDefault
+        <> value (configWebReqTimeout def)
+    configWebPriceGet <-
+        option auto $
+        metavar "MICROSECONDS"
+        <> long "web-price-get"
+        <> help "How often to retrieve price information"
+        <> showDefault
+        <> value (configWebPriceGet def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -591,6 +633,9 @@ run Config { configHost = host
            , configStatsdHost = statsdhost
            , configStatsdPort = statsdport
            , configStatsdPrefix = statsdpfx
+           , configWebRequests = wreqs
+           , configWebReqTimeout = wtimeout
+           , configWebPriceGet = wpget
            } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
         $(logInfoS) "Main" $
@@ -634,6 +679,9 @@ run Config { configHost = host
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
                     , webStats = stats
+                    , webRequests = wreqs
+                    , webReqTimeout = wtimeout
+                    , webPriceGet = wpget
                     }
   where
     with_stats go

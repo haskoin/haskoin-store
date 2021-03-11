@@ -395,6 +395,7 @@ instance Arbitrary Except where
         , UserError <$> arbitrary
         , StringError <$> arbitrary
         , TxIndexConflict <$> listOf1 arbitraryTxHash
+        , return ServerTimeout
         ]
 
 ---------------------------------------

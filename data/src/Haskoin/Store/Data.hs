@@ -2101,6 +2101,7 @@ data Except
     | UserError !String
     | StringError !String
     | TxIndexConflict ![TxHash]
+    | ServerTimeout
     deriving (Show, Eq, Ord, Generic, NFData)
 
 instance Serial Except where
@@ -2119,6 +2120,8 @@ instance Serial Except where
     serialize (TxIndexConflict ts) = do
         putWord8 0x05
         putList serialize ts
+    serialize ServerTimeout = do
+        putWord8 0x06
 
     deserialize =
         getWord8 >>= \case
@@ -2128,6 +2131,7 @@ instance Serial Except where
         0x03 -> UserError . T.unpack . TE.decodeUtf8 <$> getLengthBytes
         0x04 -> StringError . T.unpack . TE.decodeUtf8 <$> getLengthBytes
         0x05 -> TxIndexConflict <$> getList deserialize
+        0x06 -> return ServerTimeout
         _    -> fail "Cannot recognize exception"
 
 instance Serialize Except where
@@ -2168,6 +2172,9 @@ instance ToJSON Except where
                 [ "error" .= String "multiple-tx-index"
                 , "message" .= String "Many txs match that tx_index"
                 , "txids" .= txids ]
+            ServerTimeout ->
+                [ "error" .= String "server-timeout"
+                , "message" .= String "Request is taking too long" ]
 
 instance FromJSON Except where
     parseJSON =
@@ -2188,6 +2195,8 @@ instance FromJSON Except where
                 String "multiple-tx-index" -> do
                     txids <- o .: "txids"
                     return $ TxIndexConflict txids
+                String "server-timeout" ->
+                    return ServerTimeout
                 _ -> mzero
 
 toIntTxId :: TxHash -> Word64
@@ -2199,7 +2208,6 @@ toIntTxId h =
 ---------------------------------------
 -- Blockchain.info API Compatibility --
 ---------------------------------------
-
 
 data BinfoBlockId
     = BinfoBlockHash !BlockHash

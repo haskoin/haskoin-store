@@ -16,8 +16,8 @@ module Haskoin.Store.Database.Reader
     , balanceCF
     ) where
 
-import           Conduit                      (lift, mapC, runConduit, sinkList,
-                                               (.|))
+import           Conduit                      (ConduitT, lift, mapC, runConduit,
+                                               sinkList, (.|))
 import           Control.Monad.Except         (runExceptT, throwError)
 import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
 import           Data.Bits                    ((.&.))
@@ -29,7 +29,8 @@ import           Data.Maybe                   (fromMaybe)
 import           Data.Serialize               (encode)
 import           Data.Word                    (Word32, Word64)
 import           Database.RocksDB             (ColumnFamily, Config (..),
-                                               DB (..), withDBCF, withIterCF)
+                                               DB (..), Iterator, withDBCF,
+                                               withIterCF)
 import           Database.RocksDB.Query       (insert, matching,
                                                matchingAsListCF, matchingSkip,
                                                retrieve, retrieveCF)
@@ -39,6 +40,7 @@ import           Haskoin                      (Address, BlockHash, BlockHeight,
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Types
+import           Haskoin.Store.Logic          (joinStreams)
 import           UnliftIO                     (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -173,10 +175,38 @@ getAddressesTxsDB ::
     -> Limits
     -> DatabaseReader
     -> m [TxRef]
-getAddressesTxsDB addrs limits db = do
-    ts <- concat <$> mapM (\a -> getAddressTxsDB a (deOffset limits) db) addrs
-    let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
-    return $ applyLimits limits ts'
+getAddressesTxsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
+    liftIO $ iters addrs [] $ \cs ->
+    runConduit $
+    joinStreams (flip compare) cs .| applyLimitsC limits .| sinkList
+  where
+    iters [] acc f = f acc
+    iters (a : as) acc f =
+        withIterCF db (addrTxCF db) $ \it ->
+        iters as (addressConduit a bdb (start limits) it : acc) f
+
+addressConduit :: MonadUnliftIO m
+               => Address
+               -> DatabaseReader
+               -> Maybe Start
+               -> Iterator
+               -> ConduitT i TxRef m ()
+addressConduit a bdb s it  =
+    x .| mapC (uncurry f)
+  where
+    f (AddrTxKey _ t) () = t
+    f _ _                = undefined
+    x = case s of
+        Nothing -> matching it (AddrTxKeyA a)
+        Just (AtTx txh) -> lift (getTxDataDB txh bdb) >>= \case
+            Just TxData {txDataBlock = b@BlockRef{}} ->
+                matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
+            _ -> matching it (AddrTxKeyA a)
+        Just (AtBlock bh) ->
+            matchingSkip
+            it
+            (AddrTxKeyA a)
+            (AddrTxKeyB a (BlockRef bh maxBound))
 
 getAddressTxsDB ::
        MonadIO m
@@ -185,24 +215,11 @@ getAddressTxsDB ::
     -> DatabaseReader
     -> m [TxRef]
 getAddressTxsDB a limits bdb@DatabaseReader{databaseHandle = db} =
-    liftIO $ withIterCF db (addrTxCF db) $ \it -> runConduit $
-    x it .| applyLimitsC limits .| mapC (uncurry f) .| sinkList
-  where
-    x it =
-        case start limits of
-            Nothing -> matching it (AddrTxKeyA a)
-            Just (AtTx txh) ->
-                lift (getTxDataDB txh bdb) >>= \case
-                    Just TxData {txDataBlock = b@BlockRef {}} ->
-                        matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
-                    _ -> matching it (AddrTxKeyA a)
-            Just (AtBlock bh) ->
-                matchingSkip
-                    it
-                    (AddrTxKeyA a)
-                    (AddrTxKeyB a (BlockRef bh maxBound))
-    f AddrTxKey {addrTxKeyT = t} () = t
-    f _ _                           = undefined
+    liftIO . withIterCF db (addrTxCF db) $ \it ->
+    runConduit $
+    addressConduit a bdb (start limits) it .|
+    applyLimitsC limits .|
+    sinkList
 
 getUnspentDB :: MonadIO m => OutPoint -> DatabaseReader -> m (Maybe Unspent)
 getUnspentDB p DatabaseReader{databaseHandle = db} =

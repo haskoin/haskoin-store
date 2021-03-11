@@ -22,6 +22,7 @@ import           Conduit                       (ConduitT, await, dropC,
                                                 sinkList, takeC, yield, (.|))
 import           Control.Applicative           ((<|>))
 import           Control.Arrow                 (second)
+import           Control.Concurrent.STM        (check)
 import           Control.Lens
 import           Control.Monad                 (forM, forever, unless, when,
                                                 (<=<))
@@ -113,9 +114,9 @@ import           Text.Printf                   (printf)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, TVar,
                                                 askRunInIO, atomically, bracket,
                                                 bracket_, handleAny, liftIO,
-                                                newTVarIO, readTVarIO, timeout,
-                                                withAsync, withRunInIO,
-                                                writeTVar)
+                                                modifyTVar, newTVarIO, readTVar,
+                                                readTVarIO, timeout, withAsync,
+                                                withRunInIO, writeTVar)
 import           UnliftIO.Concurrent           (threadDelay)
 import           Web.Scotty.Internal.Types     (ActionT)
 import           Web.Scotty.Trans              (Parsable)
@@ -155,12 +156,16 @@ data WebConfig = WebConfig
     , webVersion    :: !String
     , webNoMempool  :: !Bool
     , webStats      :: !(Maybe Metrics.Store)
+    , webRequests   :: !Int
+    , webReqTimeout :: !Int
+    , webPriceGet   :: !Int
     }
 
 data WebState = WebState
     { webConfig  :: !WebConfig
     , webTicker  :: !(TVar (HashMap Text BinfoTicker))
     , webMetrics :: !(Maybe WebMetrics)
+    , webTokens  :: !(TVar Int)
     }
 
 data WebMetrics = WebMetrics
@@ -188,7 +193,7 @@ data WebMetrics = WebMetrics
     , peerStat        :: !StatDist
     , healthStat      :: !StatDist
     , dbStatsStat     :: !StatDist
-    , eventsConnected         :: !Metrics.Gauge
+    , eventsConnected :: !Metrics.Gauge
     }
 
 createMetrics :: MonadIO m => Metrics.Store -> m WebMetrics
@@ -241,6 +246,30 @@ withGaugeIncrease gf go =
     start m = liftIO $ Metrics.Gauge.inc (gf m)
     end m = liftIO $ Metrics.Gauge.dec (gf m)
 
+withTimeout :: MonadUnliftIO m
+            => (WebMetrics -> StatDist)
+            -> WebT m a
+            -> WebT m a
+withTimeout metric go = do
+    to <- lift $ asks (webReqTimeout . webConfig)
+    m <- liftWith $ \run -> timeout to (run go)
+    case m of
+        Nothing -> raise metric ServerTimeout
+        Just x -> restoreT $ return x
+
+withToken :: MonadUnliftIO m => WebT m a -> WebT m a
+withToken go = do
+    tok <- lift $ asks webTokens
+    x <- liftWith $ \run ->
+        bracket_ (t tok) (p tok) $ run go
+    restoreT $ return x
+  where
+    t tok = atomically $ do
+        ts <- readTVar tok
+        check (0 < ts)
+        modifyTVar tok (subtract 1)
+    p tok = atomically $ modifyTVar tok (+1)
+
 withMetrics :: MonadUnliftIO m
             => (WebMetrics -> StatDist)
             -> Int
@@ -248,16 +277,17 @@ withMetrics :: MonadUnliftIO m
             -> WebT m a
 withMetrics df i go =
     lift (asks webMetrics) >>= \case
-        Nothing -> go
+        Nothing -> go'
         Just m -> do
             x <-
                 liftWith $ \run ->
                 bracket
                 (systemToUTCTime <$> liftIO getSystemTime)
                 (end m)
-                (const (run go))
+                (const (run go'))
             restoreT $ return x
   where
+    go' = withTimeout df $ withToken go
     end metrics t1 = do
         t2 <- systemToUTCTime <$> liftIO getSystemTime
         let diff = round $ diffUTCTime t2 t1 * 1000
@@ -337,11 +367,21 @@ runWeb cfg@WebConfig{ webHost = host
                     , webPort = port
                     , webStore = store
                     , webStats = stats
+                    , webPriceGet = pget
+                    , webRequests = toks
                     } = do
     ticker <- newTVarIO HashMap.empty
     metrics <- mapM createMetrics stats
-    let st = WebState { webConfig = cfg, webTicker = ticker, webMetrics = metrics }
-    withAsync (price (storeNetwork store) ticker) $ \_ -> do
+    tok <- newTVarIO toks
+    let st = WebState
+             {
+                 webConfig = cfg,
+                 webTicker = ticker,
+                 webMetrics = metrics,
+                 webTokens = tok
+             }
+        net = storeNetwork store
+    withAsync (price net pget ticker) $ \_ -> do
         reqLogger <- logIt
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
@@ -355,9 +395,10 @@ runWeb cfg@WebConfig{ webHost = host
 
 price :: (MonadUnliftIO m, MonadLoggerIO m)
       => Network
+      -> Int
       -> TVar (HashMap Text BinfoTicker)
       -> m ()
-price net v =
+price net pget v =
     case code of
         Nothing -> return ()
         Just s  -> go s
@@ -372,7 +413,7 @@ price net v =
         handleAny err $ do
             r <- liftIO $ Wreq.asJSON =<< Wreq.get url
             atomically . writeTVar v $ r ^. Wreq.responseBody
-        threadDelay $ 5 * 60 * 1000 * 1000 -- five minutes
+        threadDelay pget
 
 raise_ :: MonadIO m => Except -> WebT m a
 raise_ err =
@@ -413,6 +454,7 @@ errStatus UserError{}       = status400
 errStatus StringError{}     = status400
 errStatus ServerError       = status500
 errStatus TxIndexConflict{} = status409
+errStatus ServerTimeout     = status500
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
