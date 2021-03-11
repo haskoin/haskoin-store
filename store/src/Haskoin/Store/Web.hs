@@ -263,12 +263,13 @@ withToken :: MonadUnliftIO m => WebT m a -> WebT m a
 withToken go = do
     tok <- lift $ asks webTokens
     minf <- lift $ asks (fmap inFlightRequests . webMetrics)
+    max_req <- lift $ asks (webRequests . webConfig)
     x <- liftWith $ \run ->
-        bracket (t tok) (p tok) $ \i -> do
-        let i' = fromIntegral i
+        bracket (t tok) (p tok) $ \rem -> do
+        let i = fromIntegral $ max_req - rem
         case minf of
             Nothing  -> return ()
-            Just inf -> liftIO $ Metrics.Gauge.set inf i'
+            Just inf -> liftIO $ Metrics.Gauge.set inf i
         run go
     restoreT $ return x
   where
