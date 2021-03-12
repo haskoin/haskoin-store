@@ -40,7 +40,7 @@ import           Haskoin                      (Address, BlockHash, BlockHeight,
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Types
-import           Haskoin.Store.Logic          (joinStreams)
+import           Haskoin.Store.Logic          (joinDescStreams)
 import           UnliftIO                     (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -178,7 +178,7 @@ getAddressesTxsDB ::
 getAddressesTxsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
     liftIO $ iters addrs [] $ \cs ->
     runConduit $
-    joinStreams (flip compare) cs .| applyLimitsC limits .| sinkList
+    joinDescStreams cs .| applyLimitsC limits .| sinkList
   where
     iters [] acc f = f acc
     iters (a : as) acc f =

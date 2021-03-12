@@ -1321,7 +1321,7 @@ getBinfoUnspents :: (StoreReadExtra m, MonadIO m)
                  -> HashSet Address
                  -> ConduitT () BinfoUnspent m ()
 getBinfoUnspents numtxid height xspecs addrs =
-    joinStreams (flip compare `on` fst) conduits .| mapC (uncurry binfo)
+    joinDescStreams conduits .| mapC (uncurry binfo)
   where
     binfo Unspent{..} xp =
         let conf = case unspentBlock of
@@ -1370,7 +1370,7 @@ getBinfoTxs :: (StoreReadExtra m, MonadIO m)
             -> Int64 -- starting balance
             -> ConduitT () BinfoTx m ()
 getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal =
-    joinStreams (flip compare) conduits .| go bal
+    joinDescStreams conduits .| go bal
   where
     sxspecs_ls = HashSet.toList sxspecs
     saddrs_ls = HashSet.toList saddrs

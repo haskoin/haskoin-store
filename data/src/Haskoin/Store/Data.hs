@@ -2974,6 +2974,13 @@ data BinfoXPubPath
         }
     deriving (Eq, Show, Generic, NFData)
 
+instance Ord BinfoXPubPath where
+    compare = compare `on` f
+       where
+         f b = ( xPubParent (getBinfoXPubPathKey b),
+                 getBinfoXPubPathDeriv b
+               )
+
 binfoXPubPathToJSON :: Network -> BinfoXPubPath -> Value
 binfoXPubPathToJSON net BinfoXPubPath {..} =
     A.object

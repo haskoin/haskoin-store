@@ -14,40 +14,39 @@ module Haskoin.Store.Logic
     , newMempoolTx
     , deleteUnconfirmedTx
     , streamThings
-    , joinStreams
+    , joinDescStreams
     ) where
 
-import           Conduit               (ConduitT, await, lift, sealConduitT,
-                                        yield, ($$++))
-import           Control.Monad         (forM, forM_, guard, unless, void, when,
-                                        zipWithM_)
-import           Control.Monad.Except  (MonadError, throwError)
-import           Control.Monad.Logger  (MonadLoggerIO (..), logDebugS,
-                                        logErrorS)
-import qualified Data.ByteString       as B
-import           Data.Either           (rights)
-import           Data.Function         (on)
-import qualified Data.IntMap.Strict    as I
-import           Data.List             (nub, sortBy)
-import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing,
-                                        mapMaybe)
-import           Data.Serialize        (encode)
-import           Data.Word             (Word32, Word64)
-import           Haskoin               (Address, Block (..), BlockHash,
-                                        BlockHeader (..), BlockNode (..),
-                                        Network (..), OutPoint (..), Tx (..),
-                                        TxHash, TxIn (..), TxOut (..),
-                                        blockHashToHex, computeSubsidy,
-                                        eitherToMaybe, genesisBlock,
-                                        genesisNode, headerHash, isGenesis,
-                                        nullOutPoint, scriptToAddressBS, txHash,
-                                        txHashToHex)
+import           Conduit              (ConduitT, await, lift, sealConduitT,
+                                       yield, ($$++))
+import           Control.Monad        (forM, forM_, guard, unless, void, when,
+                                       zipWithM_)
+import           Control.Monad.Except (MonadError, throwError)
+import           Control.Monad.Logger (MonadLoggerIO (..), logDebugS, logErrorS)
+import qualified Data.ByteString      as B
+import           Data.Either          (rights)
+import           Data.Function        (on)
+import qualified Data.IntMap.Strict   as I
+import           Data.List            (nub, sortBy)
+import qualified Data.Map.Strict      as Map
+import           Data.Maybe           (catMaybes, fromMaybe, isJust, isNothing,
+                                       mapMaybe)
+import           Data.Serialize       (encode)
+import           Data.Word            (Word32, Word64)
+import           Haskoin              (Address, Block (..), BlockHash,
+                                       BlockHeader (..), BlockNode (..),
+                                       Network (..), OutPoint (..), Tx (..),
+                                       TxHash, TxIn (..), TxOut (..),
+                                       blockHashToHex, computeSubsidy,
+                                       eitherToMaybe, genesisBlock, genesisNode,
+                                       headerHash, isGenesis, nullOutPoint,
+                                       scriptToAddressBS, txHash, txHashToHex)
 import           Haskoin.Store.Common
-import           Haskoin.Store.Data    (Balance (..), BlockData (..),
-                                        BlockRef (..), Prev (..), Spender (..),
-                                        TxData (..), TxRef (..), UnixTime,
-                                        Unspent (..), confirmed)
-import           UnliftIO              (Exception)
+import           Haskoin.Store.Data   (Balance (..), BlockData (..),
+                                       BlockRef (..), Prev (..), Spender (..),
+                                       TxData (..), TxRef (..), UnixTime,
+                                       Unspent (..), confirmed)
+import           UnliftIO             (Exception)
 
 type MonadImport m =
     ( MonadError ImportException m
@@ -694,26 +693,26 @@ streamThings f g l =
             mapM yield ls
             go (last ls)
 
-joinStreams :: Monad m
-            => (a -> a -> Ordering)
-            -> [ConduitT () a m ()]
-            -> ConduitT () a m ()
-joinStreams c xs = do
+joinDescStreams :: (Monad m, Ord a)
+                => [ConduitT () a m ()]
+                -> ConduitT () a m ()
+joinDescStreams xs = do
     let ss = map sealConduitT xs
-    ys <- mapMaybe j <$>
-          lift (traverse ($$++ await) ss)
-    go Nothing ys
+    go Nothing =<< g ss
   where
-    j (x, y) = (,) x <$> y
-    go m ys =
-        case sortBy (c `on` snd) ys of
-        [] -> return ()
-        (i,x):ys' -> do
+    g ss = let f (x, y) = (, [x]) <$> y
+               l = mapMaybe f <$> lift (traverse ($$++ await) ss)
+           in Map.fromListWith (++) <$> l
+    j (x, y) = (, [x]) <$> y
+    go m mp = case Map.lookupMax mp of
+        Nothing -> return ()
+        Just (x, ss) -> do
             case m of
                 Nothing -> yield x
                 Just x'
-                  | c x x' == EQ -> return ()
+                  | x == x' -> return ()
                   | otherwise -> yield x
-            j <$> lift (i $$++ await) >>= \case
-                Nothing -> go (Just x) ys'
-                Just y -> go (Just x) (y:ys')
+            mp1 <- g ss
+            let mp2 = Map.deleteMax mp
+                mp' = Map.unionWith (++) mp1 mp2
+            go (Just x) mp'
