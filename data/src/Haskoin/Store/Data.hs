@@ -2977,8 +2977,8 @@ data BinfoXPubPath
 instance Ord BinfoXPubPath where
     compare = compare `on` f
        where
-         f b = ( xPubParent (getBinfoXPubPathKey b),
-                 getBinfoXPubPathDeriv b
+         f b = ( xPubParent (getBinfoXPubPathKey b)
+               , getBinfoXPubPathDeriv b
                )
 
 binfoXPubPathToJSON :: Network -> BinfoXPubPath -> Value

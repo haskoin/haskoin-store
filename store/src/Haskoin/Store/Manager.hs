@@ -36,16 +36,17 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheWriter,
-                                                connectRedis, newCacheMetrics)
+                                                connectRedis, newCacheMetrics,
+                                                newCacheThreads)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
                                                 withDatabaseReader)
-import           Network.Socket                (SockAddr (..))
 import           NQE                           (Inbox, Process (..), Publisher,
                                                 publishSTM, receive,
                                                 withProcess, withPublisher,
                                                 withSubscription)
+import           Network.Socket                (SockAddr (..))
 import qualified System.Metrics                as Metrics (Store)
 import           UnliftIO                      (MonadIO, MonadUnliftIO, STM,
                                                 atomically, link, withAsync)
@@ -102,6 +103,8 @@ data StoreConfig =
       -- ^ delay in microseconds to retry getting cache lock
         , storeConfStats           :: !(Maybe Metrics.Store)
       -- ^ stats store
+        , storeConfCacheThreads    :: !Int
+      -- ^ how many caching threads
         }
 
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -187,14 +190,15 @@ withCache cfg chain db pub action =
             mapM newCacheMetrics (storeConfStats cfg) >>= \metrics ->
             connectRedis redisurl >>= \conn ->
             withSubscription pub $ \evts ->
-            withProcess (f conn metrics) $ \p ->
-            cacheWriterProcesses crefresh evts (getProcessMailbox p) $
-            action (Just (c conn metrics))
+            newCacheThreads (storeConfCacheThreads cfg) >>= \cth ->
+            let conf = c conn metrics cth
+            in  withProcess (f conf) $ \p ->
+                cacheWriterProcesses crefresh evts (getProcessMailbox p) $ do
+                action (Just conf)
   where
     crefresh = storeConfCacheRefresh cfg
-    f conn metrics cwinbox =
-        runReaderT (cacheWriter (c conn metrics) cwinbox) db
-    c conn metrics =
+    f conf cwinbox = runReaderT (cacheWriter conf cwinbox) db
+    c conn metrics cth =
         CacheConfig
            { cacheConn = conn
            , cacheMin = storeConfCacheMin cfg
@@ -203,6 +207,7 @@ withCache cfg chain db pub action =
            , cacheRefresh = storeConfCacheRefresh cfg
            , cacheRetryDelay = storeConfCacheRetryDelay cfg
            , cacheMetrics = metrics
+           , cacheThreads = cth
            }
 
 cacheWriterProcesses :: MonadUnliftIO m

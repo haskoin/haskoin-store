@@ -15,6 +15,7 @@ module Haskoin.Store.Cache
     , CacheT
     , CacheError(..)
     , newCacheMetrics
+    , newCacheThreads
     , withCache
     , connectRedis
     , blockRefScore
@@ -93,8 +94,9 @@ import qualified System.Metrics.Gauge        as Metrics.Gauge
 import           System.Random               (randomIO, randomRIO)
 import           UnliftIO                    (Exception, MonadIO, MonadUnliftIO,
                                               TQueue, TVar, async, atomically,
-                                              bracket, liftIO, link, readTQueue,
-                                              readTVar, throwIO, withAsync,
+                                              bracket, liftIO, link, modifyTVar,
+                                              newTVarIO, readTQueue, readTVar,
+                                              throwIO, wait, withAsync,
                                               writeTQueue, writeTVar)
 import           UnliftIO.Concurrent         (threadDelay)
 
@@ -115,7 +117,13 @@ data CacheConfig = CacheConfig
     , cacheRefresh    :: !Int -- millisenconds
     , cacheRetryDelay :: !Int -- microseconds
     , cacheMetrics    :: !(Maybe CacheMetrics)
+    , cacheThreads    :: !CacheThreads
     }
+
+type CacheThreads = TVar Int
+
+newCacheThreads :: MonadIO m => Int -> m CacheThreads
+newCacheThreads = newTVarIO
 
 data CacheMetrics = CacheMetrics
     { cacheHits            :: !Metrics.Counter
@@ -226,7 +234,7 @@ instance (MonadUnliftIO m , MonadLoggerIO m, StoreReadExtra m) =>
             Just cfg -> lift (runReaderT (getXPubTxs xpub limits) cfg)
     xPubTxCount xpub =
         ask >>= \case
-            Nothing -> lift (xPubTxCount xpub)
+            Nothing  -> lift (xPubTxCount xpub)
             Just cfg -> lift (runReaderT (getXPubTxCount xpub) cfg)
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
@@ -243,6 +251,9 @@ txSetPfx = "t"
 
 utxoPfx :: ByteString
 utxoPfx = "u"
+
+idxPfx :: ByteString
+idxPfx = "i"
 
 getXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
@@ -679,21 +690,21 @@ lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
 newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => XPubSpec -> [XPubBal] -> CacheX m ()
-newXPubC xpub bals =
-    should_index >>= \i ->
+newXPubC xpub bals = should_index >>= \i ->
     if i
     then do
-        incrementCounter cacheMisses
-        withMetrics cacheIndexTime index
+        a <- async $ do
+            incrementCounter cacheMisses
+            withMetrics cacheIndexTime index
+        wait a
     else incrementCounter cacheIgnore
   where
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
-    should_index = do
-        x <- asks cacheMin
+    should_index = asks cacheMin >>= \x ->
         if x <= lenNotNull bals
-            then inSync
-            else return False
-    index = do
+        then is_indexing >>= \y -> if y then return False else inSync
+        else return False
+    index = bracket set_index unset_index $ \(x, y) -> when (x && y) $ do
         xpubtxt <- xpubText xpub
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
@@ -715,6 +726,35 @@ newXPubC xpub bals =
             e <- redisAddXPubTxs xpub xtxs
             return $ b >> c >> d >> e >> return ()
         $(logDebugS) "Cache" $ "Cached " <> xpubtxt
+    is_indexing = runRedis (Redis.exists key)
+    key = idxPfx <> encode xpub
+    get_thread = do
+        v <- asks cacheThreads
+        atomically $ do
+            x <- readTVar v
+            if x <= 0
+                then return False
+                else modifyTVar v (subtract 1) >> return True
+    put_thread = do
+        v <- asks cacheThreads
+        atomically $ modifyTVar v (+1)
+    unset_index (x, y) = do
+        when x put_thread
+        when y . void . runRedis $ Redis.del [key]
+    set_index =
+        let opts = Redis.SetOpts
+                   { Redis.setSeconds = Just 600
+                   , Redis.setMilliseconds = Nothing
+                   , Redis.setCondition = Just Redis.Nx
+                   }
+            red = Redis.setOpts key "1" opts
+        in get_thread >>= \case
+            True -> do
+                conn <- asks cacheConn
+                liftIO (Redis.runRedis conn red) >>= \case
+                    Right _ -> return (True, True)
+                    Left _  -> return (True, False)
+            False -> return (False, False)
 
 inSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
        => CacheX m Bool
@@ -1282,7 +1322,7 @@ xpubText xpub = do
     net <- lift getNetwork
     let suffix = case xPubDeriveType xpub of
                      DeriveNormal -> ""
-                     DeriveP2SH -> "/p2sh"
+                     DeriveP2SH   -> "/p2sh"
                      DeriveP2WPKH -> "/p2wpkh"
     return . cs $ suffix <> xPubExport net (xPubSpecKey xpub)
 

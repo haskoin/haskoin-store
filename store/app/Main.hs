@@ -82,6 +82,7 @@ data Config = Config
     , configWebRequests     :: !Int
     , configWebReqTimeout   :: !Int
     , configWebPriceGet     :: !Int
+    , configCacheThreads    :: !Int
     }
 
 instance Default Config where
@@ -116,6 +117,7 @@ instance Default Config where
                  , configWebRequests     = defWebRequests
                  , configWebReqTimeout   = defWebReqTimeout
                  , configWebPriceGet     = defWebPriceGet
+                 , configCacheThreads    = defCacheThreads
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -274,6 +276,11 @@ defWebRequests :: Int
 defWebRequests = unsafePerformIO $
     defEnv "WEB_REQUESTS" 32 readMaybe
 {-# NOINLINE defWebRequests #-}
+
+defCacheThreads :: Int
+defCacheThreads = unsafePerformIO $
+    defEnv "CACHE_THREADS" 8 readMaybe
+{-# NOINLINE defCacheThreads #-}
 
 defWebReqTimeout :: Int
 defWebReqTimeout = unsafePerformIO $
@@ -557,6 +564,13 @@ config = do
         <> help "How often to retrieve price information"
         <> showDefault
         <> value (configWebPriceGet def)
+    configCacheThreads <-
+        option auto $
+        metavar "INT"
+        <> long "cache-threads"
+        <> help "Number of simultaneous xpub caching threads"
+        <> showDefault
+        <> value (configCacheThreads def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -636,6 +650,7 @@ run Config { configHost = host
            , configWebRequests = wreqs
            , configWebReqTimeout = wtimeout
            , configWebPriceGet = wpget
+           , configCacheThreads = cth
            } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
         $(logInfoS) "Main" $
@@ -665,6 +680,7 @@ run Config { configHost = host
                     , storeConfCacheRefresh = crefresh
                     , storeConfCacheRetryDelay = cretrydelay
                     , storeConfStats = stats
+                    , storeConfCacheThreads = cth
                     }
         withStore scfg $ \st ->
             runWeb
