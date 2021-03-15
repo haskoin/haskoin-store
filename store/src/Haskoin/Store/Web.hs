@@ -17,69 +17,83 @@ module Haskoin.Store.Web
     , runWeb
     ) where
 
-import           Conduit                       (ConduitT, await, dropC,
-                                                dropWhileC, mapC, runConduit,
-                                                sinkList, takeC, yield, (.|))
-import           Control.Applicative           ((<|>))
-import           Control.Arrow                 (second)
-import           Control.Concurrent.STM        (check)
-import           Control.Lens
-import           Control.Monad                 (forM, forever, unless, when,
-                                                (<=<))
-import           Control.Monad.Logger          (MonadLoggerIO, logDebugS,
-                                                logErrorS, logInfoS)
-import           Control.Monad.Reader          (ReaderT, ask, asks, local,
-                                                runReaderT)
-import           Control.Monad.Trans           (lift)
-import           Control.Monad.Trans.Control   (liftWith, restoreT)
-import           Control.Monad.Trans.Maybe     (MaybeT (..), runMaybeT)
-import           Data.Aeson                    (Encoding, ToJSON (..), Value)
-import           Data.Aeson.Encode.Pretty      (Config (..), defConfig,
-                                                encodePretty')
-import           Data.Aeson.Encoding           (encodingToLazyByteString, list)
-import           Data.Aeson.Text               (encodeToLazyText)
-import           Data.ByteString.Builder       (lazyByteString)
-import qualified Data.ByteString.Lazy          as L
-import qualified Data.ByteString.Lazy.Base16   as BL16
-import qualified Data.ByteString.Lazy.Char8    as C
+import           Conduit                                 (ConduitT, await,
+                                                          dropC, dropWhileC,
+                                                          mapC, runConduit,
+                                                          sinkList, takeC,
+                                                          yield, (.|))
+import           Control.Applicative                     ((<|>))
+import           Control.Arrow                           (second)
+import           Control.Concurrent.STM                  (check)
+import           Control.Lens                            ((^.))
+import           Control.Monad                           (forM, forever, unless,
+                                                          when, (<=<))
+import           Control.Monad.Logger                    (MonadLoggerIO,
+                                                          logDebugS, logErrorS,
+                                                          logInfoS)
+import           Control.Monad.Reader                    (ReaderT, ask, asks,
+                                                          local, runReaderT)
+import           Control.Monad.Trans                     (lift)
+import           Control.Monad.Trans.Control             (liftWith, restoreT)
+import           Control.Monad.Trans.Maybe               (MaybeT (..),
+                                                          runMaybeT)
+import           Data.Aeson                              (Encoding, ToJSON (..),
+                                                          Value, object, (.=))
+import qualified Data.Aeson                              as A
+import           Data.Aeson.Encode.Pretty                (Config (..),
+                                                          defConfig,
+                                                          encodePretty')
+import           Data.Aeson.Encoding                     (encodingToLazyByteString,
+                                                          list)
+import           Data.Aeson.Text                         (encodeToLazyText)
+import           Data.ByteString.Builder                 (lazyByteString)
+import qualified Data.ByteString.Lazy                    as L
+import qualified Data.ByteString.Lazy.Base16             as BL16
+import qualified Data.ByteString.Lazy.Char8              as C
 import           Data.Bytes.Get
 import           Data.Bytes.Put
 import           Data.Bytes.Serial
-import           Data.Char                     (isSpace)
-import           Data.Default                  (Default (..))
-import           Data.Function                 (on, (&))
-import           Data.HashMap.Strict           (HashMap)
-import qualified Data.HashMap.Strict           as HashMap
-import           Data.HashSet                  (HashSet)
-import qualified Data.HashSet                  as HashSet
-import           Data.Int                      (Int64)
-import           Data.List                     (nub, sortBy)
-import qualified Data.Map.Strict               as Map
-import           Data.Maybe                    (catMaybes, fromJust, fromMaybe,
-                                                isJust, listToMaybe, mapMaybe,
-                                                maybeToList)
-import           Data.Proxy                    (Proxy (..))
-import qualified Data.Set                      as Set
-import           Data.String                   (fromString)
-import           Data.String.Conversions       (cs)
-import           Data.Text                     (Text)
-import qualified Data.Text                     as T
-import qualified Data.Text.Encoding            as T
-import           Data.Text.Lazy                (toStrict)
-import qualified Data.Text.Lazy                as TL
-import           Data.Time.Clock               (NominalDiffTime, diffUTCTime)
-import           Data.Time.Clock.System        (getSystemTime, systemSeconds,
-                                                systemToUTCTime)
-import           Data.Word                     (Word32, Word64)
-import           Database.RocksDB              (Property (..), getProperty)
+import           Data.Char                               (isSpace)
+import           Data.Default                            (Default (..))
+import           Data.Function                           (on, (&))
+import           Data.HashMap.Strict                     (HashMap)
+import qualified Data.HashMap.Strict                     as HashMap
+import           Data.HashSet                            (HashSet)
+import qualified Data.HashSet                            as HashSet
+import           Data.Int                                (Int64)
+import           Data.List                               (nub, sortBy)
+import qualified Data.Map.Strict                         as Map
+import           Data.Maybe                              (catMaybes, fromJust,
+                                                          fromMaybe, isJust,
+                                                          listToMaybe, mapMaybe,
+                                                          maybeToList)
+import           Data.Proxy                              (Proxy (..))
+import qualified Data.Set                                as Set
+import           Data.String                             (fromString)
+import           Data.String.Conversions                 (cs)
+import           Data.Text                               (Text)
+import qualified Data.Text                               as T
+import qualified Data.Text.Encoding                      as T
+import           Data.Text.Lazy                          (toStrict)
+import qualified Data.Text.Lazy                          as TL
+import           Data.Time.Clock                         (NominalDiffTime,
+                                                          diffUTCTime)
+import           Data.Time.Clock.System                  (getSystemTime,
+                                                          systemSeconds,
+                                                          systemToUTCTime)
+import           Data.Word                               (Word32, Word64)
+import           Database.RocksDB                        (Property (..),
+                                                          getProperty)
 import           Haskoin.Address
-import qualified Haskoin.Block                 as H
+import qualified Haskoin.Block                           as H
 import           Haskoin.Constants
 import           Haskoin.Keys
 import           Haskoin.Network
-import           Haskoin.Node                  (Chain, OnlinePeer (..),
-                                                PeerManager, chainGetBest,
-                                                getPeers, sendMessage)
+import           Haskoin.Node                            (Chain,
+                                                          OnlinePeer (..),
+                                                          PeerManager,
+                                                          chainGetBest,
+                                                          getPeers, sendMessage)
 import           Haskoin.Store.BlockStore
 import           Haskoin.Store.Cache
 import           Haskoin.Store.Common
@@ -91,36 +105,46 @@ import           Haskoin.Store.Stats
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
 import           Haskoin.Util
-import           NQE                           (Inbox, receive,
-                                                withSubscription)
-import           Network.HTTP.Types            (Status (..), status400,
-                                                status403, status404, status409,
-                                                status500, status503,
-                                                statusIsClientError,
-                                                statusIsServerError,
-                                                statusIsSuccessful)
-import           Network.Wai                   (Middleware, Request (..),
-                                                responseStatus)
-import           Network.Wai.Handler.Warp      (defaultSettings, setHost,
-                                                setPort)
-import qualified Network.Wreq                  as Wreq
-import           System.IO.Unsafe              (unsafeInterleaveIO)
-import qualified System.Metrics                as Metrics
-import qualified System.Metrics.Counter        as Metrics (Counter)
-import qualified System.Metrics.Counter        as Metrics.Counter
-import qualified System.Metrics.Gauge          as Metrics (Gauge)
-import qualified System.Metrics.Gauge          as Metrics.Gauge
-import           Text.Printf                   (printf)
-import           UnliftIO                      (MonadIO, MonadUnliftIO, TVar,
-                                                askRunInIO, atomically, bracket,
-                                                bracket_, handleAny, liftIO,
-                                                modifyTVar, newTVarIO, readTVar,
-                                                readTVarIO, timeout, withAsync,
-                                                withRunInIO, writeTVar)
-import           UnliftIO.Concurrent           (threadDelay)
-import           Web.Scotty.Internal.Types     (ActionT)
-import           Web.Scotty.Trans              (Parsable)
-import qualified Web.Scotty.Trans              as S
+import           NQE                                     (Inbox, receive,
+                                                          withSubscription)
+import           Network.HTTP.Types                      (Status (..),
+                                                          requestEntityTooLarge413,
+                                                          status400, status403,
+                                                          status404, status409,
+                                                          status500, status503,
+                                                          statusIsClientError,
+                                                          statusIsServerError,
+                                                          statusIsSuccessful)
+import           Network.Wai                             (Middleware,
+                                                          Request (..),
+                                                          responseLBS,
+                                                          responseStatus)
+import           Network.Wai.Handler.Warp                (defaultSettings,
+                                                          setHost, setPort)
+import           Network.Wai.Middleware.RequestSizeLimit
+import qualified Network.Wreq                            as Wreq
+import           System.IO.Unsafe                        (unsafeInterleaveIO)
+import qualified System.Metrics                          as Metrics
+import qualified System.Metrics.Counter                  as Metrics (Counter)
+import qualified System.Metrics.Counter                  as Metrics.Counter
+import qualified System.Metrics.Gauge                    as Metrics (Gauge)
+import qualified System.Metrics.Gauge                    as Metrics.Gauge
+import           Text.Printf                             (printf)
+import           UnliftIO                                (MonadIO,
+                                                          MonadUnliftIO, TVar,
+                                                          askRunInIO,
+                                                          atomically, bracket,
+                                                          bracket_, handleAny,
+                                                          liftIO, modifyTVar,
+                                                          newTVarIO, readTVar,
+                                                          readTVarIO, timeout,
+                                                          withAsync,
+                                                          withRunInIO,
+                                                          writeTVar)
+import           UnliftIO.Concurrent                     (threadDelay)
+import           Web.Scotty.Internal.Types               (ActionT)
+import           Web.Scotty.Trans                        (Parsable)
+import qualified Web.Scotty.Trans                        as S
 
 type WebT m = ActionT Except (ReaderT WebState m)
 
@@ -396,12 +420,19 @@ runWeb cfg@WebConfig{ webHost = host
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
             S.middleware reqLogger
+            S.middleware $ requestSizeLimitMiddleware lim
             S.defaultHandler defHandler
             handlePaths
             S.notFound $ S.raise ThingNotFound
   where
+    lim = setOnLengthExceeded too_big defaultRequestSizeLimitSettings
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
+    too_big w64 = \_app _req send -> send $
+        responseLBS
+        requestEntityTooLarge413
+        [("Content-Type", "application/json")]
+        (A.encode $ object ["error" .= ("request size too large" :: Text)])
 
 price :: (MonadUnliftIO m, MonadLoggerIO m)
       => Network

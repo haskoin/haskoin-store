@@ -556,8 +556,3 @@ instance Param [TxHash] where
     proxyLabel = const "txids"
     encodeParam _ ts = Just $ txHashToHex <$> ts
     parseParam _ = mapM hexToTxHash
-
-
----------------------------------------
--- Blockchain.info API Compatibility --
----------------------------------------

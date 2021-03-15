@@ -167,7 +167,6 @@ import           Data.Bits               (Bits (..))
 import           Data.ByteString         (ByteString)
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BSB
-import qualified Data.ByteString.Lazy    as BSL
 import           Data.Bytes.Get
 import qualified Data.Bytes.Get          as Bytes.Get
 import           Data.Bytes.Put
