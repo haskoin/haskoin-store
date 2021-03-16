@@ -46,10 +46,10 @@ import           Data.Aeson.Encode.Pretty                (Config (..),
 import           Data.Aeson.Encoding                     (encodingToLazyByteString,
                                                           list)
 import           Data.Aeson.Text                         (encodeToLazyText)
+import qualified Data.ByteString.Base16                  as B16
 import           Data.ByteString.Builder                 (lazyByteString)
+import qualified Data.ByteString.Char8                   as C
 import qualified Data.ByteString.Lazy                    as L
-import qualified Data.ByteString.Lazy.Base16             as BL16
-import qualified Data.ByteString.Lazy.Char8              as C
 import           Data.Bytes.Get
 import           Data.Bytes.Put
 import           Data.Bytes.Serial
@@ -1983,13 +1983,15 @@ paramLazy = do
 
 parseBody :: (MonadIO m, Serial a) => WebT m a
 parseBody = do
-    b <- S.body
+    b <- L.toStrict <$> S.body
     case hex b <> bin b of
         Left _  -> raise_ $ UserError "Failed to parse request body"
         Right x -> return x
   where
-    bin = runGetL deserialize
-    hex = bin <=< BL16.decodeBase16 . C.filter (not . isSpace)
+    bin = runGetS deserialize
+    hex b = case B16.decodeBase16 $ C.filter (not . isSpace) b of
+                Right x -> bin x
+                Left s -> Left (T.unpack s)
 
 parseOffset :: MonadIO m => WebT m OffsetParam
 parseOffset = do
