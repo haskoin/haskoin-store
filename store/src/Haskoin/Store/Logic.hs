@@ -700,10 +700,9 @@ joinDescStreams xs = do
     let ss = map sealConduitT xs
     go Nothing =<< g ss
   where
-    g ss = let f (x, y) = (, [x]) <$> y
-               l = mapMaybe f <$> lift (traverse ($$++ await) ss)
-           in Map.fromListWith (++) <$> l
     j (x, y) = (, [x]) <$> y
+    g ss = let l = mapMaybe j <$> lift (traverse ($$++ await) ss)
+           in Map.fromListWith (++) <$> l
     go m mp = case Map.lookupMax mp of
         Nothing -> return ()
         Just (x, ss) -> do

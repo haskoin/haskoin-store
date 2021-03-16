@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.50.3
+### Fixed
+- Do not return transactions when start anchor not in database.
+
 ## 0.50.2
 ### Fixed
 - Do not use lazy parsers for incoming data that may throw exceptions.
