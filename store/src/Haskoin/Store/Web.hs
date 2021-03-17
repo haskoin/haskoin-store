@@ -2100,11 +2100,13 @@ logIt metrics = do
                         requestBody =
                             req_body var (getRequestBodyChunk req)
                     }
-        bracket start (end var runner req') $ \_ ->
+        bracket start (end var runner req') $ \t1 ->
             app req' $ \res -> do
+                t2 <- systemToUTCTime <$> getSystemTime
+                let diff = round $ diffUTCTime t2 t1 * 1000
                 b <- readTVarIO var
                 let s = responseStatus res
-                    msg = fmtReq b req' <> ": " <> fmtStatus s
+                    msg = fmtReq b req' <> ": " <> fmtStatus s diff
                 if statusIsSuccessful s
                     then runner $ $(logDebugS) "Web" msg
                     else runner $ $(logErrorS) "Web" msg
@@ -2140,7 +2142,7 @@ logIt metrics = do
         when (diff > 10000) $ do
             b <- readTVarIO var
             runner $ $(logWarnS) "Web" $
-                "Slow [" <> cs (show diff) <> "ms]: " <> fmtReq b req
+                "Slow [" <> cs (show diff) <> " ms]: " <> fmtReq b req
 
 reqToken :: Int -> TVar Int -> Maybe WebMetrics -> Middleware
 reqToken max_req tok metrics app req respond =
@@ -2168,6 +2170,9 @@ fmtReq bs req =
                   Right t  -> " [" <> t <> "]"
     in T.decodeUtf8 (m <> " " <> p <> q <> " " <> cs (show v)) <> txt
 
-fmtStatus :: Status -> Text
-fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
+fmtStatus :: Status -> Int -> Text
+fmtStatus s i =
+    cs (show (statusCode s)) <> " " <>
+    cs (statusMessage s) <> " (" <>
+    cs (show i) <> " ms)"
 
