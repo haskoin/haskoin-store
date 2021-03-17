@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Fixed
 - Do not return transactions when start anchor not in database.
+- Use fast transaction counting in cache.
 
 ### Changed
 - Use WAI middlewares to manage stats.

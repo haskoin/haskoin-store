@@ -344,6 +344,7 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     xPubSummary = runInWebReader . xPubSummary
     xPubUnspents xpub = runInWebReader . xPubUnspents xpub
     xPubTxs xpub = runInWebReader . xPubTxs xpub
+    xPubTxCount = runInWebReader . xPubTxCount
     getNumTxData = runInWebReader . getNumTxData
 
 instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadBase (WebT m) where
@@ -365,6 +366,7 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
     xPubSummary = lift . xPubSummary
     xPubUnspents xpub = lift . xPubUnspents xpub
     xPubTxs xpub = lift . xPubTxs xpub
+    xPubTxCount = lift . xPubTxCount
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
     getNumTxData = lift . getNumTxData
