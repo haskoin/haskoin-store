@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
 {-# LANGUAGE TupleSections       #-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
 module Haskoin.Store.Web
     ( -- * Web
       WebConfig (..)
@@ -46,6 +47,8 @@ import           Data.Aeson.Encode.Pretty                (Config (..),
 import           Data.Aeson.Encoding                     (encodingToLazyByteString,
                                                           list)
 import           Data.Aeson.Text                         (encodeToLazyText)
+import           Data.ByteString                         (ByteString)
+import qualified Data.ByteString                         as B
 import qualified Data.ByteString.Base16                  as B16
 import           Data.ByteString.Builder                 (lazyByteString)
 import qualified Data.ByteString.Char8                   as C
@@ -118,7 +121,9 @@ import           Network.HTTP.Types                      (Status (..),
                                                           statusIsSuccessful)
 import           Network.Wai                             (Middleware,
                                                           Request (..),
-                                                          Response, responseLBS,
+                                                          Response,
+                                                          getRequestBodyChunk,
+                                                          responseLBS,
                                                           responseStatus)
 import           Network.Wai.Handler.Warp                (defaultSettings,
                                                           setHost, setPort)
@@ -399,8 +404,8 @@ runWeb cfg@WebConfig{ webHost = host
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
             S.middleware reqLogger
+            S.middleware reqSizeLimit
             S.middleware $ reqToken max_req tok metrics
-            S.middleware $ reqSizeLimit
             S.defaultHandler defHandler
             handlePaths
             S.notFound $ S.raise ThingNotFound
@@ -2069,65 +2074,73 @@ runNoCache True f = local g f
     i s = s { storeCache = Nothing }
 
 logIt :: (MonadUnliftIO m, MonadLoggerIO m)
-      => Maybe WebMetrics
-      -> m Middleware
-
-logIt Nothing = do
+      => Maybe WebMetrics -> m Middleware
+logIt metrics = do
     runner <- askRunInIO
     return $ \app req respond -> do
-        bracket start (end runner req) $ \_ ->
-            app req $ \res -> do
-                let s = responseStatus res
-                    msg = fmtReq req <> " [" <> fmtStatus s <> "]"
-                if statusIsSuccessful s
-                    then runner $ $(logDebugS) "Web" msg
-                    else runner $ $(logErrorS) "Web" msg
-                respond res
-  where
-    start = systemToUTCTime <$> getSystemTime
-    end runner req t1 = do
-        t2 <- systemToUTCTime <$> getSystemTime
-        let diff = round $ diffUTCTime t2 t1 * 1000
-        when (diff > 10000) $
-            runner $ $(logWarnS) "Web" $ "Slow: " <> fmtReq req
-
-logIt (Just metrics) = do
-    runner <- askRunInIO
-    return $ \app req respond -> do
-        stat_var <- newTVarIO Nothing
-        item_var <- newTVarIO 0
-        let vault' = V.insert stat_key stat_var $
-                     V.insert item_key item_var $
-                     vault req
-            req' = req {vault = vault'}
-        bracket start (end runner req') $ \_ ->
+        var <- newTVarIO B.empty
+        req' <- case metrics of
+            Nothing ->
+                return
+                req
+                {
+                    requestBody =
+                        req_body var (getRequestBodyChunk req)
+                }
+            Just m -> do
+                stat_var <- newTVarIO Nothing
+                item_var <- newTVarIO 0
+                let vault' = V.insert (statKey m) stat_var $
+                             V.insert (itemsKey m) item_var $
+                             vault req
+                return
+                    req
+                    {
+                        vault = vault',
+                        requestBody =
+                            req_body var (getRequestBodyChunk req)
+                    }
+        bracket start (end var runner req') $ \_ ->
             app req' $ \res -> do
+                b <- readTVarIO var
                 let s = responseStatus res
-                    msg = fmtReq req <> " [" <> fmtStatus s <> "]"
+                    msg = fmtReq b req' <> ": " <> fmtStatus s
                 if statusIsSuccessful s
                     then runner $ $(logDebugS) "Web" msg
                     else runner $ $(logErrorS) "Web" msg
                 respond res
   where
-    e = error "the lion stands proudly in your way"
     start = systemToUTCTime <$> getSystemTime
-    stat_key = statKey metrics
-    item_key = itemsKey metrics
-    end runner req t1 = do
+    req_body var old_body = do
+        b <- old_body
+        unless (B.null b) . atomically $ modifyTVar var (<> b)
+        return b
+    add_stat d i s = do
+        addStatQuery s
+        addStatTime s d
+        addStatItems s (fromIntegral i)
+    end var runner req t1 = do
         t2 <- systemToUTCTime <$> getSystemTime
         let diff = round $ diffUTCTime t2 t1 * 1000
-            stat_var = fromMaybe e $ V.lookup stat_key (vault req)
-            item_var = fromMaybe e $ V.lookup item_key (vault req)
-        i <- readTVarIO item_var
-        everyStat metrics `addStatTime` diff
-        everyStat metrics `addStatItems` fromIntegral i
-        readTVarIO stat_var >>= \case
+        case metrics of
             Nothing -> return ()
-            Just f -> do
-                f metrics `addStatTime` diff
-                f metrics `addStatItems` fromIntegral i
-        when (diff > 10000) $
-            runner $ $(logWarnS) "Web" $ "Slow: " <> fmtReq req
+            Just m -> do
+                let m_stat_var = V.lookup (statKey m) (vault req)
+                    m_item_var = V.lookup (itemsKey m) (vault req)
+                i <- case m_item_var of
+                    Nothing       -> return 0
+                    Just item_var -> readTVarIO item_var
+                add_stat diff i (everyStat m)
+                case m_stat_var of
+                    Nothing -> return ()
+                    Just stat_var ->
+                        readTVarIO stat_var >>= \case
+                            Nothing -> return ()
+                            Just f  -> add_stat diff i (f m)
+        when (diff > 10000) $ do
+            b <- readTVarIO var
+            runner $ $(logWarnS) "Web" $
+                "Slow [" <> cs (show diff) <> "ms]: " <> fmtReq b req
 
 reqToken :: Int -> TVar Int -> Maybe WebMetrics -> Middleware
 reqToken max_req tok metrics app req respond =
@@ -2143,13 +2156,17 @@ reqSizeLimit = requestSizeLimitMiddleware lim
     too_big w64 = \_app _req send -> send $
         waiExcept requestEntityTooLarge413 RequestTooLarge
 
-fmtReq :: Request -> Text
-fmtReq req =
+fmtReq :: ByteString -> Request -> Text
+fmtReq bs req =
     let m = requestMethod req
         v = httpVersion req
         p = rawPathInfo req
         q = rawQueryString req
-     in T.decodeUtf8 $ m <> " " <> p <> q <> " " <> cs (show v)
+        txt = case T.decodeUtf8' bs of
+                  Left _   -> " {invalid utf8}"
+                  Right "" -> ""
+                  Right t  -> " [" <> t <> "]"
+    in T.decodeUtf8 (m <> " " <> p <> q <> " " <> cs (show v)) <> txt
 
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
