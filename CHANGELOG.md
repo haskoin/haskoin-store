@@ -5,8 +5,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
 ## 0.50.3
+### Removed
+- Remove web request timeout.
+
 ### Fixed
 - Do not return transactions when start anchor not in database.
+
+### Changed
+- Use WAI middlewares to manage stats.
 
 ## 0.50.2
 ### Fixed

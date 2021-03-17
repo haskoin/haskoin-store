@@ -80,7 +80,6 @@ data Config = Config
     , configStatsdPort      :: !Int
     , configStatsdPrefix    :: !String
     , configWebRequests     :: !Int
-    , configWebReqTimeout   :: !Int
     , configWebPriceGet     :: !Int
     , configCacheThreads    :: !Int
     }
@@ -115,7 +114,6 @@ instance Default Config where
                  , configStatsdPort      = defStatsdPort
                  , configStatsdPrefix    = defStatsdPrefix
                  , configWebRequests     = defWebRequests
-                 , configWebReqTimeout   = defWebReqTimeout
                  , configWebPriceGet     = defWebPriceGet
                  , configCacheThreads    = defCacheThreads
                  }
@@ -281,11 +279,6 @@ defCacheThreads :: Int
 defCacheThreads = unsafePerformIO $
     defEnv "CACHE_THREADS" 8 readMaybe
 {-# NOINLINE defCacheThreads #-}
-
-defWebReqTimeout :: Int
-defWebReqTimeout = unsafePerformIO $
-    defEnv "WEB_REQ_TIMEOUT" (45 * 1000 * 1000) readMaybe
-{-# NOINLINE defWebReqTimeout #-}
 
 defWebPriceGet :: Int
 defWebPriceGet = unsafePerformIO $
@@ -550,13 +543,6 @@ config = do
         <> help "Simultaneous web requests"
         <> showDefault
         <> value (configWebRequests def)
-    configWebReqTimeout <-
-        option auto $
-        metavar "MICROSECONDS"
-        <> long "web-req-timeout"
-        <> help "Web request server timeout"
-        <> showDefault
-        <> value (configWebReqTimeout def)
     configWebPriceGet <-
         option auto $
         metavar "MICROSECONDS"
@@ -648,7 +634,6 @@ run Config { configHost = host
            , configStatsdPort = statsdport
            , configStatsdPrefix = statsdpfx
            , configWebRequests = wreqs
-           , configWebReqTimeout = wtimeout
            , configWebPriceGet = wpget
            , configCacheThreads = cth
            } =
@@ -696,7 +681,6 @@ run Config { configHost = host
                     , webNoMempool = nomem
                     , webStats = stats
                     , webRequests = wreqs
-                    , webReqTimeout = wtimeout
                     , webPriceGet = wpget
                     }
   where

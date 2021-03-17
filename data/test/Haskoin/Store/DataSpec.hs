@@ -47,7 +47,6 @@ serialVals =
     , SerialBox (arbitrary :: Gen (GenericResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResult BlockData))
     , SerialBox (arbitrary :: Gen (RawResultList BlockData))
-    , SerialBox (arbitrary :: Gen Except)
     ]
 
 jsonVals :: [JsonBox]

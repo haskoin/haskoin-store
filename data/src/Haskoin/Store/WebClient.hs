@@ -66,6 +66,7 @@ import           Control.Arrow             (second)
 import           Control.Exception
 import           Control.Lens              ((.~), (?~), (^.))
 import           Control.Monad.Except
+import qualified Data.Aeson                as A
 import           Data.Bytes.Get
 import           Data.Bytes.Put
 import           Data.Bytes.Serial
@@ -237,11 +238,11 @@ checkStatus req res
     | statusIsSuccessful status = return ()
     | isHealthPath && code == 503 = return () -- Ignore health checks
     | otherwise = do
-        e <- runGetS deserialize <$> res ^. HTTP.responseBody
+        e <- A.decodeStrict <$> res ^. HTTP.responseBody
         throwIO $
             case e of
-                Right except -> except :: Store.Except
-                _            -> Store.StringError err
+                Just except -> except :: Store.Except
+                Nothing     -> Store.StringError "could not decode error"
   where
     code = res ^. HTTP.responseStatus . HTTP.statusCode
     message = res ^. HTTP.responseStatus . HTTP.statusMessage

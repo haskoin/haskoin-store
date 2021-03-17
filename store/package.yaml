@@ -50,6 +50,7 @@ dependencies:
   - rocksdb-query >= 0.4.0
   - scotty >= 0.11.5
   - stm >= 2.5.0.0
+  - vault >= 0.3.1.5
   - wai >= 3.2.2.1
   - wai-extra >= 3.1.6
   - warp >= 3.3.10

@@ -2101,45 +2101,8 @@ data Except
     | StringError !String
     | TxIndexConflict ![TxHash]
     | ServerTimeout
+    | RequestTooLarge
     deriving (Show, Eq, Ord, Generic, NFData)
-
-instance Serial Except where
-    serialize ThingNotFound =
-        putWord8 0x00
-    serialize ServerError =
-        putWord8 0x01
-    serialize BadRequest =
-        putWord8 0x02
-    serialize (UserError s) = do
-        putWord8 0x03
-        putLengthBytes (TE.encodeUtf8 (T.pack s))
-    serialize (StringError s) = do
-        putWord8 0x04
-        putLengthBytes (TE.encodeUtf8 (T.pack s))
-    serialize (TxIndexConflict ts) = do
-        putWord8 0x05
-        putList serialize ts
-    serialize ServerTimeout = do
-        putWord8 0x06
-
-    deserialize =
-        getWord8 >>= \case
-        0x00 -> return ThingNotFound
-        0x01 -> return ServerError
-        0x02 -> return BadRequest
-        0x03 -> UserError . T.unpack . TE.decodeUtf8 <$> getLengthBytes
-        0x04 -> StringError . T.unpack . TE.decodeUtf8 <$> getLengthBytes
-        0x05 -> TxIndexConflict <$> getList deserialize
-        0x06 -> return ServerTimeout
-        _    -> fail "Cannot recognize exception"
-
-instance Serialize Except where
-    put = serialize
-    get = deserialize
-
-instance Binary Except where
-    put = serialize
-    get = deserialize
 
 instance Exception Except
 
@@ -2174,6 +2137,9 @@ instance ToJSON Except where
             ServerTimeout ->
                 [ "error" .= String "server-timeout"
                 , "message" .= String "Request is taking too long" ]
+            RequestTooLarge ->
+                [ "error" .= String "request-too-large"
+                , "message" .= String "Request body too large" ]
 
 instance FromJSON Except where
     parseJSON =
@@ -2196,6 +2162,8 @@ instance FromJSON Except where
                     return $ TxIndexConflict txids
                 String "server-timeout" ->
                     return ServerTimeout
+                String "request-too-large" ->
+                    return RequestTooLarge
                 _ -> mzero
 
 toIntTxId :: TxHash -> Word64

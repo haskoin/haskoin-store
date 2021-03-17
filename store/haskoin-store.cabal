@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 50c152992d4ecdb7aa803326a81969a13a63b9f9517fc9ccd0d85294494f68d5
+-- hash: d6fda2240441dbdfd884df223e921e20ca53b6d8d41fa6475dd99c09025afb3f
 
 name:           haskoin-store
 version:        0.50.3
@@ -81,6 +81,7 @@ library
     , transformers >=0.5.6.2
     , unliftio >=0.2.12.1
     , unordered-containers >=0.2.10.0
+    , vault >=0.3.1.5
     , wai >=3.2.2.1
     , wai-extra >=3.1.6
     , warp >=3.3.10
@@ -135,6 +136,7 @@ executable haskoin-store
     , transformers >=0.5.6.2
     , unliftio >=0.2.12.1
     , unordered-containers >=0.2.10.0
+    , vault >=0.3.1.5
     , wai >=3.2.2.1
     , wai-extra >=3.1.6
     , warp >=3.3.10
@@ -193,6 +195,7 @@ test-suite haskoin-store-test
     , transformers >=0.5.6.2
     , unliftio >=0.2.12.1
     , unordered-containers >=0.2.10.0
+    , vault >=0.3.1.5
     , wai >=3.2.2.1
     , wai-extra >=3.1.6
     , warp >=3.3.10
