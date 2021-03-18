@@ -16,8 +16,8 @@ module Haskoin.Store.Database.Reader
     , balanceCF
     ) where
 
-import           Conduit                      (ConduitT, lift, mapC, runConduit,
-                                               sinkList, (.|))
+import           Conduit                      (ConduitT, dropWhileC, lift, mapC,
+                                               runConduit, sinkList, (.|))
 import           Control.Monad.Except         (runExceptT, throwError)
 import           Control.Monad.Reader         (ReaderT, ask, asks, runReaderT)
 import           Data.Bits                    ((.&.))
@@ -197,16 +197,25 @@ addressConduit a bdb s it  =
     f (AddrTxKey _ t) () = t
     f _ _                = undefined
     x = case s of
-        Nothing -> matching it (AddrTxKeyA a)
-        Just (AtTx txh) -> lift (getTxDataDB txh bdb) >>= \case
-            Just TxData {txDataBlock = b@BlockRef{}} ->
-                matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
-            _ -> matching it (AddrTxKeyA a)
+        Nothing ->
+            matching it (AddrTxKeyA a)
         Just (AtBlock bh) ->
             matchingSkip
-            it
-            (AddrTxKeyA a)
-            (AddrTxKeyB a (BlockRef bh maxBound))
+                it
+                (AddrTxKeyA a)
+                (AddrTxKeyB a (BlockRef bh maxBound))
+        Just (AtTx txh) ->
+            lift (getTxDataDB txh bdb) >>= \case
+                Just TxData {txDataBlock = b@BlockRef{}} ->
+                    matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
+                Just TxData {txDataBlock = MemRef{}} ->
+                    let cond (AddrTxKey _a (TxRef MemRef{} th)) =
+                            th /= txh
+                        cond (AddrTxKey _a (TxRef BlockRef{} _th)) =
+                            False
+                    in matching it (AddrTxKeyA a) .|
+                       (dropWhileC (cond . fst) >> mapC id)
+                Nothing -> return ()
 
 getAddressTxsDB ::
        MonadIO m
@@ -231,12 +240,45 @@ getAddressesUnspentsDB ::
     -> Limits
     -> DatabaseReader
     -> m [Unspent]
-getAddressesUnspentsDB addrs limits bdb = do
-    us <-
-        concat <$>
-        mapM (\a -> getAddressUnspentsDB a (deOffset limits) bdb) addrs
-    let us' = sortBy (flip compare `on` unspentBlock) (nub' us)
-    return $ applyLimits limits us'
+getAddressesUnspentsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
+    liftIO $ iters addrs [] $ \cs ->
+    runConduit $
+    joinDescStreams cs .| applyLimitsC limits .| sinkList
+  where
+    iters [] acc f = f acc
+    iters (a : as) acc f =
+        withIterCF db (addrOutCF db) $ \it ->
+        iters as (unspentConduit a bdb (start limits) it : acc) f
+
+unspentConduit :: MonadUnliftIO m
+               => Address
+               -> DatabaseReader
+               -> Maybe Start
+               -> Iterator
+               -> ConduitT i Unspent m ()
+unspentConduit a bdb s it =
+    x .| mapC (uncurry toUnspent)
+  where
+    x = case s of
+        Nothing ->
+            matching it (AddrOutKeyA a)
+        Just (AtBlock h) ->
+            matchingSkip
+                it
+                (AddrOutKeyA a)
+                (AddrOutKeyB a (BlockRef h maxBound))
+        Just (AtTx txh) ->
+            lift (getTxDataDB txh bdb) >>= \case
+                Just TxData {txDataBlock = b@BlockRef{}} ->
+                    matchingSkip it (AddrOutKeyA a) (AddrOutKeyB a b)
+                Just TxData {txDataBlock = MemRef{}} ->
+                    let cond (AddrOutKey _a MemRef{} p) =
+                            outPointHash p /= txh
+                        cond (AddrOutKey _a BlockRef{} _p) =
+                            False
+                    in matching it (AddrOutKeyA a) .|
+                       (dropWhileC (cond . fst) >> mapC id)
+                Nothing -> return ()
 
 getAddressUnspentsDB ::
        MonadIO m
@@ -258,8 +300,15 @@ getAddressUnspentsDB a limits bdb@DatabaseReader{databaseHandle = db} =
                 (AddrOutKeyB a (BlockRef h maxBound))
         Just (AtTx txh) ->
             lift (getTxDataDB txh bdb) >>= \case
-                Just TxData {txDataBlock = b@BlockRef {}} ->
+                Just TxData {txDataBlock = b@BlockRef{}} ->
                     matchingSkip it (AddrOutKeyA a) (AddrOutKeyB a b)
+                Just TxData {txDataBlock = MemRef{}} ->
+                    let cond (AddrOutKey _a MemRef{} p) =
+                            outPointHash p /= txh
+                        cond (AddrOutKey _a BlockRef{} _p) =
+                            False
+                    in matching it (AddrOutKeyA a) .|
+                       (dropWhileC (cond . fst) >> mapC id)
                 _ -> matching it (AddrOutKeyA a)
 
 instance MonadIO m => StoreReadBase (DatabaseReaderT m) where

@@ -2151,7 +2151,7 @@ reqToken max_req tok metrics app req respond =
 reqSizeLimit :: Middleware
 reqSizeLimit = requestSizeLimitMiddleware lim
   where
-    max_len _req = return (Just 4096)
+    max_len _req = return (Just (256 * 1024))
     lim = setOnLengthExceeded too_big $
           setMaxLengthForRequest max_len $
           defaultRequestSizeLimitSettings

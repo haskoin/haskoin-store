@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Remove web request timeout.
 
 ### Fixed
-- Do not return transactions when start anchor not in database.
+- Do not ignore unknown start tx anchors in conduits.
 - Use fast transaction counting in cache.
 
 ### Changed
