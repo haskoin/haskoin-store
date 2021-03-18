@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.47.5
+  version: &version 0.51.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -49,10 +49,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthCheck'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
                 
   '/address/{address}/transactions':
     get:
@@ -94,10 +90,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
                 
   '/address/{address}/transactions/full':
     get:
@@ -130,10 +122,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/address/transactions':
     get:
@@ -175,10 +163,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/address/transactions/full':
     get:
@@ -211,10 +195,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/address/{address}/balance':
     get:
@@ -242,10 +222,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/address/balances':
     get:
@@ -275,10 +251,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/address/{address}/unspent':
     get:
@@ -311,10 +283,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/address/unspent':
     get:
@@ -347,10 +315,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/best':
     get:
@@ -449,10 +413,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
                 
   '/block/{block}/raw':
     get:
@@ -487,10 +447,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/blocks':
     get:
@@ -545,10 +501,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/height/{height}/raw':
     get:
@@ -580,10 +532,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/time/{time}':
     get:
@@ -612,10 +560,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/time/{time}/raw':
     get:
@@ -650,10 +594,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/mtp/{time}':
     get:
@@ -682,10 +622,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/mtp/{time}/raw':
     get:
@@ -720,10 +656,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/block/heights':
     get:
@@ -754,10 +686,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transaction/{txid}':
     get:
@@ -785,10 +713,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transaction/{txid}/raw':
     get:
@@ -818,10 +742,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transaction/{txid}/after/{height}':
     get:
@@ -911,11 +831,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-
         '500':
           description: |
             Publishing transaction failed for one of these reasons:
@@ -927,10 +842,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transactions/block/{block}':
     get:
@@ -961,10 +872,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transactions/block/{block}/raw':
     get:
@@ -997,10 +904,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/transactions/raw':
     get:
@@ -1138,10 +1041,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/xpub/{xpub}/transactions/full':
     get:
@@ -1176,10 +1075,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/xpub/{xpub}/transactions':
     get:
@@ -1227,10 +1122,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/xpub/{xpub}/balances':
     get:
@@ -1287,10 +1178,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/xpub/{xpub}/unspent':
     get:
@@ -1346,10 +1233,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
 
   '/blockchain/balance':
     get:
