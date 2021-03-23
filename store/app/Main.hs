@@ -79,9 +79,7 @@ data Config = Config
     , configStatsdHost      :: !String
     , configStatsdPort      :: !Int
     , configStatsdPrefix    :: !String
-    , configWebRequests     :: !Int
     , configWebPriceGet     :: !Int
-    , configCacheThreads    :: !Int
     }
 
 instance Default Config where
@@ -113,9 +111,7 @@ instance Default Config where
                  , configStatsdHost      = defStatsdHost
                  , configStatsdPort      = defStatsdPort
                  , configStatsdPrefix    = defStatsdPrefix
-                 , configWebRequests     = defWebRequests
                  , configWebPriceGet     = defWebPriceGet
-                 , configCacheThreads    = defCacheThreads
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -269,16 +265,6 @@ defStatsdPort :: Int
 defStatsdPort = unsafePerformIO $
     defEnv "STATSD_PORT" 8125 readMaybe
 {-# NOINLINE defStatsdPort #-}
-
-defWebRequests :: Int
-defWebRequests = unsafePerformIO $
-    defEnv "WEB_REQUESTS" 32 readMaybe
-{-# NOINLINE defWebRequests #-}
-
-defCacheThreads :: Int
-defCacheThreads = unsafePerformIO $
-    defEnv "CACHE_THREADS" 8 readMaybe
-{-# NOINLINE defCacheThreads #-}
 
 defWebPriceGet :: Int
 defWebPriceGet = unsafePerformIO $
@@ -536,13 +522,6 @@ config = do
         <> help "Prefix for statsd metrics"
         <> showDefault
         <> value (configStatsdPrefix def)
-    configWebRequests <-
-        option auto $
-        metavar "INT"
-        <> long "web-requests"
-        <> help "Simultaneous web requests"
-        <> showDefault
-        <> value (configWebRequests def)
     configWebPriceGet <-
         option auto $
         metavar "MICROSECONDS"
@@ -550,13 +529,6 @@ config = do
         <> help "How often to retrieve price information"
         <> showDefault
         <> value (configWebPriceGet def)
-    configCacheThreads <-
-        option auto $
-        metavar "INT"
-        <> long "cache-threads"
-        <> help "Number of simultaneous xpub caching threads"
-        <> showDefault
-        <> value (configCacheThreads def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -633,9 +605,7 @@ run Config { configHost = host
            , configStatsdHost = statsdhost
            , configStatsdPort = statsdport
            , configStatsdPrefix = statsdpfx
-           , configWebRequests = wreqs
            , configWebPriceGet = wpget
-           , configCacheThreads = cth
            } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
         $(logInfoS) "Main" $
@@ -665,7 +635,6 @@ run Config { configHost = host
                     , storeConfCacheRefresh = crefresh
                     , storeConfCacheRetryDelay = cretrydelay
                     , storeConfStats = stats
-                    , storeConfCacheThreads = cth
                     }
         withStore scfg $ \st ->
             runWeb
@@ -680,7 +649,6 @@ run Config { configHost = host
                     , webMaxDiff = maxdiff
                     , webNoMempool = nomem
                     , webStats = stats
-                    , webRequests = wreqs
                     , webPriceGet = wpget
                     }
   where

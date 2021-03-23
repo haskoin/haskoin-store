@@ -186,7 +186,6 @@ data WebConfig = WebConfig
     , webVersion    :: !String
     , webNoMempool  :: !Bool
     , webStats      :: !(Maybe Metrics.Store)
-    , webRequests   :: !Int
     , webPriceGet   :: !Int
     }
 
@@ -194,7 +193,6 @@ data WebState = WebState
     { webConfig  :: !WebConfig
     , webTicker  :: !(TVar (HashMap Text BinfoTicker))
     , webMetrics :: !(Maybe WebMetrics)
-    , webTokens  :: !(TVar Int)
     }
 
 data WebMetrics = WebMetrics
@@ -223,7 +221,6 @@ data WebMetrics = WebMetrics
     , healthStat       :: !StatDist
     , dbStatsStat      :: !StatDist
     , eventsConnected  :: !Metrics.Gauge
-    , inFlightRequests :: !Metrics.Gauge
     , statKey          :: !(V.Key (TVar (Maybe (WebMetrics -> StatDist))))
     , itemsKey         :: !(V.Key (TVar Int))
     }
@@ -255,7 +252,6 @@ createMetrics s = liftIO $ do
     healthStat        <- d "health"
     dbStatsStat       <- d "dbstats"
     eventsConnected   <- g "events.connected"
-    inFlightRequests  <- g "inflight"
     statKey           <- V.newKey
     itemsKey          <- V.newKey
     return WebMetrics{..}
@@ -280,23 +276,6 @@ withGaugeIncrease gf go =
   where
     start m = liftIO $ Metrics.Gauge.inc (gf m)
     end m = liftIO $ Metrics.Gauge.dec (gf m)
-
-withToken :: Int -> TVar Int -> Maybe WebMetrics -> IO a -> IO a
-withToken max_req tok metrics go = do
-    let minf = inFlightRequests <$> metrics
-    bracket (t tok) (p tok) $ \rem -> do
-        let i = fromIntegral $ max_req - rem
-        case minf of
-            Nothing  -> return ()
-            Just inf -> Metrics.Gauge.set inf i
-        go
-  where
-    t tok = atomically $ do
-        ts <- readTVar tok
-        check (0 < ts)
-        modifyTVar tok (subtract 1)
-        readTVar tok
-    p tok _ = atomically $ modifyTVar tok (+1)
 
 setMetrics :: MonadUnliftIO m
            => (WebMetrics -> StatDist)
@@ -386,17 +365,13 @@ runWeb cfg@WebConfig{ webHost = host
                     , webStore = store
                     , webStats = stats
                     , webPriceGet = pget
-                    , webRequests = max_req
                     } = do
     ticker <- newTVarIO HashMap.empty
     metrics <- mapM createMetrics stats
-    tok <- newTVarIO max_req
     let st = WebState
-             {
-                 webConfig = cfg,
-                 webTicker = ticker,
-                 webMetrics = metrics,
-                 webTokens = tok
+             { webConfig = cfg
+             , webTicker = ticker
+             , webMetrics = metrics
              }
         net = storeNetwork store
     withAsync (price net pget ticker) $ \_ -> do
@@ -405,7 +380,6 @@ runWeb cfg@WebConfig{ webHost = host
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
             S.middleware reqLogger
             S.middleware reqSizeLimit
-            S.middleware $ reqToken max_req tok metrics
             S.defaultHandler defHandler
             handlePaths
             S.notFound $ S.raise ThingNotFound
@@ -2079,34 +2053,24 @@ logIt metrics = do
     runner <- askRunInIO
     return $ \app req respond -> do
         var <- newTVarIO B.empty
-        req' <- case metrics of
-            Nothing ->
-                return
-                req
-                {
-                    requestBody =
-                        req_body var (getRequestBodyChunk req)
-                }
-            Just m -> do
-                stat_var <- newTVarIO Nothing
-                item_var <- newTVarIO 0
-                let vault' = V.insert (statKey m) stat_var $
-                             V.insert (itemsKey m) item_var $
-                             vault req
-                return
-                    req
-                    {
-                        vault = vault',
-                        requestBody =
-                            req_body var (getRequestBodyChunk req)
-                    }
+        req' <-
+            let rb = req_body var (getRequestBodyChunk req)
+                rq = req{requestBody = rb}
+            in case metrics of
+                   Nothing -> return rq
+                   Just m -> do
+                       stat_var <- newTVarIO Nothing
+                       item_var <- newTVarIO 0
+                       let vt = V.insert (statKey m) stat_var $
+                                V.insert (itemsKey m) item_var $
+                                vault rq
+                       return rq{vault = vt}
         bracket start (end var runner req') $ \t1 ->
             app req' $ \res -> do
                 t2 <- systemToUTCTime <$> getSystemTime
-                let diff = round $ diffUTCTime t2 t1 * 1000
                 b <- readTVarIO var
                 let s = responseStatus res
-                    msg = fmtReq b req' <> ": " <> fmtStatus s diff
+                    msg = fmtReq b req' <> ": " <> fmtStatus s
                 if statusIsSuccessful s
                     then runner $ $(logDebugS) "Web" msg
                     else runner $ $(logErrorS) "Web" msg
@@ -2144,10 +2108,6 @@ logIt metrics = do
             runner $ $(logWarnS) "Web" $
                 "Slow [" <> cs (show diff) <> " ms]: " <> fmtReq b req
 
-reqToken :: Int -> TVar Int -> Maybe WebMetrics -> Middleware
-reqToken max_req tok metrics app req respond =
-    withToken max_req tok metrics $ app req respond
-
 reqSizeLimit :: Middleware
 reqSizeLimit = requestSizeLimitMiddleware lim
   where
@@ -2170,9 +2130,6 @@ fmtReq bs req =
                   Right t  -> " [" <> t <> "]"
     in T.decodeUtf8 (m <> " " <> p <> q <> " " <> cs (show v)) <> txt
 
-fmtStatus :: Status -> Int -> Text
-fmtStatus s i =
-    cs (show (statusCode s)) <> " " <>
-    cs (statusMessage s) <> " (" <>
-    cs (show i) <> " ms)"
+fmtStatus :: Status -> Text
+fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
 

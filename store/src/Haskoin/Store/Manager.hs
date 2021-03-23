@@ -36,8 +36,7 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheWriter,
-                                                connectRedis, newCacheMetrics,
-                                                newCacheThreads)
+                                                connectRedis, newCacheMetrics)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
@@ -103,8 +102,6 @@ data StoreConfig =
       -- ^ delay in microseconds to retry getting cache lock
         , storeConfStats           :: !(Maybe Metrics.Store)
       -- ^ stats store
-        , storeConfCacheThreads    :: !Int
-      -- ^ how many caching threads
         }
 
 withStore :: (MonadLoggerIO m, MonadUnliftIO m)
@@ -190,15 +187,14 @@ withCache cfg chain db pub action =
             mapM newCacheMetrics (storeConfStats cfg) >>= \metrics ->
             connectRedis redisurl >>= \conn ->
             withSubscription pub $ \evts ->
-            newCacheThreads (storeConfCacheThreads cfg) >>= \cth ->
-            let conf = c conn metrics cth
+            let conf = c conn metrics
             in  withProcess (f conf) $ \p ->
                 cacheWriterProcesses crefresh evts (getProcessMailbox p) $ do
                 action (Just conf)
   where
     crefresh = storeConfCacheRefresh cfg
     f conf cwinbox = runReaderT (cacheWriter conf cwinbox) db
-    c conn metrics cth =
+    c conn metrics =
         CacheConfig
            { cacheConn = conn
            , cacheMin = storeConfCacheMin cfg
@@ -207,7 +203,6 @@ withCache cfg chain db pub action =
            , cacheRefresh = storeConfCacheRefresh cfg
            , cacheRetryDelay = storeConfCacheRetryDelay cfg
            , cacheMetrics = metrics
-           , cacheThreads = cth
            }
 
 cacheWriterProcesses :: MonadUnliftIO m
