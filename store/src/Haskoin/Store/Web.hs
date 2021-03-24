@@ -925,7 +925,11 @@ scottyTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxs -> WebT m [Transaction]
 scottyTxs (GetTxs txids) = do
     setMetrics txStat (length txids)
-    catMaybes <$> mapM getTransaction (nub txids)
+    catMaybes <$> mapM f (nub txids)
+  where
+    f x = lift $ withRunInIO $ \run ->
+        unsafeInterleaveIO . run $
+        getTransaction x
 
 scottyTxRaw ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetTxRaw -> WebT m (RawResult Tx)
