@@ -295,7 +295,8 @@ getXPubUnspents xpub xbals limits =
     go False
   where
     xm = let f x = (balanceAddress (xPubBal x), x)
-         in HashMap.fromList $ map f xbals
+             g = (> 0) . balanceUnspentCount . xPubBal
+         in HashMap.fromList $ map f $ filter g xbals
     go m = isXPubCached xpub >>= \case
         True -> do
             unless m $ incrementCounter cacheHits
