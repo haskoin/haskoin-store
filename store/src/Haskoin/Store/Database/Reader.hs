@@ -24,8 +24,9 @@ import           Data.Bits                    ((.&.))
 import qualified Data.ByteString              as BS
 import           Data.Default                 (def)
 import           Data.Function                (on)
-import           Data.List                    (sort, sortBy)
+import           Data.List                    (sortOn)
 import           Data.Maybe                   (fromMaybe)
+import           Data.Ord                     (Down(..))
 import           Data.Serialize               (encode)
 import           Data.Word                    (Word32, Word64)
 import           Database.RocksDB             (ColumnFamily, Config (..),
@@ -171,7 +172,7 @@ getMempoolDB DatabaseReader{databaseHandle = db} =
 getAddressesTxsDB :: MonadIO m
                   => [Address] -> Limits -> DatabaseReader -> m [TxRef]
 getAddressesTxsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
-    applyLimits limits . sort . concat <$> mapM f addrs
+    applyLimits limits . sortOn Down . concat <$> mapM f addrs
   where
     l = deOffset limits
     f a = liftIO . withIterCF db (addrTxCF db) $ \it ->
@@ -236,7 +237,7 @@ getAddressesUnspentsDB ::
     -> DatabaseReader
     -> m [Unspent]
 getAddressesUnspentsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
-    applyLimits limits . sort . concat <$> mapM f addrs
+    applyLimits limits . sortOn Down . concat <$> mapM f addrs
   where
     l = deOffset limits
     f a = liftIO . withIterCF db (addrTxCF db) $ \it ->

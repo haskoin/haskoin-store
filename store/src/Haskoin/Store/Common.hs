@@ -50,10 +50,11 @@ import qualified Data.HashSet               as H
 import           Data.Hashable              (Hashable)
 import           Data.IntMap.Strict         (IntMap)
 import qualified Data.IntMap.Strict         as I
-import           Data.List                  (sort, sortBy)
+import           Data.List                  (sortOn)
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (catMaybes, mapMaybe)
+import           Data.Ord                   (Down(..))
 import           Data.Serialize             (Serialize (..))
 import           Data.Time.Clock.System     (getSystemTime, systemNanoseconds,
                                              systemSeconds)
@@ -182,7 +183,7 @@ class StoreReadBase m => StoreReadExtra m where
 
     xPubUnspents :: XPubSpec -> [XPubBal] -> Limits -> m [XPubUnspent]
     xPubUnspents _xspec xbals limits =
-        applyLimits limits . sort . concat <$> mapM h cs
+        applyLimits limits . sortOn Down . concat <$> mapM h cs
       where
         l = deOffset limits
         g = balanceAddress . xPubBal

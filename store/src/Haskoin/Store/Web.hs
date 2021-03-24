@@ -64,7 +64,7 @@ import qualified Data.HashMap.Strict                     as HashMap
 import           Data.HashSet                            (HashSet)
 import qualified Data.HashSet                            as HashSet
 import           Data.Int                                (Int64)
-import           Data.List                               (nub, sortBy)
+import           Data.List                               (nub)
 import qualified Data.Map.Strict                         as Map
 import           Data.Maybe                              (catMaybes, fromJust,
                                                           fromMaybe, isJust,
@@ -196,33 +196,33 @@ data WebState = WebState
     }
 
 data WebMetrics = WebMetrics
-    { everyStat        :: !StatDist
-    , blockStat        :: !StatDist
-    , rawBlockStat     :: !StatDist
-    , txStat           :: !StatDist
-    , txsBlockStat     :: !StatDist
-    , txAfterStat      :: !StatDist
-    , postTxStat       :: !StatDist
-    , mempoolStat      :: !StatDist
-    , addrTxStat       :: !StatDist
-    , addrTxFullStat   :: !StatDist
-    , addrBalanceStat  :: !StatDist
-    , addrUnspentStat  :: !StatDist
-    , xPubStat         :: !StatDist
-    , xPubTxStat       :: !StatDist
-    , xPubTxFullStat   :: !StatDist
-    , xPubUnspentStat  :: !StatDist
-    , multiaddrStat    :: !StatDist
-    , rawaddrStat      :: !StatDist
-    , balanceStat      :: !StatDist
-    , unspentStat      :: !StatDist
-    , rawtxStat        :: !StatDist
-    , peerStat         :: !StatDist
-    , healthStat       :: !StatDist
-    , dbStatsStat      :: !StatDist
-    , eventsConnected  :: !Metrics.Gauge
-    , statKey          :: !(V.Key (TVar (Maybe (WebMetrics -> StatDist))))
-    , itemsKey         :: !(V.Key (TVar Int))
+    { everyStat       :: !StatDist
+    , blockStat       :: !StatDist
+    , rawBlockStat    :: !StatDist
+    , txStat          :: !StatDist
+    , txsBlockStat    :: !StatDist
+    , txAfterStat     :: !StatDist
+    , postTxStat      :: !StatDist
+    , mempoolStat     :: !StatDist
+    , addrTxStat      :: !StatDist
+    , addrTxFullStat  :: !StatDist
+    , addrBalanceStat :: !StatDist
+    , addrUnspentStat :: !StatDist
+    , xPubStat        :: !StatDist
+    , xPubTxStat      :: !StatDist
+    , xPubTxFullStat  :: !StatDist
+    , xPubUnspentStat :: !StatDist
+    , multiaddrStat   :: !StatDist
+    , rawaddrStat     :: !StatDist
+    , balanceStat     :: !StatDist
+    , unspentStat     :: !StatDist
+    , rawtxStat       :: !StatDist
+    , peerStat        :: !StatDist
+    , healthStat      :: !StatDist
+    , dbStatsStat     :: !StatDist
+    , eventsConnected :: !Metrics.Gauge
+    , statKey         :: !(V.Key (TVar (Maybe (WebMetrics -> StatDist))))
+    , itemsKey        :: !(V.Key (TVar Int))
     }
 
 createMetrics :: MonadIO m => Metrics.Store -> m WebMetrics
