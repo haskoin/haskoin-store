@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Fixed
 - Reduce balance retrievals for xpubs.
 - Hack UTXO ordering to avoid unwanted behaviours.
+- Do not merge conduits when there are too many.
 
 ## 0.51.0
 ### Fixed

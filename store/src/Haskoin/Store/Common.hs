@@ -182,7 +182,7 @@ class StoreReadBase m => StoreReadExtra m where
 
     xPubUnspents :: XPubSpec -> [XPubBal] -> Limits -> m [XPubUnspent]
     xPubUnspents _xspec xbals limits =
-        sort . applyLimits limits . concat <$> mapM h cs
+        applyLimits limits . sort . concat <$> mapM h cs
       where
         l = deOffset limits
         g = balanceAddress . xPubBal
