@@ -1304,9 +1304,8 @@ scottyBinfoUnspent =
     getBinfoActive unspentStat >>= \(xspecs, addrs) ->
     getNumTxId >>= \numtxid ->
     get_limit >>= \limit ->
-    get_min_conf >>= \min_conf ->
+    get_min_conf >>= \min_conf -> do
     let len = HashSet.size addrs + HashMap.size xspecs
-    in do
     setMetrics unspentStat len
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     height <- getChainHeight
