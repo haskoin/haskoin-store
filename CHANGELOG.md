@@ -6,7 +6,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## 0.52.0
 ### Changed
-- Remove unnecessary performance code.
+- Remove unnecessary performance optimisations.
+
+### Fixed
+- Reduce balance retrievals for xpubs.
+- Hack UTXO ordering to avoid unwanted behaviours.
 
 ## 0.51.0
 ### Fixed

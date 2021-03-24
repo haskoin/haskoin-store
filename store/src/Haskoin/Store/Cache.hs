@@ -34,10 +34,11 @@ import           Control.Monad.Logger        (MonadLoggerIO, logDebugS,
 import           Control.Monad.Reader        (ReaderT (..), ask, asks)
 import           Control.Monad.Trans         (lift)
 import           Control.Monad.Trans.Maybe   (MaybeT (..), runMaybeT)
-import           Data.Bits                   (shift, (.&.), (.|.))
+import           Data.Bits                   (complement, shift, (.&.), (.|.))
 import           Data.ByteString             (ByteString)
+import qualified Data.ByteString             as B
 import           Data.Default                (def)
-import           Data.Either                 (isRight, rights)
+import           Data.Either                 (fromRight, isRight, rights)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as HashMap
 import           Data.HashSet                (HashSet)
@@ -213,25 +214,33 @@ instance (MonadUnliftIO m , MonadLoggerIO m, StoreReadExtra m) =>
     getAddressTxs addr = lift . getAddressTxs addr
     getAddressUnspents addr = lift . getAddressUnspents addr
     getAddressesUnspents addrs = lift . getAddressesUnspents addrs
-    xPubBals xpub =
-        ask >>= \case
-            Nothing  -> lift (xPubBals xpub)
-            Just cfg -> lift (runReaderT (getXPubBalances xpub) cfg)
-    xPubUnspents xpub limits =
-        ask >>= \case
-            Nothing  -> lift (xPubUnspents xpub limits)
-            Just cfg -> lift (runReaderT (getXPubUnspents xpub limits) cfg)
-    xPubTxs xpub limits =
-        ask >>= \case
-            Nothing  -> lift (xPubTxs xpub limits)
-            Just cfg -> lift (runReaderT (getXPubTxs xpub limits) cfg)
-    xPubTxCount xpub =
-        ask >>= \case
-            Nothing  -> lift (xPubTxCount xpub)
-            Just cfg -> lift (runReaderT (getXPubTxCount xpub) cfg)
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
     getNumTxData = lift . getNumTxData
+    xPubBals xpub =
+        ask >>= \case
+            Nothing  -> lift $
+                xPubBals xpub
+            Just cfg -> lift $
+                runReaderT (getXPubBalances xpub) cfg
+    xPubUnspents xpub xbalmap limits =
+        ask >>= \case
+            Nothing  -> lift $
+                xPubUnspents xpub xbalmap limits
+            Just cfg -> lift $
+                runReaderT (getXPubUnspents xpub xbalmap limits) cfg
+    xPubTxs xpub xbalmap limits =
+        ask >>= \case
+            Nothing  -> lift $
+                xPubTxs xpub xbalmap limits
+            Just cfg -> lift $
+                runReaderT (getXPubTxs xpub xbalmap limits) cfg
+    xPubTxCount xpub xbalmap =
+        ask >>= \case
+            Nothing  -> lift $
+                xPubTxCount xpub xbalmap
+            Just cfg -> lift $
+                runReaderT (getXPubTxCount xpub xbalmap) cfg
 
 withCache :: StoreReadBase m => Maybe CacheConfig -> CacheT m a -> m a
 withCache s f = runReaderT f s
@@ -250,24 +259,24 @@ idxPfx = "i"
 
 getXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> Limits -> CacheX m [TxRef]
-getXPubTxs xpub limits = go Nothing
+    => XPubSpec -> XPubBalMap -> Limits -> CacheX m [TxRef]
+getXPubTxs xpub xbalmap limits = go False
   where
     go m = isXPubCached xpub >>= \case
         True -> do
-            when (isNothing m) $ incrementCounter cacheHits
-            cacheGetXPubTxs xpub limits
+            unless m $ incrementCounter cacheHits
+            cacheGetXPubTxs xpub xbalmap limits
         False ->
             case m of
-                Just bals -> lift $ xPubBalsTxs bals limits
-                Nothing -> do
-                    bals <- lift $ xPubBals xpub
-                    newXPubC xpub bals
-                    go (Just bals)
+                True -> lift $ xPubTxs xpub xbalmap limits
+                False -> do
+                    newXPubC xpub xbalmap
+                    go True
 
 getXPubTxCount :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-               => XPubSpec -> CacheX m Word32
-getXPubTxCount xpub = go False
+               => XPubSpec -> XPubBalMap -> CacheX m Word32
+getXPubTxCount xpub xbalmap =
+    go False
   where
     go t = isXPubCached xpub >>= \case
         True -> do
@@ -275,50 +284,53 @@ getXPubTxCount xpub = go False
             cacheGetXPubTxCount xpub
         False ->
             if t
-            then lift $ xPubTxCount xpub
+            then lift $ xPubTxCount xpub xbalmap
             else do
-                bals <- lift $ xPubBals xpub
-                newXPubC xpub bals
+                newXPubC xpub xbalmap
                 go True
 
-getXPubUnspents ::
-       (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> Limits -> CacheX m [XPubUnspent]
-getXPubUnspents xpub limits = go Nothing
+getXPubUnspents :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
+                => XPubSpec -> XPubBalMap -> Limits -> CacheX m [XPubUnspent]
+getXPubUnspents xpub xbalmap limits =
+    go False
   where
     go m = isXPubCached xpub >>= \case
         True -> do
-            when (isNothing m) $ incrementCounter cacheHits
-            process =<< cacheGetXPubBalances xpub
+            unless m $ incrementCounter cacheHits
+            process
         False -> case m of
-            Just bals -> lift $ xPubBalsUnspents bals limits
-            Nothing -> do
-                bals <- lift $ xPubBals xpub
-                newXPubC xpub bals
-                go (Just bals)
-    process bals = do
-        ops <- map snd <$> cacheGetXPubUnspents xpub limits
+            True ->
+                lift $ xPubUnspents xpub xbalmap limits
+            False -> do
+                newXPubC xpub xbalmap
+                go True
+    process = do
+        ops <- map snd <$> cacheGetXPubUnspents xpub xbalmap limits
         uns <- catMaybes <$> lift (mapM getUnspent ops)
-        let g b = (balanceAddress (xPubBal b), xPubBalPath b)
-            addrmap = Map.fromList (map g bals)
-            f u = either
+        let f u = either
                   (const Nothing)
                   (\a -> Just (a, u))
                   (scriptToAddressBS (unspentScript u))
-            addrutxo = mapMaybe f uns
-            e (a, u) = (`XPubUnspent` u) <$> Map.lookup a addrmap
-        return $ mapMaybe e addrutxo
+            g a = Map.lookup a xbalmap
+            h u x =
+                XPubUnspent
+                {
+                    xPubUnspent = u,
+                    xPubUnspentPath = xPubBalPath x
+                }
+            us = mapMaybe f uns
+            i a u = h u <$> g a
+        return $ mapMaybe (uncurry i) us
 
-getXPubBalances ::
-       (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> CacheX m [XPubBal]
+getXPubBalances :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
+                => XPubSpec -> CacheX m [XPubBal]
 getXPubBalances xpub = isXPubCached xpub >>= \case
     True -> do
         incrementCounter cacheHits
         cacheGetXPubBalances xpub
     False -> do
         bals <- lift $ xPubBals xpub
-        newXPubC xpub bals
+        newXPubC xpub (xPubBalMap bals)
         return bals
 
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
@@ -352,9 +364,10 @@ redisGetXPubTxCount xpub = Redis.zcard (txSetPfx <> encode xpub)
 cacheGetXPubTxs ::
        (StoreReadBase m, MonadLoggerIO m)
     => XPubSpec
+    -> XPubBalMap
     -> Limits
     -> CacheX m [TxRef]
-cacheGetXPubTxs xpub limits =
+cacheGetXPubTxs xpub _xbalmap limits =
     case start limits of
         Nothing ->
             go Nothing
@@ -380,9 +393,10 @@ cacheGetXPubTxs xpub limits =
 cacheGetXPubUnspents ::
        (StoreReadBase m, MonadLoggerIO m)
     => XPubSpec
+    -> XPubBalMap
     -> Limits
     -> CacheX m [(BlockRef, OutPoint)]
-cacheGetXPubUnspents xpub limits =
+cacheGetXPubUnspents xpub xbalmap limits =
     case start limits of
         Nothing ->
             go Nothing
@@ -680,13 +694,13 @@ doSync =
         syncMempoolC
         void pruneDB
 
-lenNotNull :: [XPubBal] -> Int
-lenNotNull bals = length $ filter (not . nullBalance . xPubBal) bals
+lenNotNull :: XPubBalMap -> Int
+lenNotNull = length . filter (not . nullBalance . xPubBal) . Map.elems
 
 newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> [XPubBal] -> CacheX m ()
-newXPubC xpub bals = should_index >>= \i ->
+    => XPubSpec -> XPubBalMap -> CacheX m ()
+newXPubC xpub xbalmap = should_index >>= \i ->
     if i
     then do
         incrementCounter cacheMisses
@@ -696,20 +710,20 @@ newXPubC xpub bals = should_index >>= \i ->
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     should_index =
         asks cacheMin >>= \x ->
-        if x <= lenNotNull bals then inSync else return False
+        if x <= lenNotNull xbalmap then inSync else return False
     index =
         bracket set_index unset_index $ \y -> when y $
         withMetrics cacheIndexTime $ do
         xpubtxt <- xpubText xpub
         $(logDebugS) "Cache" $
-            "Caching " <> xpubtxt <> ": " <> cs (show (length bals)) <>
-            " addresses / " <> cs (show (lenNotNull bals)) <>
-            " used"
-        utxo <- lift $ xPubUnspents xpub def
+            "Caching " <> xpubtxt <> ": " <>
+            cs (show (Map.size xbalmap)) <> " addresses / " <>
+            cs (show (lenNotNull xbalmap)) <> " used"
+        utxo <- lift $ xPubUnspents xpub xbalmap def
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <>
             " utxos"
-        xtxs <- lift $ xPubTxs xpub def
+        xtxs <- lift $ xPubTxs xpub xbalmap def
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <>
             " txs"
@@ -722,6 +736,7 @@ newXPubC xpub bals = should_index >>= \i ->
             return $ b >> c >> d >> e >> return ()
         $(logDebugS) "Cache" $ "Cached " <> xpubtxt
     key = idxPfx <> encode xpub
+    bals = Map.elems xbalmap
     opts = Redis.SetOpts
            { Redis.setSeconds = Just 600
            , Redis.setMilliseconds = Nothing
@@ -1194,27 +1209,32 @@ redisAddXPubUnspents ::
     => XPubSpec
     -> [(OutPoint, BlockRef)]
     -> m (f Integer)
-redisAddXPubUnspents _ [] = return (pure 0)
+redisAddXPubUnspents _ [] =
+    return (pure 0)
 redisAddXPubUnspents xpub utxo =
     zadd (utxoPfx <> encode xpub) $
     map (\(p, r) -> (blockRefScore r, encode p)) utxo
 
 redisRemXPubUnspents ::
        (Applicative f, RedisCtx m f) => XPubSpec -> [OutPoint] -> m (f Integer)
-redisRemXPubUnspents _ []     = return (pure 0)
-redisRemXPubUnspents xpub ops = zrem (utxoPfx <> encode xpub) (map encode ops)
+redisRemXPubUnspents _ [] =
+    return (pure 0)
+redisRemXPubUnspents xpub ops =
+    zrem (utxoPfx <> encode xpub) (map encode ops)
 
 redisAddXPubBalances ::
        (Monad f, RedisCtx m f) => XPubSpec -> [XPubBal] -> m (f ())
 redisAddXPubBalances _ [] = return (pure ())
 redisAddXPubBalances xpub bals = do
     xs <- mapM (uncurry (Redis.hset (balancesPfx <> encode xpub))) entries
-    ys <-
-        forM bals $ \b ->
-            redisSetAddrInfo
-                (balanceAddress (xPubBal b))
-                AddressXPub
-                    {addressXPubSpec = xpub, addressXPubPath = xPubBalPath b}
+    ys <- forM bals $ \b ->
+        redisSetAddrInfo
+        (balanceAddress (xPubBal b))
+        AddressXPub
+        {
+            addressXPubSpec = xpub,
+            addressXPubPath = xPubBalPath b
+        }
     return $ sequence_ xs >> sequence_ ys
   where
     entries = map (\b -> (encode (xPubBalPath b), encode (xPubBal b))) bals

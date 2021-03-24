@@ -40,7 +40,6 @@ import           Haskoin                      (Address, BlockHash, BlockHeight,
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Types
-import           Haskoin.Store.Logic          (joinDescStreams)
 import           UnliftIO                     (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader

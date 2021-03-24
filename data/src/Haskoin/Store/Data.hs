@@ -510,7 +510,15 @@ data Unspent =
         , unspentScript  :: !ByteString
         , unspentAddress :: !(Maybe Address)
         }
-    deriving (Show, Eq, Ord, Generic, Hashable, NFData)
+    deriving (Show, Eq, Generic, Hashable, NFData)
+
+-- | Follow same order as in database and cache by inverting outpoint sort
+-- order.
+instance Ord Unspent where
+    compare a b =
+        compare
+        (unspentBlock a, unspentPoint b)
+        (unspentBlock b, unspentPoint a)
 
 instance Serial Unspent where
     serialize Unspent{..} = do
@@ -1437,10 +1445,10 @@ xPubBalParseJSON net =
 -- | Unspent transaction for extended public key.
 data XPubUnspent =
     XPubUnspent
-        { xPubUnspentPath :: ![KeyIndex]
-        , xPubUnspent     :: !Unspent
+        { xPubUnspent     :: !Unspent
+        , xPubUnspentPath :: ![KeyIndex]
         }
-    deriving (Show, Eq, Generic, NFData)
+    deriving (Show, Eq, Ord, Generic, NFData)
 
 instance Serial XPubUnspent where
     serialize XPubUnspent{..} = do
@@ -1460,35 +1468,18 @@ instance Binary XPubUnspent where
     get = deserialize
 
 xPubUnspentToJSON :: Network -> XPubUnspent -> Value
-xPubUnspentToJSON
-    net
-    XPubUnspent
-    {
-        xPubUnspentPath = p,
-        xPubUnspent = u
-    } =
-    A.object
-    [ "path" .= p
-    , "unspent" .= unspentToJSON net u
-    ]
+xPubUnspentToJSON net XPubUnspent{xPubUnspentPath = p, xPubUnspent = u} =
+    A.object ["unspent" .= unspentToJSON net u, "path" .= p]
 
 xPubUnspentToEncoding :: Network -> XPubUnspent -> Encoding
-xPubUnspentToEncoding
-    net
-    XPubUnspent
-    {
-        xPubUnspentPath = p,
-        xPubUnspent = u
-    } =
-    AE.pairs $
-    "path" .= p <>
-    "unspent" `AE.pair` unspentToEncoding net u
+xPubUnspentToEncoding net XPubUnspent{xPubUnspentPath = p, xPubUnspent = u} =
+    AE.pairs $ "unspent" `AE.pair` unspentToEncoding net u <> "path" .= p
 
 xPubUnspentParseJSON :: Network -> Value -> Parser XPubUnspent
 xPubUnspentParseJSON net =
     A.withObject "xpubunspent" $ \o -> do
-        p <- o .: "path"
         u <- o .: "unspent" >>= unspentParseJSON net
+        p <- o .: "path"
         return XPubUnspent {xPubUnspentPath = p, xPubUnspent = u}
 
 data XPubSummary =

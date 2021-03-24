@@ -13,8 +13,6 @@ module Haskoin.Store.Logic
     , importBlock
     , newMempoolTx
     , deleteUnconfirmedTx
-    , streamThings
-    , joinDescStreams
     ) where
 
 import           Conduit              (ConduitT, await, lift, sealConduitT,
@@ -673,45 +671,3 @@ prevOuts tx = filter (/= nullOutPoint) (map prevOutput (txIn tx))
 
 testPresent :: StoreReadBase m => Tx -> m Bool
 testPresent tx = isJust <$> getActiveTxData (txHash tx)
-
-streamThings :: Monad m
-             => (Limits -> m [a])
-             -> (a -> TxHash)
-             -> Limits
-             -> ConduitT () a m ()
-streamThings f g l =
-    lift (f l{limit = 50}) >>= \case
-    [] -> return ()
-    ls -> do
-        mapM yield ls
-        go (last ls)
-  where
-    go x =
-        lift (f (Limits 50 1 (Just (AtTx (g x))))) >>= \case
-        [] -> return ()
-        ls -> do
-            mapM yield ls
-            go (last ls)
-
-joinDescStreams :: (Monad m, Ord a)
-                => [ConduitT () a m ()]
-                -> ConduitT () a m ()
-joinDescStreams xs = do
-    let ss = map sealConduitT xs
-    go Nothing =<< g ss
-  where
-    j (x, y) = (, [x]) <$> y
-    g ss = let l = mapMaybe j <$> lift (traverse ($$++ await) ss)
-           in Map.fromListWith (++) <$> l
-    go m mp = case Map.lookupMax mp of
-        Nothing -> return ()
-        Just (x, ss) -> do
-            case m of
-                Nothing -> yield x
-                Just x'
-                  | x == x' -> return ()
-                  | otherwise -> yield x
-            mp1 <- g ss
-            let mp2 = Map.deleteMax mp
-                mp' = Map.unionWith (++) mp1 mp2
-            go (Just x) mp'

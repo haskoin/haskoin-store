@@ -14,12 +14,12 @@ module Haskoin.Store.Common
     , StoreWrite(..)
     , StoreEvent(..)
     , PubExcept(..)
+    , XPubBalMap
     , getActiveBlock
     , getActiveTxData
     , getDefaultBalance
     , getSpenders
-    , xPubBalsTxs
-    , xPubBalsUnspents
+    , xPubBalMap
     , getTransaction
     , getNumTransaction
     , blockAtOrBefore
@@ -30,9 +30,13 @@ module Haskoin.Store.Common
     , sortTxs
     , nub'
     , microseconds
+    , streamThings
+    , joinDescStreams
     ) where
 
-import           Conduit                    (ConduitT, dropC, mapC, takeC)
+import           Conduit                    (ConduitT, await, dropC, mapC,
+                                             runConduit, sealConduitT, sinkList,
+                                             takeC, yield, ($$++), (.|))
 import           Control.DeepSeq            (NFData)
 import           Control.Exception          (Exception)
 import           Control.Monad              (forM)
@@ -47,7 +51,9 @@ import           Data.Hashable              (Hashable)
 import           Data.IntMap.Strict         (IntMap)
 import qualified Data.IntMap.Strict         as I
 import           Data.List                  (sortBy)
-import           Data.Maybe                 (catMaybes)
+import           Data.Map.Strict            (Map)
+import qualified Data.Map.Strict            as Map
+import           Data.Maybe                 (catMaybes, mapMaybe)
 import           Data.Serialize             (Serialize (..))
 import           Data.Time.Clock.System     (getSystemTime, systemNanoseconds,
                                              systemSeconds)
@@ -111,19 +117,25 @@ class Monad m => StoreReadBase m where
     getMempool :: m [(UnixTime, TxHash)]
 
 class StoreReadBase m => StoreReadExtra m where
+    getAddressesTxs :: [Address] -> Limits -> m [TxRef]
+    getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
+    getInitialGap :: m Word32
+    getMaxGap :: m Word32
+    getNumTxData :: Word64 -> m [TxData]
+
     getBalances :: [Address] -> m [Balance]
     getBalances as =
         zipWith f as <$> mapM getBalance as
       where
         f a Nothing  = zeroBalance a
         f _ (Just b) = b
-    getAddressesTxs :: [Address] -> Limits -> m [TxRef]
+
     getAddressTxs :: Address -> Limits -> m [TxRef]
     getAddressTxs a = getAddressesTxs [a]
+
     getAddressUnspents :: Address -> Limits -> m [Unspent]
     getAddressUnspents a = getAddressesUnspents [a]
-    getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
-    getNumTxData :: Word64 -> m [TxData]
+
     xPubBals :: XPubSpec -> m [XPubBal]
     xPubBals xpub = do
         igap <- getInitialGap
@@ -149,49 +161,49 @@ class StoreReadBase m => StoreReadExtra m where
             if all nullBalance bs
                 then return xbs
                 else (xbs <>) <$> derive_until_gap gap m as2
-    xPubSummary :: XPubSpec -> m XPubSummary
-    xPubSummary xpub = do
-        bs <- filter (not . nullBalance . xPubBal) <$> xPubBals xpub
-        let ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
-            ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
-            uc =
-                sum
-                    [ c
-                    | XPubBal {xPubBal = Balance {balanceUnspentCount = c}} <-
-                          bs
-                    ]
-            xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
-            rx =
-                sum
-                    [ r
-                    | XPubBal {xPubBal = Balance {balanceTotalReceived = r}} <-
-                          xt
-                    ]
-        return
-            XPubSummary
-                { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
-                , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
-                , xPubSummaryReceived = rx
-                , xPubUnspentCount = uc
-                , xPubChangeIndex = ch
-                , xPubExternalIndex = ex
-                }
-    xPubUnspents :: XPubSpec -> Limits -> m [XPubUnspent]
-    xPubUnspents xpub limits = do
-        xs <- filter positive <$> xPubBals xpub
-        sortBy (compare `on` unsblock) . applyLimits limits <$> xUns limits xs
+
+    xPubSummary :: XPubSpec -> XPubBalMap -> m XPubSummary
+    xPubSummary _xspec xbalmap = return
+        XPubSummary
+        { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
+        , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
+        , xPubSummaryReceived = rx
+        , xPubUnspentCount = uc
+        , xPubChangeIndex = ch
+        , xPubExternalIndex = ex
+        }
       where
-        unsblock = unspentBlock . xPubUnspent
-        positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
-    xPubTxs :: XPubSpec -> Limits -> m [TxRef]
-    xPubTxs xpub limits = do
-        bs <- xPubBals xpub
-        let as = map (balanceAddress . xPubBal) bs
-        getAddressesTxs as limits
-    xPubTxCount :: XPubSpec -> m Word32
-    xPubTxCount xpub = fromIntegral . length <$> xPubTxs xpub def
-    getMaxGap :: m Word32
-    getInitialGap :: m Word32
+        bs = filter (not . nullBalance . xPubBal) (Map.elems xbalmap)
+        ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
+        ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
+        uc = sum [balanceUnspentCount (xPubBal b) | b <- bs]
+        xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
+        rx = sum [balanceTotalReceived (xPubBal b) | b <- xt]
+
+    xPubUnspents :: XPubSpec -> XPubBalMap -> Limits -> m [XPubUnspent]
+    xPubUnspents _xspec xbalmap limits =
+        runConduit $
+        joinDescStreams cs .|
+        applyLimitsC limits .|
+        sinkList
+      where
+        bs = Map.elems xbalmap
+        cs = map i (filter ((> 0) . balanceUnspentCount . xPubBal) bs)
+        i b = streamThings (h b) Nothing (deOffset limits)
+        f b t = XPubUnspent {xPubUnspentPath = xPubBalPath b, xPubUnspent = t}
+        h b l = map (f b) <$> getAddressUnspents (balanceAddress (xPubBal b)) l
+
+    xPubTxs :: XPubSpec -> XPubBalMap -> Limits -> m [TxRef]
+    xPubTxs _xspec xbalmap limits =
+        let as = map balanceAddress $
+                 filter (not . nullBalance) $
+                 map xPubBal $
+                 Map.elems xbalmap
+        in getAddressesTxs as limits
+
+    xPubTxCount :: XPubSpec -> XPubBalMap -> m Word32
+    xPubTxCount xspec xbalmap =
+        fromIntegral . length <$> xPubTxs xspec xbalmap def
 
 class StoreWrite m where
     setBest :: BlockHash -> m ()
@@ -209,6 +221,11 @@ class StoreWrite m where
     setBalance :: Balance -> m ()
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
+
+type XPubBalMap = Map Address XPubBal
+
+xPubBalMap :: [XPubBal] -> XPubBalMap
+xPubBalMap = Map.fromList . map (\x -> (balanceAddress (xPubBal x), x))
 
 getSpenders :: StoreReadBase m => TxHash -> m (IntMap Spender)
 getSpenders th =
@@ -234,14 +251,6 @@ getDefaultBalance a = getBalance a >>= \case
     Nothing -> return $ zeroBalance a
     Just  b -> return b
 
-xUns :: StoreReadExtra f => Limits -> [XPubBal] -> f [XPubUnspent]
-xUns limits bs = concat <$> mapM g bs
-  where
-    f p t = XPubUnspent {xPubUnspentPath = p, xPubUnspent = t}
-    g b =
-        map (f (xPubBalPath b)) <$>
-        getAddressUnspents (balanceAddress (xPubBal b)) (deOffset limits)
-
 deriveAddresses :: DeriveAddr -> XPubKey -> Word32 -> [(Word32, Address)]
 deriveAddresses derive xpub start = map (\i -> (i, derive xpub i)) [start ..]
 
@@ -249,28 +258,6 @@ deriveFunction :: DeriveType -> DeriveAddr
 deriveFunction DeriveNormal i = fst . deriveAddr i
 deriveFunction DeriveP2SH i   = fst . deriveCompatWitnessAddr i
 deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
-
-xPubBalsUnspents ::
-       StoreReadExtra m
-    => [XPubBal]
-    -> Limits
-    -> m [XPubUnspent]
-xPubBalsUnspents bals limits = do
-    let xs = filter positive bals
-    applyLimits limits <$> xUns limits xs
-  where
-    positive XPubBal {xPubBal = Balance {balanceUnspentCount = c}} = c > 0
-
-xPubBalsTxs ::
-       StoreReadExtra m
-    => [XPubBal]
-    -> Limits
-    -> m [TxRef]
-xPubBalsTxs bals limits = do
-    let as = map balanceAddress . filter (not . nullBalance) $ map xPubBal bals
-    ts <- concat <$> mapM (\a -> getAddressTxs a (deOffset limits)) as
-    let ts' = sortBy (flip compare `on` txRefBlock) (nub' ts)
-    return $ applyLimits limits ts'
 
 getTransaction ::
        (Monad m, StoreReadBase m) => TxHash -> m (Maybe Transaction)
@@ -359,7 +346,9 @@ applyLimit 0 = id
 applyLimit l = take (fromIntegral l)
 
 deOffset :: Limits -> Limits
-deOffset l = l { limit = limit l + offset l, offset = 0}
+deOffset l = case limit l of
+    0 -> l{offset = 0}
+    _ -> l{limit = limit l + offset l, offset = 0}
 
 applyLimitsC :: Monad m => Limits -> ConduitT i i m ()
 applyLimitsC Limits {..} = applyOffsetC offset >> applyLimitC limit
@@ -392,3 +381,47 @@ microseconds =
     let f t = toInteger (systemSeconds t) * 1000000
             + toInteger (systemNanoseconds t) `div` 1000
     in liftIO $ f <$> getSystemTime
+
+streamThings :: Monad m
+             => (Limits -> m [a])
+             -> Maybe (a -> TxHash)
+             -> Limits
+             -> ConduitT () a m ()
+streamThings getit gettx limits =
+    lift (getit limits) >>= \case
+    [] -> return ()
+    ls -> mapM yield ls >> go limits (last ls)
+  where
+    h l x = case gettx of
+        Just g -> Just l{offset = 1, start = Just (AtTx (g x))}
+        Nothing -> case limit l of
+            0 -> Nothing
+            _ -> Just l{offset = offset l + limit l}
+    go l x = case h l x of
+        Nothing -> return ()
+        Just l' -> lift (getit l') >>= \case
+            [] -> return ()
+            ls -> mapM yield ls >> go l' (last ls)
+
+joinDescStreams :: (Monad m, Ord a)
+                => [ConduitT () a m ()]
+                -> ConduitT () a m ()
+joinDescStreams xs = do
+    let ss = map sealConduitT xs
+    go Nothing =<< g ss
+  where
+    j (x, y) = (, [x]) <$> y
+    g ss = let l = mapMaybe j <$> lift (traverse ($$++ await) ss)
+           in Map.fromListWith (++) <$> l
+    go m mp = case Map.lookupMax mp of
+        Nothing -> return ()
+        Just (x, ss) -> do
+            case m of
+                Nothing -> yield x
+                Just x'
+                  | x == x' -> return ()
+                  | otherwise -> yield x
+            mp1 <- g ss
+            let mp2 = Map.deleteMax mp
+                mp' = Map.unionWith (++) mp1 mp2
+            go (Just x) mp'
