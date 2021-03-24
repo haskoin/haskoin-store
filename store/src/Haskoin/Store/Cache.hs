@@ -223,24 +223,24 @@ instance (MonadUnliftIO m , MonadLoggerIO m, StoreReadExtra m) =>
                 xPubBals xpub
             Just cfg -> lift $
                 runReaderT (getXPubBalances xpub) cfg
-    xPubUnspents xpub xbalmap limits =
+    xPubUnspents xpub xbals limits =
         ask >>= \case
             Nothing  -> lift $
-                xPubUnspents xpub xbalmap limits
+                xPubUnspents xpub xbals limits
             Just cfg -> lift $
-                runReaderT (getXPubUnspents xpub xbalmap limits) cfg
-    xPubTxs xpub xbalmap limits =
+                runReaderT (getXPubUnspents xpub xbals limits) cfg
+    xPubTxs xpub xbals limits =
         ask >>= \case
             Nothing  -> lift $
-                xPubTxs xpub xbalmap limits
+                xPubTxs xpub xbals limits
             Just cfg -> lift $
-                runReaderT (getXPubTxs xpub xbalmap limits) cfg
-    xPubTxCount xpub xbalmap =
+                runReaderT (getXPubTxs xpub xbals limits) cfg
+    xPubTxCount xpub xbals =
         ask >>= \case
             Nothing  -> lift $
-                xPubTxCount xpub xbalmap
+                xPubTxCount xpub xbals
             Just cfg -> lift $
-                runReaderT (getXPubTxCount xpub xbalmap) cfg
+                runReaderT (getXPubTxCount xpub xbals) cfg
 
 withCache :: StoreReadBase m => Maybe CacheConfig -> CacheT m a -> m a
 withCache s f = runReaderT f s
@@ -259,23 +259,23 @@ idxPfx = "i"
 
 getXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> XPubBalMap -> Limits -> CacheX m [TxRef]
-getXPubTxs xpub xbalmap limits = go False
+    => XPubSpec -> [XPubBal] -> Limits -> CacheX m [TxRef]
+getXPubTxs xpub xbals limits = go False
   where
     go m = isXPubCached xpub >>= \case
         True -> do
             unless m $ incrementCounter cacheHits
-            cacheGetXPubTxs xpub xbalmap limits
+            cacheGetXPubTxs xpub limits
         False ->
             case m of
-                True -> lift $ xPubTxs xpub xbalmap limits
+                True -> lift $ xPubTxs xpub xbals limits
                 False -> do
-                    newXPubC xpub xbalmap
+                    newXPubC xpub xbals
                     go True
 
 getXPubTxCount :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-               => XPubSpec -> XPubBalMap -> CacheX m Word32
-getXPubTxCount xpub xbalmap =
+               => XPubSpec -> [XPubBal] -> CacheX m Word32
+getXPubTxCount xpub xbals =
     go False
   where
     go t = isXPubCached xpub >>= \case
@@ -284,34 +284,36 @@ getXPubTxCount xpub xbalmap =
             cacheGetXPubTxCount xpub
         False ->
             if t
-            then lift $ xPubTxCount xpub xbalmap
+            then lift $ xPubTxCount xpub xbals
             else do
-                newXPubC xpub xbalmap
+                newXPubC xpub xbals
                 go True
 
 getXPubUnspents :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-                => XPubSpec -> XPubBalMap -> Limits -> CacheX m [XPubUnspent]
-getXPubUnspents xpub xbalmap limits =
+                => XPubSpec -> [XPubBal] -> Limits -> CacheX m [XPubUnspent]
+getXPubUnspents xpub xbals limits =
     go False
   where
+    xm = let f x = (balanceAddress (xPubBal x), x)
+         in HashMap.fromList $ map f xbals
     go m = isXPubCached xpub >>= \case
         True -> do
             unless m $ incrementCounter cacheHits
             process
         False -> case m of
             True ->
-                lift $ xPubUnspents xpub xbalmap limits
+                lift $ xPubUnspents xpub xbals limits
             False -> do
-                newXPubC xpub xbalmap
+                newXPubC xpub xbals
                 go True
     process = do
-        ops <- map snd <$> cacheGetXPubUnspents xpub xbalmap limits
+        ops <- map snd <$> cacheGetXPubUnspents xpub limits
         uns <- catMaybes <$> lift (mapM getUnspent ops)
         let f u = either
                   (const Nothing)
                   (\a -> Just (a, u))
                   (scriptToAddressBS (unspentScript u))
-            g a = Map.lookup a xbalmap
+            g a = HashMap.lookup a xm
             h u x =
                 XPubUnspent
                 {
@@ -330,7 +332,7 @@ getXPubBalances xpub = isXPubCached xpub >>= \case
         cacheGetXPubBalances xpub
     False -> do
         bals <- lift $ xPubBals xpub
-        newXPubC xpub (xPubBalMap bals)
+        newXPubC xpub bals
         return bals
 
 isInCache :: MonadLoggerIO m => XPubSpec -> CacheT m Bool
@@ -364,10 +366,9 @@ redisGetXPubTxCount xpub = Redis.zcard (txSetPfx <> encode xpub)
 cacheGetXPubTxs ::
        (StoreReadBase m, MonadLoggerIO m)
     => XPubSpec
-    -> XPubBalMap
     -> Limits
     -> CacheX m [TxRef]
-cacheGetXPubTxs xpub _xbalmap limits =
+cacheGetXPubTxs xpub limits =
     case start limits of
         Nothing ->
             go Nothing
@@ -393,10 +394,9 @@ cacheGetXPubTxs xpub _xbalmap limits =
 cacheGetXPubUnspents ::
        (StoreReadBase m, MonadLoggerIO m)
     => XPubSpec
-    -> XPubBalMap
     -> Limits
     -> CacheX m [(BlockRef, OutPoint)]
-cacheGetXPubUnspents xpub xbalmap limits =
+cacheGetXPubUnspents xpub limits =
     case start limits of
         Nothing ->
             go Nothing
@@ -694,13 +694,13 @@ doSync =
         syncMempoolC
         void pruneDB
 
-lenNotNull :: XPubBalMap -> Int
-lenNotNull = length . filter (not . nullBalance . xPubBal) . Map.elems
+lenNotNull :: [XPubBal] -> Int
+lenNotNull = length . filter (not . nullBalance . xPubBal)
 
 newXPubC ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
-    => XPubSpec -> XPubBalMap -> CacheX m ()
-newXPubC xpub xbalmap = should_index >>= \i ->
+    => XPubSpec -> [XPubBal] -> CacheX m ()
+newXPubC xpub xbals = should_index >>= \i ->
     if i
     then do
         incrementCounter cacheMisses
@@ -710,33 +710,32 @@ newXPubC xpub xbalmap = should_index >>= \i ->
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     should_index =
         asks cacheMin >>= \x ->
-        if x <= lenNotNull xbalmap then inSync else return False
+        if x <= lenNotNull xbals then inSync else return False
     index =
         bracket set_index unset_index $ \y -> when y $
         withMetrics cacheIndexTime $ do
         xpubtxt <- xpubText xpub
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <>
-            cs (show (Map.size xbalmap)) <> " addresses / " <>
-            cs (show (lenNotNull xbalmap)) <> " used"
-        utxo <- lift $ xPubUnspents xpub xbalmap def
+            cs (show (length xbals)) <> " addresses / " <>
+            cs (show (lenNotNull xbals)) <> " used"
+        utxo <- lift $ xPubUnspents xpub xbals def
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <> cs (show (length utxo)) <>
             " utxos"
-        xtxs <- lift $ xPubTxs xpub xbalmap def
+        xtxs <- lift $ xPubTxs xpub xbals def
         $(logDebugS) "Cache" $
             "Caching " <> xpubtxt <> ": " <> cs (show (length xtxs)) <>
             " txs"
         now <- systemSeconds <$> liftIO getSystemTime
         runRedis $ do
             b <- redisTouchKeys now [xpub]
-            c <- redisAddXPubBalances xpub bals
+            c <- redisAddXPubBalances xpub xbals
             d <- redisAddXPubUnspents xpub (map op utxo)
             e <- redisAddXPubTxs xpub xtxs
             return $ b >> c >> d >> e >> return ()
         $(logDebugS) "Cache" $ "Cached " <> xpubtxt
     key = idxPfx <> encode xpub
-    bals = Map.elems xbalmap
     opts = Redis.SetOpts
            { Redis.setSeconds = Just 600
            , Redis.setMilliseconds = Nothing

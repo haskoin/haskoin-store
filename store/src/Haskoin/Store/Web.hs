@@ -326,8 +326,8 @@ instance (MonadUnliftIO m, MonadLoggerIO m) =>
     getAddressesUnspents as = runInWebReader . getAddressesUnspents as
     xPubBals = runInWebReader . xPubBals
     xPubSummary xpub = runInWebReader . xPubSummary xpub
-    xPubUnspents xpub xbalmap = runInWebReader . xPubUnspents xpub xbalmap
-    xPubTxs xpub xbalmap = runInWebReader . xPubTxs xpub xbalmap
+    xPubUnspents xpub xbals = runInWebReader . xPubUnspents xpub xbals
+    xPubTxs xpub xbals = runInWebReader . xPubTxs xpub xbals
     xPubTxCount xpub = runInWebReader . xPubTxCount xpub
     getNumTxData = runInWebReader . getNumTxData
 
@@ -348,8 +348,8 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
     getAddressesUnspents as = lift . getAddressesUnspents as
     xPubBals = lift . xPubBals
     xPubSummary xpub = lift . xPubSummary xpub
-    xPubUnspents xpub xbalmap = lift . xPubUnspents xpub xbalmap
-    xPubTxs xpub xbalmap = lift . xPubTxs xpub xbalmap
+    xPubUnspents xpub xbals = lift . xPubUnspents xpub xbals
+    xPubTxs xpub xbals = lift . xPubTxs xpub xbals
     xPubTxCount xpub = lift . xPubTxCount xpub
     getMaxGap = lift getMaxGap
     getInitialGap = lift getInitialGap
@@ -1171,16 +1171,16 @@ scottyXPub ::
 scottyXPub (GetXPub xpub deriv (NoCache noCache)) =  do
     setMetrics xPubStat 1
     let xspec = XPubSpec xpub deriv
-    xbalmap <- xPubBalMap <$> xPubBals xspec
-    lift . runNoCache noCache $ xPubSummary xspec xbalmap
+    xbals <- xPubBals xspec
+    lift . runNoCache noCache $ xPubSummary xspec xbals
 
 getXPubTxs :: (MonadUnliftIO m, MonadLoggerIO m)
            => XPubKey -> DeriveType -> LimitsParam -> Bool -> WebT m [TxRef]
 getXPubTxs xpub deriv plimits nocache = do
     limits <- paramToLimits False plimits
     let xspec = XPubSpec xpub deriv
-    xbalmap <- xPubBalMap <$> xPubBals xspec
-    lift . runNoCache nocache $ xPubTxs xspec xbalmap limits
+    xbals <- xPubBals xspec
+    lift . runNoCache nocache $ xPubTxs xspec xbals limits
 
 scottyXPubTxs ::
        (MonadUnliftIO m, MonadLoggerIO m) => GetXPubTxs -> WebT m [TxRef]
@@ -1215,8 +1215,8 @@ scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) = do
     setMetrics xPubUnspentStat 1
     limits <- paramToLimits False pLimits
     let xspec = XPubSpec xpub deriv
-    xbalmap <- xPubBalMap <$> xPubBals xspec
-    lift . runNoCache noCache $ xPubUnspents xspec xbalmap limits
+    xbals <- xPubBals xspec
+    lift . runNoCache noCache $ xPubUnspents xspec xbals limits
 
 ---------------------------------------
 -- Blockchain.info API Compatibility --
@@ -1362,10 +1362,10 @@ getBinfoUnspents numtxid height xspecs addrs = do
                     xp = BinfoXPubPath (xPubSpecKey x) <$> path
                 in (u, xp)
             g x = do
-                xm <- xPubBalMap <$> xPubBals x
+                bs <- xPubBals x
                 return $
                     streamThings
-                    (xPubUnspents x xm)
+                    (xPubUnspents x bs)
                     Nothing
                     def{limit = 250} .|
                     mapC (f x)
@@ -1397,8 +1397,8 @@ getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
     saddrs_ls = HashSet.toList saddrs
     conduits = (<>) <$> mapM xpub_c sxspecs_ls <*> pure (map addr_c saddrs_ls)
     xpub_c x = lift $ do
-        xm <- xPubBalMap <$> xPubBals x
-        return $ streamThings (xPubTxs x xm) (Just txRefHash) def{limit = 50}
+        bs <- xPubBals x
+        return $ streamThings (xPubTxs x bs) (Just txRefHash) def{limit = 50}
     addr_c a = streamThings (getAddressTxs a) (Just txRefHash) def{limit = 50}
     binfo_tx b = toBinfoTx numtxid abook prune b
     compute_bal_change BinfoTx{..} =
@@ -1524,7 +1524,7 @@ scottyMultiAddr =
                 case HashMap.lookup k xbals of
                     Nothing -> return (k, 0)
                     Just bs -> do
-                        n <- xPubTxCount s (xPubBalMap bs)
+                        n <- xPubTxCount s bs
                         return (k, fromIntegral n)
         in fmap HashMap.fromList . mapM f . HashMap.toList
     get_filter = S.param "filter" `S.rescue` const (return BinfoFilterAll)
@@ -1703,7 +1703,7 @@ scottyShortBal =
     is_ext _                          = False
     get_xspec_balance net xpub = do
         xbals <- xPubBals xpub
-        xts <- xPubTxCount xpub (xPubBalMap xbals)
+        xts <- xPubTxCount xpub xbals
         let val = sum $ map balanceAmount $ map xPubBal xbals
             zro = sum $ map balanceZero $ map xPubBal xbals
             exs = filter is_ext xbals

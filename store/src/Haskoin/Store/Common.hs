@@ -14,12 +14,10 @@ module Haskoin.Store.Common
     , StoreWrite(..)
     , StoreEvent(..)
     , PubExcept(..)
-    , XPubBalMap
     , getActiveBlock
     , getActiveTxData
     , getDefaultBalance
     , getSpenders
-    , xPubBalMap
     , getTransaction
     , getNumTransaction
     , blockAtOrBefore
@@ -162,8 +160,8 @@ class StoreReadBase m => StoreReadExtra m where
                 then return xbs
                 else (xbs <>) <$> derive_until_gap gap m as2
 
-    xPubSummary :: XPubSpec -> XPubBalMap -> m XPubSummary
-    xPubSummary _xspec xbalmap = return
+    xPubSummary :: XPubSpec -> [XPubBal] -> m XPubSummary
+    xPubSummary _xspec xbals = return
         XPubSummary
         { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
         , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
@@ -173,37 +171,37 @@ class StoreReadBase m => StoreReadExtra m where
         , xPubExternalIndex = ex
         }
       where
-        bs = filter (not . nullBalance . xPubBal) (Map.elems xbalmap)
+        bs = filter (not . nullBalance . xPubBal) xbals
         ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
         ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
         uc = sum [balanceUnspentCount (xPubBal b) | b <- bs]
         xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
         rx = sum [balanceTotalReceived (xPubBal b) | b <- xt]
 
-    xPubUnspents :: XPubSpec -> XPubBalMap -> Limits -> m [XPubUnspent]
-    xPubUnspents _xspec xbalmap limits =
+    xPubUnspents :: XPubSpec -> [XPubBal] -> Limits -> m [XPubUnspent]
+    xPubUnspents _xspec xbals limits =
         runConduit $
         joinDescStreams cs .|
         applyLimitsC limits .|
         sinkList
       where
-        bs = Map.elems xbalmap
+        bs = xbals
         cs = map i (filter ((> 0) . balanceUnspentCount . xPubBal) bs)
         i b = streamThings (h b) Nothing (deOffset limits)
         f b t = XPubUnspent {xPubUnspentPath = xPubBalPath b, xPubUnspent = t}
         h b l = map (f b) <$> getAddressUnspents (balanceAddress (xPubBal b)) l
 
-    xPubTxs :: XPubSpec -> XPubBalMap -> Limits -> m [TxRef]
-    xPubTxs _xspec xbalmap limits =
+    xPubTxs :: XPubSpec -> [XPubBal] -> Limits -> m [TxRef]
+    xPubTxs _xspec xbals limits =
         let as = map balanceAddress $
                  filter (not . nullBalance) $
                  map xPubBal $
-                 Map.elems xbalmap
+                 xbals
         in getAddressesTxs as limits
 
-    xPubTxCount :: XPubSpec -> XPubBalMap -> m Word32
-    xPubTxCount xspec xbalmap =
-        fromIntegral . length <$> xPubTxs xspec xbalmap def
+    xPubTxCount :: XPubSpec -> [XPubBal] -> m Word32
+    xPubTxCount xspec xbals =
+        fromIntegral . length <$> xPubTxs xspec xbals def
 
 class StoreWrite m where
     setBest :: BlockHash -> m ()
@@ -221,11 +219,6 @@ class StoreWrite m where
     setBalance :: Balance -> m ()
     insertUnspent :: Unspent -> m ()
     deleteUnspent :: OutPoint -> m ()
-
-type XPubBalMap = Map Address XPubBal
-
-xPubBalMap :: [XPubBal] -> XPubBalMap
-xPubBalMap = Map.fromList . map (\x -> (balanceAddress (xPubBal x), x))
 
 getSpenders :: StoreReadBase m => TxHash -> m (IntMap Spender)
 getSpenders th =
