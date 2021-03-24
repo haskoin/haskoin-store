@@ -240,7 +240,7 @@ getAddressesUnspentsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
     applyLimits limits . sortOn Down . concat <$> mapM f addrs
   where
     l = deOffset limits
-    f a = liftIO . withIterCF db (addrTxCF db) $ \it ->
+    f a = liftIO . withIterCF db (addrOutCF db) $ \it ->
         runConduit $
         unspentConduit a bdb (start l) it .|
         applyLimitC (limit l) .|
