@@ -168,21 +168,17 @@ getMempoolDB :: MonadIO m => DatabaseReader -> m [(UnixTime, TxHash)]
 getMempoolDB DatabaseReader{databaseHandle = db} =
     fromMaybe [] <$> retrieve db MemKey
 
-getAddressesTxsDB ::
-       MonadIO m
-    => [Address]
-    -> Limits
-    -> DatabaseReader
-    -> m [TxRef]
+getAddressesTxsDB :: MonadIO m
+                  => [Address] -> Limits -> DatabaseReader -> m [TxRef]
 getAddressesTxsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
-    liftIO $ iters addrs [] $ \cs ->
-    runConduit $
-    joinDescStreams cs .| applyLimitsC limits .| sinkList
+    applyLimits limits . concat <$> mapM f addrs
   where
-    iters [] acc f = f acc
-    iters (a : as) acc f =
-        withIterCF db (addrTxCF db) $ \it ->
-        iters as (addressConduit a bdb (start limits) it : acc) f
+    l = deOffset limits
+    f a = liftIO . withIterCF db (addrTxCF db) $ \it ->
+        runConduit $
+        addressConduit a bdb (start l) it .|
+        applyLimitC (limit l) .|
+        sinkList
 
 addressConduit :: MonadUnliftIO m
                => Address
@@ -240,14 +236,14 @@ getAddressesUnspentsDB ::
     -> DatabaseReader
     -> m [Unspent]
 getAddressesUnspentsDB addrs limits bdb@DatabaseReader{databaseHandle = db} =
-    liftIO $ iters addrs [] $ \cs ->
-    runConduit $
-    joinDescStreams cs .| applyLimitsC limits .| sinkList
+    applyLimits limits . concat <$> mapM f addrs
   where
-    iters [] acc f = f acc
-    iters (a : as) acc f =
-        withIterCF db (addrOutCF db) $ \it ->
-        iters as (unspentConduit a bdb (start limits) it : acc) f
+    l = deOffset limits
+    f a = liftIO . withIterCF db (addrTxCF db) $ \it ->
+        runConduit $
+        unspentConduit a bdb (start l) it .|
+        applyLimitC (limit l) .|
+        sinkList
 
 unspentConduit :: MonadUnliftIO m
                => Address

@@ -25,6 +25,8 @@ module Haskoin.Store.Common
     , deOffset
     , applyLimits
     , applyLimitsC
+    , applyLimit
+    , applyLimitC
     , sortTxs
     , nub'
     , microseconds
@@ -48,7 +50,7 @@ import qualified Data.HashSet               as H
 import           Data.Hashable              (Hashable)
 import           Data.IntMap.Strict         (IntMap)
 import qualified Data.IntMap.Strict         as I
-import           Data.List                  (sortBy)
+import           Data.List                  (sort, sortBy)
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (catMaybes, mapMaybe)
@@ -180,16 +182,14 @@ class StoreReadBase m => StoreReadExtra m where
 
     xPubUnspents :: XPubSpec -> [XPubBal] -> Limits -> m [XPubUnspent]
     xPubUnspents _xspec xbals limits =
-        runConduit $
-        joinDescStreams cs .|
-        applyLimitsC limits .|
-        sinkList
+        sort . applyLimits limits . concat <$> mapM h cs
       where
-        bs = xbals
-        cs = map i (filter ((> 0) . balanceUnspentCount . xPubBal) bs)
-        i b = streamThings (h b) Nothing (deOffset limits)
+        l = deOffset limits
+        g = balanceAddress . xPubBal
+        cs = filter ((> 0) . balanceUnspentCount . xPubBal) xbals
+        i b = getAddressUnspents (balanceAddress (xPubBal b)) l
         f b t = XPubUnspent {xPubUnspentPath = xPubBalPath b, xPubUnspent = t}
-        h b l = map (f b) <$> getAddressUnspents (balanceAddress (xPubBal b)) l
+        h b = map (f b) <$> i b
 
     xPubTxs :: XPubSpec -> [XPubBal] -> Limits -> m [TxRef]
     xPubTxs _xspec xbals limits =
