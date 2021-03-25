@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.51.0
+  version: &version 0.52.2
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1303,7 +1303,7 @@ paths:
       summary: Address Balance & Transactions
       parameters:
         - $ref: '#/components/parameters/binfoAddr'
-        - $ref: '#/components/parameters/binfoCount'
+        - $ref: '#/components/parameters/binfoLimit'
         - $ref: '#/components/parameters/binfoOffset'
       responses:
         '200':

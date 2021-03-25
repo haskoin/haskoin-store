@@ -1666,7 +1666,7 @@ scottyRawAddr =
     get_count = do
         d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
         x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
-        i <- min x <$> (S.param "n" `S.rescue` const (return d))
+        i <- min x <$> (S.param "limit" `S.rescue` const (return d))
         return $ fromIntegral i
     get_offset = do
         x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
