@@ -382,7 +382,7 @@ runWeb cfg@WebConfig{ webHost = host
             S.middleware reqSizeLimit
             S.defaultHandler defHandler
             handlePaths
-            S.notFound $ S.raise ThingNotFound
+            S.notFound $ raise_ ThingNotFound
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
@@ -452,6 +452,7 @@ errStatus ServerTimeout     = status500
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
+    setHeaders
     S.status $ errStatus e
     S.json e
 
