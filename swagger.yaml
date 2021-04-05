@@ -2730,6 +2730,8 @@ components:
           type: string
         activeBech32:
           type: string
+        cashaddr:
+          type: boolean
 
     BinfoMultiAddrReq:
       type: object
