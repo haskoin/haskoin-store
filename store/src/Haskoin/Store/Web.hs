@@ -1446,13 +1446,16 @@ getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
                         | c -> return ()
                         | otherwise -> yield a >> go b'
 
+getCashAddr :: Monad m => WebT m Bool
+getCashAddr = S.param "cashaddr" `S.rescue` const (return False)
+
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
     get_addrs >>= \(addrs', xpubs, saddrs, sxpubs, xspecs) ->
     getNumTxId >>= \numtxid ->
+    getCashAddr >>= \cashaddr ->
     lift (asks webTicker) >>= \ticker ->
     get_price ticker >>= \local ->
-    get_cashaddr >>= \cashaddr ->
     get_offset >>= \offset ->
     get_count >>= \n ->
     get_prune >>= \prune ->
@@ -1546,8 +1549,6 @@ scottyMultiAddr =
             Nothing -> return def
             Just p  -> return $ binfoTickerToSymbol code p
     get_prune = fmap not $ S.param "no_compact"
-        `S.rescue` const (return False)
-    get_cashaddr = S.param "cashaddr"
         `S.rescue` const (return False)
     get_count = do
         d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
@@ -1680,10 +1681,12 @@ scottyRawAddr =
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal =
     getBinfoActive balanceStat >>= \(xspecs, addrs) ->
+    getCashAddr >>= \cashaddr ->
     getNumTxId >>= \numtxid -> do
     setMetrics balanceStat (hl addrs + ml xspecs)
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    abals <- catMaybes <$> mapM (get_addr_balance net) (HashSet.toList addrs)
+    abals <- catMaybes <$>
+             mapM (get_addr_balance net cashaddr) (HashSet.toList addrs)
     xbals <- mapM (get_xspec_balance net) (HashMap.elems xspecs)
     let res = HashMap.fromList (abals <> xbals)
     setHeaders
@@ -1698,12 +1701,16 @@ scottyShortBal =
             binfoShortBalTxCount = balanceTxCount,
             binfoShortBalReceived = balanceTotalReceived
         }
-    get_addr_balance net a =
-        case addrToText net a of
-            Nothing -> return Nothing
-            Just a' -> getBalance a >>= \case
-                Nothing -> return $ Just (a', to_short_bal (zeroBalance a))
-                Just b  -> return $ Just (a', to_short_bal b)
+    get_addr_balance net cashaddr a =
+        let net' = if | cashaddr       -> net
+                      | net == bch     -> btc
+                      | net == bchTest -> btcTest
+                      | otherwise      -> net
+        in case addrToText net' a of
+               Nothing -> return Nothing
+               Just a' -> getBalance a >>= \case
+                   Nothing -> return $ Just (a', to_short_bal (zeroBalance a))
+                   Just b  -> return $ Just (a', to_short_bal b)
     is_ext XPubBal{xPubBalPath = 0:_} = True
     is_ext _                          = False
     get_xspec_balance net xpub = do

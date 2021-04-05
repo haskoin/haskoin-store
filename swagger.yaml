@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.52.2
+  version: &version 0.52.4
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1244,6 +1244,7 @@ paths:
         - $ref: '#/components/parameters/binfoActive'
         - $ref: '#/components/parameters/binfoActiveP2SH'
         - $ref: '#/components/parameters/binfoActiveBech32'
+        - $ref: '#/components/parameters/binfoCashAddr'
       responses:
         '200':
           description: Balance object map.
