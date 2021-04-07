@@ -26,7 +26,7 @@ import           Conduit                                 (ConduitT, await,
 import           Control.Applicative                     ((<|>))
 import           Control.Arrow                           (second)
 import           Control.Concurrent.STM                  (check)
-import           Control.Lens                            ((^.))
+import           Control.Lens                            ((.~), (^.))
 import           Control.Monad                           (forM, forever, unless,
                                                           when, (<=<))
 import           Control.Monad.Logger                    (MonadLoggerIO,
@@ -386,6 +386,22 @@ runWeb cfg@WebConfig{ webHost = host
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
+
+getRates :: (MonadUnliftIO m, MonadLoggerIO m)
+         => Network -> Text -> [Word64] -> m [BinfoRate]
+getRates net currency times = do
+    handleAny err $ do
+        r <- liftIO $ Wreq.asJSON =<< Wreq.postWith opts url body
+        return $ r ^. Wreq.responseBody
+  where
+    err e = do
+        $(logErrorS) "Web" "Could not get historic prices"
+        return []
+    body = toJSON times
+    base = Wreq.defaults &
+           Wreq.param "base" .~ [T.toUpper (T.pack (getNetworkName net))]
+    opts = base & Wreq.param "quote" .~ [currency]
+    url = "https://api.blockchain.info/price/index-series"
 
 price :: (MonadUnliftIO m, MonadLoggerIO m)
       => Network

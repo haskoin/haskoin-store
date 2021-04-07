@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 710e372481353f316363a2d8c3a13be49c3531b328b4d4f6237ad9208a7a3535
+-- hash: 76582ece19c7f731811889eb943a5a281e48f5339b4ea24910f122b90326ba8c
 
 name:           haskoin-store-data
-version:        0.52.0
+version:        0.52.5
 synopsis:       Data for Haskoin Store
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -55,6 +55,7 @@ library
     , scotty >=0.11.5
     , string-conversions >=0.4.0.1
     , text >=1.2.3.0
+    , time >=1.9.3
     , unordered-containers >=0.2.10
     , wreq >=0.5.3.2
   default-language: Haskell2010
@@ -92,6 +93,7 @@ test-suite haskoin-store-test
     , scotty >=0.11.5
     , string-conversions >=0.4.0.1
     , text >=1.2.3.0
+    , time >=1.9.3
     , unordered-containers >=0.2.10
     , wreq >=0.5.3.2
   default-language: Haskell2010

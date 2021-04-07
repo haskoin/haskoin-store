@@ -68,6 +68,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoBlockInfo)
     , JsonBox (arbitrary :: Gen BinfoInfo)
     , JsonBox (arbitrary :: Gen BinfoSpender)
+    , JsonBox (arbitrary :: Gen BinfoRate)
     , JsonBox (arbitrary :: Gen BinfoTicker)
     , JsonBox (arbitrary :: Gen BinfoTxId)
     , JsonBox (arbitrary :: Gen BinfoShortBal)
@@ -550,6 +551,9 @@ instance Arbitrary BinfoSymbol where
         getBinfoSymbolAfter <- arbitrary
         getBinfoSymbolLocal <- arbitrary
         return BinfoSymbol {..}
+
+instance Arbitrary BinfoRate where
+    arbitrary = BinfoRate <$> arbitrary <*> arbitrary <*> arbitrary
 
 instance Arbitrary BinfoTicker where
     arbitrary = do
