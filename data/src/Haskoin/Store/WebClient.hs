@@ -67,6 +67,7 @@ import           Control.Exception
 import           Control.Lens              ((.~), (?~), (^.))
 import           Control.Monad.Except
 import qualified Data.Aeson                as A
+import qualified Data.ByteString.Lazy      as BL
 import           Data.Bytes.Get
 import           Data.Bytes.Put
 import           Data.Bytes.Serial
@@ -212,7 +213,7 @@ getBinary opts url = do
     resE <- try $ HTTP.getWith (binaryOpts opts) url
     return $ do
         res <- resE
-        toExcept $ runGetL deserialize $ res ^. HTTP.responseBody
+        toExcept $ runGetS deserialize $ BL.toStrict $ res ^. HTTP.responseBody
 
 postBinary ::
        (Serial a, Serial r)
