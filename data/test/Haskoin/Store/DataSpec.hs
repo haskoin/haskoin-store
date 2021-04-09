@@ -72,6 +72,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoTicker)
     , JsonBox (arbitrary :: Gen BinfoTxId)
     , JsonBox (arbitrary :: Gen BinfoShortBal)
+    , JsonBox (arbitrary :: Gen BinfoHistory)
     ]
 
 netVals :: [NetBox]
@@ -563,6 +564,18 @@ instance Arbitrary BinfoTicker where
         binfoTickerLast <- arbitrary
         binfoTickerSymbol <- cs <$> listOf1 arbitraryUnicodeChar
         return BinfoTicker{..}
+
+instance Arbitrary BinfoHistory where
+    arbitrary = do
+        binfoHistoryDate <- cs <$> listOf1 arbitraryUnicodeChar
+        binfoHistoryTime <- cs <$> listOf1 arbitraryUnicodeChar
+        binfoHistoryType <- cs <$> listOf1 arbitraryUnicodeChar
+        binfoHistoryAmount <- arbitrary
+        binfoHistoryValueThen <- arbitrary
+        binfoHistoryValueNow <- arbitrary
+        binfoHistoryExchangeRateThen <- arbitrary
+        binfoHistoryTx <- arbitraryTxHash
+        return BinfoHistory{..}
 
 instance Arbitrary BinfoUnspent where
     arbitrary = do

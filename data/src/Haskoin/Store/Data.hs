@@ -149,6 +149,7 @@ module Haskoin.Store.Data
     , BinfoRate(..)
     , BinfoHistory(..)
     , toBinfoHistory
+    , BinfoDate(..)
     )
 
 where
@@ -199,8 +200,10 @@ import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as TE
 import qualified Data.Text.Lazy          as TL
 import qualified Data.Text.Lazy.Encoding as TLE
-import           Data.Time.Clock.POSIX   (posixSecondsToUTCTime)
-import           Data.Time.Format        (defaultTimeLocale, formatTime)
+import           Data.Time.Clock.POSIX   (posixSecondsToUTCTime,
+                                          utcTimeToPOSIXSeconds)
+import           Data.Time.Format        (defaultTimeLocale, formatTime,
+                                          parseTimeM)
 import           Data.Word               (Word32, Word64, Word8)
 import           GHC.Generics            (Generic)
 import           Haskoin
@@ -293,9 +296,9 @@ getUnixTime = (maxBound -) <$> getWord64be
 data BlockRef
     = BlockRef
           { blockRefHeight :: !BlockHeight
-    -- ^ block height in the chain
+          -- ^ block height in the chain
           , blockRefPos    :: !Word32
-    -- ^ position of transaction within the block
+          -- ^ position of transaction within the block
           }
     | MemRef
           { memRefTime :: !UnixTime
@@ -2181,10 +2184,9 @@ instance Parsable BinfoBlockId where
     parseParam t =
         hex <> igr
       where
-        hex =
-            case hexToBlockHash (TL.toStrict t) of
-                Nothing -> Left "could not decode txid"
-                Just h  -> Right $ BinfoBlockHash h
+        hex = case hexToBlockHash (TL.toStrict t) of
+                  Nothing -> Left "could not decode txid"
+                  Just h  -> Right $ BinfoBlockHash h
         igr = BinfoBlockIndex <$> parseParam t
 
 data BinfoTxId
@@ -3059,14 +3061,13 @@ instance FromJSON BinfoRate where
 
 data BinfoHistory
     = BinfoHistory
-      { binfoHistoryDate             :: !Text
+      { binfoHistoryDate               :: !Text
       , binfoHistoryTime             :: !Text
       , binfoHistoryType             :: !Text
       , binfoHistoryAmount           :: !Double
-      , binfoHistoryNetwork          :: !Network
-      , binfoHistoryValueThen        :: !Text
-      , binfoHistoryValueNow         :: !Text
-      , binfoHistoryExchangeRateThen :: !Text
+      , binfoHistoryValueThen        :: !Double
+      , binfoHistoryValueNow         :: !Double
+      , binfoHistoryExchangeRateThen :: !Double
       , binfoHistoryTx               :: !TxHash
       }
     deriving (Eq, Show, Generic, NFData)
@@ -3077,24 +3078,33 @@ instance ToJSON BinfoHistory where
         [ "date" .= binfoHistoryDate
         , "time" .= binfoHistoryTime
         , "type" .= binfoHistoryType
-        , ("amount_" <> T.pack (getNetworkName binfoHistoryNetwork)) .=
-            binfoHistoryAmount
+        , "amount" .= binfoHistoryAmount
         , "value_then" .= binfoHistoryValueThen
         , "value_now" .= binfoHistoryValueNow
         , "exchange_rate_then" .= binfoHistoryExchangeRateThen
         , "tx" .= binfoHistoryTx
         ]
 
+instance FromJSON BinfoHistory where
+    parseJSON = A.withObject "history" $ \o -> do
+        binfoHistoryDate                  <- o .: "date"
+        binfoHistoryTime                  <- o .: "time"
+        binfoHistoryType                  <- o .: "type"
+        binfoHistoryAmount                <- o .: "amount"
+        binfoHistoryValueThen             <- o .: "value_then"
+        binfoHistoryValueNow              <- o .: "value_now"
+        binfoHistoryExchangeRateThen      <- o .: "exchange_rate_then"
+        binfoHistoryTx                    <- o .: "tx"
+        return BinfoHistory{..}
 
-toBinfoHistory :: Network
-               -> String
-               -> Int64
+
+toBinfoHistory :: Int64
                -> Word64
                -> Double
                -> Double
                -> TxHash
                -> BinfoHistory
-toBinfoHistory net format satoshi timestamp rate_then rate_now txhash =
+toBinfoHistory satoshi timestamp rate_then rate_now txhash =
     BinfoHistory
     { binfoHistoryDate =
             T.pack $ formatTime defaultTimeLocale "%Y-%m-%d" t
@@ -3104,14 +3114,12 @@ toBinfoHistory net format satoshi timestamp rate_then rate_now txhash =
             if satoshi <= 0 then "sent" else "received"
     , binfoHistoryAmount =
             fromIntegral satoshi / 100 * 1000 * 1000
-    , binfoHistoryNetwork =
-            net
     , binfoHistoryValueThen =
-            T.pack $ printf format v1
+            v1
     , binfoHistoryValueNow =
-            T.pack $ printf format v2
+            v2
     , binfoHistoryExchangeRateThen =
-            T.pack $ printf format rate_then
+            rate_then
     , binfoHistoryTx =
             txhash
     }
@@ -3122,6 +3130,15 @@ toBinfoHistory net format satoshi timestamp rate_then rate_now txhash =
     n = round (rate_now * 100)
     v1 = fromIntegral (v * r) / 100 * 100 * 1000 * 1000 :: Double
     v2 = fromIntegral (v * n) / 100 * 100 * 1000 * 1000 :: Double
+
+newtype BinfoDate = BinfoDate Word64
+    deriving (Eq, Show, Read, Generic, NFData)
+
+instance Parsable BinfoDate where
+    parseParam = maybeToEither "Cannot parse date"
+                 . fmap (BinfoDate . round . utcTimeToPOSIXSeconds)
+                 . parseTimeM False defaultTimeLocale "%d-%m-%Y"
+                 . TL.unpack
 
 data BinfoTicker
     = BinfoTicker

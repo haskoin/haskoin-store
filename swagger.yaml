@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.52.4
+  version: &version 0.52.5
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1533,7 +1533,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-                
+
+  '/blockchain/export-history':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoHistory
+      summary: Transaction History
+      parameters:
+        - $ref: '#/components/parameters/binfoActive'
+        - $ref: '#/components/parameters/binfoActiveP2SH'
+        - $ref: '#/components/parameters/binfoActiveBech32'
+        - $ref: '#/components/parameters/binfoStart'
+        - $ref: '#/components/parameters/binfoEnd'
+        - $ref: '#/components/parameters/binfoCurrency'
+      responses:
+        '200':
+          description: Transaction history with price.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BinfoHistory'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+        - Blockchain
+      operationId: postBinfoHistory
+      summary: Transaction History
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BinfoHistoryReq'
+      responses:
+        '200':
+          description: Transaction history with price.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BinfoHistory'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   schemas:
   
@@ -2484,12 +2538,12 @@ components:
     BinfoTxOutput:
       type: object
       required:
+        - tx_index
         - 'n'
         - type
         - spent
         - value
         - spending_outpoints
-        - tx_index
         - script
       properties:
         type:
@@ -2596,6 +2650,45 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/BinfoTx'
+
+    BinfoHistory:
+      type: object
+      required:
+        - date
+        - time
+        - type
+        - amount
+        - value_then
+        - value_now
+        - exchange_rate_then
+        - tx
+      properties:
+        date:
+          type: string
+          example: 2020-12-31
+        time:
+          type: string
+          example: 12:59:30 GMT +00:00
+        type:
+          type: string
+          enum:
+            - sent
+            - received
+        amount:
+          type: number
+          example: 50.00986304
+        value_then:
+          type: number
+          example: 584.12
+        value_now:
+          type: number
+          example: 33928234.55
+        exchange_rate_then:
+          type: number
+          example: 11.68
+        tx:
+          type: string
+          example: '534fedf9caf3323e4a08f17d813199a0b3f561b1c9d58ad4a50278a611e8a45d'
 
     BinfoTx:
       type: object
@@ -2720,30 +2813,80 @@ components:
           type: array
           items:
             type: string
+            example: 41bcad86a1caedb3ca7686c994c025794c2a30eafc9a8708aa5d72ed0fab9048
             
     BinfoBalanceReq:
       type: object
       properties:
         active:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         activeP2SH:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         activeBech32:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         cashaddr:
           type: boolean
+
+    BinfoHistoryReq:
+      type: object
+      properties:
+        active:
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+        activeP2SH:
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+        activeBech32:
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+        currency:
+          type: string
+          example: EUR
+        start:
+          type: string
+          example: 12-01-2009
+        end:
+          type: string
+          example: 09-04-2021
+        
+
 
     BinfoMultiAddrReq:
       type: object
       properties:
         active:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         activeP2SH:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         activeBech32:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         onlyShow:
           type: string
+          example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         n:
           type: integer
         offset:
@@ -2752,6 +2895,7 @@ components:
           type: boolean
         currency:
           type: string
+          example: EUR
         cashaddr:
           type: boolean
         txidindex:
@@ -2763,11 +2907,23 @@ components:
       type: object
       properties:
         active:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         activeP2SH:
-          type: string
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         activeBech32:
+          type: array
+          items:
+            type: string
+            example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+        onlyShow:
           type: string
+          example: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
         limit:
           type: integer
         confirmations:
@@ -3119,3 +3275,19 @@ components:
         enum:
           - json
           - hex
+
+    binfoStart:
+      name: start
+      in: query
+      required: true
+      schema:
+        type: string
+        example: 20-10-2020
+
+    binfoEnd:
+      name: end
+      in: query
+      required: true
+      schema:
+        type: string
+        example: 09-04-2021

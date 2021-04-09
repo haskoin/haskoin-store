@@ -20,6 +20,7 @@ module Haskoin.Store.Common
     , getSpenders
     , getTransaction
     , getNumTransaction
+    , blockAtOrAfter
     , blockAtOrBefore
     , blockAtOrAfterMTP
     , deOffset
@@ -268,6 +269,18 @@ getNumTransaction i = do
         sm <- getSpenders (txHash (txData d))
         return $ toTransaction d sm
 
+blockAtOrAfter :: (MonadIO m, StoreReadExtra m)
+               => Chain
+               -> UnixTime
+               -> m (Maybe BlockData)
+blockAtOrAfter ch q = runMaybeT $ do
+    net <- lift getNetwork
+    x <- MaybeT $ liftIO $ runReaderT (firstGreaterOrEqual net f) ch
+    MaybeT $ getBlock (headerHash (nodeHeader x))
+  where
+    f x = let t = fromIntegral (blockTimestamp (nodeHeader x))
+          in return $ t `compare` q
+
 blockAtOrBefore :: (MonadIO m, StoreReadExtra m)
                 => Chain
                 -> UnixTime
@@ -277,9 +290,8 @@ blockAtOrBefore ch q = runMaybeT $ do
     x <- MaybeT $ liftIO $ runReaderT (lastSmallerOrEqual net f) ch
     MaybeT $ getBlock (headerHash (nodeHeader x))
   where
-    f x =
-        let t = fromIntegral (blockTimestamp (nodeHeader x))
-         in return $ t `compare` q
+    f x = let t = fromIntegral (blockTimestamp (nodeHeader x))
+          in return $ t `compare` q
 
 blockAtOrAfterMTP :: (MonadIO m, StoreReadExtra m)
                   => Chain

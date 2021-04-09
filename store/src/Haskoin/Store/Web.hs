@@ -19,9 +19,10 @@ module Haskoin.Store.Web
     ) where
 
 import           Conduit                                 (ConduitT, await,
-                                                          dropC, dropWhileC,
-                                                          mapC, runConduit,
-                                                          sinkList, takeC,
+                                                          concatMapMC, dropC,
+                                                          dropWhileC, mapC,
+                                                          runConduit, sinkList,
+                                                          takeC, takeWhileC,
                                                           yield, (.|))
 import           Control.Applicative                     ((<|>))
 import           Control.Arrow                           (second)
@@ -217,6 +218,7 @@ data WebMetrics = WebMetrics
     , balanceStat     :: !StatDist
     , unspentStat     :: !StatDist
     , rawtxStat       :: !StatDist
+    , historyStat     :: !StatDist
     , peerStat        :: !StatDist
     , healthStat      :: !StatDist
     , dbStatsStat     :: !StatDist
@@ -247,6 +249,7 @@ createMetrics s = liftIO $ do
     multiaddrStat     <- d "multiaddr"
     balanceStat       <- d "balance"
     rawtxStat         <- d "rawtx"
+    historyStat       <- d "history"
     unspentStat       <- d "unspent"
     peerStat          <- d "peer"
     healthStat        <- d "health"
@@ -678,6 +681,8 @@ handlePaths = do
     S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
     S.get  "/blockchain/rawblock/:block" scottyBinfoBlock
     S.get  "/blockchain/block-height/:height" scottyBinfoBlockHeight
+    S.get  "/blockchain/export-history" scottyBinfoHistory
+    S.post "/blockchain/export-history" scottyBinfoHistory
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1323,8 +1328,9 @@ getNumTxId :: MonadIO m => WebT m Bool
 getNumTxId = fmap not $ S.param "txidindex" `S.rescue` const (return False)
 
 getChainHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m H.BlockHeight
-getChainHeight =
-    fmap H.nodeHeight $ chainGetBest =<< lift (asks (storeChain . webStore . webConfig))
+getChainHeight = do
+    ch <- lift $ asks (storeChain . webStore . webConfig)
+    fmap H.nodeHeight $ chainGetBest ch
 
 scottyBinfoUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoUnspent =
@@ -1465,13 +1471,96 @@ getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
 getCashAddr :: Monad m => WebT m Bool
 getCashAddr = S.param "cashaddr" `S.rescue` const (return False)
 
+scottyBinfoHistory :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoHistory =
+    getBinfoActive historyStat >>= \(xspecs, addrs) ->
+    get_dates >>= \(startM, endM) -> do
+    setMetrics historyStat (HashSet.size addrs + HashMap.size xspecs)
+    (code, price) <- getPrice
+    xpubs <- mapM (\x -> (,) x <$> xPubBals x) (HashMap.elems xspecs)
+    let xaddrs = HashSet.fromList $ concatMap (map get_addr . snd) xpubs
+        aaddrs = xaddrs <> addrs
+        cur = binfoTicker15m price
+        cs = conduits xpubs addrs endM
+    txs <- lift . runConduit $
+        joinDescStreams cs
+        .| takeWhileC (is_newer startM)
+        .| concatMapMC get_transaction
+        .| sinkList
+    let times = map transactionTime txs
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    rates <- map binfoRatePrice <$> lift (getRates net code times)
+    let hs = zipWith (convert cur aaddrs) txs rates
+    setHeaders
+    streamEncoding $ toEncoding hs
+  where
+    is_newer (Just BlockData{..}) TxRef{txRefBlock = BlockRef{..}} =
+        blockRefHeight >= blockDataHeight
+    is_newer _ _ = True
+    get_addr = balanceAddress . xPubBal
+    get_transaction TxRef{txRefHash = h, txRefBlock = BlockRef{..}} =
+        getTransaction h
+    convert cur addrs tx rate =
+        let ins = transactionInputs tx
+            outs = transactionOutputs tx
+            fins = filter (input_addr addrs) ins
+            fouts = filter (output_addr addrs) outs
+            vin = fromIntegral . sum $ map inputAmount fins
+            vout = fromIntegral . sum $ map outputAmount fouts
+            v = vout - vin
+            t = transactionTime tx
+            h = txHash $ transactionData tx
+        in toBinfoHistory v t rate cur h
+    input_addr addrs' StoreInput{inputAddress = Just a} =
+        a `HashSet.member` addrs'
+    input_addr _ _ = False
+    output_addr addrs' StoreOutput{outputAddr = Just a} =
+        a `HashSet.member` addrs'
+    output_addr _ _ = False
+    get_dates = do
+        BinfoDate start <- S.param "start"
+        BinfoDate end' <- S.param "end"
+        let end = end' + 24 * 60 * 60
+        ch <- lift $ asks (storeChain . webStore . webConfig)
+        startM <- blockAtOrAfter ch start
+        endM <- blockAtOrBefore ch end
+        return (startM, endM)
+    conduits xpubs addrs endM =
+        map (uncurry (xpub_c endM)) xpubs
+        <>
+        map (addr_c endM) (HashSet.toList addrs)
+    addr_c endM a =
+        streamThings (getAddressTxs a)
+        (Just txRefHash)
+        def{ limit = 50
+           , start = AtBlock . blockDataHeight <$> endM
+           }
+    xpub_c endM x bs =
+        streamThings
+        (xPubTxs x bs)
+        (Just txRefHash)
+        def{ limit = 50
+           , start = AtBlock . blockDataHeight <$> endM
+           }
+
+getPrice :: MonadIO m => WebT m (Text, BinfoTicker)
+getPrice = do
+    code <- T.toUpper <$> S.param "currency" `S.rescue` const (return "USD")
+    ticker <- lift $ asks webTicker
+    prices <- readTVarIO ticker
+    case HashMap.lookup code prices of
+        Nothing -> return (code, def)
+        Just p  -> return (code, p)
+
+getSymbol :: MonadIO m => WebT m BinfoSymbol
+getSymbol = uncurry binfoTickerToSymbol <$> getPrice
+
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr =
     get_addrs >>= \(addrs', xpubs, saddrs, sxpubs, xspecs) ->
     getNumTxId >>= \numtxid ->
     getCashAddr >>= \cashaddr ->
-    lift (asks webTicker) >>= \ticker ->
-    get_price ticker >>= \local ->
+    getSymbol >>= \local ->
     get_offset >>= \offset ->
     get_count >>= \n ->
     get_prune >>= \prune ->
@@ -1699,7 +1788,7 @@ scottyShortBal =
     getBinfoActive balanceStat >>= \(xspecs, addrs) ->
     getCashAddr >>= \cashaddr ->
     getNumTxId >>= \numtxid -> do
-    setMetrics balanceStat (hl addrs + ml xspecs)
+    setMetrics balanceStat (HashSet.size addrs + HashMap.size xspecs)
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     abals <- catMaybes <$>
              mapM (get_addr_balance net cashaddr) (HashSet.toList addrs)
@@ -1708,8 +1797,6 @@ scottyShortBal =
     setHeaders
     streamEncoding $ toEncoding res
   where
-    hl = HashSet.size
-    ml = HashMap.size
     to_short_bal Balance{..} =
         BinfoShortBal
         {
