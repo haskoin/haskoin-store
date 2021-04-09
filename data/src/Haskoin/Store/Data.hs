@@ -3113,11 +3113,11 @@ toBinfoHistory satoshi timestamp rate_then rate_now txhash =
     , binfoHistoryType =
             if satoshi <= 0 then "sent" else "received"
     , binfoHistoryAmount =
-            fromIntegral satoshi / (100 * 1000 * 1000)
+            fromRational v
     , binfoHistoryValueThen =
-            v1
+            fromRational v1
     , binfoHistoryValueNow =
-            v2
+            fromRational v2
     , binfoHistoryExchangeRateThen =
             rate_then
     , binfoHistoryTx =
@@ -3125,11 +3125,11 @@ toBinfoHistory satoshi timestamp rate_then rate_now txhash =
     }
   where
     t = posixSecondsToUTCTime (realToFrac timestamp)
-    v = toInteger satoshi
-    r = round (rate_then * 100)
-    n = round (rate_now * 100)
-    v1 = fromIntegral (v * r) / (100 * 100 * 1000 * 1000)
-    v2 = fromIntegral (v * n) / (100 * 100 * 1000 * 1000)
+    v = toRational satoshi / (100 * 1000 * 1000)
+    r1 = toRational rate_then
+    r2 = toRational rate_now
+    v1 = v * r1
+    v2 = v * r2
 
 newtype BinfoDate = BinfoDate Word64
     deriving (Eq, Show, Read, Generic, NFData)
