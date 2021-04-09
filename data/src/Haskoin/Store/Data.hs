@@ -3135,10 +3135,13 @@ newtype BinfoDate = BinfoDate Word64
     deriving (Eq, Show, Read, Generic, NFData)
 
 instance Parsable BinfoDate where
-    parseParam = maybeToEither "Cannot parse date"
-                 . fmap (BinfoDate . round . utcTimeToPOSIXSeconds)
-                 . parseTimeM False defaultTimeLocale "%d-%m-%Y"
-                 . TL.unpack
+    parseParam t =
+        maybeToEither "Cannot parse date"
+        . fmap (BinfoDate . round . utcTimeToPOSIXSeconds)
+        $ p "%d-%m-%Y" <|> p "%d/%m/%Y"
+      where
+        s = TL.unpack t
+        p fmt = parseTimeM False defaultTimeLocale fmt s
 
 data BinfoTicker
     = BinfoTicker
