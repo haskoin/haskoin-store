@@ -1490,7 +1490,7 @@ scottyBinfoHistory =
     let times = map transactionTime txs
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     rates <- map binfoRatePrice <$> lift (getRates net code times)
-    let hs = zipWith (convert cur aaddrs) txs rates
+    let hs = zipWith (convert cur aaddrs) txs (rates <> repeat 0.0)
     setHeaders
     streamEncoding $ toEncoding hs
   where
