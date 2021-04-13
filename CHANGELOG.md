@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.52.8
+### Fixed
+- Fix special case for zero limit.
+
 ## 0.52.7
 ### Fixed
 - Fix cache bug when too many transactions in mempool.

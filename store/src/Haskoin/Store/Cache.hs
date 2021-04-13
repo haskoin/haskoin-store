@@ -403,8 +403,11 @@ cacheGetXPubTxs xpub limits =
                   else []
         return
             $ map (uncurry f)
-            $ take (fromIntegral (limit limits))
+            $ l
             $ drop (fromIntegral (offset limits)) xs'
+    l = if limit limits > 0
+        then take (fromIntegral (limit limits))
+        else id
     f t s = TxRef {txRefHash = t, txRefBlock = scoreBlockRef s}
 
 cacheGetXPubUnspents ::
@@ -447,8 +450,11 @@ cacheGetXPubUnspents xpub limits =
                   else []
         return
             $ map (uncurry f)
-            $ take (fromIntegral (limit limits))
+            $ l
             $ drop (fromIntegral (offset limits)) xs'
+    l = if limit limits > 0
+        then take (fromIntegral (limit limits))
+        else id
     f o s = (scoreBlockRef s, o)
 
 redisGetXPubBalances :: (Functor f, RedisCtx m f) => XPubSpec -> m (f [XPubBal])
