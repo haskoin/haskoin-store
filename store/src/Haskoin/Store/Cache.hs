@@ -372,16 +372,16 @@ cacheGetXPubTxs ::
 cacheGetXPubTxs xpub limits =
     case start limits of
         Nothing ->
-            go Nothing
+            go1 Nothing
         Just (AtTx th) -> lift (getTxData th) >>= \case
-            Just TxData {txDataBlock = b@BlockRef {}} ->
-                go $ Just (blockRefScore b)
-            Nothing ->
-                return []
+            Just TxData {txDataBlock = b@BlockRef{}} ->
+                go1 $ Just (blockRefScore b)
+            _ ->
+                go2 th
         Just (AtBlock h) ->
-            go (Just (blockRefScore (BlockRef h maxBound)))
+            go1 (Just (blockRefScore (BlockRef h maxBound)))
   where
-    go score = do
+    go1 score = do
         xs <- runRedis $
             getFromSortedSet
                 (txSetPfx <> encode xpub)
@@ -390,6 +390,21 @@ cacheGetXPubTxs xpub limits =
                 (limit limits)
         touchKeys [xpub]
         return $ map (uncurry f) xs
+    go2 hash = do
+        xs <- runRedis $
+            getFromSortedSet
+                (txSetPfx <> encode xpub)
+                Nothing
+                0
+                0
+        touchKeys [xpub]
+        let xs' = if any ((== hash) . fst) xs
+                  then dropWhile ((/= hash) . fst) xs
+                  else []
+        return
+            $ map (uncurry f)
+            $ take (fromIntegral (limit limits))
+            $ drop (fromIntegral (offset limits)) xs'
     f t s = TxRef {txRefHash = t, txRefBlock = scoreBlockRef s}
 
 cacheGetXPubUnspents ::
@@ -400,16 +415,16 @@ cacheGetXPubUnspents ::
 cacheGetXPubUnspents xpub limits =
     case start limits of
         Nothing ->
-            go Nothing
+            go1 Nothing
         Just (AtTx th) -> lift (getTxData th) >>= \case
-            Just TxData {txDataBlock = b@BlockRef {}} ->
-                go (Just (blockRefScore b))
-            Nothing ->
-                return []
+            Just TxData {txDataBlock = b@BlockRef{}} ->
+                go1 (Just (blockRefScore b))
+            _ ->
+                go2 th
         Just (AtBlock h) ->
-            go (Just (blockRefScore (BlockRef h maxBound)))
+            go1 (Just (blockRefScore (BlockRef h maxBound)))
   where
-    go score = do
+    go1 score = do
         xs <-
             runRedis $
             getFromSortedSet
@@ -419,6 +434,21 @@ cacheGetXPubUnspents xpub limits =
                 (limit limits)
         touchKeys [xpub]
         return $ map (uncurry f) xs
+    go2 hash = do
+        xs <- runRedis $
+            getFromSortedSet
+                (utxoPfx <> encode xpub)
+                Nothing
+                0
+                0
+        touchKeys [xpub]
+        let xs' = if any ((== hash) . outPointHash . fst) xs
+                  then dropWhile ((/= hash) . outPointHash . fst) xs
+                  else []
+        return
+            $ map (uncurry f)
+            $ take (fromIntegral (limit limits))
+            $ drop (fromIntegral (offset limits)) xs'
     f o s = (scoreBlockRef s, o)
 
 redisGetXPubBalances :: (Functor f, RedisCtx m f) => XPubSpec -> m (f [XPubBal])
@@ -469,7 +499,13 @@ getFromSortedSet key Nothing off count = do
         ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
         return (rights ys)
 getFromSortedSet key (Just score) off 0 = do
-    xs <- zrangebyscoreWithscoresLimit key score (1 / 0) (fromIntegral off) (-1)
+    xs <-
+        zrangebyscoreWithscoresLimit
+            key
+            score
+            (1 / 0)
+            (fromIntegral off)
+            (-1)
     return $ do
         ys <- map (\(x, s) -> (, s) <$> decode x) <$> xs
         return (rights ys)
