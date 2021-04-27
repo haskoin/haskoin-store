@@ -150,6 +150,7 @@ module Haskoin.Store.Data
     , BinfoHistory(..)
     , toBinfoHistory
     , BinfoDate(..)
+    , BinfoHeader(..)
     )
 
 where
@@ -3468,3 +3469,31 @@ parseBinfoAddr net s =
     concatMap (T.splitOn ",") (T.splitOn "|" s)
   where
     f x = BinfoAddr <$> textToAddr net x <|> BinfoXpub <$> xPubImport net x
+
+data BinfoHeader
+    = BinfoHeader
+      { binfoHeaderHash   :: !BlockHash
+      , binfoHeaderTime   :: !Timestamp
+      , binfoHeaderIndex  :: !Word32
+      , binfoHeaderHeight :: !BlockHeight
+      , binfoTxIndices    :: ![BinfoTxId]
+      } deriving (Eq, Show, Generic, NFData)
+
+instance ToJSON BinfoHeader where
+    toJSON BinfoHeader{..} =
+        A.object
+        [ "hash" .= binfoHeaderHash
+        , "time" .= binfoHeaderTime
+        , "block_index" .= binfoHeaderIndex
+        , "height" .= binfoHeaderHeight
+        , "txIndexes" .= binfoTxIndices
+        ]
+
+instance FromJSON BinfoHeader where
+    parseJSON = A.withObject "header" $ \o -> do
+        binfoHeaderHash <- o .: "hash"
+        binfoHeaderTime <- o .: "time"
+        binfoHeaderIndex <- o .: "block_index"
+        binfoHeaderHeight <-  o .: "height"
+        binfoTxIndices <- o .: "txIndexes"
+        return BinfoHeader{..}

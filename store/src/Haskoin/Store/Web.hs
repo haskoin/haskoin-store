@@ -680,6 +680,7 @@ handlePaths = do
     S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
     S.get  "/blockchain/rawblock/:block" scottyBinfoBlock
+    S.get  "/blockchain/latest" scottyBinfoLatest
     S.get  "/blockchain/block-height/:height" scottyBinfoBlockHeight
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
@@ -1867,6 +1868,25 @@ scottyBinfoBlockHeight =
         let binfo_txs = map (toBinfoTxSimple numtxid) txs
             binfo_block = toBinfoBlock block_header binfo_txs next_blocks
         return binfo_block
+
+scottyBinfoLatest :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoLatest = do
+    numtxid <- getNumTxId
+    setMetrics blockStat 1
+    best <- get_best_block
+    let binfoTxIndices = map (encodeBinfoTxId numtxid) (blockDataTxs best)
+        binfoHeaderHash = H.headerHash (blockDataHeader best)
+        binfoHeaderTime = H.blockTimestamp (blockDataHeader best)
+        binfoHeaderIndex = binfoHeaderTime
+        binfoHeaderHeight = blockDataHeight best
+    streamEncoding $ toEncoding BinfoHeader{..}
+  where
+    get_best_block =
+        getBestBlock >>= \case
+        Nothing -> raise blockStat ThingNotFound
+        Just bh -> getBlock bh >>= \case
+            Nothing -> raise blockStat ThingNotFound
+            Just b  -> return b
 
 scottyBinfoBlock :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoBlock =

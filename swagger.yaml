@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.52.5
+  version: &version 0.52.9
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1401,6 +1401,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  '/blockchain/latest':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoLatest
+      summary: Latest Block
+      parameters:
+        - $ref: '#/components/parameters/binfoTxIdIndex'
+      responses:
+        '200':
+          description: Latest block and list of transactions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoHeader'
+        '404':
+          description: Block not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   '/blockchain/block-height/{height}':
     get:
       tags:
@@ -2577,6 +2599,33 @@ components:
         xpub:
           path: M/1/20
           m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
+
+    BinfoHeader:
+      type: object
+      required:
+        - hash
+        - time
+        - block_index
+        - height
+        - txIndexes
+      properties:
+        hash:
+          type: string
+          example: '0000000000000000000002625d8d469c8dfe7c79d9d2686902c1150a5cc03982'
+        time:
+          type: integer
+          example: 1613563854
+        block_index:
+          type: integer
+          example: 670976
+        height:
+          type: integer
+          example: 670976
+        txIndexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinfoTxId'
+
 
     BinfoBlock:
       type: object

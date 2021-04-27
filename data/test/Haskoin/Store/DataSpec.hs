@@ -73,6 +73,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoTxId)
     , JsonBox (arbitrary :: Gen BinfoShortBal)
     , JsonBox (arbitrary :: Gen BinfoHistory)
+    , JsonBox (arbitrary :: Gen BinfoHeader)
     ]
 
 netVals :: [NetBox]
@@ -590,3 +591,12 @@ instance Arbitrary BinfoUnspent where
 
 instance Arbitrary BinfoUnspents where
     arbitrary = BinfoUnspents <$> arbitrary
+
+instance Arbitrary BinfoHeader where
+    arbitrary =
+        BinfoHeader
+        <$> arbitraryBlockHash
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
+        <*> arbitrary
