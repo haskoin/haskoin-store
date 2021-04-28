@@ -680,7 +680,7 @@ handlePaths = do
     S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
     S.get  "/blockchain/rawblock/:block" scottyBinfoBlock
-    S.get  "/blockchain/latest" scottyBinfoLatest
+    S.get  "/blockchain/latestblock" scottyBinfoLatest
     S.get  "/blockchain/block-height/:height" scottyBinfoBlockHeight
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
