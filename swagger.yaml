@@ -1320,6 +1320,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  '/blockchain/unconfirmed-transactions':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoMempool
+      summary: Mempool Transactions
+      parameters:
+        - $ref: '#/components/parameters/binfoCount'
+        - $ref: '#/components/parameters/binfoOffset'
+      responses:
+        '200':
+          description: Mempool transactions array.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BinfoTx'
+
   '/blockchain/multiaddr':
     get:
       tags:

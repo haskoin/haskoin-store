@@ -151,6 +151,10 @@ module Haskoin.Store.Data
     , toBinfoHistory
     , BinfoDate(..)
     , BinfoHeader(..)
+    , BinfoMempool(..)
+    , binfoMempoolToJSON
+    , binfoMempoolToEncoding
+    , binfoMempoolParseJSON
     )
 
 where
@@ -3497,3 +3501,19 @@ instance FromJSON BinfoHeader where
         binfoHeaderHeight <-  o .: "height"
         binfoTxIndices <- o .: "txIndexes"
         return BinfoHeader{..}
+
+newtype BinfoMempool = BinfoMempool { getBinfoMempool :: [BinfoTx] }
+    deriving (Eq, Show, Generic, NFData)
+
+binfoMempoolToJSON :: Network -> BinfoMempool -> Value
+binfoMempoolToJSON net (BinfoMempool txs) =
+    A.object ["txs" .= map (binfoTxToJSON net) txs]
+
+binfoMempoolToEncoding :: Network -> BinfoMempool -> Encoding
+binfoMempoolToEncoding net (BinfoMempool txs) =
+    AE.pairs $ AE.pair "txs" (AE.list (binfoTxToEncoding net) txs)
+
+binfoMempoolParseJSON :: Network -> Value -> Parser BinfoMempool
+binfoMempoolParseJSON net =
+    A.withObject "mempool" $ \o ->
+    BinfoMempool <$> (mapM (binfoTxParseJSON net) =<< o .: "txs")

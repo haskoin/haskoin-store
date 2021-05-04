@@ -150,6 +150,10 @@ netVals =
              , binfoRawAddrToEncoding
              , binfoRawAddrParseJSON
              , arbitraryNetData)
+    , NetBox ( binfoMempoolToJSON
+             , binfoMempoolToEncoding
+             , binfoMempoolParseJSON
+             , arbitraryNetData)
     ]
 
 spec :: Spec
@@ -600,3 +604,6 @@ instance Arbitrary BinfoHeader where
         <*> arbitrary
         <*> arbitrary
         <*> arbitrary
+
+instance Arbitrary BinfoMempool where
+    arbitrary = BinfoMempool <$> arbitrary

@@ -681,6 +681,7 @@ handlePaths = do
     S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
     S.get  "/blockchain/rawblock/:block" scottyBinfoBlock
     S.get  "/blockchain/latestblock" scottyBinfoLatest
+    S.get  "/blockchain/unconfirmed-transactions" scottyBinfoMempool
     S.get  "/blockchain/block-height/:height" scottyBinfoBlockHeight
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
@@ -1557,18 +1558,17 @@ getSymbol :: MonadIO m => WebT m BinfoSymbol
 getSymbol = uncurry binfoTickerToSymbol <$> getPrice
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyMultiAddr =
-    get_addrs >>= \(addrs', xpubs, saddrs, sxpubs, xspecs) ->
-    getNumTxId >>= \numtxid ->
-    getCashAddr >>= \cashaddr ->
-    getSymbol >>= \local ->
-    get_offset >>= \offset ->
-    get_count >>= \n ->
-    get_prune >>= \prune ->
-    get_filter >>= \fltr ->
+scottyMultiAddr = do
+    setMetrics multiaddrStat 1
+    (addrs', xpubs, saddrs, sxpubs, xspecs) <- get_addrs
+    numtxid <- getNumTxId
+    cashaddr <- getCashAddr
+    local <- getSymbol
+    offset <- getBinfoOffset multiaddrStat
+    n <- getBinfoCount
+    prune <- get_prune
+    fltr <- get_filter
     let len = HashSet.size addrs' + HashSet.size xpubs
-    in do
-    setMetrics multiaddrStat len
     xbals <- get_xbals xspecs
     xtxns <- get_xpub_tx_count xbals xspecs
     let sxbals = subset sxpubs xbals
@@ -1656,18 +1656,6 @@ scottyMultiAddr =
             Just p  -> return $ binfoTickerToSymbol code p
     get_prune = fmap not $ S.param "no_compact"
         `S.rescue` const (return False)
-    get_count = do
-        d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
-        x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
-        i <- min x <$> (S.param "n" `S.rescue` const (return d))
-        return (fromIntegral i :: Int)
-    get_offset = do
-        x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
-        o <- S.param "offset" `S.rescue` const (return 0)
-        when (o > x) $
-            raise multiaddrStat $
-            UserError $ "offset exceeded: " <> show o <> " > " <> show x
-        return (fromIntegral o :: Int)
     subset ks =
         HashMap.filterWithKey (\k _ -> k `HashSet.member` ks)
     compute_sxspecs sxpubs =
@@ -1745,13 +1733,31 @@ scottyMultiAddr =
       | otherwise = 0
     received _ = 0
 
+getBinfoCount :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m Int
+getBinfoCount = do
+        d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
+        x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
+        i <- min x <$> (S.param "n" `S.rescue` const (return d))
+        return (fromIntegral i :: Int)
+
+getBinfoOffset :: (MonadUnliftIO m, MonadLoggerIO m)
+               => (WebMetrics -> StatDist)
+               -> WebT m Int
+getBinfoOffset stat = do
+        x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
+        o <- S.param "offset" `S.rescue` const (return 0)
+        when (o > x) $
+            raise stat $
+            UserError $ "offset exceeded: " <> show o <> " > " <> show x
+        return (fromIntegral o :: Int)
+
 scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyRawAddr =
-    get_addr >>= \addr ->
-    getNumTxId >>= \numtxid ->
-    get_offset >>= \off ->
-    get_count >>= \n -> do
+scottyRawAddr = do
     setMetrics rawaddrStat 1
+    addr <- get_addr
+    numtxid <- getNumTxId
+    n <- getBinfoCount
+    off <- getBinfoOffset rawaddrStat
     bal <- fromMaybe (zeroBalance addr) <$> getBalance addr
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     let abook = HashMap.singleton addr Nothing
@@ -1771,18 +1777,6 @@ scottyRawAddr =
         case textToAddr net txt of
             Nothing -> raise rawaddrStat ThingNotFound
             Just a  -> return a
-    get_count = do
-        d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
-        x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
-        i <- min x <$> (S.param "limit" `S.rescue` const (return d))
-        return $ fromIntegral i
-    get_offset = do
-        x <- lift (asks (maxLimitOffset . webMaxLimits . webConfig))
-        o <- S.param "offset" `S.rescue` const (return 0)
-        when (o > x) $
-            raise rawaddrStat $
-            UserError $ "offset exceeded: " <> show o <> " > " <> show x
-        return $ fromIntegral o
 
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal =
@@ -1953,6 +1947,20 @@ scottyBinfoTx =
     hx t = do
         setHeaders
         S.text . encodeHexLazy . runPutL . serialize $ transactionData t
+
+scottyBinfoMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoMempool = do
+    setMetrics mempoolStat 1
+    numtxid <- getNumTxId
+    offset <- getBinfoOffset mempoolStat
+    n <- getBinfoCount
+    mempool <- getMempool
+    let txids = map snd $ take n $ drop offset mempool
+    txs <- catMaybes <$> mapM getTransaction txids
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    setHeaders
+    let mem = BinfoMempool $ map (toBinfoTxSimple numtxid) txs
+    streamEncoding $ binfoMempoolToEncoding net mem
 
 -- GET Network Information --
 
