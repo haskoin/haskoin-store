@@ -74,6 +74,7 @@ jsonVals =
     , JsonBox (arbitrary :: Gen BinfoShortBal)
     , JsonBox (arbitrary :: Gen BinfoHistory)
     , JsonBox (arbitrary :: Gen BinfoHeader)
+    , JsonBox (arbitrary :: Gen BinfoBlocks)
     ]
 
 netVals :: [NetBox]
@@ -607,3 +608,6 @@ instance Arbitrary BinfoHeader where
 
 instance Arbitrary BinfoMempool where
     arbitrary = BinfoMempool <$> arbitrary
+
+instance Arbitrary BinfoBlocks where
+    arbitrary = BinfoBlocks <$> arbitrary

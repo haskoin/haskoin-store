@@ -683,6 +683,7 @@ handlePaths = do
     S.get  "/blockchain/latestblock" scottyBinfoLatest
     S.get  "/blockchain/unconfirmed-transactions" scottyBinfoMempool
     S.get  "/blockchain/block-height/:height" scottyBinfoBlockHeight
+    S.get  "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
   where
@@ -1556,6 +1557,26 @@ getPrice = do
 
 getSymbol :: MonadIO m => WebT m BinfoSymbol
 getSymbol = uncurry binfoTickerToSymbol <$> getPrice
+
+scottyBinfoBlocksDay :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoBlocksDay = do
+    setMetrics blockStat 144
+    t <- min h . (`div` 1000) <$> S.param "milliseconds"
+    ch <- lift $ asks (storeChain . webStore . webConfig)
+    m <- blockAtOrBefore ch t
+    bs <- go (d t) m
+    streamEncoding $ toEncoding $ map toBinfoBlockInfo bs
+  where
+    h = fromIntegral (maxBound :: H.Timestamp)
+    d = subtract (24 * 3600)
+    go _ Nothing = return []
+    go t (Just b)
+        | H.blockTimestamp (blockDataHeader b) <= fromIntegral t =
+              return []
+        | otherwise = do
+              b' <- getBlock (H.prevBlock (blockDataHeader b))
+              (b :) <$> go t b'
+
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr = do

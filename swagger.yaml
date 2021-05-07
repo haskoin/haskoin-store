@@ -1442,6 +1442,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  '/blockchain/blocks/{milliseconds}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoBlocksDay
+      summary: Blocks for a Day
+      parameters:
+        - name: milliseconds
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of blocks for a 24 hour period ending at given timestamp.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BinfoBlockInfo'
+
   '/blockchain/block-height/{height}':
     get:
       tags:
@@ -2932,8 +2954,6 @@ components:
         end:
           type: string
           example: 09-04-2021
-        
-
 
     BinfoMultiAddrReq:
       type: object

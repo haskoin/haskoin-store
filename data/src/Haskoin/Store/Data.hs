@@ -144,6 +144,7 @@ module Haskoin.Store.Data
     , binfoXPubPathParseJSON
     , BinfoInfo(..)
     , BinfoBlockInfo(..)
+    , toBinfoBlockInfo
     , BinfoSymbol(..)
     , BinfoTicker(..)
     , BinfoRate(..)
@@ -155,6 +156,7 @@ module Haskoin.Store.Data
     , binfoMempoolToJSON
     , binfoMempoolToEncoding
     , binfoMempoolParseJSON
+    , BinfoBlocks(..)
     )
 
 where
@@ -3041,6 +3043,15 @@ instance FromJSON BinfoBlockInfo where
         getBinfoBlockInfoIndex <- o .: "block_index"
         return BinfoBlockInfo {..}
 
+toBinfoBlockInfo :: BlockData -> BinfoBlockInfo
+toBinfoBlockInfo BlockData {..} =
+    BinfoBlockInfo
+    { getBinfoBlockInfoHash = headerHash blockDataHeader
+    , getBinfoBlockInfoHeight = blockDataHeight
+    , getBinfoBlockInfoTime = blockTimestamp blockDataHeader
+    , getBinfoBlockInfoIndex = blockDataHeight
+    }
+
 data BinfoRate
     = BinfoRate
       { binfoRateTime  :: !Word64
@@ -3517,3 +3528,12 @@ binfoMempoolParseJSON :: Network -> Value -> Parser BinfoMempool
 binfoMempoolParseJSON net =
     A.withObject "mempool" $ \o ->
     BinfoMempool <$> (mapM (binfoTxParseJSON net) =<< o .: "txs")
+
+newtype BinfoBlocks = BinfoBlocks { binfoBlocks :: [BinfoBlockInfo] }
+    deriving (Eq, Show, Generic, NFData)
+
+instance ToJSON BinfoBlocks where
+    toJSON BinfoBlocks {..} = A.object [ "blocks" .= binfoBlocks ]
+
+instance FromJSON BinfoBlocks where
+    parseJSON = A.withObject "blocks" $ \o -> BinfoBlocks <$> o .: "blocks"

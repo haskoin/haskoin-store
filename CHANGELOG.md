@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Add Blockchain.info latest block endpoint.
 - Add Blockchain.info unconfirmed-transactions endpoint.
+- Add Blockchain.info blocks for one day endpoint.
 
 ## 0.52.8
 ### Fixed
