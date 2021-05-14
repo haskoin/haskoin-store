@@ -687,6 +687,7 @@ handlePaths = do
     S.get  "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
+    S.get  "/blockchain/addresstohash/:addr"  scottyBinfoAddrToHash
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1475,6 +1476,14 @@ getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
 getCashAddr :: Monad m => WebT m Bool
 getCashAddr = S.param "cashaddr" `S.rescue` const (return False)
 
+getAddress :: (Monad m, MonadUnliftIO m) => TL.Text -> WebT m Address
+getAddress param = do
+    txt <- S.param param
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    case textToAddr net txt of
+        Nothing -> raise rawaddrStat ThingNotFound
+        Just a  -> return a
+
 scottyBinfoHistory :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHistory =
     getBinfoActive historyStat >>= \(xspecs, addrs) ->
@@ -1776,7 +1785,7 @@ getBinfoOffset stat = do
 scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawAddr = do
     setMetrics rawaddrStat 1
-    addr <- get_addr
+    addr <- getAddress "addr"
     numtxid <- getNumTxId
     n <- getBinfoCount "limit"
     off <- getBinfoOffset rawaddrStat
@@ -1792,13 +1801,6 @@ scottyRawAddr = do
         (dropC off >> takeC n .| sinkList)
     setHeaders
     streamEncoding $ binfoRawAddrToEncoding net $ BinfoRawAddr bal txs
-  where
-    get_addr = do
-        txt <- S.param "addr"
-        net <- lift $ asks (storeNetwork . webStore . webConfig)
-        case textToAddr net txt of
-            Nothing -> raise rawaddrStat ThingNotFound
-            Just a  -> return a
 
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal =
@@ -1983,6 +1985,12 @@ scottyBinfoMempool = do
     setHeaders
     let mem = BinfoMempool $ map (toBinfoTxSimple numtxid) txs
     streamEncoding $ binfoMempoolToEncoding net mem
+
+scottyBinfoAddrToHash ::(MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoAddrToHash =
+    getAddress "addr" >>= \addr -> do
+    setHeaders
+    S.text . encodeHexLazy . runPutL . serialize $ getAddrHash160 addr
 
 -- GET Network Information --
 
