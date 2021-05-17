@@ -1587,7 +1587,7 @@ scottyMultiAddr = do
     cashaddr <- getCashAddr
     local <- getSymbol
     offset <- getBinfoOffset multiaddrStat
-    n <- getBinfoCount
+    n <- getBinfoCount "n"
     prune <- get_prune
     fltr <- get_filter
     let len = HashSet.size addrs' + HashSet.size xpubs
@@ -1755,11 +1755,11 @@ scottyMultiAddr = do
       | otherwise = 0
     received _ = 0
 
-getBinfoCount :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m Int
-getBinfoCount = do
+getBinfoCount :: (MonadUnliftIO m, MonadLoggerIO m) => TL.Text -> WebT m Int
+getBinfoCount str = do
         d <- lift (asks (maxLimitDefault . webMaxLimits . webConfig))
         x <- lift (asks (maxLimitFull . webMaxLimits . webConfig))
-        i <- min x <$> (S.param "n" `S.rescue` const (return d))
+        i <- min x <$> (S.param str `S.rescue` const (return d))
         return (fromIntegral i :: Int)
 
 getBinfoOffset :: (MonadUnliftIO m, MonadLoggerIO m)
@@ -1778,7 +1778,7 @@ scottyRawAddr = do
     setMetrics rawaddrStat 1
     addr <- get_addr
     numtxid <- getNumTxId
-    n <- getBinfoCount
+    n <- getBinfoCount "limit"
     off <- getBinfoOffset rawaddrStat
     bal <- fromMaybe (zeroBalance addr) <$> getBalance addr
     net <- lift $ asks (storeNetwork . webStore . webConfig)
@@ -1975,7 +1975,7 @@ scottyBinfoMempool = do
     setMetrics mempoolStat 1
     numtxid <- getNumTxId
     offset <- getBinfoOffset mempoolStat
-    n <- getBinfoCount
+    n <- getBinfoCount "limit"
     mempool <- getMempool
     let txids = map snd $ take n $ drop offset mempool
     txs <- catMaybes <$> mapM getTransaction txids
