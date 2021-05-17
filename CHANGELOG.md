@@ -5,7 +5,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
 ## 0.52.11
+### Added
+- Alias for Blockchain.info raw address endpoint.
+
 ### Fixed
+- Fix unknown message types without payload upstream.
 - Randomise peer timeouts upstream.
 
 ## 0.52.10

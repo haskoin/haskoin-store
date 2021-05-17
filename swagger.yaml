@@ -1320,6 +1320,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  '/blockchain/address/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBinfoAddress
+      summary: Address Balance & Transactions
+      parameters:
+        - $ref: '#/components/parameters/binfoAddr'
+        - $ref: '#/components/parameters/binfoLimit'
+        - $ref: '#/components/parameters/binfoOffset'
+      responses:
+        '200':
+          description: Address balance & transactions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinfoRawAddr'
+        '400':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   '/blockchain/unconfirmed-transactions':
     get:
       tags:

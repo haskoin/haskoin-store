@@ -676,6 +676,7 @@ handlePaths = do
     S.get  "/blockchain/balance" scottyShortBal
     S.post "/blockchain/balance" scottyShortBal
     S.get  "/blockchain/rawaddr/:addr" scottyRawAddr
+    S.get  "/blockchain/address/:addr" scottyRawAddr
     S.post "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
