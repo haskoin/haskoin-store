@@ -11,5 +11,7 @@ packages:
   - store
   - data
 extra-deps:
-  - haskoin-core-0.20.2@sha256:70ca2c8095da2ad849bd698f6ca21e34f29b8d26513ae09c268952d7241b8741,4836
-  - haskoin-node-0.17.10@sha256:966c71d76fd4ae10af5556d7bea1085737a53ab14b99a79a5972f513f489afc5,2280
+  - git: https://github.com/haskoin/haskoin-core.git
+    commit: 73fcd3c401ab38995802b4ccf9e2043eb00b6ff2
+  - git: https://github.com/haskoin/haskoin-node.git
+    commit: 3bc648bdadb04cc007fa8f81e3f9f804fe30b3d3
