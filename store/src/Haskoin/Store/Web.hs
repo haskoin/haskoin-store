@@ -26,21 +26,20 @@ import           Conduit                                 (ConduitT, await,
                                                           yield, (.|))
 import           Control.Applicative                     ((<|>))
 import           Control.Arrow                           (second)
-import           Control.Concurrent.STM                  (check)
 import           Control.Lens                            ((.~), (^.))
-import           Control.Monad                           (forM, forever, unless,
-                                                          when, (<=<))
+import           Control.Monad                           (forever, unless, when,
+                                                          (<=<))
 import           Control.Monad.Logger                    (MonadLoggerIO,
                                                           logDebugS, logErrorS,
-                                                          logInfoS, logWarnS)
-import           Control.Monad.Reader                    (ReaderT, ask, asks,
-                                                          local, runReaderT)
+                                                          logWarnS)
+import           Control.Monad.Reader                    (ReaderT, asks, local,
+                                                          runReaderT)
 import           Control.Monad.Trans                     (lift)
 import           Control.Monad.Trans.Control             (liftWith, restoreT)
 import           Control.Monad.Trans.Maybe               (MaybeT (..),
                                                           runMaybeT)
 import           Data.Aeson                              (Encoding, ToJSON (..),
-                                                          Value, object, (.=))
+                                                          Value)
 import qualified Data.Aeson                              as A
 import           Data.Aeson.Encode.Pretty                (Config (..),
                                                           defConfig,
@@ -59,20 +58,18 @@ import           Data.Bytes.Put
 import           Data.Bytes.Serial
 import           Data.Char                               (isSpace)
 import           Data.Default                            (Default (..))
-import           Data.Function                           (on, (&))
+import           Data.Function                           ((&))
 import           Data.HashMap.Strict                     (HashMap)
 import qualified Data.HashMap.Strict                     as HashMap
 import           Data.HashSet                            (HashSet)
 import qualified Data.HashSet                            as HashSet
 import           Data.Int                                (Int64)
 import           Data.List                               (nub)
-import qualified Data.Map.Strict                         as Map
 import           Data.Maybe                              (catMaybes, fromJust,
                                                           fromMaybe, isJust,
                                                           listToMaybe, mapMaybe,
                                                           maybeToList)
 import           Data.Proxy                              (Proxy (..))
-import qualified Data.Set                                as Set
 import           Data.String                             (fromString)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
@@ -80,8 +77,7 @@ import qualified Data.Text                               as T
 import qualified Data.Text.Encoding                      as T
 import           Data.Text.Lazy                          (toStrict)
 import qualified Data.Text.Lazy                          as TL
-import           Data.Time.Clock                         (NominalDiffTime,
-                                                          diffUTCTime)
+import           Data.Time.Clock                         (diffUTCTime)
 import           Data.Time.Clock.System                  (getSystemTime,
                                                           systemSeconds,
                                                           systemToUTCTime)
@@ -104,7 +100,6 @@ import           Haskoin.Store.Cache
 import           Haskoin.Store.Common
 import           Haskoin.Store.Data
 import           Haskoin.Store.Database.Reader
-import           Haskoin.Store.Logic
 import           Haskoin.Store.Manager
 import           Haskoin.Store.Stats
 import           Haskoin.Store.WebCommon
@@ -114,8 +109,8 @@ import           NQE                                     (Inbox, receive,
                                                           withSubscription)
 import           Network.HTTP.Types                      (Status (..),
                                                           requestEntityTooLarge413,
-                                                          status400, status403,
-                                                          status404, status409,
+                                                          status400, status404,
+                                                          status409, status413,
                                                           status500, status503,
                                                           statusIsClientError,
                                                           statusIsServerError,
@@ -132,25 +127,20 @@ import           Network.Wai.Middleware.RequestSizeLimit
 import qualified Network.Wreq                            as Wreq
 import           System.IO.Unsafe                        (unsafeInterleaveIO)
 import qualified System.Metrics                          as Metrics
-import qualified System.Metrics.Counter                  as Metrics (Counter)
-import qualified System.Metrics.Counter                  as Metrics.Counter
 import qualified System.Metrics.Gauge                    as Metrics (Gauge)
 import qualified System.Metrics.Gauge                    as Metrics.Gauge
-import           Text.Printf                             (printf)
 import           UnliftIO                                (MonadIO,
                                                           MonadUnliftIO, TVar,
                                                           askRunInIO,
                                                           atomically, bracket,
                                                           bracket_, handleAny,
                                                           liftIO, modifyTVar,
-                                                          newTVarIO, readTVar,
-                                                          readTVarIO, timeout,
-                                                          withAsync,
+                                                          newTVarIO, readTVarIO,
+                                                          timeout, withAsync,
                                                           withRunInIO,
                                                           writeTVar)
 import           UnliftIO.Concurrent                     (threadDelay)
 import           Web.Scotty.Internal.Types               (ActionT)
-import           Web.Scotty.Trans                        (Parsable)
 import qualified Web.Scotty.Trans                        as S
 
 type WebT m = ActionT Except (ReaderT WebState m)
@@ -365,7 +355,7 @@ instance (MonadUnliftIO m, MonadLoggerIO m) => StoreReadExtra (WebT m) where
 runWeb :: (MonadUnliftIO m, MonadLoggerIO m) => WebConfig -> m ()
 runWeb cfg@WebConfig{ webHost = host
                     , webPort = port
-                    , webStore = store
+                    , webStore = store'
                     , webStats = stats
                     , webPriceGet = pget
                     } = do
@@ -376,7 +366,7 @@ runWeb cfg@WebConfig{ webHost = host
              , webTicker = ticker
              , webMetrics = metrics
              }
-        net = storeNetwork store
+        net = storeNetwork store'
     withAsync (price net pget ticker) $ \_ -> do
         reqLogger <- logIt metrics
         runner <- askRunInIO
@@ -397,7 +387,7 @@ getRates net currency times = do
         r <- liftIO $ Wreq.asJSON =<< Wreq.postWith opts url body
         return $ r ^. Wreq.responseBody
   where
-    err e = do
+    err _ = do
         $(logErrorS) "Web" "Could not get historic prices"
         return []
     body = toJSON times
@@ -468,6 +458,7 @@ errStatus StringError{}     = status400
 errStatus ServerError       = status500
 errStatus TxIndexConflict{} = status409
 errStatus ServerTimeout     = status500
+errStatus RequestTooLarge   = status413
 
 defHandler :: Monad m => Except -> WebT m ()
 defHandler e = do
@@ -692,16 +683,6 @@ handlePaths = do
     S.get  "/blockchain/hashpubkey/:pubkey"  scottyBinfoHashPubkey
   where
     json_list f net = toJSONList . map (f net)
-
-pathPretty ::
-       (ApiResource a b, MonadIO m)
-    => WebT m a
-    -> (a -> WebT m b)
-    -> (Network -> b -> Encoding)
-    -> (Network -> b -> Value)
-    -> S.ScottyT Except (ReaderT WebState m) ()
-pathPretty parser action encJson encValue =
-    pathCommon parser action encJson encValue True
 
 pathCompact ::
        (ApiResource a b, MonadIO m)
@@ -1025,7 +1006,7 @@ cbAfterHeight ::
     -> TxHash
     -> m (Maybe Bool)
 cbAfterHeight height txid =
-    inputs 10000 HashSet.empty HashSet.empty [txid]
+    inputs (10000 :: Int) HashSet.empty HashSet.empty [txid]
   where
     inputs 0 _ _ [] = return Nothing
     inputs i is ns [] =
@@ -1327,7 +1308,7 @@ getBinfoActive metric = do
     return (xspecs, addrs)
   where
     addr (BinfoAddr a) = Just a
-    addr (BinfoXpub x) = Nothing
+    addr (BinfoXpub _) = Nothing
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
 
@@ -1337,7 +1318,7 @@ getNumTxId = fmap not $ S.param "txidindex" `S.rescue` const (return False)
 getChainHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m H.BlockHeight
 getChainHeight = do
     ch <- lift $ asks (storeChain . webStore . webConfig)
-    fmap H.nodeHeight $ chainGetBest ch
+    H.nodeHeight <$> chainGetBest ch
 
 scottyBinfoUnspent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoUnspent =
@@ -1367,8 +1348,8 @@ getBinfoUnspents :: (StoreReadExtra m, MonadIO m)
                  -> HashSet Address
                  -> ConduitT () BinfoUnspent m ()
 getBinfoUnspents numtxid height xspecs addrs = do
-    cs <- conduits
-    joinDescStreams cs .| mapC (uncurry binfo)
+    cs' <- conduits
+    joinDescStreams cs' .| mapC (uncurry binfo)
   where
     binfo Unspent{..} xp =
         let conf = case unspentBlock of
@@ -1388,7 +1369,6 @@ getBinfoUnspents numtxid height xspecs addrs = do
            , getBinfoUnspentTxIndex = txi
            , getBinfoUnspentXPub = xp
            }
-    point_hash = outPointHash . unspentPoint
     conduits = (<>) <$> xconduits <*> pure acounduits
     xconduits = lift $ do
         let f x (XPubUnspent u p) =
@@ -1424,8 +1404,8 @@ getBinfoTxs :: (StoreReadExtra m, MonadIO m)
             -> Int64 -- starting balance
             -> ConduitT () BinfoTx m ()
 getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
-    cs <- conduits
-    joinDescStreams cs .| go bal
+    cs' <- conduits
+    joinDescStreams cs' .| go bal
   where
     sxspecs_ls = HashSet.toList sxspecs
     saddrs_ls = HashSet.toList saddrs
@@ -1491,14 +1471,14 @@ scottyBinfoHistory =
     getBinfoActive historyStat >>= \(xspecs, addrs) ->
     get_dates >>= \(startM, endM) -> do
     setMetrics historyStat (HashSet.size addrs + HashMap.size xspecs)
-    (code, price) <- getPrice
+    (code, price') <- getPrice
     xpubs <- mapM (\x -> (,) x <$> xPubBals x) (HashMap.elems xspecs)
     let xaddrs = HashSet.fromList $ concatMap (map get_addr . snd) xpubs
         aaddrs = xaddrs <> addrs
-        cur = binfoTicker15m price
-        cs = conduits xpubs addrs endM
+        cur = binfoTicker15m price'
+        cs' = conduits xpubs addrs endM
     txs <- lift . runConduit $
-        joinDescStreams cs
+        joinDescStreams cs'
         .| takeWhileC (is_newer startM)
         .| concatMapMC get_transaction
         .| sinkList
@@ -1513,7 +1493,7 @@ scottyBinfoHistory =
         blockRefHeight >= blockDataHeight
     is_newer _ _ = True
     get_addr = balanceAddress . xPubBal
-    get_transaction TxRef{txRefHash = h, txRefBlock = BlockRef{..}} =
+    get_transaction TxRef{txRefHash = h} =
         getTransaction h
     convert cur addrs tx rate =
         let ins = transactionInputs tx
@@ -1593,15 +1573,14 @@ scottyBinfoBlocksDay = do
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr = do
     setMetrics multiaddrStat 1
-    (addrs', xpubs, saddrs, sxpubs, xspecs) <- get_addrs
+    (addrs', _, saddrs, sxpubs, xspecs) <- get_addrs
     numtxid <- getNumTxId
     cashaddr <- getCashAddr
-    local <- getSymbol
+    local' <- getSymbol
     offset <- getBinfoOffset multiaddrStat
     n <- getBinfoCount "n"
     prune <- get_prune
     fltr <- get_filter
-    let len = HashSet.size addrs' + HashSet.size xpubs
     xbals <- get_xbals xspecs
     xtxns <- get_xpub_tx_count xbals xspecs
     let sxbals = subset sxpubs xbals
@@ -1629,7 +1608,7 @@ scottyMultiAddr = do
     let baddrs = toBinfoAddrs sabals sxbals xtxns
         abaddrs = toBinfoAddrs abals xbals xtxns
         recv = sum $ map getBinfoAddrReceived abaddrs
-        sent = sum $ map getBinfoAddrSent abaddrs
+        sent' = sum $ map getBinfoAddrSent abaddrs
         txn = fromIntegral $ length ftxs
         wallet =
             BinfoWallet
@@ -1637,7 +1616,7 @@ scottyMultiAddr = do
             , getBinfoWalletTxCount = txn
             , getBinfoWalletFilteredCount = txn
             , getBinfoWalletTotalReceived = recv
-            , getBinfoWalletTotalSent = sent
+            , getBinfoWalletTotalSent = sent'
             }
         coin = netBinfoSymbol net
         block =
@@ -1651,7 +1630,7 @@ scottyMultiAddr = do
             BinfoInfo
             { getBinfoConnected = peers
             , getBinfoConversion = 100 * 1000 * 1000
-            , getBinfoLocal = local
+            , getBinfoLocal = local'
             , getBinfoBTC = coin
             , getBinfoLatestBlock = block
             }
@@ -1681,12 +1660,6 @@ scottyMultiAddr = do
         Just bh -> getBlock bh >>= \case
             Nothing -> raise multiaddrStat ThingNotFound
             Just b  -> return b
-    get_price ticker = do
-        code <- T.toUpper <$> S.param "currency" `S.rescue` const (return "USD")
-        prices <- readTVarIO ticker
-        case HashMap.lookup code prices of
-            Nothing -> return def
-            Just p  -> return $ binfoTickerToSymbol code p
     get_prune = fmap not $ S.param "no_compact"
         `S.rescue` const (return False)
     subset ks =
@@ -1694,7 +1667,7 @@ scottyMultiAddr = do
     compute_sxspecs sxpubs =
         HashSet.fromList . HashMap.elems . subset sxpubs
     addr (BinfoAddr a) = Just a
-    addr (BinfoXpub x) = Nothing
+    addr (BinfoXpub _) = Nothing
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
     get_addrs = do
@@ -1716,24 +1689,10 @@ scottyMultiAddr = do
         let f b = (balanceAddress b, b)
             g = HashMap.fromList . map f
         in fmap g . getBalances . HashSet.toList
-    addr_in_set s t =
-        let f StoreCoinbase{}                    = False
-            f StoreInput{inputAddress = Nothing} = False
-            f StoreInput{inputAddress = Just a}  = a `HashSet.member` s
-            g StoreOutput{outputAddr = m} = case m of
-                Nothing -> False
-                Just a  -> a `HashSet.member` s
-            i = any f (transactionInputs t)
-            o = any g (transactionOutputs t)
-        in i || o
     get_peers = do
         ps <- lift $ getPeersInformation =<<
             asks (storeManager . webStore . webConfig)
         return (fromIntegral (length ps))
-    compute_txids = map txRefHash . Set.toDescList
-    compute_etxids prune abook =
-        let f = relevantTxs (HashMap.keysSet abook) prune
-        in HashSet.toList . foldl HashSet.union HashSet.empty . map f
     compute_xabals =
         let f b = (balanceAddress (xPubBal b), xPubBal b)
         in HashMap.fromList . concatMap (map f) . HashMap.elems
@@ -1757,14 +1716,6 @@ scottyMultiAddr = do
     compute_xaddrs =
         let f = map (balanceAddress . xPubBal)
         in HashSet.fromList . concatMap f . HashMap.elems
-    sent BinfoTx{getBinfoTxResultBal = Just (r, _)}
-      | r < 0 = fromIntegral (negate r)
-      | otherwise = 0
-    sent _ = 0
-    received BinfoTx{getBinfoTxResultBal = Just (r, _)}
-      | r > 0 = fromIntegral r
-      | otherwise = 0
-    received _ = 0
 
 getBinfoCount :: (MonadUnliftIO m, MonadLoggerIO m) => TL.Text -> WebT m Int
 getBinfoCount str = do
@@ -1805,10 +1756,9 @@ scottyRawAddr = do
     streamEncoding $ binfoRawAddrToEncoding net $ BinfoRawAddr bal txs
 
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyShortBal =
-    getBinfoActive balanceStat >>= \(xspecs, addrs) ->
-    getCashAddr >>= \cashaddr ->
-    getNumTxId >>= \numtxid -> do
+scottyShortBal = do
+    (xspecs, addrs) <- getBinfoActive balanceStat
+    cashaddr <- getCashAddr
     setMetrics balanceStat (HashSet.size addrs + HashMap.size xspecs)
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     abals <- catMaybes <$>
@@ -1840,10 +1790,10 @@ scottyShortBal =
     get_xspec_balance net xpub = do
         xbals <- xPubBals xpub
         xts <- xPubTxCount xpub xbals
-        let val = sum $ map balanceAmount $ map xPubBal xbals
-            zro = sum $ map balanceZero $ map xPubBal xbals
+        let val = sum $ map (balanceAmount . xPubBal) xbals
+            zro = sum $ map (balanceZero . xPubBal) xbals
             exs = filter is_ext xbals
-            rcv = sum $ map balanceTotalReceived $ map xPubBal exs
+            rcv = sum $ map (balanceTotalReceived . xPubBal) exs
             sbl =
                 BinfoShortBal
                 {
@@ -2281,9 +2231,8 @@ logIt metrics = do
                                 V.insert (itemsKey m) item_var $
                                 vault rq
                        return rq{vault = vt}
-        bracket start (end var runner req') $ \t1 ->
+        bracket start (end var runner req') $ \_ ->
             app req' $ \res -> do
-                t2 <- systemToUTCTime <$> getSystemTime
                 b <- readTVarIO var
                 let s = responseStatus res
                     msg = fmtReq b req' <> ": " <> fmtStatus s
@@ -2329,9 +2278,9 @@ reqSizeLimit = requestSizeLimitMiddleware lim
   where
     max_len _req = return (Just (256 * 1024))
     lim = setOnLengthExceeded too_big $
-          setMaxLengthForRequest max_len $
+          setMaxLengthForRequest max_len
           defaultRequestSizeLimitSettings
-    too_big w64 = \_app _req send -> send $
+    too_big _ = \_app _req send -> send $
         waiExcept requestEntityTooLarge413 RequestTooLarge
 
 fmtReq :: ByteString -> Request -> Text
