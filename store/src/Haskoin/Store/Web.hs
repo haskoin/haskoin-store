@@ -689,6 +689,7 @@ handlePaths = do
     S.post "/blockchain/export-history" scottyBinfoHistory
     S.get  "/blockchain/addresstohash/:addr"  scottyBinfoAddrToHash
     S.get  "/blockchain/addrpubkey/:pubkey"  scottyBinfoAddrPubkey
+    S.get  "/blockchain/hashpubkey/:pubkey"  scottyBinfoHashPubkey
   where
     json_list f net = toJSONList . map (f net)
 
@@ -2001,6 +2002,13 @@ scottyBinfoAddrPubkey = do
   case (addrToText net pubkey) of
     Nothing -> raise rawaddrStat ThingNotFound
     Just a -> S.text $ TL.fromStrict a
+
+scottyBinfoHashPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoHashPubkey = do
+  addr <- pubKeyAddr <$> fromString <$> S.param "pubkey"
+  net <- lift $ asks (storeNetwork . webStore . webConfig)
+  setHeaders
+  S.text . encodeHexLazy . runPutL . serialize $ getAddrHash160 addr
 
 
 -- GET Network Information --
