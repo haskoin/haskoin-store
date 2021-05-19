@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 8ceee75d28fbd725fffaf8115698714ce2a7655952f721e8db596dc9641c3eac
+-- hash: c732e73894280346039e2a4a844d447d9132a5cbe3145ce62eea674e28d212ac
 
 name:           haskoin-store
 version:        0.52.13
@@ -13,7 +13,8 @@ description:    Please see the README on GitHub at <https://github.com/haskoin/h
 category:       Bitcoin, Finance, Network
 homepage:       http://github.com/haskoin/haskoin-store#readme
 bug-reports:    http://github.com/haskoin/haskoin-store/issues
-author:         Jean-Pierre Rupp
+author:         Jean-Pierre Rupp,
+                Levente Kurusa
 maintainer:     jprupp@protonmail.ch
 license:        MIT
 license-file:   LICENSE
