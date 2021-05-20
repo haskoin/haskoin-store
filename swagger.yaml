@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.52.13
+  version: &version 0.52.14
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1676,6 +1676,162 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  '/blockchain/q/addresstohash/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getAddressHash
+      summary: Address Hash
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+      responses:
+        '200':
+          description: Address hash.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  '/blockchain/q/addrpubkey/{pubkey}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getPubKeyAddress
+      summary: Public Key Address
+      parameters:
+        - $ref: '#/components/parameters/pubKeyParam'
+      responses:
+        '200':
+          description: Public key address.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  '/blockchain/q/hashpubkey/{pubkey}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getPubKeyHash
+      summary: Public Key Hash
+      parameters:
+        - $ref: '#/components/parameters/pubKeyParam'
+      responses:
+        '200':
+          description: Public key hash.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  '/blockchain/q/getblockcount':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBlockCount
+      summary: Block Count
+      responses:
+        '200':
+          description: Height of block chain.
+          content:
+            text/plain:
+              schema:
+                type: number
+
+  '/blockchain/q/latesthash':
+    get:
+      tags:
+        - Blockchain
+      operationId: getLatestHash
+      summary: Latest Block Hash
+      responses:
+        '200':
+          description: Latest block hash.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  '/blockchain/q/bcperblock':
+    get:
+      tags:
+        - Blockchain
+      operationId: getBlockSubsidy
+      summary: Block Subsidy
+      responses:
+        '200':
+          description: Block subsidy for next block.
+          content:
+            text/plain:
+              schema:
+                type: number
+
+  '/blockchain/q/txtotalbtcoutput/{txid}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getTotalOutput
+      summary: Total Output
+      parameters:
+        - $ref: '#/components/parameters/binfoTxId'
+      responses:
+        '200':
+          description: Total amount in transaction outputs.
+          content:
+            text/plain:
+              schema:
+                type: number
+
+  '/blockchain/q/txtotalbtcinput/{txid}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getTotalInput
+      summary: Total Spent
+      parameters:
+        - $ref: '#/components/parameters/binfoTxId'
+      responses:
+        '200':
+          description: Total amount spent by transaction.
+          content:
+            text/plain:
+              schema:
+                type: number
+
+  '/blockchain/q/txfee/{txid}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getTxFee
+      summary: Transaction Fee
+      parameters:
+        - $ref: '#/components/parameters/binfoTxId'
+      responses:
+        '200':
+          description: Fees paid by transaction.
+          content:
+            text/plain:
+              schema:
+                type: number
+
+  '/blockchain/q/txresult/{txid}/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getTxResult
+      summary: Transaction Address Amount
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+        - $ref: '#/components/parameters/binfoTxId'
+      responses:
+        '200':
+          description: Value of transaction affecting address balance.
+          content:
+            text/plain:
+              schema:
+                type: number
+    
+
 components:
   schemas:
   
@@ -3043,6 +3199,13 @@ components:
           type: integer
 
   parameters:
+
+    pubKeyParam:
+      name: pubkey
+      in: path
+      required: true
+      schema:
+        type: string
 
     addressParam:
       name: address

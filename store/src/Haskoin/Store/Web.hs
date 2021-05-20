@@ -27,8 +27,8 @@ import           Conduit                                 (ConduitT, await,
 import           Control.Applicative                     ((<|>))
 import           Control.Arrow                           (second)
 import           Control.Lens                            ((.~), (^.))
-import           Control.Monad                           (forever, unless, when,
-                                                          (<=<))
+import           Control.Monad                           (forM_, forever,
+                                                          unless, when, (<=<))
 import           Control.Monad.Logger                    (MonadLoggerIO,
                                                           logDebugS, logErrorS,
                                                           logWarnS)
@@ -67,8 +67,7 @@ import           Data.Int                                (Int64)
 import           Data.List                               (nub)
 import           Data.Maybe                              (catMaybes, fromJust,
                                                           fromMaybe, isJust,
-                                                          listToMaybe, mapMaybe,
-                                                          maybeToList)
+                                                          mapMaybe, maybeToList)
 import           Data.Proxy                              (Proxy (..))
 import           Data.String                             (fromString)
 import           Data.String.Conversions                 (cs)
@@ -402,9 +401,7 @@ price :: (MonadUnliftIO m, MonadLoggerIO m)
       -> TVar (HashMap Text BinfoTicker)
       -> m ()
 price net pget v =
-    case code of
-        Nothing -> return ()
-        Just s  -> go s
+    forM_ code go
   where
     code | net == btc = Just "btc"
          | net == bch = Just "bch"
@@ -678,9 +675,16 @@ handlePaths = do
     S.get  "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
-    S.get  "/blockchain/addresstohash/:addr"  scottyBinfoAddrToHash
-    S.get  "/blockchain/addrpubkey/:pubkey"  scottyBinfoAddrPubkey
-    S.get  "/blockchain/hashpubkey/:pubkey"  scottyBinfoHashPubkey
+    S.get  "/blockchain/q/addresstohash/:addr"  scottyBinfoAddrToHash
+    S.get  "/blockchain/q/addrpubkey/:pubkey"  scottyBinfoAddrPubkey
+    S.get  "/blockchain/q/hashpubkey/:pubkey"  scottyBinfoHashPubkey
+    S.get  "/blockchain/q/getblockcount" scottyBinfoGetBlockCount
+    S.get  "/blockchain/q/latesthash" scottyBinfoLatestHash
+    S.get  "/blockchain/q/bcperblock" scottyBinfoSubsidy
+    S.get  "/blockchain/q/txtotalbtcoutput/:txid" scottyBinfoTotalOut
+    S.get  "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
+    S.get  "/blockchain/q/txfee/:txid" scottyBinfoTxFees
+    S.get  "/blockchain/q/txresult/:txhash/:addr" scottyBinfoTxResult
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1459,8 +1463,8 @@ getCashAddr :: Monad m => WebT m Bool
 getCashAddr = S.param "cashaddr" `S.rescue` const (return False)
 
 getAddress :: (Monad m, MonadUnliftIO m) => TL.Text -> WebT m Address
-getAddress param = do
-    txt <- S.param param
+getAddress param' = do
+    txt <- S.param param'
     net <- lift $ asks (storeNetwork . webStore . webConfig)
     case textToAddr net txt of
         Nothing -> raise rawaddrStat ThingNotFound
@@ -1901,20 +1905,29 @@ scottyBinfoBlock =
                 net <- lift $ asks (storeNetwork . webStore . webConfig)
                 streamEncoding $ binfoBlockToEncoding net y
 
-scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyBinfoTx =
-    getNumTxId >>= \numtxid ->
-    getBinfoHex >>= \hex ->
-    S.param "txid" >>= \txid ->
-    setMetrics rawtxStat 1 >>
-    let f (BinfoTxIdHash h)  = maybeToList <$> getTransaction h
-        f (BinfoTxIdIndex i) = getNumTransaction i
-    in f txid >>= \case
-        [] -> raise rawtxStat ThingNotFound
-        [t] -> if hex then hx t else js numtxid t
+getBinfoTx :: (MonadLoggerIO m, MonadUnliftIO m) =>
+              BinfoTxId -> WebT m (Either Except Transaction)
+getBinfoTx txid = do
+    tx <- case txid of
+              BinfoTxIdHash h  -> maybeToList <$> getTransaction h
+              BinfoTxIdIndex i -> getNumTransaction i
+    case tx of
+        [t] -> return $ Right t
+        [] -> return $ Left ThingNotFound
         ts ->
             let tids = map (txHash . transactionData) ts
-            in raise rawtxStat (TxIndexConflict tids)
+            in return $ Left (TxIndexConflict tids)
+
+scottyBinfoTx :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTx = do
+    numtxid <- getNumTxId
+    hex <- getBinfoHex
+    txid <- S.param "txid"
+    setMetrics rawtxStat 1
+    tx <- getBinfoTx txid >>= \case
+              Right t -> return t
+              Left e -> raise rawtxStat e
+    if hex then hx tx else js numtxid tx
   where
     js numtxid t = do
         net <- lift $ asks (storeNetwork . webStore . webConfig)
@@ -1923,6 +1936,66 @@ scottyBinfoTx =
     hx t = do
         setHeaders
         S.text . encodeHexLazy . runPutL . serialize $ transactionData t
+
+scottyBinfoTotalOut :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTotalOut = do
+    txid <- S.param "txid"
+    setMetrics rawtxStat 1
+    tx <- getBinfoTx txid >>= \case
+              Right t -> return t
+              Left e -> raise_ e
+    S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) .
+        fromIntegral . sum . map outputAmount $ transactionOutputs tx
+
+scottyBinfoTxFees :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTxFees = do
+    txid <- S.param "txid"
+    setMetrics rawtxStat 1
+    tx <- getBinfoTx txid >>= \case
+              Right t -> return t
+              Left e -> raise_ e
+    let i = sum . map inputAmount . filter is_input $
+            transactionInputs tx
+        o = sum . map outputAmount $ transactionOutputs tx
+    S.text . cs . show $ fromIntegral (i - o) / (100 * 1000 * 1000 :: Double)
+  where
+    is_input StoreInput{} = True
+    is_input StoreCoinbase{} = False
+
+scottyBinfoTxResult :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTxResult = do
+    txid <- S.param "txid"
+    addr <- getAddress "addr"
+    setMetrics rawtxStat 1
+    tx <- getBinfoTx txid >>= \case
+              Right t -> return t
+              Left e -> raise_ e
+    let i = toInteger . sum . map inputAmount . filter (is_input addr) $
+            transactionInputs tx
+        o = toInteger . sum . map outputAmount . filter (is_output addr) $
+            transactionOutputs tx
+    S.text . cs . show $ fromIntegral (o - i) / (100 * 1000 * 1000 :: Double)
+  where
+    is_input addr StoreInput{inputAddress = Just a} = a == addr
+    is_input _ _ = False
+    is_output addr StoreOutput{outputAddr = Just a} = a == addr
+    is_output _ _ = False
+
+
+
+scottyBinfoTotalInput :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoTotalInput = do
+    txid <- S.param "txid"
+    setMetrics rawtxStat 1
+    tx <- getBinfoTx txid >>= \case
+              Right t -> return t
+              Left e -> raise_ e
+    S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) .
+        fromIntegral . sum . map inputAmount . filter is_input $
+        transactionInputs tx
+  where
+    is_input StoreInput{} = True
+    is_input StoreCoinbase{} = False
 
 scottyBinfoMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoMempool = do
@@ -1938,6 +2011,29 @@ scottyBinfoMempool = do
     let mem = BinfoMempool $ map (toBinfoTxSimple numtxid) txs
     streamEncoding $ binfoMempoolToEncoding net mem
 
+scottyBinfoGetBlockCount :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoGetBlockCount = do
+    ch <- asks (storeChain . webStore . webConfig)
+    bn <- chainGetBest ch
+    setHeaders
+    S.text . cs . show $ H.nodeHeight bn
+
+scottyBinfoLatestHash :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoLatestHash = do
+    ch <- asks (storeChain . webStore . webConfig)
+    bn <- chainGetBest ch
+    setHeaders
+    S.text . TL.fromStrict . H.blockHashToHex . H.headerHash $ H.nodeHeader bn
+
+scottyBinfoSubsidy :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoSubsidy = do
+    ch <- asks (storeChain . webStore . webConfig)
+    net <- asks (storeNetwork . webStore . webConfig)
+    bn <- chainGetBest ch
+    setHeaders
+    S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) . fromIntegral $
+        H.computeSubsidy net (H.nodeHeight bn + 1)
+
 scottyBinfoAddrToHash :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrToHash =
     getAddress "addr" >>= \addr -> do
@@ -1946,17 +2042,16 @@ scottyBinfoAddrToHash =
 
 scottyBinfoAddrPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrPubkey = do
-  pubkey <- pubKeyAddr <$> fromString <$> S.param "pubkey"
+  pubkey <- pubKeyAddr . fromString <$> S.param "pubkey"
   net <- lift $ asks (storeNetwork . webStore . webConfig)
   setHeaders
-  case (addrToText net pubkey) of
+  case addrToText net pubkey of
     Nothing -> raise rawaddrStat ThingNotFound
-    Just a -> S.text $ TL.fromStrict a
+    Just a  -> S.text $ TL.fromStrict a
 
 scottyBinfoHashPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashPubkey = do
-  addr <- pubKeyAddr <$> fromString <$> S.param "pubkey"
-  net <- lift $ asks (storeNetwork . webStore . webConfig)
+  addr <- pubKeyAddr . fromString <$> S.param "pubkey"
   setHeaders
   S.text . encodeHexLazy . runPutL . serialize $ getAddrHash160 addr
 
@@ -2026,10 +2121,10 @@ lastTxHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
 lastTxHealthCheck WebConfig {..} = do
     n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
     b <- fromIntegral . H.blockTimestamp . H.nodeHeader <$> chainGetBest ch
-    t <- listToMaybe <$> getMempool >>= \case
-        Just t -> let x = fromIntegral $ fst t
-                  in return $ max x b
-        Nothing -> return b
+    t <- getMempool >>= \case
+        t:_ -> let x = fromIntegral $ fst t
+               in return $ max x b
+        [] -> return b
     let timeHealthAge = n - t
         timeHealthMax = fromIntegral to
     return TimeHealth {..}

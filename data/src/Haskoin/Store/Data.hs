@@ -799,6 +799,7 @@ instance Serial StoreInput where
             inputWitness <- getList getLengthBytes
             inputAddress <- getMaybe deserialize
             return StoreInput{..}
+        x -> fail $ "Unknown input id: " <> cs (show x)
 
 instance Serialize StoreInput where
     put = serialize
@@ -825,7 +826,7 @@ storeInputToJSON
         inputWitness = wit,
         inputAddress = a
     } =
-    A.object $
+    A.object
     [ "coinbase" .= False
     , "txid" .= oph
     , "output" .= opi
