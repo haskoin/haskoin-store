@@ -684,7 +684,7 @@ handlePaths = do
     S.get  "/blockchain/q/txtotalbtcoutput/:txid" scottyBinfoTotalOut
     S.get  "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
     S.get  "/blockchain/q/txfee/:txid" scottyBinfoTxFees
-    S.get  "/blockchain/q/txresult/:txhash/:addr" scottyBinfoTxResult
+    S.get  "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
   where
     json_list f net = toJSONList . map (f net)
 
