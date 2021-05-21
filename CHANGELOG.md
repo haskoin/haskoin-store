@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Blockchain.info endpoint: q/txfee/:txid
 - Blockchain.info endpoint: q/txresult/:txhash/:addr
 
+### Fixed
+- Various latest blocks endpoint fixes.
+
 ## 0.52.13
 ### Fixed
 - Upstream fixes for unknown inv types.

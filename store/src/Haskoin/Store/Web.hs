@@ -859,10 +859,10 @@ scottyBlockLatest (GetBlockLatest (NoTx noTx)) = do
         (raise blockStat ThingNotFound)
         (go [] <=< getBlock)
   where
-    go acc Nothing = return acc
+    go acc Nothing = return $ reverse acc
     go acc (Just b)
-        | blockDataHeight b <= 0 = return acc
-        | length acc == 99 = return (b:acc)
+        | blockDataHeight b <= 0 = return $ reverse acc
+        | length acc == 99 = return . reverse $ pruneTx noTx b : acc
         | otherwise = do
             let prev = H.prevBlock (blockDataHeader b)
             go (pruneTx noTx b : acc) =<< getBlock prev
