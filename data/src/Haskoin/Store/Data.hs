@@ -2139,7 +2139,7 @@ instance ToJSON Except where
                 , "message" .= String (cs msg) ]
             TxIndexConflict txids ->
                 [ "error" .= String "multiple-tx-index"
-                , "message" .= String "Many txs match that tx_index"
+                , "message" .= String "Multiple txs match that index"
                 , "txids" .= txids ]
             ServerTimeout ->
                 [ "error" .= String "server-timeout"
