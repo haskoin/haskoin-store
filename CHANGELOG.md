@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Fixed
 - Various latest blocks endpoint fixes.
+- Allow empty parameters in Blockchain.info POST requests.
 
 ## 0.52.13
 ### Fixed

@@ -1291,9 +1291,11 @@ getBinfoAddrsParam :: MonadIO m
 getBinfoAddrsParam metric name = do
     net <- lift (asks (storeNetwork . webStore . webConfig))
     p <- S.param (cs name) `S.rescue` const (return "")
-    case parseBinfoAddr net p of
-        Nothing -> raise metric (UserError "invalid active address")
-        Just xs -> return $ HashSet.fromList xs
+    if T.null p
+        then return HashSet.empty
+        else case parseBinfoAddr net p of
+                 Nothing -> raise metric (UserError "invalid active address")
+                 Just xs -> return $ HashSet.fromList xs
 
 getBinfoActive :: MonadIO m
                => (WebMetrics -> StatDist)
