@@ -248,7 +248,6 @@ checkStatus req res
     code = res ^. HTTP.responseStatus . HTTP.statusCode
     message = res ^. HTTP.responseStatus . HTTP.statusMessage
     status = mkStatus code message
-    err = unwords ["Code:", show code, "Message:", cs message]
     isHealthPath = "/health" `Text.isInfixOf` cs (path req)
 
 ---------------

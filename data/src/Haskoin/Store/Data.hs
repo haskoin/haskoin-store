@@ -66,6 +66,8 @@ module Haskoin.Store.Data
     , xPubUnspentParseJSON
     , XPubSummary(..)
     , DeriveType(..)
+    , textToDeriveType
+    , deriveTypeToText
 
       -- * Other Data
     , TxId(..)
@@ -164,12 +166,9 @@ where
 import           Control.Applicative     ((<|>))
 import           Control.DeepSeq         (NFData)
 import           Control.Exception       (Exception)
-import           Control.Monad           (join, mzero, replicateM, unless,
-                                          (<=<))
-import           Data.Aeson              (Encoding, FromJSON (..),
-                                          FromJSONKey (..), ToJSON (..),
-                                          ToJSONKey (..), Value (..), (.!=),
-                                          (.:), (.:?), (.=))
+import           Control.Monad           (join, mzero, unless, (<=<))
+import           Data.Aeson              (Encoding, FromJSON (..), ToJSON (..),
+                                          Value (..), (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson              as A
 import qualified Data.Aeson.Encoding     as AE
 import           Data.Aeson.Types        (Parser)
@@ -181,11 +180,8 @@ import qualified Data.ByteString.Builder as BSB
 import           Data.Bytes.Get
 import qualified Data.Bytes.Get          as Bytes.Get
 import           Data.Bytes.Put
-import qualified Data.Bytes.Put          as Bytes.Put
 import           Data.Bytes.Serial
-import           Data.Bytes.Serial       (Serial (..))
 import           Data.Default            (Default (..))
-import           Data.Either             (fromRight, lefts, rights)
 import           Data.Foldable           (toList)
 import           Data.Function           (on)
 import           Data.HashMap.Strict     (HashMap)
@@ -196,8 +192,6 @@ import           Data.Hashable           (Hashable (..))
 import           Data.Int                (Int32, Int64)
 import qualified Data.IntMap             as IntMap
 import           Data.IntMap.Strict      (IntMap)
-import           Data.List               (unfoldr)
-import           Data.Map.Strict         (Map)
 import           Data.Maybe              (catMaybes, fromMaybe, isJust,
                                           isNothing, mapMaybe, maybeToList)
 import           Data.Serialize          (Serialize (..))
@@ -211,12 +205,9 @@ import           Data.Time.Clock.POSIX   (posixSecondsToUTCTime,
                                           utcTimeToPOSIXSeconds)
 import           Data.Time.Format        (defaultTimeLocale, formatTime,
                                           parseTimeM)
-import           Data.Word               (Word32, Word64, Word8)
+import           Data.Word               (Word32, Word64)
 import           GHC.Generics            (Generic)
-import           Haskoin
-import           Numeric.Natural         (Natural)
-import           Text.Printf             (printf)
-import           Text.Read               (readMaybe)
+import           Haskoin                 hiding (inputAddress)
 import           Web.Scotty.Trans        (Parsable (..), ScottyError (..))
 
 data DeriveType
@@ -224,6 +215,17 @@ data DeriveType
     | DeriveP2SH
     | DeriveP2WPKH
     deriving (Show, Eq, Generic, NFData)
+
+textToDeriveType :: Text -> Maybe DeriveType
+textToDeriveType "normal" = Just DeriveNormal
+textToDeriveType "compat" = Just DeriveP2SH
+textToDeriveType "segwit" = Just DeriveP2WPKH
+textToDeriveType _        = Nothing
+
+deriveTypeToText :: DeriveType -> Text
+deriveTypeToText DeriveNormal = "normal"
+deriveTypeToText DeriveP2SH   = "compat"
+deriveTypeToText DeriveP2WPKH = "segwit"
 
 instance Serial DeriveType where
     serialize DeriveNormal = putWord8 0x00
@@ -234,6 +236,7 @@ instance Serial DeriveType where
         0x00 -> return DeriveNormal
         0x01 -> return DeriveP2SH
         0x02 -> return DeriveP2WPKH
+        _    -> return DeriveNormal
 
 instance Binary DeriveType where
     put = serialize
@@ -245,6 +248,12 @@ instance Serialize DeriveType where
 
 instance Default DeriveType where
     def = DeriveNormal
+
+instance Parsable DeriveType where
+    parseParam txt =
+        case textToDeriveType (TL.toStrict txt) of
+            Nothing -> Left "invalid derivation type"
+            Just x  -> Right x
 
 data XPubSpec =
     XPubSpec
@@ -839,7 +848,7 @@ storeInputToJSON
     ]
 
 storeInputToJSON
-    net
+    _
     StoreCoinbase
     {
         inputPoint = OutPoint oph opi,
@@ -847,7 +856,7 @@ storeInputToJSON
         inputSigScript = ss,
         inputWitness = wit
     } =
-    A.object $
+    A.object
     [ "coinbase" .= True
     , "txid" .= oph
     , "output" .= opi
@@ -884,7 +893,7 @@ storeInputToEncoding
     "witness" .= map encodeHex wit
 
 storeInputToEncoding
-    net
+    _
     StoreCoinbase
     {
         inputPoint = OutPoint oph opi,
@@ -2131,12 +2140,12 @@ instance ToJSON Except where
             BadRequest ->
                 [ "error" .= String "bad-request"
                 , "message" .= String "Invalid request" ]
-            UserError msg ->
+            UserError msg' ->
                 [ "error" .= String "user-error"
-                , "message" .= String (cs msg) ]
-            StringError msg ->
+                , "message" .= String (cs msg') ]
+            StringError msg' ->
                 [ "error" .= String "string-error"
-                , "message" .= String (cs msg) ]
+                , "message" .= String (cs msg') ]
             TxIndexConflict txids ->
                 [ "error" .= String "multiple-tx-index"
                 , "message" .= String "Multiple txs match that index"
@@ -2152,7 +2161,7 @@ instance FromJSON Except where
     parseJSON =
         A.withObject "Except" $ \o -> do
             ctr <- o .: "error"
-            msg <- o .:? "message" .!= ""
+            msg' <- o .:? "message" .!= ""
             case ctr of
                 String "not-found-or-invalid-arg" ->
                     return ThingNotFound
@@ -2161,9 +2170,9 @@ instance FromJSON Except where
                 String "bad-request" ->
                     return BadRequest
                 String "user-error" ->
-                    return $ UserError msg
+                    return $ UserError msg'
                 String "string-error" ->
-                    return $ StringError msg
+                    return $ StringError msg'
                 String "multiple-tx-index" -> do
                     txids <- o .: "txids"
                     return $ TxIndexConflict txids
@@ -2300,8 +2309,13 @@ binfoMultiAddrToEncoding net' BinfoMultiAddr {..} =
 
 data BinfoRawAddr
     = BinfoRawAddr
-      { getBinfoRawAddrBalance :: !Balance
-      , getBinfoRawAddrTxs     :: ![BinfoTx]
+      { binfoRawAddr       :: !BinfoAddr
+      , binfoRawBalance    :: !Word64
+      , binfoRawTxCount    :: !Word64
+      , binfoRawUnredeemed :: !Word64
+      , binfoRawReceived   :: !Word64
+      , binfoRawSent       :: !Int64
+      , binfoRawTxs        :: ![BinfoTx]
       }
     deriving (Eq, Show, Generic, NFData)
 
@@ -2309,59 +2323,67 @@ binfoRawAddrToJSON :: Network -> BinfoRawAddr -> Value
 binfoRawAddrToJSON net BinfoRawAddr{..} =
     A.object
     [
-        "hash160"        .= (encodeHex . runPutS . serialize <$> h160),
-        "address"        .= addrToJSON net balanceAddress,
-        "n_tx"           .= balanceTxCount,
-        "n_unredeemed"   .= balanceUnspentCount,
-        "total_received" .= balanceTotalReceived,
-        "total_sent"     .= (balanceTotalReceived - bal),
-        "final_balance"  .= bal,
-        "txs"            .= map (binfoTxToJSON net) getBinfoRawAddrTxs
+        "hash160"        .= h160,
+        "address"        .= address,
+        "n_tx"           .= binfoRawTxCount,
+        "n_unredeemed"   .= binfoRawUnredeemed,
+        "total_received" .= binfoRawReceived,
+        "total_sent"     .= binfoRawSent,
+        "final_balance"  .= binfoRawBalance,
+        "txs"            .= map (binfoTxToJSON net) binfoRawTxs
     ]
   where
-    Balance{..} = getBinfoRawAddrBalance
-    bal = balanceAmount + balanceZero
-    h160 = case balanceAddress of
-               PubKeyAddress h        -> Just h
-               ScriptAddress h        -> Just h
-               WitnessPubKeyAddress h -> Just h
-               _                      -> Nothing
+    address = case binfoRawAddr of
+        BinfoAddr a -> addrToJSON net a
+        BinfoXpub x -> xPubToJSON net x
+    h160 =
+        encodeHex . runPutS . serialize <$>
+        case binfoRawAddr of
+        BinfoAddr a -> case a of
+            PubKeyAddress h        -> Just h
+            ScriptAddress h        -> Just h
+            WitnessPubKeyAddress h -> Just h
+            _                      -> Nothing
+        _ -> Nothing
 
 binfoRawAddrToEncoding :: Network -> BinfoRawAddr -> Encoding
 binfoRawAddrToEncoding net BinfoRawAddr{..} =
     AE.pairs $
-    "hash160"        .= (encodeHex . runPutS . serialize <$> h160) <>
-    "address" `AE.pair` addrToEncoding net balanceAddress <>
-    "n_tx"           .= balanceTxCount <>
-    "n_unredeemed"   .= balanceUnspentCount <>
-    "total_received" .= balanceTotalReceived <>
-    "total_sent"     .= (balanceTotalReceived - bal) <>
-    "final_balance"  .= bal <>
-    "txs"     `AE.pair` AE.list (binfoTxToEncoding net) getBinfoRawAddrTxs
+    "hash160"        .= h160 <>
+    "address" `AE.pair` address <>
+    "n_tx"           .= binfoRawTxCount <>
+    "n_unredeemed"   .= binfoRawUnredeemed <>
+    "total_received" .= binfoRawReceived <>
+    "total_sent"     .= binfoRawSent <>
+    "final_balance"  .= binfoRawBalance <>
+    "txs"     `AE.pair` AE.list (binfoTxToEncoding net) binfoRawTxs
   where
-    Balance{..} = getBinfoRawAddrBalance
-    bal = balanceAmount + balanceZero
-    h160 = case balanceAddress of
-               PubKeyAddress h        -> Just h
-               ScriptAddress h        -> Just h
-               WitnessPubKeyAddress h -> Just h
-               _                      -> Nothing
+    address = case binfoRawAddr of
+        BinfoAddr a -> addrToEncoding net a
+        BinfoXpub x -> xPubToEncoding net x
+    h160 =
+        encodeHex . runPutS . serialize <$>
+        case binfoRawAddr of
+        BinfoAddr a -> case a of
+            PubKeyAddress h        -> Just h
+            ScriptAddress h        -> Just h
+            WitnessPubKeyAddress h -> Just h
+            _                      -> Nothing
+        _ -> Nothing
 
 binfoRawAddrParseJSON :: Network -> Value -> Parser BinfoRawAddr
 binfoRawAddrParseJSON net = A.withObject "balancetxs" $ \o -> do
-    balanceAddress <- addrFromJSON net =<< o .: "address"
-    balanceAmount <- o .: "final_balance"
-    let balanceZero = 0
-    balanceUnspentCount <- o .: "n_unredeemed"
-    balanceTxCount <- o .: "n_tx"
-    balanceTotalReceived <- o .: "total_received"
-    txs <- mapM (binfoTxParseJSON net) =<< o .: "txs"
-    return
-        BinfoRawAddr
-        {
-            getBinfoRawAddrBalance = Balance{..},
-            getBinfoRawAddrTxs = txs
-        }
+    addr <- o .: "address"
+    binfoRawAddr <-
+        BinfoAddr <$> addrFromJSON net addr <|>
+        BinfoXpub <$> xPubFromJSON net addr
+    binfoRawBalance <- o .: "final_balance"
+    binfoRawUnredeemed <- o .: "n_unredeemed"
+    binfoRawTxCount <- o .: "n_tx"
+    binfoRawReceived <- o .: "total_received"
+    binfoRawSent <- o .: "total_sent"
+    binfoRawTxs <- mapM (binfoTxParseJSON net) =<< o .: "txs"
+    return BinfoRawAddr{..}
 
 data BinfoShortBal
     = BinfoShortBal
@@ -2650,7 +2672,7 @@ data BinfoBlock
 
 binfoBlockToJSON :: Network -> BinfoBlock -> Value
 binfoBlockToJSON net BinfoBlock{..} =
-    A.object $
+    A.object
     [ "hash" .= getBinfoBlockHash
     , "ver" .= getBinfoBlockVer
     , "prev_block" .= getBinfoPrevBlock
@@ -2755,9 +2777,9 @@ binfoTxToJSON net BinfoTx {..} =
   where
     bal =
         case getBinfoTxResultBal of
-            Nothing         -> []
-            Just (res, bal) -> ["result" .= res, "balance" .= bal]
-    rbf = if getBinfoTxRBF then ["rbf" .= True] else []
+            Nothing          -> []
+            Just (res, bal') -> ["result" .= res, "balance" .= bal']
+    rbf = ["rbf" .= True | getBinfoTxRBF]
 
 binfoTxToEncoding :: Network -> BinfoTx -> Encoding
 binfoTxToEncoding net BinfoTx {..} =
@@ -2782,8 +2804,8 @@ binfoTxToEncoding net BinfoTx {..} =
   where
     bal =
         case getBinfoTxResultBal of
-            Nothing         -> mempty
-            Just (res, bal) -> "result" .= res <> "balance" .= bal
+            Nothing          -> mempty
+            Just (res, bal') -> "result" .= res <> "balance" .= bal'
     rbf = if getBinfoTxRBF then "rbf" .= True else mempty
 
 binfoTxParseJSON :: Network -> Value -> Parser BinfoTx
@@ -3292,9 +3314,7 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
             received = sum (map f xs)
             bal = fromIntegral (sum (map g xs))
             sent = if bal <= received then received - bal else 0
-            count = case HashMap.lookup k xpub_txs of
-                Nothing -> 0
-                Just i  -> fromIntegral i
+            count = maybe 0 fromIntegral $ HashMap.lookup k xpub_txs
             ax = foldl max 0 (map (i 0) xs)
             cx = foldl max 0 (map (i 1) xs)
         in BinfoXPubBalance{ getBinfoXPubKey = k

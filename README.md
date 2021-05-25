@@ -44,4 +44,4 @@ stack build --copy-bins
 
 ## API Documentation
 
-* [Swagger API Documentation](https://api.haskoin.com/).
+* [Swagger API Documentation](https://api.haskoin.com/)

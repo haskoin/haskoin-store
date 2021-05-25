@@ -665,6 +665,7 @@ handlePaths = do
     S.post "/blockchain/balance" scottyShortBal
     S.get  "/blockchain/rawaddr/:addr" scottyRawAddr
     S.get  "/blockchain/address/:addr" scottyRawAddr
+    S.get  "/blockchain/xpub/:addr" scottyRawAddr
     S.post "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/unspent" scottyBinfoUnspent
     S.get  "/blockchain/rawtx/:txid" scottyBinfoTx
@@ -1472,6 +1473,14 @@ getAddress param' = do
         Nothing -> raise rawaddrStat ThingNotFound
         Just a  -> return a
 
+getBinfoAddr :: Monad m => TL.Text -> WebT m (Maybe BinfoAddr)
+getBinfoAddr param' = do
+    txt <- S.param param'
+    net <- lift $ asks (storeNetwork . webStore . webConfig)
+    return $
+        BinfoAddr <$> textToAddr net txt <|>
+        BinfoXpub <$> xPubImport net txt
+
 scottyBinfoHistory :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHistory =
     getBinfoActive historyStat >>= \(xspecs, addrs) ->
@@ -1742,24 +1751,99 @@ getBinfoOffset stat = do
         return (fromIntegral o :: Int)
 
 scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyRawAddr = do
-    setMetrics rawaddrStat 1
-    addr <- getAddress "addr"
-    numtxid <- getNumTxId
-    n <- getBinfoCount "limit"
-    off <- getBinfoOffset rawaddrStat
-    bal <- fromMaybe (zeroBalance addr) <$> getBalance addr
-    net <- lift $ asks (storeNetwork . webStore . webConfig)
-    let abook = HashMap.singleton addr Nothing
-        xspecs = HashSet.empty
-        saddrs = HashSet.singleton addr
-        bfilter = BinfoFilterAll
-        b = fromIntegral $ balanceAmount bal + balanceZero bal
-    txs <- lift . runConduit $
-        getBinfoTxs abook xspecs saddrs saddrs bfilter numtxid False b .|
-        (dropC off >> takeC n .| sinkList)
-    setHeaders
-    streamEncoding $ binfoRawAddrToEncoding net $ BinfoRawAddr bal txs
+scottyRawAddr =
+    setMetrics rawaddrStat 1 >>
+    getBinfoAddr "addr" >>= \case
+        Just b -> case b of
+            BinfoAddr addr -> do_addr addr
+            BinfoXpub xpub -> do_xpub xpub
+        Nothing ->
+            raise rawaddrStat $
+            UserError "could not decode address provided"
+  where
+    do_xpub xpub = do
+        numtxid <- getNumTxId
+        derive <- S.param "derive" `S.rescue` const (return DeriveNormal)
+        let xspec = XPubSpec xpub derive
+        n <- getBinfoCount "limit"
+        off <- getBinfoOffset rawaddrStat
+        xbals <- xPubBals xspec
+        net <- lift $ asks (storeNetwork . webStore . webConfig)
+        summary <- xPubSummary xspec xbals
+        let abook = compute_abook xpub xbals
+            xspecs = HashSet.singleton xspec
+            saddrs = HashSet.empty
+            baddrs = HashMap.keysSet abook
+            bfilter = BinfoFilterAll
+            amnt = xPubSummaryConfirmed summary +
+                   xPubSummaryZero summary
+        txs <- lift . runConduit $
+            getBinfoTxs
+                abook
+                xspecs
+                saddrs
+                baddrs
+                bfilter
+                numtxid
+                False
+                (fromIntegral amnt)
+            .| (dropC off >> takeC n .| sinkList)
+        let ra = BinfoRawAddr
+                 { binfoRawAddr = BinfoXpub xpub
+                 , binfoRawBalance = amnt
+                 , binfoRawTxCount = fromIntegral $ length txs
+                 , binfoRawUnredeemed = xPubUnspentCount summary
+                 , binfoRawReceived = xPubSummaryReceived summary
+                 , binfoRawSent =
+                         fromIntegral (xPubSummaryReceived summary) -
+                         fromIntegral amnt
+                 , binfoRawTxs = txs
+                 }
+        setHeaders
+        streamEncoding $ binfoRawAddrToEncoding net ra
+    compute_abook xpub xbals =
+        let f XPubBal{..} =
+                let a = balanceAddress xPubBal
+                    e = error "black hole swallows all your code"
+                    s = toSoft (listToPath xPubBalPath)
+                    m = fromMaybe e s
+                in (a, Just (BinfoXPubPath xpub m))
+        in HashMap.fromList $ map f xbals
+    do_addr addr = do
+        numtxid <- getNumTxId
+        n <- getBinfoCount "limit"
+        off <- getBinfoOffset rawaddrStat
+        bal <- fromMaybe (zeroBalance addr) <$> getBalance addr
+        net <- lift $ asks (storeNetwork . webStore . webConfig)
+        let abook = HashMap.singleton addr Nothing
+            xspecs = HashSet.empty
+            saddrs = HashSet.singleton addr
+            bfilter = BinfoFilterAll
+            amnt = balanceAmount bal + balanceZero bal
+        txs <- lift . runConduit $
+            getBinfoTxs
+                abook
+                xspecs
+                saddrs
+                saddrs
+                bfilter
+                numtxid
+                False
+                (fromIntegral amnt)
+            .| (dropC off >> takeC n .| sinkList)
+        let ra = BinfoRawAddr
+                 { binfoRawAddr = BinfoAddr addr
+                 , binfoRawBalance = amnt
+                 , binfoRawTxCount = balanceTxCount bal
+                 , binfoRawUnredeemed = balanceUnspentCount bal
+                 , binfoRawReceived = balanceTotalReceived bal
+                 , binfoRawSent =
+                         fromIntegral (balanceTotalReceived bal) -
+                         fromIntegral amnt
+                 , binfoRawTxs = txs
+                 }
+        setHeaders
+        streamEncoding $ binfoRawAddrToEncoding net ra
 
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal = do

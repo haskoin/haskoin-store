@@ -8,18 +8,14 @@ module Haskoin.Store.DataSpec
     ( spec
     ) where
 
-import           Control.Monad           (forM_, replicateM)
+import           Control.Monad           (forM_)
 import           Data.Aeson              (FromJSON (..))
 import qualified Data.ByteString         as B
-import qualified Data.ByteString.Short   as BSS
-import qualified Data.Map.Strict         as Map
-import qualified Data.Serialize          as S
 import           Data.String.Conversions (cs)
 import           Haskoin
 import           Haskoin.Store.Data
 import           Haskoin.Util.Arbitrary
-import           Test.Hspec              (Spec, describe, it)
-import           Test.Hspec.QuickCheck   (prop)
+import           Test.Hspec              (Spec, describe)
 import           Test.QuickCheck
 
 serialVals :: [SerialBox]
@@ -236,20 +232,6 @@ instance Arbitrary Transaction where
             <*> arbitrary
             <*> arbitrary
 
-arbitraryTransactionNet :: Gen (Network, Transaction)
-arbitraryTransactionNet = do
-    net <- arbitraryNetwork
-    val <- arbitrary
-    let val1 | getSegWit net = val
-             | otherwise = val{ transactionInputs = f <$> transactionInputs val
-                              , transactionWeight = 0
-                              }
-        res | getReplaceByFee net = val1
-            | otherwise = val1{ transactionRBF = False }
-    return (net, res)
-  where
-    f i = i {inputWitness = []}
-
 instance Arbitrary PeerInformation where
     arbitrary =
         PeerInformation
@@ -427,9 +409,18 @@ instance Arbitrary BinfoMultiAddr where
 
 instance Arbitrary BinfoRawAddr where
     arbitrary = do
-        balance <- arbitrary
-        txs <- arbitrary
-        return $ BinfoRawAddr balance{balanceZero = 0} txs
+        binfoRawAddr <-
+            oneof
+            [ BinfoAddr <$> arbitraryAddress
+            , BinfoXpub . snd <$> arbitraryXPubKey
+            ]
+        binfoRawBalance <- arbitrary
+        binfoRawTxCount <- arbitrary
+        binfoRawUnredeemed <- arbitrary
+        binfoRawReceived <- arbitrary
+        binfoRawSent <- arbitrary
+        binfoRawTxs <- arbitrary
+        return $ BinfoRawAddr {..}
 
 instance Arbitrary BinfoShortBal where
     arbitrary = BinfoShortBal <$> arbitrary <*> arbitrary <*> arbitrary

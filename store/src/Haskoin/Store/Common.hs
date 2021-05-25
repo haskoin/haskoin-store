@@ -36,8 +36,7 @@ module Haskoin.Store.Common
     ) where
 
 import           Conduit                    (ConduitT, await, dropC, mapC,
-                                             runConduit, sealConduitT, sinkList,
-                                             takeC, yield, ($$++), (.|))
+                                             sealConduitT, takeC, yield, ($$++))
 import           Control.DeepSeq            (NFData)
 import           Control.Exception          (Exception)
 import           Control.Monad              (forM)
@@ -46,16 +45,14 @@ import           Control.Monad.Trans.Maybe  (MaybeT (..), runMaybeT)
 import           Control.Monad.Trans.Reader (runReaderT)
 import           Data.ByteString            (ByteString)
 import           Data.Default               (Default (..))
-import           Data.Function              (on)
 import qualified Data.HashSet               as H
 import           Data.Hashable              (Hashable)
 import           Data.IntMap.Strict         (IntMap)
 import qualified Data.IntMap.Strict         as I
 import           Data.List                  (sortOn)
-import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (catMaybes, mapMaybe)
-import           Data.Ord                   (Down(..))
+import           Data.Ord                   (Down (..))
 import           Data.Serialize             (Serialize (..))
 import           Data.Time.Clock.System     (getSystemTime, systemNanoseconds,
                                              systemSeconds)
@@ -187,7 +184,6 @@ class StoreReadBase m => StoreReadExtra m where
         applyLimits limits . sortOn Down . concat <$> mapM h cs
       where
         l = deOffset limits
-        g = balanceAddress . xPubBal
         cs = filter ((> 0) . balanceUnspentCount . xPubBal) xbals
         i b = getAddressUnspents (balanceAddress (xPubBal b)) l
         f b t = XPubUnspent {xPubUnspentPath = xPubBalPath b, xPubUnspent = t}
@@ -197,8 +193,7 @@ class StoreReadBase m => StoreReadExtra m where
     xPubTxs _xspec xbals limits =
         let as = map balanceAddress $
                  filter (not . nullBalance) $
-                 map xPubBal $
-                 xbals
+                 map xPubBal xbals
         in getAddressesTxs as limits
 
     xPubTxCount :: XPubSpec -> [XPubBal] -> m Word32
@@ -396,7 +391,7 @@ streamThings :: Monad m
 streamThings getit gettx limits =
     lift (getit limits) >>= \case
     [] -> return ()
-    ls -> mapM yield ls >> go limits (last ls)
+    ls -> mapM_ yield ls >> go limits (last ls)
   where
     h l x = case gettx of
         Just g -> Just l{offset = 1, start = Just (AtTx (g x))}
@@ -407,7 +402,7 @@ streamThings getit gettx limits =
         Nothing -> return ()
         Just l' -> lift (getit l') >>= \case
             [] -> return ()
-            ls -> mapM yield ls >> go l' (last ls)
+            ls -> mapM_ yield ls >> go l' (last ls)
 
 joinDescStreams :: (Monad m, Ord a)
                 => [ConduitT () a m ()]

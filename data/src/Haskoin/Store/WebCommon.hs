@@ -4,18 +4,13 @@
 {-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE TupleSections              #-}
 module Haskoin.Store.WebCommon
 
 where
 
 import           Control.Applicative     ((<|>))
 import           Control.Monad           (guard)
-import           Data.Bytes.Get
-import           Data.Bytes.Put
 import           Data.Bytes.Serial
 import           Data.Default            (Default, def)
 import           Data.Proxy              (Proxy (..))
@@ -490,16 +485,11 @@ instance Param Store.DeriveType where
     proxyLabel = const "derive"
     encodeParam net p = do
         guard (getSegWit net || p == Store.DeriveNormal)
-        case p of
-            Store.DeriveNormal -> Just ["standard"]
-            Store.DeriveP2SH   -> Just ["compat"]
-            Store.DeriveP2WPKH -> Just ["segwit"]
+        Just [Store.deriveTypeToText p]
     parseParam net d = do
         res <- case d of
-            ["standard"] -> Just Store.DeriveNormal
-            ["compat"]   -> Just Store.DeriveP2SH
-            ["segwit"]   -> Just Store.DeriveP2WPKH
-            _            -> Nothing
+            [x] -> Store.textToDeriveType x
+            _   -> Nothing
         guard (getSegWit net || res == Store.DeriveNormal)
         return res
 

@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.52.14
+  version: &version 0.53.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -2401,6 +2401,7 @@ paths:
         - $ref: '#/components/parameters/binfoAddr'
         - $ref: '#/components/parameters/binfoLimit'
         - $ref: '#/components/parameters/binfoOffset'
+        - $ref: '#/components/parameters/xpubDerive'
       responses:
         '200':
           description: Address balance & transactions.
@@ -2520,141 +2521,6 @@ paths:
                     result: 2275183814
                     balance: 2275183814
 
-        '400':
-          description: Invalid argument.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  '/blockchain/address/{address}':
-    get:
-      tags:
-        - Blockchain
-      operationId: getBinfoAddress
-      summary: Address Balance & Transactions
-      parameters:
-        - $ref: '#/components/parameters/binfoAddr'
-        - $ref: '#/components/parameters/binfoLimit'
-        - $ref: '#/components/parameters/binfoOffset'
-      responses:
-        '200':
-          description: Address balance & transactions.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BinfoRawAddr'
-              example:
-                hash160: 37d070b3c6716a6174080722579fbdddad39bfb3
-                address: bitcoincash:qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
-                n_tx: 2
-                n_unredeemed: 0
-                total_received: 2275183814
-                total_sent: 2275183814
-                final_balance: 0
-                txs:
-                  - hash: 00f304a6089a708168cd10d5ad8abd2977c36791156a55b040117cb5a3db7fad
-                    ver: 2
-                    vin_sz: 1
-                    vout_sz: 2
-                    size: 225
-                    weight: 900
-                    fee: 4500
-                    relayed_by: 0.0.0.0
-                    lock_time: 688792
-                    tx_index: 6104469036511106
-                    double_spend: false
-                    time: 1621583361
-                    block_index: 688793
-                    block_height: 688793
-                    inputs:
-                      - sequence: 4294967294
-                        witness: ""
-                        script: 47304402206a11f253c8035be2d9f5958a9ca838b3fd5a1a120441885e10e6cad0fef3911f02202056263939a88fe06e7fc94368ff44c46f71e7daa603936d755b35b8b2a21c154121027eb504988cbc043dd4c9fac51685d68718a24d7f9f1d4c07b9f8c3d04327794c
-                        index: 0
-                        prev_out:
-                          spent: true
-                          script: 76a91437d070b3c6716a6174080722579fbdddad39bfb388ac
-                          spending_outpoints:
-                            - tx_index: 6104469036511106
-                              n: 0
-                          tx_index: 5028695321485056
-                          value: 2275183814
-                          addr: bitcoincash:qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
-                          n: 1
-                          type: 0
-                    out:
-                      - type: 0
-                        spent: false
-                        value: 15197686
-                        spending_outpoints: []
-                        n: 0
-                        tx_index: 6104469036511106
-                        script: 76a9143fd3cf57704a93e9782a97a4fb5a3bf7fb1a604788ac
-                        addr: bitcoincash:qqla8n6hwp9f86tc92t6f76680mlkxnqgu5flcqwfe
-                      - type: 0
-                        spent: true
-                        value: 2259981628
-                        spending_outpoints:
-                          - tx_index: 8410203892883835
-                            n: 0
-                        n: 1
-                        tx_index: 6104469036511106
-                        script: 76a9143ea707954f63a225fe4630701df0924c9e835a3488ac
-                        addr: bitcoincash:qql2wpu4fa36yf07gcc8q80sjfxfaq66xssezyukg2
-                    result: -2275183814
-                    balance: 0
-                  - hash: b810589c80335083ed715c03abf62f23968846d2f54343bac305f890f292ec8e
-                    ver: 2
-                    vin_sz: 1
-                    vout_sz: 2
-                    size: 225
-                    weight: 900
-                    fee: 4500
-                    relayed_by: 0.0.0.0
-                    lock_time: 688706
-                    tx_index: 5028695321485056
-                    double_spend: false
-                    time: 1621533785
-                    block_index: 688707
-                    block_height: 688707
-                    inputs:
-                      - sequence: 4294967294
-                        witness: ""
-                        script: 4730440220298e397d155bcd0c3371a17f11d6dc06392c72c6d4646ac27fad72e86e7f18f50220471c7338a0f4573955e52a95c4c2717f5ae5d369ad153ae62749d0dcd9250482412103c60a0fd16eaf3c72dee4bf12a566ee3a6ae181a29b66a1f2407442f7a6d39ad2
-                        index: 0
-                        prev_out:
-                          spent: true
-                          script: 76a9145124c4e68eed7ffc6110c2326d7d3739f55a09eb88ac
-                          spending_outpoints:
-                            - tx_index: 5028695321485056
-                              n: 0
-                          tx_index: 8915933840879415
-                          value: 2775188314
-                          addr: bitcoincash:qpgjf38x3mkhllrpzrprymtaxuul2ksfavle5hmhl4
-                          n: 0
-                          type: 0
-                    out:
-                      - type: 0
-                        spent: false
-                        value: 500000000
-                        spending_outpoints: []
-                        n: 0
-                        tx_index: 5028695321485056
-                        script: 76a9140cfccdb98e0de78db0deffae8681c60b306e70a088ac
-                        addr: bitcoincash:qqx0ende3cx70rdsmml6ap5pcc9nqmns5qlc8yvhga
-                      - type: 0
-                        spent: true
-                        value: 2275183814
-                        spending_outpoints:
-                          - tx_index: 6104469036511106
-                            n: 0
-                        n: 1
-                        tx_index: 5028695321485056
-                        script: 76a91437d070b3c6716a6174080722579fbdddad39bfb388ac
-                        addr: bitcoincash:qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
-                    result: 2275183814
-                    balance: 2275183814
         '400':
           description: Invalid argument.
           content:
@@ -6039,6 +5905,7 @@ components:
         * If a transaction hash is specified, only entries at or below that
           transaction's place in the block chain will be returned. No filtering
           will be done if the transaction cannot be found or is not confirmed.
+
     offsetParam:
       name: offset
       in: query
@@ -6169,7 +6036,8 @@ components:
       required: true
       schema:
         type: string
-      description: Address in whatever format the network accepts.
+      description: >
+        Address or extended public key.
       example: qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
 
     binfoActive:
@@ -6260,7 +6128,7 @@ components:
       schema:
         type: integer
       description: Skip this many items at the beginning.
-  
+
     binfoConfirmations:
       name: confirmations
       in: query
