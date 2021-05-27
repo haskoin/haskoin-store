@@ -2078,7 +2078,7 @@ scottyBinfoTxResult = do
             transactionInputs tx
         o = toInteger . sum . map outputAmount . filter (is_output addr) $
             transactionOutputs tx
-    S.text . cs . show $ fromIntegral (o - i) / (100 * 1000 * 1000 :: Double)
+    S.text . cs . show $ o - i
   where
     is_input addr StoreInput{inputAddress = Just a} = a == addr
     is_input _ _ = False
