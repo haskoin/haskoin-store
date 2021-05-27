@@ -4738,7 +4738,7 @@ paths:
             text/plain:
               schema:
                 type: number
-                example: -9.9427e-4
+                example: 0
         '404':
           description: Invalid transaction or address.
           content:
@@ -4761,6 +4761,30 @@ paths:
             text/plain:
               schema:
                 type: number
+                example: 2275183814
+        '404':
+          description: Invalid address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/q/addressbalance/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getReceivedByAddress
+      summary: Balance for Address
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+      responses:
+        '200':
+          description: Total unspent balance for address.
+          content:
+            text/plain:
+              schema:
+                type: number
+                example: 0
         '404':
           description: Invalid address.
           content:

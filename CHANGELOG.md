@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Blockchain.info endpoint: `q/txfee/:txid`.
 - Blockchain.info endpoint: `q/txresult/:txhash/:addr`.
 - Blockchain.info endpoint: `q/getreceivedbyaddress/:addr`.
+- Blockchain.info endpoint: `q/addressbalance/:addr`.
 - Support xpubs in `blockchain/rawaddr` endpoint.
 
 ### Fixed

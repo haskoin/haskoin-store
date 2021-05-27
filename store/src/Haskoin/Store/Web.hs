@@ -687,6 +687,7 @@ handlePaths = do
     S.get  "/blockchain/q/txfee/:txid" scottyBinfoTxFees
     S.get  "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
     S.get  "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
+    S.get  "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1853,6 +1854,14 @@ scottyBinfoReceived = do
     b <- fromMaybe (zeroBalance a) <$> getBalance a
     setHeaders
     S.text . cs . show $ balanceTotalReceived b
+
+scottyBinfoAddrBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoAddrBalance = do
+    setMetrics addrBalanceStat 1
+    a <- getAddress "addr"
+    b <- fromMaybe (zeroBalance a) <$> getBalance a
+    setHeaders
+    S.text . cs . show $ balanceAmount b + balanceZero b
 
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal = do
