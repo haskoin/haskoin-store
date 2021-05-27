@@ -686,6 +686,7 @@ handlePaths = do
     S.get  "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
     S.get  "/blockchain/q/txfee/:txid" scottyBinfoTxFees
     S.get  "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
+    S.get  "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1844,6 +1845,14 @@ scottyRawAddr =
                  }
         setHeaders
         streamEncoding $ binfoRawAddrToEncoding net ra
+
+scottyBinfoReceived :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoReceived = do
+    setMetrics addrBalanceStat 1
+    a <- getAddress "addr"
+    b <- fromMaybe (zeroBalance a) <$> getBalance a
+    setHeaders
+    S.text . cs . show $ balanceTotalReceived b
 
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal = do

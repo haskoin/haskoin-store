@@ -1434,6 +1434,12 @@ paths:
               schema:
                 type: string
                 format: binary
+        '404':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
                 
   '/transactions':
     get:
@@ -1528,6 +1534,12 @@ paths:
               schema:
                 type: string
                 format: binary
+        '404':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
     post:
       tags:
@@ -1804,6 +1816,12 @@ paths:
               schema:
                 type: string
                 format: binary
+        '404':
+          description: Invalid argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/mempool':
     get:
@@ -1926,7 +1944,7 @@ paths:
               schema:
                 type: string
                 format: binary
-        '400':
+        '404':
           description: Invalid extended public key.
           content:
             application/json:
@@ -2142,7 +2160,7 @@ paths:
               schema:
                 type: string
                 format: binary
-        '400':
+        '404':
           description: Invalid extended public key.
           content:
             application/json:
@@ -2189,7 +2207,7 @@ paths:
               schema:
                 type: string
                 format: binary
-        '400':
+        '404':
           description: Invalid extended public key.
           content:
             application/json:
@@ -2251,7 +2269,7 @@ paths:
               schema:
                 type: string
                 format: binary
-        '400':
+        '404':
           description: Invalid extended public key.
           content:
             application/json:
@@ -2322,7 +2340,7 @@ paths:
               schema:
                 type: string
                 format: binary
-        '400':
+        '404':
           description: Invalid extended public key.
           content:
             application/json:
@@ -2354,7 +2372,7 @@ paths:
                   final_balance: 84994
                   n_tx: 123
                   total_received: 137003577
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -2384,7 +2402,7 @@ paths:
                   final_balance: 84994
                   n_tx: 123
                   total_received: 137003577
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -2521,7 +2539,7 @@ paths:
                     result: 2275183814
                     balance: 2275183814
 
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -3173,12 +3191,6 @@ paths:
                   - fc9b718701edecf2c4031c7043a510c2cb9233138e2061caa8b18327f7d1a2b4
                   - fca2aa70b428bed7ed7d463c880491e720b6a46ad649601ed9a25048ab72dac3
                   - fef4d9bff10845b426cdb246c5450207a947cea02b014ec8523da5d8ed987a58
-        '404':
-          description: Block not found.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
 
   '/blockchain/blocks/{milliseconds}':
     get:
@@ -4035,12 +4047,6 @@ paths:
                             tx_index: 3589906961130271
                             script: 4104e70a02f5af48a1989bf630d92523c9d14c45c75f7d1b998e962bff6ff9995fc5bdb44f1793b37495d80324acba7c8f537caaf8432b8d47987313060cc82d8a93ac
                             addr: bitcoincash:qqt6g6wul02yakpt05amm0hey67lhh7wagrrqxcmys
-        '404':
-          description: Block not found.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
 
   '/blockchain/rawtx/{txid}':
     get:
@@ -4173,7 +4179,7 @@ paths:
                     xpub:
                       m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
                       path: M/1/26
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -4230,7 +4236,7 @@ paths:
                     xpub:
                       m: xpub6By8JDaPr5L6oHfgQDc47quD69qH1hTwnFYbuia8paiYxSE9u84KZfYqn6xLMUqxKK3wNpsgP4Kwu1gzXHD5xBxj5HrLposEYL6PwZzpAMZ
                       path: M/1/27
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -4380,7 +4386,7 @@ paths:
                   value_now: -53.3046711976
                   type: sent
                   value_then: -20.115861164100846
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -4526,7 +4532,7 @@ paths:
                   value_now: -53.3046711976
                   type: sent
                   value_then: -20.115861164100846
-        '400':
+        '404':
           description: Invalid argument.
           content:
             application/json:
@@ -4549,6 +4555,12 @@ paths:
               schema:
                 type: string
                 example: 37d070b3c6716a6174080722579fbdddad39bfb3
+        '404':
+          description: Invalid address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/blockchain/q/addrpubkey/{pubkey}':
     get:
@@ -4566,6 +4578,12 @@ paths:
               schema:
                 type: string
                 example: bitcoincash:qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
+        '404':
+          description: Invalid public key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/blockchain/q/hashpubkey/{pubkey}':
     get:
@@ -4583,6 +4601,12 @@ paths:
               schema:
                 type: string
                 example: 37d070b3c6716a6174080722579fbdddad39bfb3
+        '404':
+          description: Invalid public key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/blockchain/q/getblockcount':
     get:
@@ -4645,6 +4669,12 @@ paths:
               schema:
                 type: number
                 example: 9.94e-4
+        '404':
+          description: Invalid transaction.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/blockchain/q/txtotalbtcinput/{txid}':
     get:
@@ -4662,6 +4692,12 @@ paths:
               schema:
                 type: number
                 example: 9.9973e-4
+        '404':
+          description: Invalid transaction.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/blockchain/q/txfee/{txid}':
     get:
@@ -4679,6 +4715,12 @@ paths:
               schema:
                 type: number
                 example: 5.73e-6
+        '404':
+          description: Invalid transaction.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   '/blockchain/q/txresult/{txid}/{address}':
     get:
@@ -4697,6 +4739,34 @@ paths:
               schema:
                 type: number
                 example: -9.9427e-4
+        '404':
+          description: Invalid transaction or address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/q/getreceivedbyaddress/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getReceivedByAddress
+      summary: Total Received by Address
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+      responses:
+        '200':
+          description: Value of total received by address
+          content:
+            text/plain:
+              schema:
+                type: number
+        '404':
+          description: Invalid address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     
 
 components:
