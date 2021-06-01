@@ -4791,6 +4791,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  '/blockchain/q/addressfirstseen/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getAddressFirstSeen
+      summary: Address First Seen
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+      responses:
+        '200':
+          description: Time when address was first seen.
+          content:
+            text/plain:
+              schema:
+                type: number
+                example: 1621533785
+        '404':
+          description: Invalid address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     
 
 components:

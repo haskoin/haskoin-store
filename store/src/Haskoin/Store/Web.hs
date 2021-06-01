@@ -92,6 +92,7 @@ import           Haskoin.Network
 import           Haskoin.Node                            (Chain,
                                                           OnlinePeer (..),
                                                           PeerManager,
+                                                          chainGetAncestor,
                                                           chainGetBest,
                                                           getPeers, sendMessage)
 import           Haskoin.Store.BlockStore
@@ -688,6 +689,7 @@ handlePaths = do
     S.get  "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
     S.get  "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
     S.get  "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
+    S.get  "/blockchain/q/addressfirstseen/:addr" scottyFirstSeen
   where
     json_list f net = toJSONList . map (f net)
 
@@ -1863,6 +1865,36 @@ scottyBinfoAddrBalance = do
     setHeaders
     S.text . cs . show $ balanceAmount b + balanceZero b
 
+scottyFirstSeen :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyFirstSeen = do
+    a <- getAddress "addr"
+    ch <- lift $ asks (storeChain . webStore . webConfig)
+    bb <- chainGetBest ch
+    let top = H.nodeHeight bb
+        bot = 0
+    i <- go ch bb a bot top
+    setHeaders
+    S.text . cs $ show i
+  where
+    go ch bb a bot top = do
+        let mid = bot + (top - bot) `div` 2
+            n = top - bot < 2
+        x <- hasone a bot
+        y <- hasone a mid
+        z <- hasone a top
+        if
+            | x         -> getblocktime ch bb bot
+            | n         -> getblocktime ch bb top
+            | y         -> go ch bb a bot mid
+            | z         -> go ch bb a mid top
+            | otherwise -> return 0
+    getblocktime ch bb h =
+        H.blockTimestamp . H.nodeHeader . fromJust <$>
+        chainGetAncestor h bb ch
+    hasone a h = do
+        let l = Limits 1 0 (Just (AtBlock h))
+        not . null <$> getAddressTxs a l
+
 scottyShortBal :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyShortBal = do
     (xspecs, addrs) <- getBinfoActive balanceStat
@@ -2030,7 +2062,7 @@ scottyBinfoTx = do
     setMetrics rawtxStat 1
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
-              Left e -> raise rawtxStat e
+              Left e  -> raise rawtxStat e
     if hex then hx tx else js numtxid tx
   where
     js numtxid t = do
@@ -2047,7 +2079,7 @@ scottyBinfoTotalOut = do
     setMetrics rawtxStat 1
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
-              Left e -> raise_ e
+              Left e  -> raise_ e
     S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) .
         fromIntegral . sum . map outputAmount $ transactionOutputs tx
 
@@ -2057,13 +2089,13 @@ scottyBinfoTxFees = do
     setMetrics rawtxStat 1
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
-              Left e -> raise_ e
+              Left e  -> raise_ e
     let i = sum . map inputAmount . filter is_input $
             transactionInputs tx
         o = sum . map outputAmount $ transactionOutputs tx
     S.text . cs . show $ fromIntegral (i - o) / (100 * 1000 * 1000 :: Double)
   where
-    is_input StoreInput{} = True
+    is_input StoreInput{}    = True
     is_input StoreCoinbase{} = False
 
 scottyBinfoTxResult :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2073,7 +2105,7 @@ scottyBinfoTxResult = do
     setMetrics rawtxStat 1
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
-              Left e -> raise_ e
+              Left e  -> raise_ e
     let i = toInteger . sum . map inputAmount . filter (is_input addr) $
             transactionInputs tx
         o = toInteger . sum . map outputAmount . filter (is_output addr) $
@@ -2081,9 +2113,9 @@ scottyBinfoTxResult = do
     S.text . cs . show $ o - i
   where
     is_input addr StoreInput{inputAddress = Just a} = a == addr
-    is_input _ _ = False
+    is_input _ _                                    = False
     is_output addr StoreOutput{outputAddr = Just a} = a == addr
-    is_output _ _ = False
+    is_output _ _                                   = False
 
 
 
@@ -2093,12 +2125,12 @@ scottyBinfoTotalInput = do
     setMetrics rawtxStat 1
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
-              Left e -> raise_ e
+              Left e  -> raise_ e
     S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) .
         fromIntegral . sum . map inputAmount . filter is_input $
         transactionInputs tx
   where
-    is_input StoreInput{} = True
+    is_input StoreInput{}    = True
     is_input StoreCoinbase{} = False
 
 scottyBinfoMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
