@@ -1477,13 +1477,13 @@ getAddress param' = do
         Nothing -> raise rawaddrStat ThingNotFound
         Just a  -> return a
 
-getBinfoAddr :: Monad m => TL.Text -> WebT m (Maybe BinfoAddr)
+getBinfoAddr :: Monad m => TL.Text -> WebT m BinfoAddr
 getBinfoAddr param' = do
     txt <- S.param param'
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    return $
-        BinfoAddr <$> textToAddr net txt <|>
-        BinfoXpub <$> xPubImport net txt
+    let x = BinfoAddr <$> textToAddr net txt <|>
+            BinfoXpub <$> xPubImport net txt
+    maybe S.next return x
 
 scottyBinfoHistory :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHistory =
@@ -1758,12 +1758,8 @@ scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawAddr =
     setMetrics rawaddrStat 1 >>
     getBinfoAddr "addr" >>= \case
-        Just b -> case b of
-            BinfoAddr addr -> do_addr addr
-            BinfoXpub xpub -> do_xpub xpub
-        Nothing ->
-            raise rawaddrStat $
-            UserError "could not decode address provided"
+    BinfoAddr addr -> do_addr addr
+    BinfoXpub xpub -> do_xpub xpub
   where
     do_xpub xpub = do
         numtxid <- getNumTxId
