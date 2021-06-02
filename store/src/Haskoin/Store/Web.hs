@@ -2076,8 +2076,7 @@ scottyBinfoTotalOut = do
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
               Left e  -> raise_ e
-    S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) .
-        fromIntegral . sum . map outputAmount $ transactionOutputs tx
+    S.text . cs . show . sum . map outputAmount $ transactionOutputs tx
 
 scottyBinfoTxFees :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTxFees = do
@@ -2086,13 +2085,13 @@ scottyBinfoTxFees = do
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
               Left e  -> raise_ e
-    let i = sum . map inputAmount . filter is_input $
+    let i = sum . map inputAmount . filter f $
             transactionInputs tx
         o = sum . map outputAmount $ transactionOutputs tx
-    S.text . cs . show $ fromIntegral (i - o) / (100 * 1000 * 1000 :: Double)
+    S.text . cs . show $ i - o
   where
-    is_input StoreInput{}    = True
-    is_input StoreCoinbase{} = False
+    f StoreInput{}    = True
+    f StoreCoinbase{} = False
 
 scottyBinfoTxResult :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoTxResult = do
@@ -2102,16 +2101,16 @@ scottyBinfoTxResult = do
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
               Left e  -> raise_ e
-    let i = toInteger . sum . map inputAmount . filter (is_input addr) $
+    let i = toInteger . sum . map inputAmount . filter (f addr) $
             transactionInputs tx
-        o = toInteger . sum . map outputAmount . filter (is_output addr) $
+        o = toInteger . sum . map outputAmount . filter (g addr) $
             transactionOutputs tx
     S.text . cs . show $ o - i
   where
-    is_input addr StoreInput{inputAddress = Just a} = a == addr
-    is_input _ _                                    = False
-    is_output addr StoreOutput{outputAddr = Just a} = a == addr
-    is_output _ _                                   = False
+    f addr StoreInput{inputAddress = Just a} = a == addr
+    f _ _                                    = False
+    g addr StoreOutput{outputAddr = Just a} = a == addr
+    g _ _                                   = False
 
 
 
@@ -2122,12 +2121,10 @@ scottyBinfoTotalInput = do
     tx <- getBinfoTx txid >>= \case
               Right t -> return t
               Left e  -> raise_ e
-    S.text . cs . show . (/ (100 * 1000 * 1000 :: Double)) .
-        fromIntegral . sum . map inputAmount . filter is_input $
-        transactionInputs tx
+    S.text . cs . show . sum . map inputAmount . filter f $ transactionInputs tx
   where
-    is_input StoreInput{}    = True
-    is_input StoreCoinbase{} = False
+    f StoreInput{}    = True
+    f StoreCoinbase{} = False
 
 scottyBinfoMempool :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoMempool = do
