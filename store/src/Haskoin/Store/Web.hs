@@ -2182,25 +2182,32 @@ scottyBinfoSubsidy = do
         H.computeSubsidy net (H.nodeHeight bn + 1)
 
 scottyBinfoAddrToHash :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyBinfoAddrToHash =
-    getAddress "addr" >>= \addr -> do
+scottyBinfoAddrToHash = do
+    addr <- getAddress "addr"
     setHeaders
     S.text . encodeHexLazy . runPutL . serialize $ getAddrHash160 addr
 
 scottyBinfoHashToAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashToAddr = do
-    hex <- S.param "hash"
+    bs <- maybe
+          (raise_ (UserError "Could not decode hex hash"))
+          return .
+          decodeHex =<< S.param "hash"
     net <- asks (storeNetwork . webStore . webConfig)
-    a <-
-        case decodeHex hex >>= either fail return . decode >>= addrToText net of
-        Nothing -> raise_ $ UserError "Could not decode hash"
-        Just x  -> return x
+    hash <- case decode bs of
+        Left e -> raise_ $ UserError e
+        Right hash -> return hash
+    addr <- maybe
+        (raise_ (UserError "Could not encode address"))
+        return
+        (addrToText net (PubKeyAddress hash))
     setHeaders
-    S.text $ TL.fromStrict a
+    S.text $ TL.fromStrict addr
 
 scottyBinfoAddrPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrPubkey = do
-  pkm <- (eitherToMaybe . runGetS deserialize <=< decodeHex) <$> S.param "pubkey"
+  pkm <- (eitherToMaybe . runGetS deserialize <=< decodeHex)
+         <$> S.param "pubkey"
   pubkey <- case pkm of
       Nothing -> raise_ $ UserError "Could not decode public key"
       Just pk -> return $ pubKeyAddr pk
