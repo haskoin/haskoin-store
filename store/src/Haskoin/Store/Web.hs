@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -2189,28 +2190,18 @@ scottyBinfoAddrToHash = do
 
 scottyBinfoHashToAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashToAddr = do
-    bs <- maybe
-          (raise_ (UserError "Could not decode hex hash"))
-          return .
-          decodeHex =<< S.param "hash"
+    bs <- maybe S.next return . decodeHex =<< S.param "hash"
     net <- asks (storeNetwork . webStore . webConfig)
-    hash <- case decode bs of
-        Left e -> raise_ $ UserError e
-        Right hash -> return hash
-    addr <- maybe
-        (raise_ (UserError "Could not encode address"))
-        return
-        (addrToText net (PubKeyAddress hash))
+    hash <- either (const S.next) return (decode bs)
+    addr <- maybe S.next return (addrToText net (PubKeyAddress hash))
     setHeaders
     S.text $ TL.fromStrict addr
 
 scottyBinfoAddrPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrPubkey = do
-  pkm <- (eitherToMaybe . runGetS deserialize <=< decodeHex)
-         <$> S.param "pubkey"
-  pubkey <- case pkm of
-      Nothing -> raise_ $ UserError "Could not decode public key"
-      Just pk -> return $ pubKeyAddr pk
+  hex <- S.param "pubkey"
+  pubkey <- maybe S.next (return . pubKeyAddr) $
+      eitherToMaybe . runGetS deserialize =<< decodeHex hex
   net <- lift $ asks (storeNetwork . webStore . webConfig)
   setHeaders
   case addrToText net pubkey of
@@ -2223,10 +2214,10 @@ scottyBinfoPubKeyAddr = do
     mi <- strm addr
     i <- case mi of
         Nothing -> raise_ ThingNotFound
-        Just i -> return i
+        Just i  -> return i
     pk <- case extr addr i of
-        Left e -> raise_ $ UserError e
-        Right t  -> return t
+        Left e  -> raise_ $ UserError e
+        Right t -> return t
     setHeaders
     S.text $ encodeHexLazy $ L.fromStrict pk
   where
@@ -2237,7 +2228,7 @@ scottyBinfoPubKeyAddr = do
         headC
     inp addr StoreInput{inputAddress = Just a} = a == addr
     inp _ _                                    = False
-    extr addr StoreInput{..} = do
+    extr addr StoreInput{inputSigScript, inputPkScript, inputWitness} = do
         Script sig <- decode inputSigScript
         Script pks <- decode inputPkScript
         case addr of

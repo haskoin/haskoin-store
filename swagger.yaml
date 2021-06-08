@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.53.2
+  version: &version 0.53.3
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -4562,6 +4562,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  '/blockchain/q/hashtoaddress/{hash}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getHashAddress
+      summary: Hash Address
+      parameters:
+        - $ref: '#/components/parameters/hashParam'
+      responses:
+        '200':
+          description: Hash address.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
+        '404':
+          description: Invalid hash.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   '/blockchain/q/addrpubkey/{pubkey}':
     get:
       tags:
@@ -4580,6 +4603,29 @@ paths:
                 example: bitcoincash:qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
         '404':
           description: Invalid public key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/q/pubkeyaddr/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getAddressPubKey
+      summary: Address Public Key
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+      responses:
+        '200':
+          description: Address public key.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: 027eb504988cbc043dd4c9fac51685d68718a24d7f9f1d4c07b9f8c3d04327794c
+        '404':
+          description: Invalid address.
           content:
             application/json:
               schema:
@@ -4757,6 +4803,29 @@ paths:
       responses:
         '200':
           description: Value of total received by address
+          content:
+            text/plain:
+              schema:
+                type: number
+                example: 2275183814
+        '404':
+          description: Invalid address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  '/blockchain/q/getsentbyaddress/{address}':
+    get:
+      tags:
+        - Blockchain
+      operationId: getSentByAddress
+      summary: Total Sent by Address
+      parameters:
+        - $ref: '#/components/parameters/addressParam'
+      responses:
+        '200':
+          description: Value of total sent by address
           content:
             text/plain:
               schema:
@@ -5977,6 +6046,14 @@ components:
       schema:
         type: string
       example: qqmaqu9nceck5ct5pqrjy4ulhhw66wdlkv2s7f2l9u
+
+    hashParam:
+      name: hash
+      in: path
+      required: true
+      schema:
+        type: string
+      example: 37d070b3c6716a6174080722579fbdddad39bfb3
 
     addressesParam:
       name: addresses
