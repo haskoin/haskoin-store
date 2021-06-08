@@ -198,12 +198,14 @@ defWebLimits = unsafePerformIO $ do
     def_limit  <- defEnv "DEF_LIMIT" (maxLimitDefault def) readMaybe
     max_gap    <- defEnv "MAX_GAP" (maxLimitGap def) readMaybe
     init_gap   <- defEnv "INIT_GAP" (maxLimitInitialGap def) readMaybe
+    max_body   <- defEnv "MAX_BODY" (maxLimitBody def) readMaybe
     return WebLimits { maxLimitCount = max_limit
                      , maxLimitFull = max_full
                      , maxLimitOffset = max_offset
                      , maxLimitDefault = def_limit
                      , maxLimitGap = max_gap
                      , maxLimitInitialGap = init_gap
+                     , maxLimitBody = max_body
                      }
 {-# NOINLINE defWebLimits #-}
 
@@ -409,6 +411,13 @@ config = do
         <> help "Max gap for empty xpub"
         <> showDefault
         <> value (maxLimitInitialGap (configWebLimits def))
+    maxLimitBody <-
+        option auto $
+        metavar "BYTES"
+        <> long "max-body"
+        <> help "Maximum request body size"
+        <> showDefault
+        <> value (maxLimitBody (configWebLimits def))
     blockTimeout <-
         option auto $
         metavar "SECONDS"

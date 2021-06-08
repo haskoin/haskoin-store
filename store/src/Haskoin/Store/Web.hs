@@ -19,11 +19,13 @@ module Haskoin.Store.Web
     ) where
 
 import           Conduit                                 (ConduitT, await,
+                                                          concatMapC,
                                                           concatMapMC, dropC,
-                                                          dropWhileC, mapC,
-                                                          runConduit, sinkList,
-                                                          takeC, takeWhileC,
-                                                          yield, (.|))
+                                                          dropWhileC, headC,
+                                                          mapC, runConduit,
+                                                          sinkList, takeC,
+                                                          takeWhileC, yield,
+                                                          (.|))
 import           Control.Applicative                     ((<|>))
 import           Control.Arrow                           (second)
 import           Control.Lens                            ((.~), (^.))
@@ -69,6 +71,7 @@ import           Data.Maybe                              (catMaybes, fromJust,
                                                           fromMaybe, isJust,
                                                           mapMaybe, maybeToList)
 import           Data.Proxy                              (Proxy (..))
+import           Data.Serialize                          (decode)
 import           Data.String                             (fromString)
 import           Data.String.Conversions                 (cs)
 import           Data.Text                               (Text)
@@ -95,6 +98,7 @@ import           Haskoin.Node                            (Chain,
                                                           chainGetAncestor,
                                                           chainGetBest,
                                                           getPeers, sendMessage)
+import           Haskoin.Script
 import           Haskoin.Store.BlockStore
 import           Haskoin.Store.Cache
 import           Haskoin.Store.Common
@@ -152,6 +156,7 @@ data WebLimits = WebLimits
     , maxLimitDefault    :: !Word32
     , maxLimitGap        :: !Word32
     , maxLimitInitialGap :: !Word32
+    , maxLimitBody       :: !Word32
     }
     deriving (Eq, Show)
 
@@ -164,6 +169,7 @@ instance Default WebLimits where
             , maxLimitDefault = 100
             , maxLimitGap = 32
             , maxLimitInitialGap = 20
+            , maxLimitBody = 1024 * 1024
             }
 
 data WebConfig = WebConfig
@@ -358,6 +364,7 @@ runWeb cfg@WebConfig{ webHost = host
                     , webStore = store'
                     , webStats = stats
                     , webPriceGet = pget
+                    , webMaxLimits = WebLimits{..}
                     } = do
     ticker <- newTVarIO HashMap.empty
     metrics <- mapM createMetrics stats
@@ -372,7 +379,7 @@ runWeb cfg@WebConfig{ webHost = host
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
             S.middleware reqLogger
-            S.middleware reqSizeLimit
+            S.middleware (reqSizeLimit maxLimitBody)
             S.defaultHandler defHandler
             handlePaths
             S.notFound $ raise_ ThingNotFound
@@ -678,7 +685,9 @@ handlePaths = do
     S.get  "/blockchain/export-history" scottyBinfoHistory
     S.post "/blockchain/export-history" scottyBinfoHistory
     S.get  "/blockchain/q/addresstohash/:addr"  scottyBinfoAddrToHash
+    S.get  "/blockchain/q/hashtoaddress/:hash" scottyBinfoHashToAddr
     S.get  "/blockchain/q/addrpubkey/:pubkey"  scottyBinfoAddrPubkey
+    S.get  "/blockchain/q/pubkeyaddr/:addr" scottyBinfoPubKeyAddr
     S.get  "/blockchain/q/hashpubkey/:pubkey"  scottyBinfoHashPubkey
     S.get  "/blockchain/q/getblockcount" scottyBinfoGetBlockCount
     S.get  "/blockchain/q/latesthash" scottyBinfoLatestHash
@@ -688,6 +697,7 @@ handlePaths = do
     S.get  "/blockchain/q/txfee/:txid" scottyBinfoTxFees
     S.get  "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
     S.get  "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
+    S.get  "/blockchain/q/getsentbyaddress/:addr" scottyBinfoSent
     S.get  "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
     S.get  "/blockchain/q/addressfirstseen/:addr" scottyFirstSeen
   where
@@ -1853,6 +1863,14 @@ scottyBinfoReceived = do
     setHeaders
     S.text . cs . show $ balanceTotalReceived b
 
+scottyBinfoSent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoSent = do
+    setMetrics addrBalanceStat 1
+    a <- getAddress "addr"
+    b <- fromMaybe (zeroBalance a) <$> getBalance a
+    setHeaders
+    S.text . cs . show $ balanceTotalReceived b - balanceAmount b - balanceZero b
+
 scottyBinfoAddrBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrBalance = do
     setMetrics addrBalanceStat 1
@@ -2169,6 +2187,17 @@ scottyBinfoAddrToHash =
     setHeaders
     S.text . encodeHexLazy . runPutL . serialize $ getAddrHash160 addr
 
+scottyBinfoHashToAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoHashToAddr = do
+    hex <- S.param "hash"
+    net <- asks (storeNetwork . webStore . webConfig)
+    a <-
+        case decodeHex hex >>= either fail return . decode >>= addrToText net of
+        Nothing -> raise_ $ UserError "Could not decode hash"
+        Just x  -> return x
+    setHeaders
+    S.text $ TL.fromStrict a
+
 scottyBinfoAddrPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrPubkey = do
   pubkey <- pubKeyAddr . fromString <$> S.param "pubkey"
@@ -2177,6 +2206,43 @@ scottyBinfoAddrPubkey = do
   case addrToText net pubkey of
     Nothing -> raise rawaddrStat ThingNotFound
     Just a  -> S.text $ TL.fromStrict a
+
+scottyBinfoPubKeyAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
+scottyBinfoPubKeyAddr = do
+    addr <- getAddress "addr"
+    pk <- runMaybeT (strm addr >>= extr addr) >>= \case
+        Nothing -> raise_ ThingNotFound
+        Just t  -> return t
+    setHeaders
+    S.text . encodeHexLazy . runPutL $ serialize pk
+  where
+    strm addr = MaybeT . runConduit $
+        streamThings (getAddressTxs addr) (Just txRefHash) def{limit = 50} .|
+        concatMapMC (getTransaction . txRefHash) .|
+        concatMapC (filter (inp addr) . transactionInputs) .|
+        headC
+    inp addr StoreInput{inputAddress = Just a} = a == addr
+    inp _ _                                    = False
+    extr addr StoreInput{..} = do
+        Script sig <- either fail return (decode inputSigScript)
+        Script pks <- either fail return (decode inputPkScript)
+        case addr of
+            PubKeyAddress{} ->
+                case sig of
+                    [OP_PUSHDATA _ _, OP_PUSHDATA pub _] ->
+                        return pub
+                    [OP_PUSHDATA _ _] ->
+                        case pks of
+                            [OP_PUSHDATA pub _, OP_CHECKSIG] ->
+                                return pub
+                            _ -> fail "Could not parse scriptPubKey"
+                    _ -> fail "Could not parse scriptSig"
+            WitnessPubKeyAddress{} ->
+                case inputWitness of
+                    [_, pub] -> return pub
+                    _        -> fail "Could not parse scriptPubKey"
+            _ -> fail "Address does not have public key"
+    extr _ _ = fail "Incorrect input type"
 
 scottyBinfoHashPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashPubkey = do
@@ -2497,10 +2563,10 @@ logIt metrics = do
             runner $ $(logWarnS) "Web" $
                 "Slow [" <> cs (show diff) <> " ms]: " <> fmtReq b req
 
-reqSizeLimit :: Middleware
-reqSizeLimit = requestSizeLimitMiddleware lim
+reqSizeLimit :: Integral i => i -> Middleware
+reqSizeLimit i = requestSizeLimitMiddleware lim
   where
-    max_len _req = return (Just (256 * 1024))
+    max_len _req = return (Just (fromIntegral i))
     lim = setOnLengthExceeded too_big $
           setMaxLengthForRequest max_len
           defaultRequestSizeLimitSettings

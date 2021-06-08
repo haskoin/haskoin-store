@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.53.3
+### Added
+- Blockchain.info endpoint: `q/pubkeyhash/:addr`.
+- Blockchain.info endpoint: `q/getsentbyaddress/:addr`.
+- Blockchain.info endpoint: `q/pubkeyaddr/:addr`.
+- Configurable request body limit size.
+
 ## 0.53.2
 ### Fixed
 - Return output in satoshi for some endpoints.
