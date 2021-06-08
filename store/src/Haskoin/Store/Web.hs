@@ -2200,12 +2200,15 @@ scottyBinfoHashToAddr = do
 
 scottyBinfoAddrPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoAddrPubkey = do
-  pubkey <- pubKeyAddr . fromString <$> S.param "pubkey"
+  pkm <- (eitherToMaybe . runGetS deserialize <=< decodeHex) <$> S.param "pubkey"
+  pubkey <- case pkm of
+      Nothing -> raise_ $ UserError "Could not decode public key"
+      Just pk -> return $ pubKeyAddr pk
   net <- lift $ asks (storeNetwork . webStore . webConfig)
   setHeaders
   case addrToText net pubkey of
-    Nothing -> raise rawaddrStat ThingNotFound
-    Just a  -> S.text $ TL.fromStrict a
+      Nothing -> raise rawaddrStat ThingNotFound
+      Just a  -> S.text $ TL.fromStrict a
 
 scottyBinfoPubKeyAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoPubKeyAddr = do
@@ -2214,7 +2217,7 @@ scottyBinfoPubKeyAddr = do
         Nothing -> raise_ ThingNotFound
         Just t  -> return t
     setHeaders
-    S.text . encodeHexLazy . runPutL $ serialize pk
+    S.text $ encodeHexLazy $ L.fromStrict pk
   where
     strm addr = MaybeT . runConduit $
         streamThings (getAddressTxs addr) (Just txRefHash) def{limit = 50} .|
@@ -2246,7 +2249,10 @@ scottyBinfoPubKeyAddr = do
 
 scottyBinfoHashPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashPubkey = do
-  addr <- pubKeyAddr . fromString <$> S.param "pubkey"
+  pkm <- (eitherToMaybe . runGetS deserialize <=< decodeHex) <$> S.param "pubkey"
+  addr <- case pkm of
+      Nothing -> raise_ $ UserError "Could not decode public key"
+      Just pk -> return $ pubKeyAddr pk
   setHeaders
   S.text . encodeHexLazy . runPutL . serialize $ getAddrHash160 addr
 
