@@ -2213,13 +2213,17 @@ scottyBinfoAddrPubkey = do
 scottyBinfoPubKeyAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoPubKeyAddr = do
     addr <- getAddress "addr"
-    pk <- runMaybeT (strm addr >>= extr addr) >>= \case
+    mi <- strm addr
+    i <- case mi of
         Nothing -> raise_ ThingNotFound
-        Just t  -> return t
+        Just i -> return i
+    pk <- case extr addr i of
+        Left e -> raise_ $ UserError e
+        Right t  -> return t
     setHeaders
     S.text $ encodeHexLazy $ L.fromStrict pk
   where
-    strm addr = MaybeT . runConduit $
+    strm addr = runConduit $
         streamThings (getAddressTxs addr) (Just txRefHash) def{limit = 50} .|
         concatMapMC (getTransaction . txRefHash) .|
         concatMapC (filter (inp addr) . transactionInputs) .|
@@ -2227,25 +2231,25 @@ scottyBinfoPubKeyAddr = do
     inp addr StoreInput{inputAddress = Just a} = a == addr
     inp _ _                                    = False
     extr addr StoreInput{..} = do
-        Script sig <- either fail return (decode inputSigScript)
-        Script pks <- either fail return (decode inputPkScript)
+        Script sig <- decode inputSigScript
+        Script pks <- decode inputPkScript
         case addr of
             PubKeyAddress{} ->
                 case sig of
                     [OP_PUSHDATA _ _, OP_PUSHDATA pub _] ->
-                        return pub
+                        Right pub
                     [OP_PUSHDATA _ _] ->
                         case pks of
                             [OP_PUSHDATA pub _, OP_CHECKSIG] ->
-                                return pub
-                            _ -> fail "Could not parse scriptPubKey"
-                    _ -> fail "Could not parse scriptSig"
+                                Right pub
+                            _ -> Left "Could not parse scriptPubKey"
+                    _ -> Left "Could not parse scriptSig"
             WitnessPubKeyAddress{} ->
                 case inputWitness of
                     [_, pub] -> return pub
-                    _        -> fail "Could not parse scriptPubKey"
-            _ -> fail "Address does not have public key"
-    extr _ _ = fail "Incorrect input type"
+                    _        -> Left "Could not parse scriptPubKey"
+            _ -> Left "Address does not have public key"
+    extr _ _ = Left "Incorrect input type"
 
 scottyBinfoHashPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashPubkey = do
