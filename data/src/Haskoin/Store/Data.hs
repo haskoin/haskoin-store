@@ -1664,7 +1664,7 @@ instance ToJSON BlockHealth where
             , "ok"       .= isOK h
             ]
       where
-        diff = blockHealthHeaders - blockHealthBlocks
+        diff = toInteger blockHealthHeaders - toInteger blockHealthBlocks
 
 instance FromJSON BlockHealth where
     parseJSON =
