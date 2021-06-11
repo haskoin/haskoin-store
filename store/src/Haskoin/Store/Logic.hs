@@ -15,36 +15,35 @@ module Haskoin.Store.Logic
     , deleteUnconfirmedTx
     ) where
 
-import           Conduit              (ConduitT, await, lift, sealConduitT,
-                                       yield, ($$++))
-import           Control.Monad        (forM, forM_, guard, unless, void, when,
-                                       zipWithM_)
-import           Control.Monad.Except (MonadError, throwError)
-import           Control.Monad.Logger (MonadLoggerIO (..), logDebugS, logErrorS)
-import qualified Data.ByteString      as B
-import           Data.Either          (rights)
-import           Data.Function        (on)
-import qualified Data.IntMap.Strict   as I
-import           Data.List            (nub, sortBy)
-import qualified Data.Map.Strict      as Map
-import           Data.Maybe           (catMaybes, fromMaybe, isJust, isNothing,
-                                       mapMaybe)
-import           Data.Serialize       (encode)
-import           Data.Word            (Word32, Word64)
-import           Haskoin              (Address, Block (..), BlockHash,
-                                       BlockHeader (..), BlockNode (..),
-                                       Network (..), OutPoint (..), Tx (..),
-                                       TxHash, TxIn (..), TxOut (..),
-                                       blockHashToHex, computeSubsidy,
-                                       eitherToMaybe, genesisBlock, genesisNode,
-                                       headerHash, isGenesis, nullOutPoint,
-                                       scriptToAddressBS, txHash, txHashToHex)
+import           Control.Monad           (forM, forM_, guard, unless, void,
+                                          when, zipWithM_)
+import           Control.Monad.Except    (MonadError, throwError)
+import           Control.Monad.Logger    (MonadLoggerIO (..), logDebugS,
+                                          logErrorS)
+import qualified Data.ByteString         as B
+import           Data.Either             (rights)
+import qualified Data.IntMap.Strict      as I
+import           Data.List               (nub)
+import           Data.Maybe              (catMaybes, fromMaybe, isJust,
+                                          isNothing)
+import           Data.Serialize          (encode)
+import           Data.String.Conversions (cs)
+import           Data.Word               (Word32, Word64)
+import           Haskoin                 (Address, Block (..), BlockHash,
+                                          BlockHeader (..), BlockNode (..),
+                                          Network (..), OutPoint (..), Tx (..),
+                                          TxHash, TxIn (..), TxOut (..),
+                                          blockHashToHex, computeSubsidy,
+                                          eitherToMaybe, genesisBlock,
+                                          genesisNode, headerHash, isGenesis,
+                                          nullOutPoint, scriptToAddressBS,
+                                          txHash, txHashToHex)
 import           Haskoin.Store.Common
-import           Haskoin.Store.Data   (Balance (..), BlockData (..),
-                                       BlockRef (..), Prev (..), Spender (..),
-                                       TxData (..), TxRef (..), UnixTime,
-                                       Unspent (..), confirmed)
-import           UnliftIO             (Exception)
+import           Haskoin.Store.Data      (Balance (..), BlockData (..),
+                                          BlockRef (..), Prev (..),
+                                          Spender (..), TxData (..), TxRef (..),
+                                          UnixTime, Unspent (..), confirmed)
+import           UnliftIO                (Exception)
 
 type MonadImport m =
     ( MonadError ImportException m
@@ -91,10 +90,6 @@ initBest = do
         $(logDebugS) "BlockStore" "Importing Genesis block"
         importBlock (genesisBlock net) (genesisNode net)
 
-getOldMempool :: StoreReadBase m => UnixTime -> m [TxHash]
-getOldMempool now =
-    map snd . filter ((< now - 3600 * 72) . fst) <$> getMempool
-
 newMempoolTx :: MonadImport m => Tx -> UnixTime -> m Bool
 newMempoolTx tx w =
     getActiveTxData (txHash tx) >>= \case
@@ -129,11 +124,24 @@ revertBlock bh = do
             $(logErrorS) "BlockStore" $
                 "Cannot revert non-head block: " <> blockHashToHex bh
             throwError BlockNotBest
+    $(logDebugS) "BlockStore" $
+        "Obtained block data for " <> blockHashToHex bh
     tds <- mapM getImportTxData (blockDataTxs bd)
+    $(logDebugS) "BlockStore" $
+        "Obtained import tx data for block " <> blockHashToHex bh
     setBest (prevBlock (blockDataHeader bd))
+    $(logDebugS) "BlockStore" $
+        "Set parent as best block " <>
+        blockHashToHex (prevBlock (blockDataHeader bd))
     insertBlock bd {blockDataMainChain = False}
+    $(logDebugS) "BlockStore" $
+        "Updated as not in main chain: " <> blockHashToHex bh
     forM_ (tail tds) unConfirmTx
+    $(logDebugS) "BlockStore" $
+        "Unconfirmed " <> cs (show (length tds)) <> " transactions"
     deleteConfirmedTx (txHash (txData (head tds)))
+    $(logDebugS) "BlockStore" $
+        "Deleted coinbase: " <> txHashToHex (txHash (txData (head tds)))
 
 checkNewBlock :: MonadImport m => Block -> BlockNode -> m ()
 checkNewBlock b n =
