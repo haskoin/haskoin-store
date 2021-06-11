@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Fixed
 - Negative (headers - blocks) diff shown incorrectly.
+- Infinite loop when removing a block's coinbase transaction.
 
 ## 0.53.3
 ### Added

@@ -22,6 +22,7 @@ import           Control.Monad.Logger    (MonadLoggerIO (..), logDebugS,
                                           logErrorS)
 import qualified Data.ByteString         as B
 import           Data.Either             (rights)
+import qualified Data.HashSet            as HashSet
 import qualified Data.IntMap.Strict      as I
 import           Data.List               (nub)
 import           Data.Maybe              (catMaybes, fromMaybe, isJust,
@@ -407,44 +408,54 @@ deleteTx :: MonadImport m
          -> Bool -- ^ only delete RBF
          -> TxHash
          -> m ()
-deleteTx memonly rbfcheck th =
-    getChain memonly rbfcheck th >>=
-    mapM_ (deleteSingleTx . txHash)
+deleteTx memonly rbfcheck th = do
+    chain <- getChain memonly rbfcheck th
+    $(logDebugS) "BlockStore" $
+        "Deleting " <> cs (show (length chain)) <>
+        " txs from chain leading to " <> txHashToHex th
+    mapM_ (deleteSingleTx . txHash) chain
 
-getChain :: MonadImport m
+getChain :: (MonadImport m, MonadLoggerIO m)
          => Bool -- ^ only delete transaction if unconfirmed
          -> Bool -- ^ only delete RBF
          -> TxHash
          -> m [Tx]
-getChain memonly rbfcheck th =
-    fmap sort_clean $
-    getActiveTxData th >>= \case
-        Nothing -> do
-            $(logErrorS) "BlockStore" $
-                "Transaction not found: " <> txHashToHex th
-            throwError TxNotFound
-        Just td
-          | memonly && confirmed (txDataBlock td) -> do
-            $(logErrorS) "BlockStore" $
-                "Transaction already confirmed: "
-                <> txHashToHex th
-            throwError TxConfirmed
-          | rbfcheck ->
-            isRBF (txDataBlock td) (txData td) >>= \case
-                True -> go td
-                False -> do
-                    $(logErrorS) "BlockStore" $
-                        "Double-spending transaction: "
-                        <> txHashToHex th
-                    throwError DoubleSpend
-          | otherwise -> go td
+getChain memonly rbfcheck th' = do
+    $(logDebugS) "BlockStore" $
+        "Getting chain for tx " <> txHashToHex th'
+    sort_clean <$> go HashSet.empty (HashSet.singleton th')
   where
-    sort_clean = reverse . map snd . sortTxs . nub'
-    go td = do
-        let tx = txData td
-        ss <- nub' . map spenderHash . I.elems <$> getSpenders th
-        xs <- concat <$> mapM (getChain memonly rbfcheck) ss
-        return $ tx : xs
+    sort_clean = reverse . map snd . sortTxs
+    get_tx th =
+        getActiveTxData th >>= \case
+            Nothing -> do
+                $(logErrorS) "BlockStore" $
+                    "Transaction not found: " <> txHashToHex th
+                throwError TxNotFound
+            Just td
+              | memonly && confirmed (txDataBlock td) -> do
+                $(logErrorS) "BlockStore" $
+                    "Transaction already confirmed: "
+                    <> txHashToHex th
+                throwError TxConfirmed
+              | rbfcheck ->
+                isRBF (txDataBlock td) (txData td) >>= \case
+                    True -> return $ txData td
+                    False -> do
+                        $(logErrorS) "BlockStore" $
+                            "Double-spending transaction: "
+                            <> txHashToHex th
+                        throwError DoubleSpend
+              | otherwise -> return $ txData td
+    go txs pdg = do
+        txs1 <- HashSet.fromList <$> mapM get_tx (HashSet.toList pdg)
+        pdg1 <- HashSet.fromList . concatMap (map spenderHash . I.elems) <$>
+                mapM getSpenders (HashSet.toList pdg)
+        let txs' = txs1 <> txs
+            pdg' = pdg1 `HashSet.difference` HashSet.map txHash txs'
+        if HashSet.null pdg'
+            then return $ HashSet.toList txs'
+            else go txs' pdg'
 
 deleteSingleTx :: MonadImport m => TxHash -> m ()
 deleteSingleTx th =
