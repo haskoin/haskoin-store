@@ -1954,6 +1954,7 @@ paths:
       tags:
         - Address
       operationId: deleteCachedXPub
+      summary: Delete Cached Extended Key
       parameters:
         - $ref: '#/components/parameters/xpubParam'
         - $ref: '#/components/parameters/nocacheParam'
