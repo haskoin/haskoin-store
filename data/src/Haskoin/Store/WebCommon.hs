@@ -94,6 +94,7 @@ data GetXPubTxs = GetXPubTxs !XPubKey !Store.DeriveType !LimitsParam !NoCache
 data GetXPubTxsFull = GetXPubTxsFull !XPubKey !Store.DeriveType !LimitsParam !NoCache
 data GetXPubBalances = GetXPubBalances !XPubKey !Store.DeriveType !NoCache
 data GetXPubUnspent = GetXPubUnspent !XPubKey !Store.DeriveType !LimitsParam !NoCache
+data DelCachedXPub = DelCachedXPub !XPubKey !Store.DeriveType
 -- Network
 data GetPeers = GetPeers
 data GetHealth = GetHealth
@@ -295,6 +296,12 @@ instance ApiResource GetXPubUnspent (Store.SerialList Store.XPubUnspent) where
         ( [ParamBox p]
         , noDefBox d <> noMaybeBox l <> noDefBox o <> noMaybeBox sM <> noDefBox n
         )
+    captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
+
+instance ApiResource DelCachedXPub (Store.GenericResult Bool) where
+    resourceMethod _ = DELETE
+    resourcePath _ = ("/xpub/" <:>)
+    queryParams (DelCachedXPub p d) = ([ParamBox p], noDefBox d)
     captureParams _ = [ProxyBox (Proxy :: Proxy XPubKey)]
 
 -------------

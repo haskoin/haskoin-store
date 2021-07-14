@@ -510,7 +510,7 @@ commitModTx add tx_data = do
 updateMempool :: MonadImport m => TxData -> m ()
 updateMempool td@TxData{txDataDeleted = True} =
     deleteFromMempool (txHash (txData td))
-updateMempool td@TxData{txDataDeleted = False, txDataBlock = MemRef t} =
+updateMempool td@TxData{txDataBlock = MemRef t} =
     addToMempool (txHash (txData td)) t
 updateMempool td@TxData{txDataBlock = BlockRef{}} =
     deleteFromMempool (txHash (txData td))

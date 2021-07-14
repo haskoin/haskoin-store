@@ -210,6 +210,7 @@ data WebMetrics = WebMetrics
     , xPubTxStat      :: !StatDist
     , xPubTxFullStat  :: !StatDist
     , xPubUnspentStat :: !StatDist
+    , xPubDel         :: !StatDist
     , multiaddrStat   :: !StatDist
     , rawaddrStat     :: !StatDist
     , balanceStat     :: !StatDist
@@ -242,6 +243,7 @@ createMetrics s = liftIO $ do
     xPubTxStat        <- d "xpub_tx"
     xPubTxFullStat    <- d "xpub_tx_full"
     xPubUnspentStat   <- d "xpub_unspent"
+    xPubDel           <- d "xpub_delete"
     rawaddrStat       <- d "rawaddr"
     multiaddrStat     <- d "multiaddr"
     balanceStat       <- d "balance"
@@ -654,6 +656,11 @@ handlePaths = do
         (fmap SerialList . scottyXPubUnspent)
         (\n -> list (xPubUnspentToEncoding n) . getSerialList)
         (\n -> json_list xPubUnspentToJSON n . getSerialList)
+    pathCompact
+        (DelCachedXPub <$> paramLazy <*> paramDef)
+        scottyDelXPub
+        (const toEncoding)
+        (const toJSON)
     -- Network
     pathCompact
         (GetPeers & return)
@@ -1207,6 +1214,15 @@ scottyXPub (GetXPub xpub deriv (NoCache noCache)) =  do
     let xspec = XPubSpec xpub deriv
     xbals <- xPubBals xspec
     lift . runNoCache noCache $ xPubSummary xspec xbals
+
+scottyDelXPub :: (MonadUnliftIO m, MonadLoggerIO m)
+              => DelCachedXPub -> WebT m (GenericResult Bool)
+scottyDelXPub (DelCachedXPub xpub deriv) = do
+    setMetrics xPubDel 1
+    let xspec = XPubSpec xpub deriv
+    cacheM <- lift (asks (storeCache . webStore . webConfig))
+    n <- lift $ withCache cacheM (cacheDelXPubs [xspec])
+    return (GenericResult (n > 0))
 
 getXPubTxs :: (MonadUnliftIO m, MonadLoggerIO m)
            => XPubKey -> DeriveType -> LimitsParam -> Bool -> WebT m [TxRef]

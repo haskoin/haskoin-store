@@ -23,6 +23,7 @@ module Haskoin.Store.Cache
     , CacheWriterInbox
     , cacheNewBlock
     , cacheWriter
+    , cacheDelXPubs
     , isInCache
     ) where
 
@@ -1197,6 +1198,13 @@ redisRemFromMempool xs = zrem mempoolSetKey $ map encode xs
 redisSetAddrInfo ::
        (Functor f, RedisCtx m f) => Address -> AddressXPub -> m (f ())
 redisSetAddrInfo a i = void <$> Redis.set (addrPfx <> encode a) (encode i)
+
+cacheDelXPubs :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
+              => [XPubSpec]
+              -> CacheT m Integer
+cacheDelXPubs xpubs = ReaderT $ \case
+    Just cache -> runReaderT (delXPubKeys xpubs) cache
+    Nothing -> return 0
 
 delXPubKeys ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
