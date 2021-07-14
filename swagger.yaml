@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.53.4
+  version: &version 0.53.5
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: JP Rupp
@@ -1946,6 +1946,37 @@ paths:
                 format: binary
         '404':
           description: Invalid extended public key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+        - Address
+      operationId: deleteCachedXPub
+      parameters:
+        - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/nocacheParam'
+      responses:
+        '200':
+          description: True if xpub got deleted from cache.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - result
+                properties:
+                  result:
+                    type: boolean
+                    nullable: false
+                    example: true
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Invalid argument.
           content:
             application/json:
               schema:
