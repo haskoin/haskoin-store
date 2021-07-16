@@ -260,7 +260,7 @@ instance MonadIO m => StoreReadBase (BlockT m) where
     getMempool =
         runRocksDB getMempool
 
-instance MonadIO m => StoreReadExtra (BlockT m) where
+instance MonadUnliftIO m => StoreReadExtra (BlockT m) where
     getMaxGap =
         runRocksDB getMaxGap
     getInitialGap =

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.35.7
+### Added
+- Added counters for database retrievals.
+- Added counter for xpub derivations.
+
+### Changed
+- Removed some buggy or unnecessary stats.
+
 ## 0.35.6
 ### Changed
 - Improve web server statistics.

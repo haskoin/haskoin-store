@@ -115,6 +115,18 @@ class Monad m => StoreReadBase m where
     getUnspent :: OutPoint -> m (Maybe Unspent)
     getMempool :: m [(UnixTime, TxHash)]
 
+    countBlocks :: Int -> m ()
+    countBlocks _ = return ()
+
+    countTxs :: Int -> m ()
+    countTxs _ = return ()
+
+    countBalances :: Int -> m ()
+    countBalances _ = return ()
+
+    countUnspents :: Int -> m ()
+    countUnspents _ = return ()
+
 class StoreReadBase m => StoreReadExtra m where
     getAddressesTxs :: [Address] -> Limits -> m [TxRef]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
@@ -155,6 +167,7 @@ class StoreReadBase m => StoreReadExtra m where
         derive_until_gap _ _ [] = return []
         derive_until_gap gap m as = do
             let (as1, as2) = splitAt (fromIntegral gap) as
+            countXPubDerivations (length as1)
             bs <- getBalances (map snd as1)
             let xbs = zipWith (xbalance m) bs (map fst as1)
             if all nullBalance bs
@@ -185,7 +198,10 @@ class StoreReadBase m => StoreReadExtra m where
       where
         l = deOffset limits
         cs = filter ((> 0) . balanceUnspentCount . xPubBal) xbals
-        i b = getAddressUnspents (balanceAddress (xPubBal b)) l
+        i b = do
+            us <- getAddressUnspents (balanceAddress (xPubBal b)) l
+            countUnspents (length us)
+            return us
         f b t = XPubUnspent {xPubUnspentPath = xPubBalPath b, xPubUnspent = t}
         h b = map (f b) <$> i b
 
@@ -199,6 +215,12 @@ class StoreReadBase m => StoreReadExtra m where
     xPubTxCount :: XPubSpec -> [XPubBal] -> m Word32
     xPubTxCount xspec xbals =
         fromIntegral . length <$> xPubTxs xspec xbals def
+
+    countTxRefs :: Int -> m ()
+    countTxRefs _ = return ()
+
+    countXPubDerivations :: Int -> m ()
+    countXPubDerivations _ = return ()
 
 class StoreWrite m where
     setBest :: BlockHash -> m ()

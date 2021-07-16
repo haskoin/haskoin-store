@@ -167,7 +167,6 @@ withMetrics df go =
         t2 <- systemToUTCTime <$> liftIO getSystemTime
         let diff = round $ diffUTCTime t2 t1 * 1000
         df metrics `addStatTime` diff
-        df metrics `addStatItems` 1
         addStatQuery (df metrics)
 
 incrementCounter :: MonadIO m
