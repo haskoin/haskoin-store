@@ -73,12 +73,12 @@ data DatabaseReader =
 
 createDatabaseStats :: MonadIO m => Metrics.Store -> m DatabaseStats
 createDatabaseStats s = liftIO $ do
-    databaseBlockCount          <- Metrics.createCounter "database.blocks"    s
-    databaseTxCount             <- Metrics.createCounter "database.txs"       s
-    databaseBalanceCount        <- Metrics.createCounter "database.balances"  s
-    databaseUnspentCount        <- Metrics.createCounter "database.unspents"  s
-    databaseTxRefCount          <- Metrics.createCounter "database.txrefs"    s
-    databaseDerivations         <- Metrics.createCounter "xpub_derivations"   s
+    databaseBlockCount          <- Metrics.createCounter "database.blocks"      s
+    databaseTxCount             <- Metrics.createCounter "database.txs"         s
+    databaseBalanceCount        <- Metrics.createCounter "database.balances"    s
+    databaseUnspentCount        <- Metrics.createCounter "database.unspents"    s
+    databaseTxRefCount          <- Metrics.createCounter "database.txrefs"      s
+    databaseDerivations         <- Metrics.createCounter "database.derivations" s
     return DatabaseStats{..}
 
 incrementCounter :: MonadIO m
