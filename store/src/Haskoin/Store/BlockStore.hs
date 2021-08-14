@@ -355,8 +355,8 @@ guardMempool f = do
 
 syncMempool :: Monad m => BlockT m () -> BlockT m ()
 syncMempool f = do
-    n <- asks (blockConfSyncMempool . myConfig)
-    unless n f
+    s <- asks (blockConfSyncMempool . myConfig)
+    when s f
 
 mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 mempool p = guardMempool $ syncMempool $ void $ async $ do
