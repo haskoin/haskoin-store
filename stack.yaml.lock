@@ -17,15 +17,15 @@ packages:
     commit: 147152343cde3a86aa98af2272f52b955d89d971
 - completed:
     name: haskoin-node
-    version: 0.17.13
+    version: 0.17.14
     git: https://github.com/haskoin/haskoin-node.git
     pantry-tree:
       size: 896
-      sha256: df506c56db2d2296046cd1dfdd414fa544b3d3d39188b7df0761d030059a4946
-    commit: 926536e1110fd8bf2f272d612f822bb9c2408761
+      sha256: 9302403e6f960b40e20a7a4204bc3130c407621d8e242284224f0e5010af5434
+    commit: 07a8138397e484330a02e1d1bb2babadae7d5d99
   original:
     git: https://github.com/haskoin/haskoin-node.git
-    commit: 926536e1110fd8bf2f272d612f822bb9c2408761
+    commit: 07a8138397e484330a02e1d1bb2babadae7d5d99
 snapshots:
 - completed:
     size: 567669

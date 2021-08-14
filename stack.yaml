@@ -14,4 +14,4 @@ extra-deps:
   - git: https://github.com/haskoin/haskoin-core.git
     commit: 147152343cde3a86aa98af2272f52b955d89d971
   - git: https://github.com/haskoin/haskoin-node.git
-    commit: 926536e1110fd8bf2f272d612f822bb9c2408761
+    commit: 07a8138397e484330a02e1d1bb2babadae7d5d99

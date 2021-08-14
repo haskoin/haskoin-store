@@ -93,6 +93,7 @@ withTestStore net t f =
               , storeConfMaxKeys = 100 * 1000 * 1000
               , storeConfNoMempool = False
               , storeConfWipeMempool = False
+              , storeConfSyncMempool = False
               , storeConfPeerTimeout = 60
               , storeConfPeerMaxLife = 48 * 3600
               , storeConfConnect = dummyPeerConnect net ad

@@ -223,6 +223,8 @@ data BlockStoreConfig =
         -- ^ do not index new mempool transactions
         , blockConfWipeMempool :: !Bool
         -- ^ wipe mempool at start
+        , blockConfSyncMempool :: !Bool
+        -- ^ sync mempool from peers
         , blockConfPeerTimeout :: !NominalDiffTime
         -- ^ disconnect syncing peer if inactive for this long
         , blockConfStats       :: !(Maybe Metrics.Store)
@@ -351,8 +353,13 @@ guardMempool f = do
     n <- asks (blockConfNoMempool . myConfig)
     unless n f
 
+syncMempool :: Monad m => BlockT m () -> BlockT m ()
+syncMempool f = do
+    n <- asks (blockConfSyncMempool . myConfig)
+    unless n f
+
 mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
-mempool p = guardMempool $ void $ async $ do
+mempool p = guardMempool $ syncMempool $ void $ async $ do
     isInSync >>= \s -> when s $ do
         $(logDebugS) "BlockStore" $
             "Requesting mempool from peer: " <> peerText p

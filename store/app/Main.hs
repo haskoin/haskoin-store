@@ -69,6 +69,7 @@ data Config = Config
     , configRedisMax        :: !Integer
     , configWipeMempool     :: !Bool
     , configNoMempool       :: !Bool
+    , configSyncMempool     :: !Bool
     , configPeerTimeout     :: !Int
     , configPeerMaxLife     :: !Int
     , configMaxPeers        :: !Int
@@ -101,6 +102,7 @@ instance Default Config where
                  , configRedisMax        = defRedisMax
                  , configWipeMempool     = defWipeMempool
                  , configNoMempool       = defNoMempool
+                 , configSyncMempool     = defSyncMempool
                  , configPeerTimeout     = defPeerTimeout
                  , configPeerMaxLife     = defPeerMaxLife
                  , configMaxPeers        = defMaxPeers
@@ -174,6 +176,11 @@ defRedis :: Bool
 defRedis = unsafePerformIO $
     defEnv "CACHE" False parseBool
 {-# NOINLINE defRedis #-}
+
+defSyncMempool :: Bool
+defSyncMempool = unsafePerformIO $
+    defEnv "SYNC_MEMPOOL" False parseBool
+{-# NOINLINE defSyncMempool #-}
 
 defDiscover :: Bool
 defDiscover = unsafePerformIO $
@@ -499,6 +506,10 @@ config = do
         flag (configWipeMempool def) True $
         long "wipe-mempool"
         <> help "Wipe mempool at start"
+    configSyncMempool <-
+        flag (configSyncMempool def) True $
+        long "sync-mempool"
+        <> help "Sync mempool from peers"
     configMaxDiff <-
         option auto $
         metavar "INT"
@@ -608,6 +619,7 @@ run Config { configHost = host
            , configMaxPeers = maxpeers
            , configMaxDiff = maxdiff
            , configNoMempool = nomem
+           , configSyncMempool = syncmem
            , configCacheRefresh = crefresh
            , configCacheRetryDelay = cretrydelay
            , configStatsd = statsd
@@ -638,6 +650,7 @@ run Config { configHost = host
                     , storeConfMaxKeys = redismax
                     , storeConfWipeMempool = wipemempool
                     , storeConfNoMempool = nomem
+                    , storeConfSyncMempool = syncmem
                     , storeConfPeerTimeout = fromIntegral peertimeout
                     , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection

@@ -91,6 +91,8 @@ data StoreConfig =
       -- ^ do not index new mempool transactions
         , storeConfWipeMempool     :: !Bool
       -- ^ wipe mempool when starting
+        , storeConfSyncMempool         :: !Bool
+      -- ^ sync mempool from peers
         , storeConfPeerTimeout     :: !NominalDiffTime
       -- ^ disconnect peer if message not received for this many seconds
         , storeConfPeerMaxLife     :: !NominalDiffTime
@@ -150,6 +152,7 @@ blockStoreCfg cfg node pub db =
         , blockConfNet = storeConfNetwork cfg
         , blockConfNoMempool = storeConfNoMempool cfg
         , blockConfWipeMempool = storeConfWipeMempool cfg
+        , blockConfSyncMempool = storeConfSyncMempool cfg
         , blockConfPeerTimeout = storeConfPeerTimeout cfg
         , blockConfStats = storeConfStats cfg
         }
