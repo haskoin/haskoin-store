@@ -1,4 +1,4 @@
-resolver: lts-17.12
+resolver: lts-18.10
 nix:
   packages:
     - perl
@@ -11,7 +11,5 @@ packages:
   - store
   - data
 extra-deps:
-  - git: https://github.com/haskoin/haskoin-core.git
-    commit: 147152343cde3a86aa98af2272f52b955d89d971
-  - git: https://github.com/haskoin/haskoin-node.git
-    commit: 07a8138397e484330a02e1d1bb2babadae7d5d99
+  - haskoin-core-0.20.5
+  - haskoin-node-0.17.14
