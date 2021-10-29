@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -110,7 +109,8 @@ import           Haskoin.Store.Stats
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
 import           Haskoin.Util
-import           NQE                                     (Inbox, receive,
+import           NQE                                     (Inbox, Publisher,
+                                                          receive,
                                                           withSubscription)
 import           Network.HTTP.Types                      (Status (..),
                                                           requestEntityTooLarge413,
@@ -128,7 +128,12 @@ import           Network.Wai                             (Middleware,
                                                           responseStatus)
 import           Network.Wai.Handler.Warp                (defaultSettings,
                                                           setHost, setPort)
+import           Network.Wai.Handler.WebSockets          (websocketsOr)
 import           Network.Wai.Middleware.RequestSizeLimit
+import           Network.WebSockets                      (ServerApp,
+                                                          acceptRequest,
+                                                          defaultConnectionOptions,
+                                                          sendTextData)
 import qualified Network.Wreq                            as Wreq
 import           System.IO.Unsafe                        (unsafeInterleaveIO)
 import qualified System.Metrics                          as Metrics
@@ -342,6 +347,12 @@ createMetrics s = liftIO $ do
     d x = createStatDist       ("web." <> x) s
     g x = Metrics.createGauge  ("web." <> x) s
 
+withGaugeIO :: MonadUnliftIO m => Metrics.Gauge -> m a -> m a
+withGaugeIO g =
+    bracket_
+    (liftIO $ Metrics.Gauge.inc g)
+    (liftIO $ Metrics.Gauge.dec g)
+
 withGaugeIncrease :: MonadUnliftIO m
                   => (WebMetrics -> Metrics.Gauge)
                   -> WebT m a
@@ -350,15 +361,8 @@ withGaugeIncrease gf go =
     lift (asks webMetrics) >>= \case
         Nothing -> go
         Just m -> do
-            s <- liftWith $ \run ->
-                bracket_
-                (start m)
-                (end m)
-                (run go)
+            s <- liftWith $ \run -> withGaugeIO (gf m) (run go)
             restoreT $ return s
-  where
-    start m = liftIO $ Metrics.Gauge.inc (gf m)
-    end m = liftIO $ Metrics.Gauge.dec (gf m)
 
 setMetrics :: MonadUnliftIO m
            => (WebMetrics -> StatDist)
@@ -458,6 +462,7 @@ runWeb cfg@WebConfig{ webHost = host
         reqLogger <- logIt metrics
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
+            S.middleware (webSocketEvents st)
             S.middleware reqLogger
             S.middleware (reqSizeLimit maxLimitBody)
             S.defaultHandler defHandler
@@ -510,7 +515,7 @@ raise err = lift (asks webMetrics) >>= \case
         req <- S.request
         mM <- case V.lookup (statKey m) (vault req) of
             Nothing -> return Nothing
-            Just t -> readTVarIO t
+            Just t  -> readTVarIO t
         let status = errStatus err
         if | statusIsClientError status ->
              liftIO $ do
@@ -1217,6 +1222,19 @@ scottyMempool (GetMempool limitM (OffsetParam o)) = do
         l = Limits (validateLimit wl' False limitM) (fromIntegral o) Nothing
     ths <- map snd . applyLimits l <$> getMempool
     return ths
+
+
+webSocketEvents :: WebState -> Middleware
+webSocketEvents s =
+    websocketsOr defaultConnectionOptions events
+  where
+    pub = (storePublisher . webStore . webConfig) s
+    gauge = statEvents <$> webMetrics s
+    events pending = withSubscription pub $ \sub -> do
+        conn <- acceptRequest pending
+        forever $ receiveEvent sub >>= \case
+            Nothing -> return ()
+            Just event -> sendTextData conn (A.encode event)
 
 scottyEvents :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyEvents =
@@ -2392,9 +2410,7 @@ scottyPeers :: (MonadUnliftIO m, MonadLoggerIO m)
             -> WebT m [PeerInformation]
 scottyPeers _ = do
     setMetrics statPeers
-    peers <- lift $ getPeersInformation =<<
-             asks (storeManager . webStore . webConfig)
-    return peers
+    lift $ getPeersInformation =<< asks (storeManager . webStore . webConfig)
 
 -- | Obtain information about connected peers from peer manager process.
 getPeersInformation

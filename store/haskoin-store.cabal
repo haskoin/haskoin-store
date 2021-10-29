@@ -1,13 +1,11 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.34.2.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 7cff24e5b6ce01f7b47d7ce31d0eda998fdbe9b56ad028e075dec93d0fe2bd31
 
 name:           haskoin-store
-version:        0.53.11
+version:        0.53.12
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -85,7 +83,9 @@ library
     , vault >=0.3.1.5
     , wai >=3.2.2.1
     , wai-extra >=3.1.6
+    , wai-websockets >=3.0.1.2
     , warp >=3.3.10
+    , websockets >=0.12.4
     , wreq >=0.5.3.2
   default-language: Haskell2010
 
@@ -140,7 +140,9 @@ executable haskoin-store
     , vault >=0.3.1.5
     , wai >=3.2.2.1
     , wai-extra >=3.1.6
+    , wai-websockets >=3.0.1.2
     , warp >=3.3.10
+    , websockets >=0.12.4
     , wreq >=0.5.3.2
   default-language: Haskell2010
 
@@ -199,7 +201,9 @@ test-suite haskoin-store-test
     , vault >=0.3.1.5
     , wai >=3.2.2.1
     , wai-extra >=3.1.6
+    , wai-websockets >=3.0.1.2
     , warp >=3.3.10
+    , websockets >=0.12.4
     , wreq >=0.5.3.2
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover

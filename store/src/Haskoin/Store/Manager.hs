@@ -91,7 +91,7 @@ data StoreConfig =
       -- ^ do not index new mempool transactions
         , storeConfWipeMempool     :: !Bool
       -- ^ wipe mempool when starting
-        , storeConfSyncMempool         :: !Bool
+        , storeConfSyncMempool     :: !Bool
       -- ^ sync mempool from peers
         , storeConfPeerTimeout     :: !NominalDiffTime
       -- ^ disconnect peer if message not received for this many seconds
