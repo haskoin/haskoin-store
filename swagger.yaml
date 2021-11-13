@@ -10,8 +10,8 @@ info:
   version: &version 0.53.10
   title: Bitcoin (BCH/BTC) Query API
   contact:
-    name: JP Rupp
-    url: https://github.com/haskoin/haskoin-store
+    name: Haskoin
+    url: https://www.haskoin.com/
     email: jprupp@protonmail.ch
   license:
     name: MIT
