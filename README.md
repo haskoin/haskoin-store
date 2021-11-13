@@ -25,7 +25,7 @@ stack --nix build --copy-bins
 ~/.local/bin/haskoin-store --help
 ```
 
-## Install on Ubuntu 20.04 or Debian 10
+## Install on Ubuntu or Debian
 
 * Get [Stack](https://haskellstack.org/)
 
