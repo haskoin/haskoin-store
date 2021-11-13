@@ -13,9 +13,9 @@ Block chain store and index featuring:
 - RESTful API with JSON and binary serialization.
 - High performance concurrent architecture.
 
-## Quick Install with Nix Anywhere
+## Install with Nix on any distribution
 
-* Get [Nix](https://nixos.org/nix/).
+* Get [Nix](https://nixos.org/nix/)
 
 ```sh
 nix-env --install stack
@@ -30,7 +30,7 @@ stack --nix build --copy-bins
 * Get [Stack](https://haskellstack.org/)
 
 ```sh
-apt install git libsecp256k1-dev librocksdb-dev pkg-config
+apt install git zlib1g-dev libsecp256k1-dev librocksdb-dev pkg-config
 git clone https://github.com/haskoin/haskoin-store.git
 cd haskoin-store
 stack build --copy-bins
@@ -39,8 +39,9 @@ stack build --copy-bins
 
 ## Non-Haskell Dependencies
 
+* [zlib](https://zlib.net/)
 * [libsecp256k1](https://github.com/Bitcoin-ABC/secp256k1)
-* [RocksDB](https://github.com/facebook/rocksdb/)
+* [RocksDB](https://github.com/facebook/rocksdb)
 
 ## API Documentation
 
