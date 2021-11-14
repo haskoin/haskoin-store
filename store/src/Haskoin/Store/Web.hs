@@ -89,6 +89,7 @@ import           Database.RocksDB                        (Property (..),
                                                           getProperty)
 import           Haskoin.Address
 import qualified Haskoin.Block                           as H
+import           Haskoin.Data
 import           Haskoin.Constants
 import           Haskoin.Keys
 import           Haskoin.Network
@@ -2067,10 +2068,11 @@ scottyShortBal = do
             binfoShortBalReceived = balanceTotalReceived
         }
     get_addr_balance net cashaddr a =
-        let net' = if | cashaddr       -> net
-                      | net == bch     -> btc
-                      | net == bchTest -> btcTest
-                      | otherwise      -> net
+        let net' = if | cashaddr        -> net
+                      | net == bch      -> btc
+                      | net == bchTest  -> btcTest
+                      | net == bchTest4 -> btcTest
+                      | otherwise       -> net
         in case addrToText net' a of
                Nothing -> return Nothing
                Just a' -> getBalance a >>= \case

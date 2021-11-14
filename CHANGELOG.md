@@ -4,27 +4,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
-## 0.35.12
+## 0.54.0
 ### Added
 - WebSocket support.
+- Testnet4 support.
 
-## 0.35.11
+## 0.53.11
 ### Changed
 - Dummy version increase to signal upstream update of Haskoin Core.
 
-## 0.35.10
+## 0.53.10
 ### Fixed
 - Correct test that was reversed in previous version.
 
-## 0.35.9
+## 0.53.9
 ### Removed
 - Mempool is no longer synced by default to fix public Bitcoin Core regression.
 
-## 0.35.8
+## 0.53.8
 ### Changed
 - Put derivations stat inside database.
 
-## 0.35.7
+## 0.53.7
 ### Added
 - Added counters for database retrievals.
 - Added counter for xpub derivations.
@@ -32,7 +33,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 - Removed some buggy or unnecessary stats.
 
-## 0.35.6
+## 0.53.6
 ### Changed
 - Improve web server statistics.
 

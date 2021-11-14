@@ -269,14 +269,14 @@ instance Hashable XPubSpec where
 instance Serial XPubSpec where
     serialize XPubSpec {xPubSpecKey = k, xPubDeriveType = t} = do
         putWord8 (xPubDepth k)
-        putWord32be (xPubParent k)
+        serialize (xPubParent k)
         putWord32be (xPubIndex k)
         serialize (xPubChain k)
         serialize (wrapPubKey True (xPubKey k))
         serialize t
     deserialize = do
         d <- getWord8
-        p <- getWord32be
+        p <- deserialize
         i <- getWord32be
         c <- deserialize
         k <- deserialize

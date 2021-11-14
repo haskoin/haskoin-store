@@ -21,7 +21,7 @@ import           Data.String.Conversions   (cs)
 import qualified Data.Text                 as T
 import           Data.Word                 (Word32)
 import           Haskoin                   (Network (..), allNets, bch,
-                                            bchRegTest, bchTest, btc,
+                                            bchRegTest, bchTest, bchTest4, btc,
                                             btcRegTest, btcTest, eitherToMaybe)
 import           Haskoin.Node              (withConnection)
 import           Haskoin.Store             (StoreConfig (..), WebConfig (..),
@@ -54,8 +54,7 @@ data Config = Config
     { configDir             :: !FilePath
     , configHost            :: !String
     , configPort            :: !Int
-    , configNetwork         :: !Network
-    , configAsert           :: !Word32
+    , configNetwork         :: !String
     , configDiscover        :: !Bool
     , configPeers           :: ![(String, Maybe Int)]
     , configVersion         :: !Bool
@@ -88,7 +87,6 @@ instance Default Config where
                  , configHost            = defHost
                  , configPort            = defPort
                  , configNetwork         = defNetwork
-                 , configAsert           = defAsert
                  , configDiscover        = defDiscover
                  , configPeers           = defPeers
                  , configVersion         = False
@@ -157,15 +155,10 @@ defPort = unsafePerformIO $
     defEnv "PORT" 3000 readMaybe
 {-# NOINLINE defPort #-}
 
-defNetwork :: Network
+defNetwork :: String
 defNetwork = unsafePerformIO $
-    defEnv "NET" bch (eitherToMaybe . networkReader)
+    defEnv "NET" "bch" pure
 {-# NOINLINE defNetwork #-}
-
-defAsert :: Word32
-defAsert = unsafePerformIO $
-    defEnv "ASERT" 0 readMaybe
-{-# NOINLINE defAsert #-}
 
 defRedisMin :: Int
 defRedisMin = unsafePerformIO $
@@ -335,19 +328,13 @@ config = do
         <> showDefault
         <> value (configPort def)
     configNetwork <-
-        option (eitherReader networkReader) $
+        strOption $
         metavar netNames
         <> long "net"
         <> short 'n'
         <> help "Network to connect to"
         <> showDefault
         <> value (configNetwork def)
-    configAsert <-
-        option auto $
-        metavar "TIME"
-        <> long "asert"
-        <> help "ASERT (axon) activation time"
-        <> value (configAsert def)
     configDiscover <-
         flag (configDiscover def) True $
         long "discover"
@@ -563,6 +550,7 @@ networkReader s
     | s == getNetworkName btcRegTest = Right btcRegTest
     | s == getNetworkName bch = Right bch
     | s == getNetworkName bchTest = Right bchTest
+    | s == getNetworkName bchTest4 = Right bchTest4
     | s == getNetworkName bchRegTest = Right bchRegTest
     | otherwise = Left "Network name invalid"
 
@@ -600,8 +588,7 @@ main = do
 run :: Config -> IO ()
 run Config { configHost = host
            , configPort = port
-           , configNetwork = net
-           , configAsert = asert
+           , configNetwork = net_str
            , configDiscover = disc
            , configPeers = peers
            , configDir = db_dir
@@ -629,17 +616,20 @@ run Config { configHost = host
            , configWebPriceGet = wpget
            } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
+        net <- case networkReader net_str of
+            Right n -> return n
+            Left e -> error e
         $(logInfoS) "Main" $
-            "Creating working directory if not found: " <> cs wd
-        createDirectoryIfMissing True wd
+            "Creating working directory if not found: " <> cs (wd net)
+        createDirectoryIfMissing True (wd net)
         let scfg =
                 StoreConfig
                     { storeConfMaxPeers = maxpeers
                     , storeConfInitPeers =
                           map (second (fromMaybe (getDefaultPort net))) peers
                     , storeConfDiscover = disc
-                    , storeConfDB = wd </> "db"
-                    , storeConfNetwork = net'
+                    , storeConfDB = wd net </> "db"
+                    , storeConfNetwork = net
                     , storeConfCache =
                           if redis
                               then Just redisurl
@@ -686,9 +676,7 @@ run Config { configHost = host
                 (T.pack statsdpfx)
                 (go . Just)
         | otherwise = go Nothing
-    net' | asert == 0 = net
-         | otherwise = net { getAsertActivationTime = Just asert }
     l _ lvl
         | deb = True
         | otherwise = LevelInfo <= lvl
-    wd = db_dir </> getNetworkName net'
+    wd net = db_dir </> getNetworkName net

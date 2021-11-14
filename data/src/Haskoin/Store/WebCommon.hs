@@ -22,6 +22,7 @@ import           Haskoin.Address
 import           Haskoin.Block           (Block, BlockHash, blockHashToHex,
                                           hexToBlockHash)
 import           Haskoin.Constants
+import           Haskoin.Data
 import           Haskoin.Crypto          (Hash256)
 import           Haskoin.Keys
 import qualified Haskoin.Store.Data      as Store

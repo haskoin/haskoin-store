@@ -78,6 +78,7 @@ import           Data.String.Conversions   (cs)
 import           Data.Text                 (Text)
 import qualified Data.Text                 as Text
 import           Haskoin.Constants
+import           Haskoin.Data
 import qualified Haskoin.Store.Data        as Store
 import           Haskoin.Store.WebCommon
 import           Haskoin.Transaction
