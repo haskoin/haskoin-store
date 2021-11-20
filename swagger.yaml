@@ -7,11 +7,11 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.53.12
+  version: &version 0.54.0
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Haskoin
-    url: https://www.haskoin.com/
+    url: https://github.com/haskoin
     email: jprupp@protonmail.ch
   license:
     name: MIT

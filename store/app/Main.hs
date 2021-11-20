@@ -416,14 +416,14 @@ config = do
         option auto $
         metavar "SECONDS"
         <> long "block-timeout"
-        <> help "Last block mined health timeout (0 = inf)"
+        <> help "Last block mined health timeout"
         <> showDefault
         <> value (blockTimeout (configWebTimeouts def))
     txTimeout <-
         option auto $
         metavar "SECONDS"
         <> long "tx-timeout"
-        <> help "Last tx recived health timeout (0 = inf)"
+        <> help "Last tx recived health timeout"
         <> showDefault
         <> value (txTimeout (configWebTimeouts def))
     configPeerTimeout <-

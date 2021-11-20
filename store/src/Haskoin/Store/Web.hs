@@ -2479,7 +2479,9 @@ lastTxHealthCheck WebConfig {..} = do
     return TimeHealth {..}
   where
     ch = storeChain webStore
-    to = if webNoMempool then blockTimeout webTimeouts else txTimeout webTimeouts
+    to = if webNoMempool
+         then blockTimeout webTimeouts
+         else txTimeout webTimeouts
 
 pendingTxsHealthCheck :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
                       => WebConfig -> m MaxHealth
