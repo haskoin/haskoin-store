@@ -13,4 +13,4 @@ packages:
 extra-deps:
   - haskoin-node-0.17.14
   - git: https://github.com/haskoin/haskoin-core.git
-    commit: d74a4801b7d4214c78383453d8a20a06877ff57e
+    commit: ffb7b44f989a5a0803ac9777d508d327842f9bf5
