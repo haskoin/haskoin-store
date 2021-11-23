@@ -328,6 +328,7 @@ blockAtOrAfterMTP ch q = runMaybeT $ do
 data StoreEvent
     = StoreBestBlock !BlockHash
     | StoreMempoolNew !TxHash
+    | StoreMempoolDelete !TxHash
     | StorePeerConnected !Peer
     | StorePeerDisconnected !Peer
     | StorePeerPong !Peer !Word64

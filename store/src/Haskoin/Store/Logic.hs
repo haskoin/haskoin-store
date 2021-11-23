@@ -22,6 +22,7 @@ import           Control.Monad.Logger    (MonadLoggerIO (..), logDebugS,
                                           logErrorS)
 import qualified Data.ByteString         as B
 import           Data.Either             (rights)
+import           Data.HashSet            (HashSet)
 import qualified Data.HashSet            as HashSet
 import qualified Data.IntMap.Strict      as I
 import           Data.List               (nub)
@@ -91,17 +92,20 @@ initBest = do
         $(logDebugS) "BlockStore" "Importing Genesis block"
         importBlock (genesisBlock net) (genesisNode net)
 
-newMempoolTx :: MonadImport m => Tx -> UnixTime -> m Bool
+-- | If it returns 'Nothing', then transaction was not imported because it
+-- already exists. Otherwise tranasction was imported successfully. Any deleted
+-- transactions will be returned in the set (RBF only).
+newMempoolTx :: MonadImport m => Tx -> UnixTime -> m (Maybe (HashSet TxHash))
 newMempoolTx tx w =
     getActiveTxData (txHash tx) >>= \case
         Just _ ->
-            return False
+            return Nothing
         Nothing -> do
-            freeOutputs True True tx
+            txids <- freeOutputs True True tx
             rbf <- isRBF (MemRef w) tx
             checkNewTx tx
             importTx (MemRef w) w rbf tx
-            return True
+            return (Just txids)
 
 bestBlockData :: MonadImport m => m BlockData
 bestBlockData = do
@@ -385,13 +389,15 @@ freeOutputs
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> Tx
-    -> m ()
-freeOutputs memonly rbfcheck tx =
-    forM_ (prevOuts tx) $ \op ->
-    getUnspent op >>= \u -> when (isNothing u) $
-    getSpender op >>= \p -> forM_ p $ \s ->
-    unless (spenderHash s == txHash tx) $
-    deleteTx memonly rbfcheck (spenderHash s)
+    -> m (HashSet TxHash)
+freeOutputs memonly rbfcheck tx = do
+    let prevs = prevOuts tx
+    unspents <- mapM getUnspent prevs
+    let spents = map fst $ filter (isNothing . snd) $ zip prevs unspents
+    spndrs <- catMaybes <$> mapM getSpender spents
+    let txids = HashSet.fromList $ filter (/= txHash tx) $ map spenderHash spndrs
+    mapM (deleteTx memonly rbfcheck) $ HashSet.toList txids
+    return txids
 
 deleteConfirmedTx :: MonadImport m => TxHash -> m ()
 deleteConfirmedTx = deleteTx False False

@@ -89,8 +89,8 @@ import           Database.RocksDB                        (Property (..),
                                                           getProperty)
 import           Haskoin.Address
 import qualified Haskoin.Block                           as H
-import           Haskoin.Data
 import           Haskoin.Constants
+import           Haskoin.Data
 import           Haskoin.Keys
 import           Haskoin.Network
 import           Haskoin.Node                            (Chain,
@@ -134,7 +134,11 @@ import           Network.Wai.Middleware.RequestSizeLimit
 import           Network.WebSockets                      (ServerApp,
                                                           acceptRequest,
                                                           defaultConnectionOptions,
+                                                          pendingRequest,
+                                                          rejectRequestWith,
+                                                          requestPath,
                                                           sendTextData)
+import qualified Network.WebSockets                      as WebSockets
 import qualified Network.Wreq                            as Wreq
 import           System.IO.Unsafe                        (unsafeInterleaveIO)
 import qualified System.Metrics                          as Metrics
@@ -1232,10 +1236,22 @@ webSocketEvents s =
     pub = (storePublisher . webStore . webConfig) s
     gauge = statEvents <$> webMetrics s
     events pending = withSubscription pub $ \sub -> do
-        conn <- acceptRequest pending
-        forever $ receiveEvent sub >>= \case
-            Nothing -> return ()
-            Just event -> sendTextData conn (A.encode event)
+        let path = requestPath $ pendingRequest pending
+        if path == "/events"
+          then do
+            conn <- acceptRequest pending
+            forever $ receiveEvent sub >>= \case
+                Nothing    -> return ()
+                Just event -> sendTextData conn (A.encode event)
+          else
+            rejectRequestWith
+            pending
+            WebSockets.defaultRejectRequest
+            { WebSockets.rejectBody = L.toStrict $ A.encode ThingNotFound
+            , WebSockets.rejectCode = 404
+            , WebSockets.rejectMessage = "Not Found"
+            , WebSockets.rejectHeaders = [("Content-Type", "application/json")]
+            }
 
 scottyEvents :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyEvents =
@@ -1259,9 +1275,10 @@ receiveEvent sub = do
     se <- receive sub
     return $
         case se of
-            StoreBestBlock b  -> Just (EventBlock b)
-            StoreMempoolNew t -> Just (EventTx t)
-            _                 -> Nothing
+            StoreBestBlock b     -> Just (EventBlock b)
+            StoreMempoolNew t    -> Just (EventTx t)
+            StoreMempoolDelete t -> Just (EventTx t)
+            _                    -> Nothing
 
 -- GET Address Transactions --
 

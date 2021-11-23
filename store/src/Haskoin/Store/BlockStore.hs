@@ -610,29 +610,29 @@ importMempoolTx
     => BlockStore
     -> UTCTime
     -> Tx
-    -> WriterT m Bool
+    -> WriterT m (Maybe (HashSet TxHash))
 importMempoolTx block_read time tx =
     catchError new_mempool_tx handle_error
   where
     tx_hash = txHash tx
     handle_error Orphan = do
         newOrphanTx block_read time tx
-        return False
-    handle_error _ = return False
+        return Nothing
+    handle_error _ = return Nothing
     seconds = floor (utcTimeToPOSIXSeconds time)
     new_mempool_tx =
         newMempoolTx tx seconds >>= \case
-            True -> do
+            Just set -> do
                 $(logInfoS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
                     <> ": OK"
                 fulfillOrphans block_read tx_hash
-                return True
-            False -> do
+                return (Just set)
+            Nothing -> do
                 $(logDebugS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
                     <> ": Already imported"
-                return False
+                return Nothing
 
 processMempool :: MonadLoggerIO m => BlockT m ()
 processMempool = guardMempool $ do
@@ -645,8 +645,8 @@ processMempool = guardMempool $ do
             block_read
             (pendingTxTime p)
             (pendingTx p) >>= \case
-                True  -> return $ Just (txHash (pendingTx p))
-                False -> return Nothing
+                Just set -> return $ Just (txHash (pendingTx p), set)
+                Nothing -> return Nothing
     import_txs block_read txs =
         let r = mapM (run_import block_read) txs
          in runImport r >>= \case
@@ -657,8 +657,9 @@ processMempool = guardMempool $ do
             "Error processing mempool: " <> cs (show e)
         throwIO e
     success = mapM_ notify
-    notify txid = do
+    notify (txid, set) = do
         listener <- asks (blockConfListener . myConfig)
+        mapM ((`publish` listener) . StoreMempoolDelete) (HashSet.toList set)
         publish (StoreMempoolNew txid) listener
 
 processTxs ::
