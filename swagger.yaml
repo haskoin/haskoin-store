@@ -6317,17 +6317,17 @@ components:
         type: integer
         enum: [0,1,2,3,5,7]
       description: |
-        Filter only these types of transaction with respect to active addresses:
+        Filter only these types of transaction with respect to active addresses
+        (0 for no filtering):
 
-        0. Do not filter
-        1. Sent (result + fee < 0)
-        2. Received (result + fee > 0)
-        3. Transfer (result + fee = 0)
-        4. INVALID
-        5. Confirmed
-        6. NO-OP
-        7. Unconfirmed
-      example: 0
+        1. Only outgoing transactions (sent) (result + fee < 0)
+        2. Only incoming transactions (received) (result + fee > 0)
+        3. Only internal transfers (result + fee = 0)
+        4. No filtering
+        5. Only confirmed transactions
+        6. No filtering
+        7. Only unconfirmed transactions
+      example: 5
   
     binfoLimit:
       name: limit
