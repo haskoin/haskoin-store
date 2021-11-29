@@ -1465,7 +1465,7 @@ getBinfoAddrsParam name = do
     if T.null p
         then return HashSet.empty
         else case parseBinfoAddr net p of
-                 Nothing -> raise (UserError "invalid active address")
+                 Nothing -> raise (UserError "invalid address")
                  Just xs -> return $ HashSet.fromList xs
 
 getBinfoActive :: MonadIO m
