@@ -146,7 +146,8 @@ runWriter bdb@DatabaseReader{ databaseHandle = db } f = do
     mem <- runReaderT getMempool bdb
     hm <- newTVarIO (newMemory mem)
     x <- R.runReaderT f Writer { getReader = bdb, getState = hm }
-    ops <- hashMapOps db <$> readTVarIO hm
+    mem' <- readTVarIO hm
+    let ops = hashMapOps db mem'
     writeBatch db ops
     return x
 

@@ -389,17 +389,18 @@ processBlock peer block = void . runMaybeT $ do
     $(logDebugS) "BlockStore" $
         "Processing block: " <> blockText node Nothing
         <> " from peer: " <> peerText peer
-    lift $ runImport (importBlock block node) >>= \case
-        Left e   -> failure e
-        Right ths -> success node ths
+    lift . notify (Just block) $
+        runImport (importBlock block node) >>= \case
+            Left e   -> failure e
+            Right ths -> success node
   where
+    exclude = map txHash $ blockTxns block
     header = blockHeader block
     blockhash = headerHash header
     hexhash = blockHashToHex blockhash
-    success node ths = do
+    success node = do
         $(logInfoS) "BlockStore" $
             "Best block: " <> blockText node (Just block)
-        notify ths
         removeSyncingBlock $ headerHash $ nodeHeader node
         touchPeer
         isInSync >>= \case
@@ -413,10 +414,6 @@ processBlock peer block = void . runMaybeT $ do
             <> " from peer: " <> peerText peer <> ": "
             <> cs (show e)
         killPeer (PeerMisbehaving (show e)) peer
-    notify ths = do
-        listener <- asks (blockConfListener . myConfig)
-        mapM_ ((`publish` listener) . StoreMempoolDelete) ths
-        publish (StoreBestBlock blockhash) listener
 
 setSyncingBlocks :: (MonadReader BlockStore m, MonadIO m)
                  => [BlockHash] -> m ()
@@ -611,57 +608,68 @@ importMempoolTx
     => BlockStore
     -> UTCTime
     -> Tx
-    -> WriterT m (Maybe (HashSet TxHash))
+    -> WriterT m Bool
 importMempoolTx block_read time tx =
     catchError new_mempool_tx handle_error
   where
     tx_hash = txHash tx
     handle_error Orphan = do
         newOrphanTx block_read time tx
-        return Nothing
-    handle_error _ = return Nothing
+        return False
+    handle_error _ = return False
     seconds = floor (utcTimeToPOSIXSeconds time)
     new_mempool_tx =
         newMempoolTx tx seconds >>= \case
-            Just set -> do
+            True -> do
                 $(logInfoS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
                     <> ": OK"
                 fulfillOrphans block_read tx_hash
-                return (Just set)
-            Nothing -> do
+                return True
+            False -> do
                 $(logDebugS) "BlockStore" $
                     "Import tx " <> txHashToHex (txHash tx)
                     <> ": Already imported"
-                return Nothing
+                return False
+
+notify :: MonadIO m => Maybe Block -> BlockT m a -> BlockT m a
+notify block go = do
+    old <- HashSet.union e . HashSet.fromList . map snd <$> getMempool
+    x <- go
+    new <- HashSet.fromList . map snd <$> getMempool
+    l <- asks (blockConfListener . myConfig)
+    forM_ (old `HashSet.difference` new) $ \h ->
+        publish (StoreMempoolDelete h) l
+    forM_ (new `HashSet.difference` old) $ \h ->
+        publish (StoreMempoolNew h) l
+    case block of
+        Just b -> publish (StoreBestBlock (headerHash (blockHeader b))) l
+        Nothing -> return ()
+    return x
+  where
+    e = case block of
+        Just b -> HashSet.fromList (map txHash (blockTxns b))
+        Nothing -> HashSet.empty
 
 processMempool :: MonadLoggerIO m => BlockT m ()
-processMempool = guardMempool $ do
+processMempool = guardMempool . notify Nothing $ do
     txs <- pendingTxs 2000
     block_read <- ask
-    unless (null txs) (import_txs block_read txs >>= success)
+    unless (null txs) (import_txs block_read txs)
   where
     run_import block_read p =
-        importMempoolTx
-            block_read
-            (pendingTxTime p)
-            (pendingTx p) >>= \case
-                Just set -> return $ Just (txHash (pendingTx p), set)
-                Nothing -> return Nothing
+        let t = pendingTx p
+            h = txHash t
+        in importMempoolTx block_read (pendingTxTime p) (pendingTx p)
     import_txs block_read txs =
         let r = mapM (run_import block_read) txs
          in runImport r >>= \case
-            Left e   -> report_error e >> return []
-            Right ms -> return (catMaybes ms)
+            Left e   -> report_error e
+            Right _ -> return ()
     report_error e = do
         $(logErrorS) "BlockImport" $
             "Error processing mempool: " <> cs (show e)
         throwIO e
-    success = mapM_ notify
-    notify (txid, set) = do
-        listener <- asks (blockConfListener . myConfig)
-        mapM ((`publish` listener) . StoreMempoolDelete) (HashSet.toList set)
-        publish (StoreMempoolNew txid) listener
 
 processTxs ::
        MonadLoggerIO m

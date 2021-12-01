@@ -94,20 +94,17 @@ initBest = do
         $(logDebugS) "BlockStore" "Importing Genesis block"
         importBlock (genesisBlock net) (genesisNode net)
 
--- | If it returns 'Nothing', then transaction was not imported because it
--- already exists. Otherwise tranasction was imported successfully. Any deleted
--- transactions will be returned in the set (RBF only).
-newMempoolTx :: MonadImport m => Tx -> UnixTime -> m (Maybe (HashSet TxHash))
+newMempoolTx :: MonadImport m => Tx -> UnixTime -> m Bool
 newMempoolTx tx w =
     getActiveTxData (txHash tx) >>= \case
         Just _ ->
-            return Nothing
+            return False
         Nothing -> do
-            txids <- freeOutputs True True tx
+            freeOutputs True True tx
             rbf <- isRBF (MemRef w) tx
             checkNewTx tx
             importTx (MemRef w) w rbf tx
-            return (Just txids)
+            return True
 
 bestBlockData :: MonadImport m => m BlockData
 bestBlockData = do
@@ -168,11 +165,10 @@ checkNewBlock b n =
                     <> blockHashToHex (headerHash (blockHeader b))
                 throwError PrevBlockNotBest
 
-importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> m (HashSet TxHash)
+importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> m ()
 importOrConfirm bn txns = do
-    ths <- foldl (<>) HashSet.empty <$> mapM (freeOutputs True False . snd) (reverse txs)
+    mapM_ (freeOutputs True False . snd) (reverse txs)
     mapM_ (uncurry action) txs
-    return ths
   where
     txs = sortTxs txns
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
@@ -200,7 +196,7 @@ importOrConfirm bn txns = do
         importTx (br i) bn_time False tx
         return Nothing
 
-importBlock :: MonadImport m => Block -> BlockNode -> m (HashSet TxHash)
+importBlock :: MonadImport m => Block -> BlockNode -> m ()
 importBlock b n = do
     $(logDebugS) "BlockStore" $
         "Checking new block: "
@@ -230,11 +226,10 @@ importBlock b n = do
         (nub (headerHash (nodeHeader n) : bs))
         (nodeHeight n)
     setBest (headerHash (nodeHeader n))
-    ths <- importOrConfirm n (blockTxns b)
+    importOrConfirm n (blockTxns b)
     $(logDebugS) "BlockStore" $
         "Finished importing transactions for: "
         <> blockHashToHex (headerHash (nodeHeader n))
-    return ths
   where
     cb_out_val =
         sum $ map outValue $ txOut $ head $ blockTxns b
@@ -393,39 +388,37 @@ freeOutputs
     => Bool -- ^ only delete transaction if unconfirmed
     -> Bool -- ^ only delete RBF
     -> Tx
-    -> m (HashSet TxHash)
+    -> m ()
 freeOutputs memonly rbfcheck tx = do
     let prevs = prevOuts tx
     unspents <- mapM getUnspent prevs
     let spents = [ p | (p, Nothing) <- zip prevs unspents ]
     spndrs <- catMaybes <$> mapM getSpender spents
     let txids = HashSet.fromList $ filter (/= txHash tx) $ map spenderHash spndrs
-    del <- fmap concat $ mapM (deleteTx memonly rbfcheck) $ HashSet.toList txids
-    return $ HashSet.fromList del
+    mapM_ (deleteTx memonly rbfcheck) $ HashSet.toList txids
 
-deleteConfirmedTx :: MonadImport m => TxHash -> m [TxHash]
+deleteConfirmedTx :: MonadImport m => TxHash -> m ()
 deleteConfirmedTx = deleteTx False False
 
-deleteUnconfirmedTx :: MonadImport m => Bool -> TxHash -> m [TxHash]
+deleteUnconfirmedTx :: MonadImport m => Bool -> TxHash -> m ()
 deleteUnconfirmedTx rbfcheck th =
     getActiveTxData th >>= \case
         Just _ -> deleteTx True rbfcheck th
-        Nothing -> do
+        Nothing ->
           $(logDebugS) "BlockStore" $
-              "Not found or already deleted: " <> txHashToHex th
-          return []
+          "Not found or already deleted: " <> txHashToHex th
 
 deleteTx :: MonadImport m
          => Bool -- ^ only delete transaction if unconfirmed
          -> Bool -- ^ only delete RBF
          -> TxHash
-         -> m [TxHash]
+         -> m ()
 deleteTx memonly rbfcheck th = do
     chain <- getChain memonly rbfcheck th
     $(logDebugS) "BlockStore" $
         "Deleting " <> cs (show (length chain)) <>
         " txs from chain leading to " <> txHashToHex th
-    mapM (\t -> let h = txHash t in deleteSingleTx h >> return h) chain
+    mapM_ (\t -> let h = txHash t in deleteSingleTx h >> return h) chain
 
 getChain :: (MonadImport m, MonadLoggerIO m)
          => Bool -- ^ only delete transaction if unconfirmed
