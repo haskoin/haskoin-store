@@ -391,15 +391,15 @@ processBlock peer block = void . runMaybeT $ do
         <> " from peer: " <> peerText peer
     lift $ runImport (importBlock block node) >>= \case
         Left e   -> failure e
-        Right () -> success node
+        Right ths -> success node ths
   where
     header = blockHeader block
     blockhash = headerHash header
     hexhash = blockHashToHex blockhash
-    success node = do
+    success node ths = do
         $(logInfoS) "BlockStore" $
             "Best block: " <> blockText node (Just block)
-        notify
+        notify ths
         removeSyncingBlock $ headerHash $ nodeHeader node
         touchPeer
         isInSync >>= \case
@@ -413,8 +413,9 @@ processBlock peer block = void . runMaybeT $ do
             <> " from peer: " <> peerText peer <> ": "
             <> cs (show e)
         killPeer (PeerMisbehaving (show e)) peer
-    notify = do
+    notify ths = do
         listener <- asks (blockConfListener . myConfig)
+        mapM_ ((`publish` listener) . StoreMempoolDelete) ths
         publish (StoreBestBlock blockhash) listener
 
 setSyncingBlocks :: (MonadReader BlockStore m, MonadIO m)
