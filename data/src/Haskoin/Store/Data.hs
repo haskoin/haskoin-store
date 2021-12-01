@@ -2838,7 +2838,7 @@ data BinfoTxInput
         , getBinfoTxInputWitness :: !ByteString
         , getBinfoTxInputScript  :: !ByteString
         , getBinfoTxInputIndex   :: !Word32
-        , getBinfoTxInputPrevOut :: !(Maybe BinfoTxOutput)
+        , getBinfoTxInputPrevOut :: !BinfoTxOutput
         }
     deriving (Eq, Show, Generic, NFData)
 
@@ -2849,7 +2849,7 @@ binfoTxInputToJSON net BinfoTxInput {..} =
         , "witness"  .= encodeHex getBinfoTxInputWitness
         , "script"   .= encodeHex getBinfoTxInputScript
         , "index"    .= getBinfoTxInputIndex
-        , "prev_out" .= (binfoTxOutputToJSON net <$> getBinfoTxInputPrevOut)
+        , "prev_out" .= binfoTxOutputToJSON net getBinfoTxInputPrevOut
         ]
 
 binfoTxInputToEncoding :: Network -> BinfoTxInput -> Encoding
@@ -2859,7 +2859,7 @@ binfoTxInputToEncoding net BinfoTxInput {..} =
         <> "witness"  .= encodeHex getBinfoTxInputWitness
         <> "script"   .= encodeHex getBinfoTxInputScript
         <> "index"    .= getBinfoTxInputIndex
-        <> "prev_out" .= (binfoTxOutputToJSON net <$> getBinfoTxInputPrevOut)
+        <> "prev_out" .= binfoTxOutputToJSON net getBinfoTxInputPrevOut
         )
 
 binfoTxInputParseJSON :: Network -> Value -> Parser BinfoTxInput
@@ -2870,8 +2870,8 @@ binfoTxInputParseJSON net = A.withObject "txin" $ \o -> do
     getBinfoTxInputScript <- maybe mzero return . decodeHex =<<
                              o .: "script"
     getBinfoTxInputIndex <- o .: "index"
-    getBinfoTxInputPrevOut <- o .:? "prev_out" >>=
-                              mapM (binfoTxOutputParseJSON net)
+    getBinfoTxInputPrevOut <- o .: "prev_out" >>=
+                              binfoTxOutputParseJSON net
     return BinfoTxInput {..}
 
 data BinfoTxOutput
@@ -3470,10 +3470,8 @@ inputToBinfoTxOutput :: Bool
                      -> Transaction
                      -> Word32
                      -> StoreInput
-                     -> Maybe BinfoTxOutput
-inputToBinfoTxOutput _ _ _ _ StoreCoinbase{} = Nothing
-inputToBinfoTxOutput numtxid abook t n StoreInput{..} =
-    Just
+                     -> BinfoTxOutput
+inputToBinfoTxOutput numtxid abook t n i =
     BinfoTxOutput
     { getBinfoTxOutputIndex = out_index
     , getBinfoTxOutputType = 0
@@ -3486,7 +3484,16 @@ inputToBinfoTxOutput numtxid abook t n StoreInput{..} =
     , getBinfoTxOutputXPub = xpub
     }
   where
-    OutPoint out_hash out_index = inputPoint
+    inputAmount =
+        case i of StoreCoinbase{} -> 0
+                  StoreInput{..} -> inputAmount
+    inputPkScript =
+        case i of StoreCoinbase{} -> BS.empty
+                  StoreInput{..} -> inputPkScript
+    inputAddress =
+        case i of StoreCoinbase{} -> Nothing
+                  StoreInput{} -> inputAddress
+    OutPoint out_hash out_index = inputPoint i
     spender =
         BinfoSpender
         (encodeBinfoTxId numtxid (txHash (transactionData t)))

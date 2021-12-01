@@ -1592,7 +1592,7 @@ getBinfoTxs abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
     addr_c a = streamThings (getAddressTxs a) (Just txRefHash) def{limit = 50}
     binfo_tx b = toBinfoTx numtxid abook prune b
     compute_bal_change BinfoTx{..} =
-        let ins = mapMaybe getBinfoTxInputPrevOut getBinfoTxInputs
+        let ins = map getBinfoTxInputPrevOut getBinfoTxInputs
             out = getBinfoTxOutputs
             f b BinfoTxOutput{..} =
                 let val = fromIntegral getBinfoTxOutputValue
