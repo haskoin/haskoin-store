@@ -398,13 +398,18 @@ freeOutputs memonly rbfcheck tx = do
     let prevs = prevOuts tx
     unspents <- mapM getUnspent prevs
     let spents = map fst $ filter (isNothing . snd) $ zip prevs unspents
-    spndrs <- mapM (spender <=< getSpender) spents
+    spndrs <- mapM (\s -> getSpender s >>= spender s) spents
     let txids = HashSet.fromList $ filter (/= txHash tx) $ map spenderHash spndrs
     del <- fmap concat $ mapM (deleteTx memonly rbfcheck) $ HashSet.toList txids
     return $ HashSet.fromList del
   where
-    spender Nothing  = throwError SpenderNotFound
-    spender (Just s) = return s
+    spender s Nothing = do
+      $(logErrorS) "BlockStore" $
+          "Spender not found for output " <>
+          txHashToHex (outPointHash s) <> ":" <>
+          cs (show (outPointIndex s))
+      throwError SpenderNotFound
+    spender _ (Just s) = return s
 
 deleteConfirmedTx :: MonadImport m => TxHash -> m [TxHash]
 deleteConfirmedTx = deleteTx False False
