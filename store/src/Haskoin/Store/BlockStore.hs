@@ -392,9 +392,8 @@ processBlock peer block = void . runMaybeT $ do
     lift . notify (Just block) $
         runImport (importBlock block node) >>= \case
             Left e   -> failure e
-            Right ths -> success node
+            Right () -> success node
   where
-    exclude = map txHash $ blockTxns block
     header = blockHeader block
     blockhash = headerHash header
     hexhash = blockHashToHex blockhash

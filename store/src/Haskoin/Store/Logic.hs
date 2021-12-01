@@ -66,8 +66,6 @@ data ImportException
     | InsufficientFunds
     | DuplicatePrevOutput
     | TxSpent
-    | OrphanLoop
-    | SpenderNotFound
     deriving (Eq, Ord, Exception)
 
 instance Show ImportException where
@@ -82,8 +80,6 @@ instance Show ImportException where
     show InsufficientFunds   = "Insufficient funds"
     show DuplicatePrevOutput = "Duplicate previous output"
     show TxSpent             = "Transaction is spent"
-    show OrphanLoop          = "Orphan loop"
-    show SpenderNotFound     = "Spender not found"
 
 initBest :: MonadImport m => m ()
 initBest = do

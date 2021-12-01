@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.61.0
+### Fixed
+- Fixed recursion bug in Blockchain format conversion function.
+
 ## 0.60.0
 ### Fixed
 - Correct notifications subsystem.

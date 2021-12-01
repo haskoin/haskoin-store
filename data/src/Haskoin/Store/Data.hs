@@ -3492,7 +3492,7 @@ inputToBinfoTxOutput numtxid abook t n i =
                   StoreInput{..} -> inputPkScript
     inputAddress =
         case i of StoreCoinbase{} -> Nothing
-                  StoreInput{} -> inputAddress
+                  StoreInput{..} -> inputAddress
     OutPoint out_hash out_index = inputPoint i
     spender =
         BinfoSpender
