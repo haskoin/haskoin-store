@@ -430,9 +430,9 @@ getChain memonly rbfcheck th' = do
     get_tx th =
         getActiveTxData th >>= \case
             Nothing -> do
-                $(logErrorS) "BlockStore" $
+                $(logDebugS) "BlockStore" $
                     "Transaction not found: " <> txHashToHex th
-                throwError TxNotFound
+                return Nothing
             Just td
               | memonly && confirmed (txDataBlock td) -> do
                 $(logErrorS) "BlockStore" $
@@ -441,15 +441,15 @@ getChain memonly rbfcheck th' = do
                 throwError TxConfirmed
               | rbfcheck ->
                 isRBF (txDataBlock td) (txData td) >>= \case
-                    True -> return $ txData td
+                    True -> return $ Just $ txData td
                     False -> do
                         $(logErrorS) "BlockStore" $
                             "Double-spending transaction: "
                             <> txHashToHex th
                         throwError DoubleSpend
-              | otherwise -> return $ txData td
+              | otherwise -> return $ Just $ txData td
     go txs pdg = do
-        txs1 <- HashSet.fromList <$> mapM get_tx (HashSet.toList pdg)
+        txs1 <- HashSet.fromList . catMaybes <$> mapM get_tx (HashSet.toList pdg)
         pdg1 <- HashSet.fromList . concatMap (map spenderHash . I.elems) <$>
                 mapM getSpenders (HashSet.toList pdg)
         let txs' = txs1 <> txs
