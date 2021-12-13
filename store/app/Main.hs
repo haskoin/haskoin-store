@@ -80,6 +80,8 @@ data Config = Config
     , configStatsdPort      :: !Int
     , configStatsdPrefix    :: !String
     , configWebPriceGet     :: !Int
+    , configWebTickerURL    :: !String
+    , configWebHistoryURL   :: !String
     }
 
 instance Default Config where
@@ -112,6 +114,8 @@ instance Default Config where
                  , configStatsdPort      = defStatsdPort
                  , configStatsdPrefix    = defStatsdPrefix
                  , configWebPriceGet     = defWebPriceGet
+                 , configWebTickerURL    = defWebTickerURL
+                 , configWebHistoryURL   = defWebHistoryURL
                  }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -272,6 +276,17 @@ defWebPriceGet :: Int
 defWebPriceGet = unsafePerformIO $
     defEnv "WEB_PRICE_GET" (90 * 1000 * 1000) readMaybe
 {-# NOINLINE defWebPriceGet #-}
+
+defWebTickerURL :: String
+defWebTickerURL = unsafePerformIO $
+    defEnv "PRICE_TICKER_URL" "https://api.blockchain.info/ticker" pure
+{-# NOINLINE defWebTickerURL #-}
+
+
+defWebHistoryURL :: String
+defWebHistoryURL = unsafePerformIO $
+    defEnv "PRICE_HISTORY_URL" "https://api.blockchain.info/price/index-series" pure
+{-# NOINLINE defWebHistoryURL #-}
 
 defStatsdPrefix :: String
 defStatsdPrefix =
@@ -536,6 +551,20 @@ config = do
         <> help "How often to retrieve price information"
         <> showDefault
         <> value (configWebPriceGet def)
+    configWebTickerURL <-
+        strOption $
+        metavar "URL"
+        <> long "price-ticker-url"
+        <> help "Blockchain.info price ticker URL"
+        <> showDefault
+        <> value (configWebTickerURL def)
+    configWebHistoryURL <-
+        strOption $
+        metavar "URL"
+        <> long "price-history-url"
+        <> help "Blockchain.info price history URL"
+        <> showDefault
+        <> value (configWebHistoryURL def)
     pure
         Config
             { configWebLimits = WebLimits {..}
@@ -614,6 +643,8 @@ run Config { configHost = host
            , configStatsdPort = statsdport
            , configStatsdPrefix = statsdpfx
            , configWebPriceGet = wpget
+           , configWebTickerURL = wturl
+           , configWebHistoryURL = whurl
            } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
         net <- case networkReader net_str of
@@ -662,6 +693,8 @@ run Config { configHost = host
                     , webNoMempool = nomem
                     , webStats = stats
                     , webPriceGet = wpget
+                    , webTickerURL = wturl
+                    , webHistoryURL = whurl
                     }
   where
     with_stats go

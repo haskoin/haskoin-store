@@ -140,6 +140,8 @@ import           Network.WebSockets                      (ServerApp,
                                                           sendTextData)
 import qualified Network.WebSockets                      as WebSockets
 import qualified Network.Wreq                            as Wreq
+import           Network.Wreq.Session                    as Wreq (Session)
+import qualified Network.Wreq.Session                    as Wreq.Session
 import           System.IO.Unsafe                        (unsafeInterleaveIO)
 import qualified System.Metrics                          as Metrics
 import qualified System.Metrics.Gauge                    as Metrics (Gauge)
@@ -195,12 +197,15 @@ data WebConfig = WebConfig
     , webNoMempool  :: !Bool
     , webStats      :: !(Maybe Metrics.Store)
     , webPriceGet   :: !Int
+    , webTickerURL  :: !String
+    , webHistoryURL :: !String
     }
 
 data WebState = WebState
-    { webConfig  :: !WebConfig
-    , webTicker  :: !(TVar (HashMap Text BinfoTicker))
-    , webMetrics :: !(Maybe WebMetrics)
+    { webConfig      :: !WebConfig
+    , webTicker      :: !(TVar (HashMap Text BinfoTicker))
+    , webMetrics     :: !(Maybe WebMetrics)
+    , webWreqSession :: !Wreq.Session
     }
 
 data WebMetrics = WebMetrics
@@ -453,35 +458,38 @@ runWeb cfg@WebConfig{ webHost = host
                     , webStore = store'
                     , webStats = stats
                     , webPriceGet = pget
+                    , webTickerURL = turl
                     , webMaxLimits = WebLimits{..}
                     } = do
     ticker <- newTVarIO HashMap.empty
     metrics <- mapM createMetrics stats
+    session <- liftIO Wreq.Session.newAPISession
     let st = WebState
              { webConfig = cfg
              , webTicker = ticker
              , webMetrics = metrics
+             , webWreqSession = session
              }
         net = storeNetwork store'
-    withAsync (price net pget ticker) $ \_ -> do
-        reqLogger <- logIt metrics
-        runner <- askRunInIO
-        S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
-            S.middleware (webSocketEvents st)
-            S.middleware reqLogger
-            S.middleware (reqSizeLimit maxLimitBody)
-            S.defaultHandler defHandler
-            handlePaths
-            S.notFound $ raise ThingNotFound
+    withAsync (price net session turl pget ticker) $ const $ do
+            reqLogger <- logIt metrics
+            runner <- askRunInIO
+            S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
+                S.middleware (webSocketEvents st)
+                S.middleware reqLogger
+                S.middleware (reqSizeLimit maxLimitBody)
+                S.defaultHandler defHandler
+                handlePaths
+                S.notFound $ raise ThingNotFound
   where
     opts = def {S.settings = settings defaultSettings}
     settings = setPort port . setHost (fromString host)
 
 getRates :: (MonadUnliftIO m, MonadLoggerIO m)
-         => Network -> Text -> [Word64] -> m [BinfoRate]
-getRates net currency times = do
+         => Network -> Wreq.Session -> String -> Text -> [Word64] -> m [BinfoRate]
+getRates net session url currency times = do
     handleAny err $ do
-        r <- liftIO $ Wreq.asJSON =<< Wreq.postWith opts url body
+        r <- liftIO $ Wreq.asJSON =<< Wreq.Session.postWith opts session url body
         return $ r ^. Wreq.responseBody
   where
     err _ = do
@@ -491,27 +499,29 @@ getRates net currency times = do
     base = Wreq.defaults &
            Wreq.param "base" .~ [T.toUpper (T.pack (getNetworkName net))]
     opts = base & Wreq.param "quote" .~ [currency]
-    url = "https://api.blockchain.info/price/index-series"
 
 price :: (MonadUnliftIO m, MonadLoggerIO m)
       => Network
+      -> Wreq.Session
+      -> String
       -> Int
       -> TVar (HashMap Text BinfoTicker)
       -> m ()
-price net pget v =
-    forM_ code go
+price net session url pget v = forM_ purl $ \u -> forever $ do
+    let err e = $(logErrorS) "Price" $ cs (show e)
+    handleAny err $ do
+        r <- liftIO $ Wreq.asJSON =<< Wreq.Session.get session u
+        atomically . writeTVar v $ r ^. Wreq.responseBody
+    threadDelay pget
   where
-    code | net == btc = Just "btc"
-         | net == bch = Just "bch"
-         | otherwise = Nothing
-    go s = forever $ do
-        let err e = $(logErrorS) "Price" $ cs (show e)
-            url = "https://api.blockchain.info/ticker" <> "?" <>
-                  "base" <> "=" <> s
-        handleAny err $ do
-            r <- liftIO $ Wreq.asJSON =<< Wreq.get url
-            atomically . writeTVar v $ r ^. Wreq.responseBody
-        threadDelay pget
+    purl = case code of
+             Nothing -> Nothing
+             Just x  -> Just (url <> "?base=" <> x)
+      where
+        code | net == btc = Just "btc"
+             | net == bch = Just "bch"
+             | otherwise  = Nothing
+
 
 raise :: MonadIO m => Except -> WebT m a
 raise err = lift (asks webMetrics) >>= \case
@@ -1668,7 +1678,9 @@ scottyBinfoHistory =
         .| sinkList
     let times = map transactionTime txs
     net <- lift $ asks (storeNetwork . webStore . webConfig)
-    rates <- map binfoRatePrice <$> lift (getRates net code times)
+    url <- lift $ asks (webHistoryURL . webConfig)
+    session <- lift $ asks webWreqSession
+    rates <- map binfoRatePrice <$> lift (getRates net session url code times)
     let hs = zipWith (convert cur aaddrs) txs (rates <> repeat 0.0)
     setHeaders
     streamEncoding $ toEncoding hs
