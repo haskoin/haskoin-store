@@ -27,10 +27,8 @@ stack --nix build --copy-bins
 
 ## Install on Ubuntu or Debian
 
-* Get [Stack](https://haskellstack.org/)
-
 ```sh
-apt install git zlib1g-dev libsecp256k1-dev librocksdb-dev pkg-config
+apt install git zlib1g-dev libsecp256k1-dev librocksdb-dev pkg-config haskell-stack
 git clone https://github.com/haskoin/haskoin-store.git
 cd haskoin-store
 stack build --copy-bins
