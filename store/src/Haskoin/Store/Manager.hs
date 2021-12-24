@@ -35,8 +35,9 @@ import           Haskoin.Store.BlockStore      (BlockStore,
                                                 blockStoreTxHashSTM,
                                                 blockStoreTxSTM, withBlockStore)
 import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
-                                                cacheNewBlock, cacheWriter,
-                                                connectRedis, newCacheMetrics)
+                                                cacheNewBlock, cacheNewTx,
+                                                cacheWriter, connectRedis,
+                                                newCacheMetrics)
 import           Haskoin.Store.Common          (StoreEvent (..))
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
@@ -99,8 +100,6 @@ data StoreConfig =
       -- ^ disconnect peer if it has been connected this long
         , storeConfConnect         :: !(SockAddr -> WithConnection)
       -- ^ connect to peers using the function 'withConnection'
-        , storeConfCacheRefresh    :: !Int
-      -- ^ refresh the cache this often (milliseconds)
         , storeConfCacheRetryDelay :: !Int
       -- ^ delay in microseconds to retry getting cache lock
         , storeConfStats           :: !(Maybe Metrics.Store)
@@ -196,10 +195,9 @@ withCache cfg chain db pub action =
             withSubscription pub $ \evts ->
             let conf = c conn metrics
             in  withProcess (f conf) $ \p ->
-                cacheWriterProcesses crefresh evts (getProcessMailbox p) $ do
+                cacheWriterProcesses evts (getProcessMailbox p) $ do
                 action (Just conf)
   where
-    crefresh = storeConfCacheRefresh cfg
     f conf cwinbox = runReaderT (cacheWriter conf cwinbox) db
     c conn metrics =
         CacheConfig
@@ -207,18 +205,16 @@ withCache cfg chain db pub action =
            , cacheMin = storeConfCacheMin cfg
            , cacheChain = chain
            , cacheMax = storeConfMaxKeys cfg
-           , cacheRefresh = storeConfCacheRefresh cfg
            , cacheRetryDelay = storeConfCacheRetryDelay cfg
            , cacheMetrics = metrics
            }
 
 cacheWriterProcesses :: MonadUnliftIO m
-                     => Int
-                     -> Inbox StoreEvent
+                     => Inbox StoreEvent
                      -> CacheWriter
                      -> m a
                      -> m a
-cacheWriterProcesses crefresh evts cwm action =
+cacheWriterProcesses evts cwm action =
     withAsync events $ \a1 -> link a1 >> action
   where
     events = cacheWriterEvents evts cwm
@@ -230,8 +226,10 @@ cacheWriterEvents evts cwm =
     e `cacheWriterDispatch` cwm
 
 cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
-cacheWriterDispatch (StoreBestBlock _) = cacheNewBlock
-cacheWriterDispatch _                  = const (return ())
+cacheWriterDispatch (StoreBestBlock _)     = cacheNewBlock
+cacheWriterDispatch (StoreMempoolNew t)    = cacheNewTx t
+cacheWriterDispatch (StoreMempoolDelete t) = cacheNewTx t
+cacheWriterDispatch _                      = const (return ())
 
 nodeForwarder :: MonadIO m
               => BlockStore
@@ -280,7 +278,7 @@ storeDispatch b _ (PeerMessage p (MNotFound (NotFound is))) = do
 
 storeDispatch b pub (PeerMessage p (MInv (Inv is))) = do
     let txs = [TxHash h | InvVector t h <- is, t == InvTx || t == InvWitnessTx]
-    publishSTM (StoreTxAvailable p txs) pub
+    publishSTM (StoreTxAnnounce p txs) pub
     unless (null txs) $ blockStoreTxHashSTM p txs b
 
 storeDispatch _ pub (PeerMessage p (MReject r)) =

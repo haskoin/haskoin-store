@@ -73,7 +73,6 @@ data Config = Config
     , configPeerMaxLife     :: !Int
     , configMaxPeers        :: !Int
     , configMaxDiff         :: !Int
-    , configCacheRefresh    :: !Int
     , configCacheRetryDelay :: !Int
     , configStatsd          :: !Bool
     , configStatsdHost      :: !String
@@ -107,7 +106,6 @@ instance Default Config where
                  , configPeerMaxLife     = defPeerMaxLife
                  , configMaxPeers        = defMaxPeers
                  , configMaxDiff         = defMaxDiff
-                 , configCacheRefresh    = defCacheRefresh
                  , configCacheRetryDelay = defCacheRetryDelay
                  , configStatsd          = defStatsd
                  , configStatsdHost      = defStatsdHost
@@ -122,11 +120,6 @@ defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
 defEnv e d p = do
     ms <- lookupEnv e
     return $ fromMaybe d $ p =<< ms
-
-defCacheRefresh :: Int
-defCacheRefresh = unsafePerformIO $
-    defEnv "CACHE_REFRESH" 750 readMaybe
-{-# NOINLINE defCacheRefresh #-}
 
 defCacheRetryDelay :: Int
 defCacheRetryDelay = unsafePerformIO $
@@ -486,13 +479,6 @@ config = do
         <> help "Maximum number of keys in Redis xpub cache"
         <> showDefault
         <> value (configRedisMax def)
-    configCacheRefresh <-
-        option auto $
-        metavar "MILLISECONDS"
-        <> long "cache-refresh"
-        <> help "Refresh cache this frequently"
-        <> showDefault
-        <> value (configCacheRefresh def)
     configCacheRetryDelay <-
         option auto $
         metavar "MICROSECONDS"
@@ -636,7 +622,6 @@ run Config { configHost = host
            , configMaxDiff = maxdiff
            , configNoMempool = nomem
            , configSyncMempool = syncmem
-           , configCacheRefresh = crefresh
            , configCacheRetryDelay = cretrydelay
            , configStatsd = statsd
            , configStatsdHost = statsdhost
@@ -675,7 +660,6 @@ run Config { configHost = host
                     , storeConfPeerTimeout = fromIntegral peertimeout
                     , storeConfPeerMaxLife = fromIntegral peerlife
                     , storeConfConnect = withConnection
-                    , storeConfCacheRefresh = crefresh
                     , storeConfCacheRetryDelay = cretrydelay
                     , storeConfStats = stats
                     }

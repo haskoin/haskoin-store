@@ -22,6 +22,7 @@ module Haskoin.Store.Cache
     , CacheWriter
     , CacheWriterInbox
     , cacheNewBlock
+    , cacheNewTx
     , cacheWriter
     , cacheDelXPubs
     , isInCache
@@ -47,8 +48,8 @@ import qualified Data.HashSet                as HashSet
 import qualified Data.IntMap.Strict          as I
 import           Data.List                   (sort)
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (catMaybes, fromMaybe, isNothing,
-                                              mapMaybe)
+import           Data.Maybe                  (catMaybes, fromMaybe, isJust,
+                                              isNothing, mapMaybe)
 import           Data.Serialize              (Serialize, decode, encode)
 import           Data.String.Conversions     (cs)
 import           Data.Text                   (Text)
@@ -73,7 +74,7 @@ import           Haskoin                     (Address, BlockHash,
                                               blockHashToHex, derivePubPath,
                                               eitherToMaybe, headerHash,
                                               pathToList, scriptToAddressBS,
-                                              txHash, xPubAddr,
+                                              txHash, txHashToHex, xPubAddr,
                                               xPubCompatWitnessAddr, xPubExport,
                                               xPubWitnessAddr)
 import           Haskoin.Node                (Chain, chainBlockMain,
@@ -115,7 +116,6 @@ data CacheConfig = CacheConfig
     , cacheMin        :: !Int
     , cacheMax        :: !Integer
     , cacheChain      :: !Chain
-    , cacheRefresh    :: !Int -- millisenconds
     , cacheRetryDelay :: !Int -- microseconds
     , cacheMetrics    :: !(Maybe CacheMetrics)
     }
@@ -124,7 +124,6 @@ data CacheMetrics = CacheMetrics
     { cacheHits            :: !Metrics.Counter
     , cacheMisses          :: !Metrics.Counter
     , cacheIgnore          :: !Metrics.Counter
-    , cacheRefreshes       :: !Metrics.Counter
     , cacheLockAcquired    :: !Metrics.Counter
     , cacheLockReleased    :: !Metrics.Counter
     , cacheLockFailed      :: !Metrics.Counter
@@ -138,7 +137,6 @@ newCacheMetrics s = liftIO $ do
     cacheHits            <- c "hits"
     cacheMisses          <- c "misses"
     cacheIgnore          <- c "ignore"
-    cacheRefreshes       <- c "refreshes"
     cacheLockAcquired    <- c "lock_acquired"
     cacheLockReleased    <- c "lock_released"
     cacheLockFailed      <- c "lock_failed"
@@ -544,7 +542,7 @@ getAllFromMap n = do
 
 data CacheWriterMessage
     = CacheNewBlock
-    | CachePing !(Listen ())
+    | CacheNewTx TxHash
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 type CacheWriter = Mailbox CacheWriterMessage
@@ -576,14 +574,11 @@ cacheWriter ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
     => CacheConfig -> CacheWriterInbox -> m ()
 cacheWriter cfg inbox =
-    withAsync ping $ \a ->
-    link a >> runReaderT go cfg
+    runReaderT go cfg
   where
-    ping = forever $ do
-        threadDelay (cacheRefresh cfg * 1000)
-        cachePing (inboxToMailbox inbox)
     go = do
         newBlockC
+        syncMempoolC
         forever $ do
             x <- receive inbox
             cacheWriterReact x
@@ -726,16 +721,23 @@ cacheWriterReact ::
     => CacheWriterMessage -> CacheX m ()
 cacheWriterReact CacheNewBlock =
     doSync
-cacheWriterReact (CachePing respond) =
-    doSync >> atomically (respond ())
+cacheWriterReact (CacheNewTx txid) = go
+  where
+    f = lift (getTxData txid) >>= \mtx ->
+        forM_ mtx $ \tx -> do
+        $(logDebugS) "Cache" $
+            "Importing mempool transaction: " <> txHashToHex txid
+        importMultiTxC [tx]
+    go =
+        cacheIsInMempool txid >>= \x ->
+        unless x $
+        withLock f >>= \case
+            Just () -> return ()
+            Nothing -> smallDelay >> go
 
 doSync :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
        => CacheX m ()
-doSync =
-    inSync >>= \s -> when s $ do
-        newBlockC
-        syncMempoolC
-        void pruneDB
+doSync = newBlockC >> void pruneDB
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull = length . filter (not . nullBalance . xPubBal)
@@ -803,67 +805,68 @@ inSync =
 newBlockC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
           => CacheX m ()
 newBlockC =
-    inSync >>= \s -> when s $ do
-    lift getBestBlock >>= \case
-        Nothing -> $(logWarnS) "Cache" "No best block"
-        Just bb ->
-            asks cacheChain >>= \ch ->
-            chainGetBest ch >>= \cn ->
-            cacheGetHead >>= \case
-                Nothing -> do
-                    $(logInfoS) "Cache" "Initializing best cache block"
-                    void $ importBlockC bb
-                Just hb ->
-                    if hb == headerHash (nodeHeader cn)
-                    then $(logDebugS) "Cache" "Cache in sync"
-                    else sync ch hb bb
+    inSync >>= \s -> when s $
+    asks cacheChain >>= \ch ->
+    chainGetBest ch >>= \bn ->
+    cacheGetHead >>= \case
+        Nothing -> do
+            $(logInfoS) "Cache" "Initializing best cache block"
+            i <- withLock (importBlockC (headerHash (nodeHeader bn)))
+            when (isNothing i) $ smallDelay >> newBlockC
+        Just hb ->
+            if hb == headerHash (nodeHeader bn)
+            then
+                $(logDebugS) "Cache" "Cache in sync"
+            else
+                withLock (sync ch hb bn) >>= \i ->
+                when (isNothing i) $ smallDelay >> newBlockC
   where
-    sync ch hb bb =
+    sync ch hb bn =
         chainGetBlock hb ch >>= \case
-            Nothing ->
+            Nothing -> do
                 $(logErrorS) "Cache" $
-                "Cache head block node not found: " <>
-                blockHashToHex hb
+                    "Cache head block node not found: " <>
+                    blockHashToHex hb
+                throwIO $ LogicError $
+                    "Cache head block node not found: " <>
+                    cs (blockHashToHex hb)
             Just hn ->
                 chainBlockMain hb ch >>= \m ->
                     if m
-                    then
-                        chainGetBlock bb ch >>= \case
-                            Just bn -> next ch bn hn
-                            Nothing -> do
-                                $(logErrorS) "Cache" $
-                                    "Cache head node not found: "
-                                    <> blockHashToHex bb
-                                throwIO $
-                                    LogicError $
-                                    "Cache head node not found: "
-                                    <> cs (blockHashToHex bb)
+                    then next ch bn hn
                     else do
                         $(logDebugS) "Cache" $
                             "Reverting cache head not in main chain: " <>
                             blockHashToHex hb
-                        removeHeadC hb >>= \s -> when s newBlockC
+                        removeHeadC hb
+                        cacheGetHead >>= \case
+                            Nothing -> importBlockC (headerHash (nodeHeader bn))
+                            Just hb' -> sync ch hb' bn
     next ch bn hn =
         if | prevBlock (nodeHeader bn) == headerHash (nodeHeader hn) ->
-                 void $ importBlockC (headerHash (nodeHeader bn))
+                 importBlockC (headerHash (nodeHeader bn))
            | nodeHeight bn > nodeHeight hn ->
                  chainGetAncestor (nodeHeight hn + 1) bn ch >>= \case
-                     Nothing ->
-                         $(logWarnS) "Cache" $
-                         "Ancestor not found at height "
-                         <> cs (show (nodeHeight hn + 1))
-                         <> " for block: "
-                         <> blockHashToHex (headerHash (nodeHeader bn))
-                     Just hn' ->
-                         importBlockC (headerHash (nodeHeader hn')) >>= \s ->
-                         when s newBlockC
+                     Nothing -> do
+                         $(logErrorS) "Cache" $
+                             "Ancestor not found at height "
+                             <> cs (show (nodeHeight hn + 1))
+                             <> " for block: "
+                             <> blockHashToHex (headerHash (nodeHeader bn))
+                         throwIO $ LogicError $
+                             "Ancestor not found at height "
+                             <> show (nodeHeight hn + 1)
+                             <> " for block: "
+                             <> cs (blockHashToHex (headerHash (nodeHeader bn)))
+                     Just hn' -> do
+                         importBlockC (headerHash (nodeHeader hn'))
+                         next ch bn hn'
            | otherwise ->
                  $(logInfoS) "Cache" "Cache best block higher than this node's"
 
 importBlockC :: (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m)
-             => BlockHash -> CacheX m Bool
+             => BlockHash -> CacheX m ()
 importBlockC bh =
-    fmap (maybe False (const True)) $ withLock $
     withMetrics cacheBlockSyncTime $
     cacheGetHead >>= \case
         Nothing -> go
@@ -899,9 +902,8 @@ importBlockC bh =
                 <> blockHashToHex bh
 
 removeHeadC :: (StoreReadExtra m, MonadUnliftIO m, MonadLoggerIO m)
-            => BlockHash -> CacheX m Bool
+            => BlockHash -> CacheX m ()
 removeHeadC cb =
-    fmap (maybe False (const True)) $ withLock $
     void . runMaybeT $ do
     bh <- MaybeT cacheGetHead
     guard (cb == bh)
@@ -1148,15 +1150,11 @@ withCool key milliseconds run =
 
 syncMempoolC :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m)
              => CacheX m ()
-syncMempoolC =
-    toInteger <$> asks cacheRefresh >>= \refresh ->
-    void . withLock . withCool "cool" (refresh * 9 `div` 10) $
-    withMetrics cacheMempoolSyncTime $ do
+syncMempoolC = void . withLockForever $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
     getem (HashSet.difference nodepool cachepool)
     getem (HashSet.difference cachepool nodepool)
-    incrementCounter cacheRefreshes
   where
     getem tset = do
         let tids = HashSet.toList tset
@@ -1169,6 +1167,9 @@ syncMempoolC =
 
 cacheGetMempool :: MonadLoggerIO m => CacheX m [(UnixTime, TxHash)]
 cacheGetMempool = runRedis redisGetMempool
+
+cacheIsInMempool :: MonadLoggerIO m => TxHash -> CacheX m Bool
+cacheIsInMempool = runRedis . redisIsInMempool
 
 cacheGetHead :: MonadLoggerIO m => CacheX m (Maybe BlockHash)
 cacheGetHead = runRedis redisGetHead
@@ -1189,6 +1190,10 @@ redisAddToMempool btxs =
     map (\btx -> (blockRefScore (txRefBlock btx), encode (txRefHash btx)))
         btxs
 
+redisIsInMempool :: (Applicative f, RedisCtx m f) => TxHash -> m (f Bool)
+redisIsInMempool txid =
+    fmap isJust <$> Redis.zrank mempoolSetKey (encode txid)
+
 redisRemFromMempool ::
        (Applicative f, RedisCtx m f) => [TxHash] -> m (f Integer)
 redisRemFromMempool [] = return (pure 0)
@@ -1203,7 +1208,7 @@ cacheDelXPubs :: (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
               -> CacheT m Integer
 cacheDelXPubs xpubs = ReaderT $ \case
     Just cache -> runReaderT (delXPubKeys xpubs) cache
-    Nothing -> return 0
+    Nothing    -> return 0
 
 delXPubKeys ::
        (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m)
@@ -1375,5 +1380,5 @@ xpubText xpub = do
 cacheNewBlock :: MonadIO m => CacheWriter -> m ()
 cacheNewBlock = send CacheNewBlock
 
-cachePing :: MonadIO m => CacheWriter -> m ()
-cachePing = query CachePing
+cacheNewTx :: MonadIO m => TxHash -> CacheWriter -> m ()
+cacheNewTx = send . CacheNewTx

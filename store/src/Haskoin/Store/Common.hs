@@ -332,7 +332,7 @@ data StoreEvent
     | StorePeerConnected !Peer
     | StorePeerDisconnected !Peer
     | StorePeerPong !Peer !Word64
-    | StoreTxAvailable !Peer ![TxHash]
+    | StoreTxAnnounce !Peer ![TxHash]
     | StoreTxReject !Peer !TxHash !RejectCode !ByteString
 
 data PubExcept = PubNoPeers
