@@ -229,10 +229,10 @@ data StoreMetrics = StoreMetrics
 
 newStoreMetrics :: MonadIO m => Metrics.Store -> m StoreMetrics
 newStoreMetrics s = liftIO $ do
-    storeHeight <- g "height"
-    headersHeight <- g "headers"
-    storePendingTxs <- g "pending_txs"
-    storePeersConnected <- g "peers_connected"
+    storeHeight <- g "blockchain_height"
+    headersHeight <- g "blockchain_headers"
+    storePendingTxs <- g "mempool_pending_txs"
+    storePeersConnected <- g "network_peers_connected"
     storeMempoolSize <- g "mempool_size"
     return StoreMetrics{..}
   where

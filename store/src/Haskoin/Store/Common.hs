@@ -448,16 +448,16 @@ data DataMetrics = DataMetrics
 
 createDataMetrics :: MonadIO m => Metrics.Store -> m DataMetrics
 createDataMetrics s = liftIO $ do
-    dataBestCount <- Metrics.createCounter "data.best_block" s
-    dataBlockCount <- Metrics.createCounter "data.blocks" s
-    dataTxCount <- Metrics.createCounter "data.txs" s
-    dataSpenderCount <- Metrics.createCounter "data.spenders" s
-    dataMempoolCount <- Metrics.createCounter "data.mempool" s
-    dataBalanceCount <- Metrics.createCounter "data.balances" s
-    dataUnspentCount <- Metrics.createCounter "data.unspents" s
-    dataAddrTxCount <- Metrics.createCounter "data.address_txs" s
-    dataXPubBals <- Metrics.createCounter "data.xpub_balances" s
-    dataXPubUnspents <- Metrics.createCounter "data.xpub_unspents" s
-    dataXPubTxs <- Metrics.createCounter "data.xpub_txs" s
-    dataXPubTxCount <- Metrics.createCounter "data.xpub_tx_count" s
+    dataBestCount <- Metrics.createCounter "data_best_block" s
+    dataBlockCount <- Metrics.createCounter "data_blocks" s
+    dataTxCount <- Metrics.createCounter "data_txs" s
+    dataSpenderCount <- Metrics.createCounter "data_spenders" s
+    dataMempoolCount <- Metrics.createCounter "data_mempool" s
+    dataBalanceCount <- Metrics.createCounter "data_balances" s
+    dataUnspentCount <- Metrics.createCounter "data_unspents" s
+    dataAddrTxCount <- Metrics.createCounter "data_address_txs" s
+    dataXPubBals <- Metrics.createCounter "data_xpub_balances" s
+    dataXPubUnspents <- Metrics.createCounter "data_xpub_unspents" s
+    dataXPubTxs <- Metrics.createCounter "data_xpub_txs" s
+    dataXPubTxCount <- Metrics.createCounter "data_xpub_tx_count" s
     return DataMetrics{..}
