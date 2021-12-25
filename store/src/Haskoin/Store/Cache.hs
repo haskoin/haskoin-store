@@ -200,7 +200,6 @@ data CacheMetrics = CacheMetrics
     , cacheXPubTxs :: !Metrics.Counter
     , cacheXPubTxCount :: !Metrics.Counter
     , cacheIndexTime :: !StatDist
-    , cacheBlockSyncTime :: !StatDist
     }
 
 newCacheMetrics :: MonadIO m => Metrics.Store -> m CacheMetrics
@@ -211,11 +210,10 @@ newCacheMetrics s = liftIO $ do
     cacheLockReleased <- c "cache.lock_released"
     cacheLockFailed <- c "cache.lock_failed"
     cacheIndexTime <- d "cache.index"
-    cacheBlockSyncTime <- d "cache.block_sync"
-    cacheXPubBals <- c "cache.xpub_balances"
-    cacheXPubUnspents <- c "cache.xpub_unspents"
-    cacheXPubTxs <- c "cache.xpub_txs"
-    cacheXPubTxCount <- c "cache.xpub_tx_count"
+    cacheXPubBals <- c "cache.xpub_balances_cached"
+    cacheXPubUnspents <- c "cache.xpub_unspents_cached"
+    cacheXPubTxs <- c "cache.xpub_txs_cached"
+    cacheXPubTxCount <- c "cache.xpub_tx_count_cached"
     return CacheMetrics{..}
   where
     c x = Metrics.createCounter x s

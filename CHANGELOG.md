@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.64.5
+### Changed
+- Add suffix cached to cache entries to avoid conflicts with data entries.
+
 ## 0.64.4
 ### Fixed
 - Bring dots back and avoid stats hacks.
