@@ -38,10 +38,10 @@ import           Haskoin.Store.Cache           (CacheConfig (..), CacheWriter,
                                                 cacheNewBlock, cacheNewTx,
                                                 cacheWriter, connectRedis,
                                                 newCacheMetrics)
-import           Haskoin.Store.Common          (StoreEvent (..))
+import           Haskoin.Store.Common          (StoreEvent (..),
+                                                createDataMetrics)
 import           Haskoin.Store.Database.Reader (DatabaseReader (..),
                                                 DatabaseReaderT,
-                                                createDatabaseStats,
                                                 withDatabaseReader)
 import           NQE                           (Inbox, Process (..), Publisher,
                                                 publishSTM, receive,
@@ -128,7 +128,7 @@ withStore cfg action =
 
 connectDB :: MonadUnliftIO m => StoreConfig -> DatabaseReaderT m a -> m a
 connectDB cfg f = do
-    stats <- mapM createDatabaseStats (storeConfStats cfg)
+    stats <- mapM createDataMetrics (storeConfStats cfg)
     withDatabaseReader
           (storeConfNetwork cfg)
           (storeConfInitialGap cfg)

@@ -14,6 +14,7 @@ module Haskoin.Store.Common
     , StoreWrite(..)
     , StoreEvent(..)
     , PubExcept(..)
+    , DataMetrics(..)
     , getActiveBlock
     , getActiveTxData
     , getDefaultBalance
@@ -23,6 +24,9 @@ module Haskoin.Store.Common
     , blockAtOrAfter
     , blockAtOrBefore
     , blockAtOrAfterMTP
+    , xPubSummary
+    , deriveAddresses
+    , deriveFunction
     , deOffset
     , applyLimits
     , applyLimitsC
@@ -33,6 +37,7 @@ module Haskoin.Store.Common
     , microseconds
     , streamThings
     , joinDescStreams
+    , createDataMetrics
     ) where
 
 import           Conduit                    (ConduitT, await, dropC, mapC,
@@ -79,6 +84,9 @@ import           Haskoin.Store.Data         (Balance (..), BlockData (..),
                                              XPubSummary (..), XPubUnspent (..),
                                              nullBalance, toTransaction,
                                              zeroBalance)
+import qualified System.Metrics             as Metrics
+import           System.Metrics.Counter     (Counter)
+import qualified System.Metrics.Counter     as Counter
 import           UnliftIO                   (MonadIO, liftIO)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
@@ -115,112 +123,19 @@ class Monad m => StoreReadBase m where
     getUnspent :: OutPoint -> m (Maybe Unspent)
     getMempool :: m [(UnixTime, TxHash)]
 
-    countBlocks :: Int -> m ()
-    countBlocks _ = return ()
-
-    countTxs :: Int -> m ()
-    countTxs _ = return ()
-
-    countBalances :: Int -> m ()
-    countBalances _ = return ()
-
-    countUnspents :: Int -> m ()
-    countUnspents _ = return ()
-
 class StoreReadBase m => StoreReadExtra m where
     getAddressesTxs :: [Address] -> Limits -> m [TxRef]
     getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
     getInitialGap :: m Word32
     getMaxGap :: m Word32
     getNumTxData :: Word64 -> m [TxData]
-
     getBalances :: [Address] -> m [Balance]
-    getBalances as =
-        zipWith f as <$> mapM getBalance as
-      where
-        f a Nothing  = zeroBalance a
-        f _ (Just b) = b
-
     getAddressTxs :: Address -> Limits -> m [TxRef]
-    getAddressTxs a = getAddressesTxs [a]
-
     getAddressUnspents :: Address -> Limits -> m [Unspent]
-    getAddressUnspents a = getAddressesUnspents [a]
-
     xPubBals :: XPubSpec -> m [XPubBal]
-    xPubBals xpub = do
-        igap <- getInitialGap
-        gap <- getMaxGap
-        ext1 <- derive_until_gap gap 0 (take (fromIntegral igap) (aderiv 0 0))
-        if all (nullBalance . xPubBal) ext1
-            then return []
-            else do
-                ext2 <- derive_until_gap gap 0 (aderiv 0 igap)
-                chg <- derive_until_gap gap 1 (aderiv 1 0)
-                return (ext1 <> ext2 <> chg)
-      where
-        aderiv m =
-            deriveAddresses
-                (deriveFunction (xPubDeriveType xpub))
-                (pubSubKey (xPubSpecKey xpub) m)
-        xbalance m b n = XPubBal {xPubBalPath = [m, n], xPubBal = b}
-        derive_until_gap _ _ [] = return []
-        derive_until_gap gap m as = do
-            let (as1, as2) = splitAt (fromIntegral gap) as
-            countXPubDerivations (length as1)
-            bs <- getBalances (map snd as1)
-            let xbs = zipWith (xbalance m) bs (map fst as1)
-            if all nullBalance bs
-                then return xbs
-                else (xbs <>) <$> derive_until_gap gap m as2
-
-    xPubSummary :: XPubSpec -> [XPubBal] -> m XPubSummary
-    xPubSummary _xspec xbals = return
-        XPubSummary
-        { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
-        , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
-        , xPubSummaryReceived = rx
-        , xPubUnspentCount = uc
-        , xPubChangeIndex = ch
-        , xPubExternalIndex = ex
-        }
-      where
-        bs = filter (not . nullBalance . xPubBal) xbals
-        ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
-        ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
-        uc = sum [balanceUnspentCount (xPubBal b) | b <- bs]
-        xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
-        rx = sum [balanceTotalReceived (xPubBal b) | b <- xt]
-
     xPubUnspents :: XPubSpec -> [XPubBal] -> Limits -> m [XPubUnspent]
-    xPubUnspents _xspec xbals limits =
-        applyLimits limits . sortOn Down . concat <$> mapM h cs
-      where
-        l = deOffset limits
-        cs = filter ((> 0) . balanceUnspentCount . xPubBal) xbals
-        i b = do
-            us <- getAddressUnspents (balanceAddress (xPubBal b)) l
-            countUnspents (length us)
-            return us
-        f b t = XPubUnspent {xPubUnspentPath = xPubBalPath b, xPubUnspent = t}
-        h b = map (f b) <$> i b
-
     xPubTxs :: XPubSpec -> [XPubBal] -> Limits -> m [TxRef]
-    xPubTxs _xspec xbals limits =
-        let as = map balanceAddress $
-                 filter (not . nullBalance) $
-                 map xPubBal xbals
-        in getAddressesTxs as limits
-
     xPubTxCount :: XPubSpec -> [XPubBal] -> m Word32
-    xPubTxCount xspec xbals =
-        fromIntegral . length <$> xPubTxs xspec xbals def
-
-    countTxRefs :: Int -> m ()
-    countTxRefs _ = return ()
-
-    countXPubDerivations :: Int -> m ()
-    countXPubDerivations _ = return ()
 
 class StoreWrite m where
     setBest :: BlockHash -> m ()
@@ -270,6 +185,24 @@ deriveFunction :: DeriveType -> DeriveAddr
 deriveFunction DeriveNormal i = fst . deriveAddr i
 deriveFunction DeriveP2SH i   = fst . deriveCompatWitnessAddr i
 deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
+
+xPubSummary :: XPubSpec -> [XPubBal] -> XPubSummary
+xPubSummary _xspec xbals =
+    XPubSummary
+    { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs)
+    , xPubSummaryZero = sum (map (balanceZero . xPubBal) bs)
+    , xPubSummaryReceived = rx
+    , xPubUnspentCount = uc
+    , xPubChangeIndex = ch
+    , xPubExternalIndex = ex
+    }
+  where
+    bs = filter (not . nullBalance . xPubBal) xbals
+    ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
+    ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
+    uc = sum [balanceUnspentCount (xPubBal b) | b <- bs]
+    xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
+    rx = sum [balanceTotalReceived (xPubBal b) | b <- xt]
 
 getTransaction ::
        (Monad m, StoreReadBase m) => TxHash -> m (Maybe Transaction)
@@ -449,3 +382,35 @@ joinDescStreams xs = do
             let mp2 = Map.deleteMax mp
                 mp' = Map.unionWith (++) mp1 mp2
             go (Just x) mp'
+
+data DataMetrics =
+    DataMetrics
+        { dataBestCount    :: !Counter
+        , dataBlockCount   :: !Counter
+        , dataTxCount      :: !Counter
+        , dataSpenderCount :: !Counter
+        , dataMempoolCount :: !Counter
+        , dataBalanceCount :: !Counter
+        , dataUnspentCount :: !Counter
+        , dataAddrTxCount  :: !Counter
+        , dataXPubBals     :: !Counter
+        , dataXPubUnspents :: !Counter
+        , dataXPubTxs      :: !Counter
+        , dataXPubTxCount  :: !Counter
+        }
+
+createDataMetrics :: MonadIO m => Metrics.Store -> m DataMetrics
+createDataMetrics s = liftIO $ do
+    dataBestCount           <- Metrics.createCounter "data.best_block"     s
+    dataBlockCount          <- Metrics.createCounter "data.blocks"         s
+    dataTxCount             <- Metrics.createCounter "data.txs"            s
+    dataSpenderCount        <- Metrics.createCounter "data.spenders"       s
+    dataMempoolCount        <- Metrics.createCounter "data.mempool"        s
+    dataBalanceCount        <- Metrics.createCounter "data.balances"       s
+    dataUnspentCount        <- Metrics.createCounter "data.unspents"       s
+    dataAddrTxCount         <- Metrics.createCounter "data.address_txs"    s
+    dataXPubBals            <- Metrics.createCounter "data.xpub_balances"  s
+    dataXPubUnspents        <- Metrics.createCounter "data.xpub_unspents"  s
+    dataXPubTxs             <- Metrics.createCounter "data.xpub_txs"       s
+    dataXPubTxCount         <- Metrics.createCounter "data.xpub_tx_count"  s
+    return DataMetrics{..}

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 module Haskoin.Store.Stats
     ( StatDist
     , withStats
@@ -7,6 +8,7 @@ module Haskoin.Store.Stats
     , addClientError
     , addServerError
     , addStatQuery
+    , addStatItems
     ) where
 
 import           Control.Concurrent.STM.TQueue   (TQueue, flushTQueue,
@@ -52,6 +54,7 @@ data StatData =
     {
         statTimes        :: ![Int64],
         statQueries      :: !Int64,
+        statItems        :: !Int64,
         statClientErrors :: !Int64,
         statServerErrors :: !Int64
     }
@@ -61,29 +64,43 @@ data StatDist =
     {
         distQueue        :: !(TQueue Int64),
         distQueries      :: !(TVar Int64),
+        distItems        :: !(TVar Int64),
         distClientErrors :: !(TVar Int64),
         distServerErrors :: !(TVar Int64)
     }
 
 createStatDist :: MonadIO m => Text -> Store -> m StatDist
 createStatDist t store = liftIO $ do
-    q <- newTQueueIO
-    queries <- newTVarIO 0
-    client_errors <- newTVarIO 0
-    server_errors <- newTVarIO 0
+    distQueue <- newTQueueIO
+    distQueries <- newTVarIO 0
+    distItems <- newTVarIO 0
+    distClientErrors <- newTVarIO 0
+    distServerErrors <- newTVarIO 0
     let metrics = HashMap.fromList
-            [ (t <> ".query_count",   Counter . statQueries)
-            , (t <> ".errors.client", Counter . statClientErrors)
-            , (t <> ".errors.server", Counter . statServerErrors)
-            , (t <> ".mean_ms",       Gauge . mean . statTimes)
-            , (t <> ".avg_ms",        Gauge . avg . statTimes)
-            , (t <> ".max_ms",        Gauge . maxi . statTimes)
-            , (t <> ".min_ms",        Gauge . mini . statTimes)
-            , (t <> ".p90max_ms",     Gauge . p90max . statTimes)
-            , (t <> ".p90avg_ms",     Gauge . p90avg . statTimes)
-            , (t <> ".var_ms",        Gauge . var . statTimes)
+            [ (t <> ".query_count",
+               Counter . statQueries)
+            , (t <> ".item_count",
+               Counter . statItems)
+            , (t <> ".errors.client",
+               Counter . statClientErrors)
+            , (t <> ".errors.server",
+               Counter . statServerErrors)
+            , (t <> ".mean_ms",
+               Gauge . mean . statTimes)
+            , (t <> ".avg_ms",
+               Gauge . avg . statTimes)
+            , (t <> ".max_ms",
+               Gauge . maxi . statTimes)
+            , (t <> ".min_ms",
+               Gauge . mini . statTimes)
+            , (t <> ".p90max_ms",
+               Gauge . p90max . statTimes)
+            , (t <> ".p90avg_ms",
+               Gauge . p90avg . statTimes)
+            , (t <> ".var_ms",
+               Gauge . var . statTimes)
             ]
-    let sd = StatDist q queries client_errors server_errors
+    let sd = StatDist{..}
     registerGroup metrics (flush sd) store
     return sd
 
@@ -98,6 +115,10 @@ addStatQuery :: MonadIO m => StatDist -> m ()
 addStatQuery q =
     liftIO . atomically $ modifyTVar (distQueries q) (+1)
 
+addStatItems :: MonadIO m => StatDist -> Int64 -> m ()
+addStatItems q =
+    liftIO . atomically . modifyTVar (distItems q) . (+)
+
 addClientError :: MonadIO m => StatDist -> m ()
 addClientError q =
     liftIO . atomically $ modifyTVar (distClientErrors q) (+1)
@@ -107,12 +128,13 @@ addServerError q =
     liftIO . atomically $ modifyTVar (distServerErrors q) (+1)
 
 flush :: MonadIO m => StatDist -> m StatData
-flush (StatDist q n c s) = atomically $ do
-    ts <- flushTQueue q
-    qs <- readTVar n
-    ce <- readTVar c
-    se <- readTVar s
-    return $ StatData ts qs ce se
+flush StatDist{..} = atomically $ do
+    statTimes <- flushTQueue distQueue
+    statQueries <- readTVar distQueries
+    statItems <- readTVar distItems
+    statClientErrors <- readTVar distClientErrors
+    statServerErrors <- readTVar distServerErrors
+    return $ StatData{..}
 
 average :: Fractional a => L.Fold a a
 average = (/) <$> L.sum <*> L.genericLength

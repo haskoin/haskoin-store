@@ -277,6 +277,16 @@ instance MonadUnliftIO m => StoreReadExtra (BlockT m) where
         runRocksDB . getAddressTxs a
     getNumTxData =
         runRocksDB . getNumTxData
+    getBalances =
+        runRocksDB . getBalances
+    xPubBals =
+        runRocksDB . xPubBals
+    xPubUnspents x l =
+        runRocksDB . xPubUnspents x l
+    xPubTxs x l =
+        runRocksDB . xPubTxs x l
+    xPubTxCount x =
+        runRocksDB . xPubTxCount x
 
 -- | Run block store process.
 withBlockStore ::
