@@ -1,82 +1,116 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module Haskoin.Store.Database.Types
-    ( AddrTxKey(..)
-    , AddrOutKey(..)
-    , BestKey(..)
-    , BlockKey(..)
-    , BalKey(..)
-    , HeightKey(..)
-    , MemKey(..)
-    , SpenderKey(..)
-    , TxKey(..)
-    , decodeTxKey
-    , UnspentKey(..)
-    , VersionKey(..)
-    , BalVal(..)
-    , valToBalance
-    , balanceToVal
-    , UnspentVal(..)
-    , toUnspent
-    , unspentToVal
-    , valToUnspent
-    , OutVal(..)
-    ) where
 
-import           Control.DeepSeq        (NFData)
-import           Control.Monad          (guard)
-import           Data.Bits              (Bits, shift, shiftL, shiftR, (.&.),
-                                         (.|.))
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as BS
-import           Data.Default           (Default (..))
-import           Data.Either            (fromRight)
-import           Data.Hashable          (Hashable)
-import           Data.Serialize         (Serialize (..), decode, encode,
-                                         getBytes, getWord16be, getWord32be,
-                                         getWord8, putWord32be, putWord64be,
-                                         putWord8, runGet, runPut)
-import           Data.Word              (Word16, Word32, Word64, Word8)
-import           Database.RocksDB.Query (Key, KeyValue)
-import           GHC.Generics           (Generic)
-import           Haskoin                (Address, BlockHash, BlockHeight,
-                                         OutPoint (..), TxHash, eitherToMaybe,
-                                         scriptToAddressBS)
-import           Haskoin.Store.Data     (Balance (..), BlockData, BlockRef,
-                                         Spender, TxData, TxRef (..), UnixTime,
-                                         Unspent (..))
+module Haskoin.Store.Database.Types (
+    AddrTxKey (..),
+    AddrOutKey (..),
+    BestKey (..),
+    BlockKey (..),
+    BalKey (..),
+    HeightKey (..),
+    MemKey (..),
+    SpenderKey (..),
+    TxKey (..),
+    decodeTxKey,
+    UnspentKey (..),
+    VersionKey (..),
+    BalVal (..),
+    valToBalance,
+    balanceToVal,
+    UnspentVal (..),
+    toUnspent,
+    unspentToVal,
+    valToUnspent,
+    OutVal (..),
+) where
+
+import Control.DeepSeq (NFData)
+import Control.Monad (guard)
+import Data.Bits (
+    Bits,
+    shift,
+    shiftL,
+    shiftR,
+    (.&.),
+    (.|.),
+ )
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Data.Default (Default (..))
+import Data.Either (fromRight)
+import Data.Hashable (Hashable)
+import Data.Serialize (
+    Serialize (..),
+    decode,
+    encode,
+    getBytes,
+    getWord16be,
+    getWord32be,
+    getWord8,
+    putWord32be,
+    putWord64be,
+    putWord8,
+    runGet,
+    runPut,
+ )
+import Data.Word (Word16, Word32, Word64, Word8)
+import Database.RocksDB.Query (Key, KeyValue)
+import GHC.Generics (Generic)
+import Haskoin (
+    Address,
+    BlockHash,
+    BlockHeight,
+    OutPoint (..),
+    TxHash,
+    eitherToMaybe,
+    scriptToAddressBS,
+ )
+import Haskoin.Store.Data (
+    Balance (..),
+    BlockData,
+    BlockRef,
+    Spender,
+    TxData,
+    TxRef (..),
+    UnixTime,
+    Unspent (..),
+ )
 
 -- | Database key for an address transaction.
 data AddrTxKey
-    = AddrTxKey { addrTxKeyA :: !Address
-                , addrTxKeyT :: !TxRef
-                }
-      -- ^ key for a transaction affecting an address
-    | AddrTxKeyA { addrTxKeyA :: !Address }
-      -- ^ short key that matches all entries
-    | AddrTxKeyB { addrTxKeyA :: !Address
-                 , addrTxKeyB :: !BlockRef
-                 }
+    = -- | key for a transaction affecting an address
+      AddrTxKey
+        { addrTxKeyA :: !Address
+        , addrTxKeyT :: !TxRef
+        }
+    | -- | short key that matches all entries
+      AddrTxKeyA {addrTxKeyA :: !Address}
+    | AddrTxKeyB
+        { addrTxKeyA :: !Address
+        , addrTxKeyB :: !BlockRef
+        }
     | AddrTxKeyS
     deriving (Show, Eq, Ord, Generic, Hashable)
 
-instance Serialize AddrTxKey
+instance Serialize AddrTxKey where
     -- 0x05 · Address · BlockRef · TxHash
-                                          where
-    put AddrTxKey { addrTxKeyA = a
-                  , addrTxKeyT = TxRef {txRefBlock = b, txRefHash = t}
-                  } = do
-        put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b}
-        put t
+
+    put
+        AddrTxKey
+            { addrTxKeyA = a
+            , addrTxKeyT = TxRef{txRefBlock = b, txRefHash = t}
+            } = do
+            put AddrTxKeyB{addrTxKeyA = a, addrTxKeyB = b}
+            put t
     -- 0x05 · Address
-    put AddrTxKeyA {addrTxKeyA = a} = do
+    put AddrTxKeyA{addrTxKeyA = a} = do
         put AddrTxKeyS
         put a
     -- 0x05 · Address · BlockRef
-    put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b} = do
-        put AddrTxKeyA {addrTxKeyA = a}
+    put AddrTxKeyB{addrTxKeyA = a, addrTxKeyB = b} = do
+        put AddrTxKeyA{addrTxKeyA = a}
         put b
     -- 0x05
     put AddrTxKeyS = putWord8 0x05
@@ -88,7 +122,7 @@ instance Serialize AddrTxKey
         return
             AddrTxKey
                 { addrTxKeyA = a
-                , addrTxKeyT = TxRef {txRefBlock = b, txRefHash = t}
+                , addrTxKeyT = TxRef{txRefBlock = b, txRefHash = t}
                 }
 
 instance Key AddrTxKey
@@ -96,30 +130,33 @@ instance KeyValue AddrTxKey ()
 
 -- | Database key for an address output.
 data AddrOutKey
-    = AddrOutKey { addrOutKeyA :: !Address
-                 , addrOutKeyB :: !BlockRef
-                 , addrOutKeyP :: !OutPoint }
-      -- ^ full key
-    | AddrOutKeyA { addrOutKeyA :: !Address }
-      -- ^ short key for all spent or unspent outputs
-    | AddrOutKeyB { addrOutKeyA :: !Address
-                  , addrOutKeyB :: !BlockRef
-                  }
+    = -- | full key
+      AddrOutKey
+        { addrOutKeyA :: !Address
+        , addrOutKeyB :: !BlockRef
+        , addrOutKeyP :: !OutPoint
+        }
+    | -- | short key for all spent or unspent outputs
+      AddrOutKeyA {addrOutKeyA :: !Address}
+    | AddrOutKeyB
+        { addrOutKeyA :: !Address
+        , addrOutKeyB :: !BlockRef
+        }
     | AddrOutKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
-instance Serialize AddrOutKey
+instance Serialize AddrOutKey where
     -- 0x06 · StoreAddr · BlockRef · OutPoint
-                                              where
-    put AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p} = do
-        put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b}
+
+    put AddrOutKey{addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p} = do
+        put AddrOutKeyB{addrOutKeyA = a, addrOutKeyB = b}
         put p
     -- 0x06 · StoreAddr · BlockRef
-    put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b} = do
-        put AddrOutKeyA {addrOutKeyA = a}
+    put AddrOutKeyB{addrOutKeyA = a, addrOutKeyB = b} = do
+        put AddrOutKeyA{addrOutKeyA = a}
         put b
     -- 0x06 · StoreAddr
-    put AddrOutKeyA {addrOutKeyA = a} = do
+    put AddrOutKeyA{addrOutKeyA = a} = do
         put AddrOutKeyS
         put a
     -- 0x06
@@ -133,13 +170,15 @@ instance Key AddrOutKey
 data OutVal = OutVal
     { outValAmount :: !Word64
     , outValScript :: !ByteString
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
 
 instance KeyValue AddrOutKey OutVal
 
 -- | Transaction database key.
-data TxKey = TxKey { txKey :: TxHash }
-           | TxKeyS { txKeyShort :: (Word32, Word16) }
+data TxKey
+    = TxKey {txKey :: TxHash}
+    | TxKeyS {txKeyShort :: (Word32, Word16)}
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize TxKey where
@@ -165,19 +204,19 @@ decodeTxKey i =
             w3 <- getWord8
             return (w1, w2, w3)
         Right (w1, w2, w3) = runGet g bs
-    in ((w1, w2), w3)
+     in ((w1, w2), w3)
 
 instance Key TxKey
 instance KeyValue TxKey TxData
 
 data SpenderKey
-    = SpenderKey { outputPoint :: !OutPoint }
-    | SpenderKeyS { outputKeyS :: !TxHash }
+    = SpenderKey {outputPoint :: !OutPoint}
+    | SpenderKeyS {outputKeyS :: !TxHash}
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize SpenderKey where
     -- 0x10 · TxHash · Index
-    put (SpenderKey OutPoint {outPointHash = h, outPointIndex = i}) = do
+    put (SpenderKey OutPoint{outPointHash = h, outPointIndex = i}) = do
         put (SpenderKeyS h)
         put i
     -- 0x10 · TxHash
@@ -194,19 +233,19 @@ instance KeyValue SpenderKey Spender
 
 -- | Unspent output database key.
 data UnspentKey
-    = UnspentKey { unspentKey :: !OutPoint }
-    | UnspentKeyS { unspentKeyS :: !TxHash }
+    = UnspentKey {unspentKey :: !OutPoint}
+    | UnspentKeyS {unspentKeyS :: !TxHash}
     | UnspentKeyB
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize UnspentKey where
     -- 0x09 · TxHash · Index
-    put UnspentKey {unspentKey = OutPoint {outPointHash = h, outPointIndex = i}} = do
+    put UnspentKey{unspentKey = OutPoint{outPointHash = h, outPointIndex = i}} = do
         putWord8 0x09
         put h
         put i
     -- 0x09 · TxHash
-    put UnspentKeyS {unspentKeyS = t} = do
+    put UnspentKeyS{unspentKeyS = t} = do
         putWord8 0x09
         put t
     -- 0x09
@@ -215,7 +254,7 @@ instance Serialize UnspentKey where
         guard . (== 0x09) =<< getWord8
         h <- get
         i <- get
-        return $ UnspentKey OutPoint {outPointHash = h, outPointIndex = i}
+        return $ UnspentKey OutPoint{outPointHash = h, outPointIndex = i}
 
 instance Key UnspentKey
 instance KeyValue UnspentKey UnspentVal
@@ -231,8 +270,8 @@ toUnspent b v =
         }
 
 -- | Mempool transaction database key.
-data MemKey =
-    MemKey
+data MemKey
+    = MemKey
     deriving (Show, Read)
 
 instance Serialize MemKey where
@@ -248,7 +287,8 @@ instance KeyValue MemKey [(UnixTime, TxHash)]
 -- | Block entry database key.
 newtype BlockKey = BlockKey
     { blockKey :: BlockHash
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable)
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BlockKey where
     -- 0x01 · BlockHash
@@ -265,7 +305,8 @@ instance KeyValue BlockKey BlockData
 -- | Block height database key.
 newtype HeightKey = HeightKey
     { heightKey :: BlockHeight
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable)
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize HeightKey where
     -- 0x03 · BlockHeight
@@ -282,14 +323,14 @@ instance KeyValue HeightKey [BlockHash]
 -- | Address balance database key.
 data BalKey
     = BalKey
-          { balanceKey :: !Address
-          }
+        { balanceKey :: !Address
+        }
     | BalKeyS
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BalKey where
     -- 0x04 · Address
-    put BalKey {balanceKey = a} = do
+    put BalKey{balanceKey = a} = do
         putWord8 0x04
         put a
     -- 0x04
@@ -302,8 +343,8 @@ instance Key BalKey
 instance KeyValue BalKey BalVal
 
 -- | Key for best block in database.
-data BestKey =
-    BestKey
+data BestKey
+    = BestKey
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BestKey where
@@ -317,8 +358,8 @@ instance Key BestKey
 instance KeyValue BestKey BlockHash
 
 -- | Key for database version.
-data VersionKey =
-    VersionKey
+data VersionKey
+    = VersionKey
     deriving (Eq, Show, Read, Ord, Generic, Hashable)
 
 instance Serialize VersionKey where
@@ -332,43 +373,49 @@ instance Key VersionKey
 instance KeyValue VersionKey Word32
 
 data BalVal = BalVal
-    { balValAmount        :: !Word64
-    , balValZero          :: !Word64
-    , balValUnspentCount  :: !Word64
-    , balValTxCount       :: !Word64
+    { balValAmount :: !Word64
+    , balValZero :: !Word64
+    , balValUnspentCount :: !Word64
+    , balValTxCount :: !Word64
     , balValTotalReceived :: !Word64
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 valToBalance :: Address -> BalVal -> Balance
-valToBalance a BalVal { balValAmount = v
-                      , balValZero = z
-                      , balValUnspentCount = u
-                      , balValTxCount = t
-                      , balValTotalReceived = r
-                      } =
-    Balance
-        { balanceAddress = a
-        , balanceAmount = v
-        , balanceZero = z
-        , balanceUnspentCount = u
-        , balanceTxCount = t
-        , balanceTotalReceived = r
-        }
-
-balanceToVal :: Balance -> BalVal
-balanceToVal Balance { balanceAmount = v
-                     , balanceZero = z
-                     , balanceUnspentCount = u
-                     , balanceTxCount = t
-                     , balanceTotalReceived = r
-                     } =
+valToBalance
+    a
     BalVal
         { balValAmount = v
         , balValZero = z
         , balValUnspentCount = u
         , balValTxCount = t
         , balValTotalReceived = r
-        }
+        } =
+        Balance
+            { balanceAddress = a
+            , balanceAmount = v
+            , balanceZero = z
+            , balanceUnspentCount = u
+            , balanceTxCount = t
+            , balanceTotalReceived = r
+            }
+
+balanceToVal :: Balance -> BalVal
+balanceToVal
+    Balance
+        { balanceAmount = v
+        , balanceZero = z
+        , balanceUnspentCount = u
+        , balanceTxCount = t
+        , balanceTotalReceived = r
+        } =
+        BalVal
+            { balValAmount = v
+            , balValZero = z
+            , balValUnspentCount = u
+            , balValTxCount = t
+            , balValTotalReceived = r
+            }
 
 -- | Default balance for an address.
 instance Default BalVal where
@@ -382,30 +429,40 @@ instance Default BalVal where
             }
 
 data UnspentVal = UnspentVal
-    { unspentValBlock  :: !BlockRef
+    { unspentValBlock :: !BlockRef
     , unspentValAmount :: !Word64
     , unspentValScript :: !ByteString
-    } deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
+    }
+    deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 unspentToVal :: Unspent -> (OutPoint, UnspentVal)
-unspentToVal Unspent { unspentBlock = b
-                     , unspentPoint = p
-                     , unspentAmount = v
-                     , unspentScript = s
-                     } =
-    ( p
-    , UnspentVal
-          {unspentValBlock = b, unspentValAmount = v, unspentValScript = s})
-
-valToUnspent :: OutPoint -> UnspentVal -> Unspent
-valToUnspent p UnspentVal { unspentValBlock = b
-                          , unspentValAmount = v
-                          , unspentValScript = s
-                          } =
+unspentToVal
     Unspent
         { unspentBlock = b
         , unspentPoint = p
         , unspentAmount = v
         , unspentScript = s
-        , unspentAddress = eitherToMaybe (scriptToAddressBS s)
-        }
+        } =
+        ( p
+        , UnspentVal
+            { unspentValBlock = b
+            , unspentValAmount = v
+            , unspentValScript = s
+            }
+        )
+
+valToUnspent :: OutPoint -> UnspentVal -> Unspent
+valToUnspent
+    p
+    UnspentVal
+        { unspentValBlock = b
+        , unspentValAmount = v
+        , unspentValScript = s
+        } =
+        Unspent
+            { unspentBlock = b
+            , unspentPoint = p
+            , unspentAmount = v
+            , unspentScript = s
+            , unspentAddress = eitherToMaybe (scriptToAddressBS s)
+            }

@@ -1,22 +1,23 @@
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE FlexibleInstances         #-}
-{-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Haskoin.Store.DataSpec
-    ( spec
-    ) where
 
-import           Control.Monad           (forM_)
-import           Data.Aeson              (FromJSON (..))
-import qualified Data.ByteString         as B
-import           Data.String.Conversions (cs)
-import           Haskoin
-import           Haskoin.Store.Data
-import           Haskoin.Util.Arbitrary
-import           Test.Hspec              (Spec, describe)
-import           Test.QuickCheck
+module Haskoin.Store.DataSpec (
+    spec,
+) where
+
+import Control.Monad (forM_)
+import Data.Aeson (FromJSON (..))
+import qualified Data.ByteString as B
+import Data.String.Conversions (cs)
+import Haskoin
+import Haskoin.Store.Data
+import Haskoin.Util.Arbitrary
+import Test.Hspec (Spec, describe)
+import Test.QuickCheck
 
 serialVals :: [SerialBox]
 serialVals =
@@ -75,82 +76,120 @@ jsonVals =
 
 netVals :: [NetBox]
 netVals =
-    [ NetBox ( balanceToJSON
-             , balanceToEncoding
-             , balanceParseJSON
-             , arbitraryNetData)
-    , NetBox ( storeOutputToJSON
-             , storeOutputToEncoding
-             , storeOutputParseJSON
-             , arbitraryNetData)
-    , NetBox ( unspentToJSON
-             , unspentToEncoding
-             , unspentParseJSON
-             , arbitraryNetData)
-    , NetBox ( xPubBalToJSON
-             , xPubBalToEncoding
-             , xPubBalParseJSON
-             , arbitraryNetData)
-    , NetBox ( xPubUnspentToJSON
-             , xPubUnspentToEncoding
-             , xPubUnspentParseJSON
-             , arbitraryNetData)
-    , NetBox ( storeInputToJSON
-             , storeInputToEncoding
-             , storeInputParseJSON
-             , arbitraryStoreInputNet)
-    , NetBox ( blockDataToJSON
-             , blockDataToEncoding
-             , const parseJSON
-             , arbitraryBlockDataNet)
-    , NetBox ( transactionToJSON
-             , transactionToEncoding
-             , transactionParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoMultiAddrToJSON
-             , binfoMultiAddrToEncoding
-             , binfoMultiAddrParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoBalanceToJSON
-             , binfoBalanceToEncoding
-             , binfoBalanceParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoBlockToJSON
-             , binfoBlockToEncoding
-             , binfoBlockParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoTxToJSON
-             , binfoTxToEncoding
-             , binfoTxParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoTxInputToJSON
-             , binfoTxInputToEncoding
-             , binfoTxInputParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoTxOutputToJSON
-             , binfoTxOutputToEncoding
-             , binfoTxOutputParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoXPubPathToJSON
-             , binfoXPubPathToEncoding
-             , binfoXPubPathParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoUnspentToJSON
-             , binfoUnspentToEncoding
-             , binfoUnspentParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoBlocksToJSON
-             , binfoBlocksToEncoding
-             , binfoBlocksParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoRawAddrToJSON
-             , binfoRawAddrToEncoding
-             , binfoRawAddrParseJSON
-             , arbitraryNetData)
-    , NetBox ( binfoMempoolToJSON
-             , binfoMempoolToEncoding
-             , binfoMempoolParseJSON
-             , arbitraryNetData)
+    [ NetBox
+        ( balanceToJSON
+        , balanceToEncoding
+        , balanceParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( storeOutputToJSON
+        , storeOutputToEncoding
+        , storeOutputParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( unspentToJSON
+        , unspentToEncoding
+        , unspentParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( xPubBalToJSON
+        , xPubBalToEncoding
+        , xPubBalParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( xPubUnspentToJSON
+        , xPubUnspentToEncoding
+        , xPubUnspentParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( storeInputToJSON
+        , storeInputToEncoding
+        , storeInputParseJSON
+        , arbitraryStoreInputNet
+        )
+    , NetBox
+        ( blockDataToJSON
+        , blockDataToEncoding
+        , const parseJSON
+        , arbitraryBlockDataNet
+        )
+    , NetBox
+        ( transactionToJSON
+        , transactionToEncoding
+        , transactionParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoMultiAddrToJSON
+        , binfoMultiAddrToEncoding
+        , binfoMultiAddrParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoBalanceToJSON
+        , binfoBalanceToEncoding
+        , binfoBalanceParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoBlockToJSON
+        , binfoBlockToEncoding
+        , binfoBlockParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoTxToJSON
+        , binfoTxToEncoding
+        , binfoTxParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoTxInputToJSON
+        , binfoTxInputToEncoding
+        , binfoTxInputParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoTxOutputToJSON
+        , binfoTxOutputToEncoding
+        , binfoTxOutputParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoXPubPathToJSON
+        , binfoXPubPathToEncoding
+        , binfoXPubPathParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoUnspentToJSON
+        , binfoUnspentToEncoding
+        , binfoUnspentParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoBlocksToJSON
+        , binfoBlocksToEncoding
+        , binfoBlocksParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoRawAddrToJSON
+        , binfoRawAddrToEncoding
+        , binfoRawAddrParseJSON
+        , arbitraryNetData
+        )
+    , NetBox
+        ( binfoMempoolToJSON
+        , binfoMempoolToEncoding
+        , binfoMempoolParseJSON
+        , arbitraryNetData
+        )
     ]
 
 spec :: Spec
@@ -160,7 +199,7 @@ spec = do
     describe "JSON Encoding" $
         forM_ jsonVals $ \(JsonBox g) -> testJson g
     describe "JSON Encoding with Network" $
-        forM_ netVals $ \(NetBox (j,e,p,g)) -> testNetJson j e p g
+        forM_ netVals $ \(NetBox (j, e, p, g)) -> testNetJson j e p g
 
 instance Arbitrary BlockRef where
     arbitrary =
@@ -201,8 +240,9 @@ arbitraryStoreInputNet :: Gen (Network, StoreInput)
 arbitraryStoreInputNet = do
     net <- arbitraryNetwork
     store <- arbitrary
-    let res | getSegWit net = store
-            | otherwise = store{ inputWitness = [] }
+    let res
+            | getSegWit net = store
+            | otherwise = store{inputWitness = []}
     return (net, res)
 
 instance Arbitrary Spender where
@@ -211,10 +251,10 @@ instance Arbitrary Spender where
 instance Arbitrary StoreOutput where
     arbitrary =
         StoreOutput
-          <$> arbitrary
-          <*> arbitraryBS1
-          <*> arbitrary
-          <*> arbitraryMaybe arbitraryAddress
+            <$> arbitrary
+            <*> arbitraryBS1
+            <*> arbitrary
+            <*> arbitraryMaybe arbitraryAddress
 
 instance Arbitrary Transaction where
     arbitrary =
@@ -324,23 +364,24 @@ instance Arbitrary Unspent where
 instance Arbitrary BlockData where
     arbitrary =
         BlockData
-        <$> arbitrary
-        <*> arbitrary
-        <*> (fromInteger <$> suchThat arbitrary (0<=))
-        <*> arbitraryBlockHeader
-        <*> arbitrary
-        <*> arbitrary
-        <*> listOf1 arbitraryTxHash
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+            <$> arbitrary
+            <*> arbitrary
+            <*> (fromInteger <$> suchThat arbitrary (0 <=))
+            <*> arbitraryBlockHeader
+            <*> arbitrary
+            <*> arbitrary
+            <*> listOf1 arbitraryTxHash
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
 
 arbitraryBlockDataNet :: Gen (Network, BlockData)
 arbitraryBlockDataNet = do
     net <- arbitraryNetwork
     dat <- arbitrary
-    let res | getSegWit net = dat
-            | otherwise = dat{ blockDataWeight = 0}
+    let res
+            | getSegWit net = dat
+            | otherwise = dat{blockDataWeight = 0}
     return (net, res)
 
 instance Arbitrary a => Arbitrary (GenericResult a) where
@@ -361,41 +402,42 @@ instance Arbitrary XPubUnspent where
 instance Arbitrary XPubSummary where
     arbitrary =
         XPubSummary
-        <$> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+            <$> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
 
 instance Arbitrary Event where
     arbitrary =
         oneof
-        [ EventBlock <$> arbitraryBlockHash
-        , EventTx <$> arbitraryTxHash
-        ]
+            [ EventBlock <$> arbitraryBlockHash
+            , EventTx <$> arbitraryTxHash
+            ]
 
 instance Arbitrary Except where
     arbitrary =
         oneof
-        [ return ThingNotFound
-        , return ServerError
-        , return BadRequest
-        , UserError <$> arbitrary
-        , StringError <$> arbitrary
-        , TxIndexConflict <$> listOf1 arbitraryTxHash
-        , return ServerTimeout
-        ]
+            [ return ThingNotFound
+            , return ServerError
+            , return BadRequest
+            , UserError <$> arbitrary
+            , StringError <$> arbitrary
+            , TxIndexConflict <$> listOf1 arbitraryTxHash
+            , return ServerTimeout
+            ]
 
 ---------------------------------------
 -- Blockchain.info API Compatibility --
 ---------------------------------------
 
 instance Arbitrary BinfoTxId where
-    arbitrary = oneof
-        [ BinfoTxIdHash <$> arbitraryTxHash
-        , BinfoTxIdIndex <$> arbitrary
-        ]
+    arbitrary =
+        oneof
+            [ BinfoTxIdHash <$> arbitraryTxHash
+            , BinfoTxIdIndex <$> arbitrary
+            ]
 
 instance Arbitrary BinfoMultiAddr where
     arbitrary = do
@@ -405,22 +447,22 @@ instance Arbitrary BinfoMultiAddr where
         getBinfoMultiAddrInfo <- arbitrary
         getBinfoMultiAddrRecommendFee <- arbitrary
         getBinfoMultiAddrCashAddr <- arbitrary
-        return BinfoMultiAddr {..}
+        return BinfoMultiAddr{..}
 
 instance Arbitrary BinfoRawAddr where
     arbitrary = do
         binfoRawAddr <-
             oneof
-            [ BinfoAddr <$> arbitraryAddress
-            , BinfoXpub . snd <$> arbitraryXPubKey
-            ]
+                [ BinfoAddr <$> arbitraryAddress
+                , BinfoXpub . snd <$> arbitraryXPubKey
+                ]
         binfoRawBalance <- arbitrary
         binfoRawTxCount <- arbitrary
         binfoRawUnredeemed <- arbitrary
         binfoRawReceived <- arbitrary
         binfoRawSent <- arbitrary
         binfoRawTxs <- arbitrary
-        return $ BinfoRawAddr {..}
+        return $ BinfoRawAddr{..}
 
 instance Arbitrary BinfoShortBal where
     arbitrary = BinfoShortBal <$> arbitrary <*> arbitrary <*> arbitrary
@@ -435,7 +477,7 @@ instance Arbitrary BinfoBalance where
         getBinfoXPubKey <- snd <$> arbitraryXPubKey
         getBinfoXPubAccountIndex <- arbitrary
         getBinfoXPubChangeIndex <- arbitrary
-        elements [BinfoAddrBalance {..}, BinfoXPubBalance {..}]
+        elements [BinfoAddrBalance{..}, BinfoXPubBalance{..}]
 
 instance Arbitrary BinfoWallet where
     arbitrary = do
@@ -444,7 +486,7 @@ instance Arbitrary BinfoWallet where
         getBinfoWalletFilteredCount <- arbitrary
         getBinfoWalletTotalReceived <- arbitrary
         getBinfoWalletTotalSent <- arbitrary
-        return BinfoWallet {..}
+        return BinfoWallet{..}
 
 instance Arbitrary BinfoBlock where
     arbitrary = do
@@ -486,7 +528,7 @@ instance Arbitrary BinfoTx where
         getBinfoTxBlockIndex <- arbitrary
         getBinfoTxBlockHeight <- arbitrary
         getBinfoTxResultBal <- arbitrary
-        return BinfoTx {..}
+        return BinfoTx{..}
 
 instance Arbitrary BinfoTxInput where
     arbitrary = do
@@ -495,7 +537,7 @@ instance Arbitrary BinfoTxInput where
         getBinfoTxInputScript <- B.pack <$> listOf arbitrary
         getBinfoTxInputIndex <- arbitrary
         getBinfoTxInputPrevOut <- arbitrary
-        return BinfoTxInput {..}
+        return BinfoTxInput{..}
 
 instance Arbitrary BinfoTxOutput where
     arbitrary = do
@@ -509,19 +551,19 @@ instance Arbitrary BinfoTxOutput where
         getBinfoTxOutputAddress <-
             oneof [return Nothing, Just <$> arbitraryAddress]
         getBinfoTxOutputXPub <- arbitrary
-        return BinfoTxOutput {..}
+        return BinfoTxOutput{..}
 
 instance Arbitrary BinfoSpender where
     arbitrary = do
         getBinfoSpenderTxIndex <- arbitrary
         getBinfoSpenderIndex <- arbitrary
-        return BinfoSpender {..}
+        return BinfoSpender{..}
 
 instance Arbitrary BinfoXPubPath where
     arbitrary = do
         getBinfoXPubPathKey <- snd <$> arbitraryXPubKey
         getBinfoXPubPathDeriv <- arbitrarySoftPath
-        return BinfoXPubPath {..}
+        return BinfoXPubPath{..}
 
 instance Arbitrary BinfoInfo where
     arbitrary = do
@@ -530,7 +572,7 @@ instance Arbitrary BinfoInfo where
         getBinfoLocal <- arbitrary
         getBinfoBTC <- arbitrary
         getBinfoLatestBlock <- arbitrary
-        return BinfoInfo {..}
+        return BinfoInfo{..}
 
 instance Arbitrary BinfoBlockInfo where
     arbitrary = do
@@ -538,7 +580,7 @@ instance Arbitrary BinfoBlockInfo where
         getBinfoBlockInfoHeight <- arbitrary
         getBinfoBlockInfoTime <- arbitrary
         getBinfoBlockInfoIndex <- arbitrary
-        return BinfoBlockInfo {..}
+        return BinfoBlockInfo{..}
 
 instance Arbitrary BinfoSymbol where
     arbitrary = do
@@ -548,7 +590,7 @@ instance Arbitrary BinfoSymbol where
         getBinfoSymbolConversion <- arbitrary
         getBinfoSymbolAfter <- arbitrary
         getBinfoSymbolLocal <- arbitrary
-        return BinfoSymbol {..}
+        return BinfoSymbol{..}
 
 instance Arbitrary BinfoRate where
     arbitrary = BinfoRate <$> arbitrary <*> arbitrary <*> arbitrary
@@ -591,11 +633,11 @@ instance Arbitrary BinfoUnspents where
 instance Arbitrary BinfoHeader where
     arbitrary =
         BinfoHeader
-        <$> arbitraryBlockHash
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+            <$> arbitraryBlockHash
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
 
 instance Arbitrary BinfoMempool where
     arbitrary = BinfoMempool <$> arbitrary

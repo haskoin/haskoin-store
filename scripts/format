@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+for DIR in {data,store}/{src,test}
+do
+	find "$DIR" -type f -name '*.hs' | xargs fourmolu -i
+done

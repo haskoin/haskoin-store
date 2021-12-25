@@ -1,112 +1,117 @@
-{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Haskoin.StoreSpec (spec) where
 
-import           Conduit
-import           Control.Monad
-import           Control.Monad.Logger
-import           Control.Monad.Reader
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B
-import           Data.ByteString.Base64
-import           Data.Either
-import           Data.List
-import           Data.Maybe
-import           Data.Serialize
-import           Data.Time.Clock.POSIX
-import           Data.Word
-import           Haskoin
-import           Haskoin.Node
-import           Haskoin.Store
-import           Haskoin.Util.Arbitrary
-import           Network.Socket
-import           NQE
-import           System.Random
-import           Test.Hspec
-import           Test.Hspec.QuickCheck
-import           Test.QuickCheck
-import           UnliftIO
+import Conduit
+import Control.Monad
+import Control.Monad.Logger
+import Control.Monad.Reader
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+import Data.ByteString.Base64
+import Data.Either
+import Data.List
+import Data.Maybe
+import Data.Serialize
+import Data.Time.Clock.POSIX
+import Data.Word
+import Haskoin
+import Haskoin.Node
+import Haskoin.Store
+import Haskoin.Util.Arbitrary
+import NQE
+import Network.Socket
+import System.Random
+import Test.Hspec
+import Test.Hspec.QuickCheck
+import Test.QuickCheck
+import UnliftIO
 
 data TestStore = TestStore
-    { testStoreDB         :: !DatabaseReader
+    { testStoreDB :: !DatabaseReader
     , testStoreBlockStore :: !BlockStore
-    , testStoreChain      :: !Chain
-    , testStoreEvents     :: !(Inbox StoreEvent)
+    , testStoreChain :: !Chain
+    , testStoreEvents :: !(Inbox StoreEvent)
     }
 
 spec :: Spec
 spec = do
-  describe "Download" $ do
-    it "gets 8 blocks" $
-        withTestStore bchRegTest "eight-blocks" $ \TestStore {..} -> do
-        bs <- replicateM 8 . receiveMatch testStoreEvents $ \case
-            StoreBestBlock b -> Just b
-            _ -> Nothing
-        let bestHash = last bs
-        bestNodeM <- chainGetBlock bestHash testStoreChain
-        bestNodeM `shouldSatisfy` isJust
-        let bestNode = fromJust bestNodeM
-            bestHeight = nodeHeight bestNode
-        bestHeight `shouldBe` 8
-    it "get a block and its transactions" $
-        withTestStore bchRegTest "get-block-txs" $ \TestStore {..} ->
-        flip runReaderT testStoreDB $ do
-        let h1 = "5369ef2386c72acdf513ffd80aeba2a1774e2f004d120761e54a8bf614173f3e"
-            get_the_block h =
-                receive testStoreEvents >>= \case
-                    StoreBestBlock b
-                        | h <= 1 -> return b
-                        | otherwise ->
-                            get_the_block ((h :: Int) - 1)
-                    _ -> get_the_block h
-        bh <- get_the_block 15
-        m <- getBlock bh
-        let bd = fromMaybe (error "Could not get block") m
-        t1 <- getTransaction h1
-        lift $ do
-            blockDataHeight bd `shouldBe` 15
-            length (blockDataTxs bd) `shouldBe` 1
-            head (blockDataTxs bd) `shouldBe` h1
-            t1 `shouldSatisfy` isJust
-            txHash (transactionData (fromJust t1)) `shouldBe` h1
+    describe "Download" $ do
+        it "gets 8 blocks" $
+            withTestStore bchRegTest "eight-blocks" $ \TestStore{..} -> do
+                bs <- replicateM 8 . receiveMatch testStoreEvents $ \case
+                    StoreBestBlock b -> Just b
+                    _ -> Nothing
+                let bestHash = last bs
+                bestNodeM <- chainGetBlock bestHash testStoreChain
+                bestNodeM `shouldSatisfy` isJust
+                let bestNode = fromJust bestNodeM
+                    bestHeight = nodeHeight bestNode
+                bestHeight `shouldBe` 8
+        it "get a block and its transactions" $
+            withTestStore bchRegTest "get-block-txs" $ \TestStore{..} ->
+                flip runReaderT testStoreDB $ do
+                    let h1 = "5369ef2386c72acdf513ffd80aeba2a1774e2f004d120761e54a8bf614173f3e"
+                        get_the_block h =
+                            receive testStoreEvents >>= \case
+                                StoreBestBlock b
+                                    | h <= 1 -> return b
+                                    | otherwise ->
+                                        get_the_block ((h :: Int) - 1)
+                                _ -> get_the_block h
+                    bh <- get_the_block 15
+                    m <- getBlock bh
+                    let bd = fromMaybe (error "Could not get block") m
+                    t1 <- getTransaction h1
+                    lift $ do
+                        blockDataHeight bd `shouldBe` 15
+                        length (blockDataTxs bd) `shouldBe` 1
+                        head (blockDataTxs bd) `shouldBe` h1
+                        t1 `shouldSatisfy` isJust
+                        txHash (transactionData (fromJust t1)) `shouldBe` h1
 
 withTestStore ::
-       MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
+    MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
 withTestStore net t f =
     withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
-    runNoLoggingT $ do
-    let ad = NetworkAddress
-             nodeNetwork
-             (sockToHostAddress (SockAddrInet 0 0))
-        cfg = StoreConfig
-              { storeConfMaxPeers = 20
-              , storeConfInitPeers = []
-              , storeConfDiscover = True
-              , storeConfDB = w
-              , storeConfNetwork = net
-              , storeConfCache = Nothing
-              , storeConfGap = gap
-              , storeConfInitialGap = 20
-              , storeConfCacheMin = 100
-              , storeConfMaxKeys = 100 * 1000 * 1000
-              , storeConfNoMempool = False
-              , storeConfWipeMempool = False
-              , storeConfSyncMempool = False
-              , storeConfPeerTimeout = 60
-              , storeConfPeerMaxLife = 48 * 3600
-              , storeConfConnect = dummyPeerConnect net ad
-              , storeConfCacheRetryDelay = 100000
-              , storeConfStats = Nothing
-              }
-    withStore cfg $ \Store {..} ->
-        withSubscription storePublisher $ \sub ->
-        lift $ f TestStore { testStoreDB = storeDB
-                           , testStoreBlockStore = storeBlock
-                           , testStoreChain = storeChain
-                           , testStoreEvents = sub
-                           }
+        runNoLoggingT $ do
+            let ad =
+                    NetworkAddress
+                        nodeNetwork
+                        (sockToHostAddress (SockAddrInet 0 0))
+                cfg =
+                    StoreConfig
+                        { storeConfMaxPeers = 20
+                        , storeConfInitPeers = []
+                        , storeConfDiscover = True
+                        , storeConfDB = w
+                        , storeConfNetwork = net
+                        , storeConfCache = Nothing
+                        , storeConfGap = gap
+                        , storeConfInitialGap = 20
+                        , storeConfCacheMin = 100
+                        , storeConfMaxKeys = 100 * 1000 * 1000
+                        , storeConfNoMempool = False
+                        , storeConfWipeMempool = False
+                        , storeConfSyncMempool = False
+                        , storeConfPeerTimeout = 60
+                        , storeConfPeerMaxLife = 48 * 3600
+                        , storeConfConnect = dummyPeerConnect net ad
+                        , storeConfCacheRetryDelay = 100000
+                        , storeConfStats = Nothing
+                        }
+            withStore cfg $ \Store{..} ->
+                withSubscription storePublisher $ \sub ->
+                    lift $
+                        f
+                            TestStore
+                                { testStoreDB = storeDB
+                                , testStoreBlockStore = storeBlock
+                                , testStoreChain = storeChain
+                                , testStoreEvents = sub
+                                }
 
 gap :: Word32
 gap = 32
@@ -114,7 +119,7 @@ gap = 32
 allBlocks :: [Block]
 allBlocks =
     fromRight (error "Could not decode blocks") $
-    runGet f (decodeBase64Lenient allBlocksBase64)
+        runGet f (decodeBase64Lenient allBlocksBase64)
   where
     f = mapM (const get) [(1 :: Int) .. 15]
 
@@ -189,9 +194,9 @@ dummyPeerConnect net ad sa f = do
             ver = buildVersion net nonce 0 ad rmt now
         runPut (putMessage net (MVersion ver)) `send` s
         runConduit $
-            forever (receive r >>= yield) .| inc .| concatMapC mockPeerReact .|
-            outc .|
-            awaitForever (`send` s)
+            forever (receive r >>= yield) .| inc .| concatMapC mockPeerReact
+                .| outc
+                .| awaitForever (`send` s)
     outc = mapMC $ \msg' -> return $ runPut (putMessage net msg')
     inc = forever $ do
         x <- takeCE 24 .| foldC
@@ -202,8 +207,9 @@ dummyPeerConnect net ad sa f = do
                 y <- takeCE (fromIntegral len) .| foldC
                 case runGet (getMessage net) $ x `B.append` y of
                     Right msg' -> yield msg'
-                    Left e -> error $
-                        "Dummy peer could not decode payload: " <> show e
+                    Left e ->
+                        error $
+                            "Dummy peer could not decode payload: " <> show e
 
 mockPeerReact :: Message -> [Message]
 mockPeerReact (MPing (Ping n)) = [MPong (Pong n)]
@@ -215,6 +221,6 @@ mockPeerReact (MGetHeaders (GetHeaders _ _hs _)) = [MHeaders (Headers hs')]
 mockPeerReact (MGetData (GetData ivs)) = mapMaybe f ivs
   where
     f (InvVector InvBlock h) = MBlock <$> find (l h) allBlocks
-    f _                      = Nothing
+    f _ = Nothing
     l h b = headerHash (blockHeader b) == BlockHash h
 mockPeerReact _ = []

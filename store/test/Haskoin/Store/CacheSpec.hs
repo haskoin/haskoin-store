@@ -1,11 +1,11 @@
 module Haskoin.Store.CacheSpec (spec) where
 
-import           Data.List             (sort)
-import           Haskoin.Store.Cache   (blockRefScore, scoreBlockRef)
-import           Haskoin.Store.Data    (BlockRef (..))
-import           Test.Hspec            (Spec, describe)
-import           Test.Hspec.QuickCheck (prop)
-import           Test.QuickCheck       (Gen, choose, forAll, listOf, oneof)
+import Data.List (sort)
+import Haskoin.Store.Cache (blockRefScore, scoreBlockRef)
+import Haskoin.Store.Data (BlockRef (..))
+import Test.Hspec (Spec, describe)
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck (Gen, choose, forAll, listOf, oneof)
 
 spec :: Spec
 spec = do
@@ -29,7 +29,7 @@ arbitraryBlockRef = oneof [b, m]
     b = do
         h <- choose (0, 0x07ffffff)
         p <- choose (0, 0x03ffffff)
-        return BlockRef {blockRefHeight = h, blockRefPos = p}
+        return BlockRef{blockRefHeight = h, blockRefPos = p}
     m = do
         t <- choose (0, 0x001fffffffffffff)
-        return MemRef {memRefTime = t}
+        return MemRef{memRefTime = t}
