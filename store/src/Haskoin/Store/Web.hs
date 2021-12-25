@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -446,11 +447,12 @@ setMetrics df =
 
 addItemCount :: MonadUnliftIO m => Int -> WebT m ()
 addItemCount i =
-    asks webMetrics >>= \mm -> forM_ mm $ \m ->
-        S.request >>= \req ->
-            forM_ (V.lookup (statKey m) (vault req)) $ \t ->
-                readTVarIO t >>= \ms -> forM_ ms $ \s ->
-                    addStatItems (s m) (fromIntegral i)
+    asks webMetrics >>= mapM_ \m ->
+        addStatItems (statAll m) (fromIntegral i)
+            >> S.request >>= \req ->
+                forM_ (V.lookup (statKey m) (vault req)) \t ->
+                    readTVarIO t >>= mapM_ \s ->
+                        addStatItems (s m) (fromIntegral i)
 
 data WebTimeouts = WebTimeouts
     { txTimeout :: !Word64

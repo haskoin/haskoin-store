@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Automatic formatting.
 - Improve cache debug logging.
 
+### Fixed
+- Add item count to 'all' query metrics.
+
 ## 0.64.0
 ### Changed
 - Improve metrics.
