@@ -98,47 +98,47 @@ createStatDist t store = liftIO $ do
     let metrics =
             HashMap.fromList
                 [
-                    ( t <> "_request_count"
+                    ( t <> ".request_count"
                     , Counter . statQueries
                     )
                 ,
-                    ( t <> "_item_count"
+                    ( t <> ".item_count"
                     , Counter . statItems
                     )
                 ,
-                    ( t <> "_errors_client"
+                    ( t <> ".client_errors"
                     , Counter . statClientErrors
                     )
                 ,
-                    ( t <> "_errors_server"
+                    ( t <> ".server_errors"
                     , Counter . statServerErrors
                     )
                 ,
-                    ( t <> "_mean_ms"
+                    ( t <> ".mean_ms"
                     , Gauge . mean . statTimes
                     )
                 ,
-                    ( t <> "_avg_ms"
+                    ( t <> ".avg_ms"
                     , Gauge . avg . statTimes
                     )
                 ,
-                    ( t <> "_max_ms"
+                    ( t <> ".max_ms"
                     , Gauge . maxi . statTimes
                     )
                 ,
-                    ( t <> "_min_ms"
+                    ( t <> ".min_ms"
                     , Gauge . mini . statTimes
                     )
                 ,
-                    ( t <> "_p90max_ms"
+                    ( t <> ".p90max_ms"
                     , Gauge . p90max . statTimes
                     )
                 ,
-                    ( t <> "_p90avg_ms"
+                    ( t <> ".p90avg_ms"
                     , Gauge . p90avg . statTimes
                     )
                 ,
-                    ( t <> "_var_ms"
+                    ( t <> ".var_ms"
                     , Gauge . var . statTimes
                     )
                 ]

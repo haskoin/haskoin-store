@@ -229,11 +229,11 @@ data StoreMetrics = StoreMetrics
 
 newStoreMetrics :: MonadIO m => Metrics.Store -> m StoreMetrics
 newStoreMetrics s = liftIO $ do
-    storeHeight <- g "blockchain_height"
-    headersHeight <- g "blockchain_headers"
-    storePendingTxs <- g "mempool_pending_txs"
-    storePeersConnected <- g "network_peers_connected"
-    storeMempoolSize <- g "mempool_size"
+    storeHeight <- g "blockchain.height"
+    headersHeight <- g "blockchain.headers"
+    storePendingTxs <- g "mempool.pending_txs"
+    storePeersConnected <- g "network.peers_connected"
+    storeMempoolSize <- g "mempool.size"
     return StoreMetrics{..}
   where
     g x = Metrics.createGauge ("store." <> x) s

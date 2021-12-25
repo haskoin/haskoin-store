@@ -414,8 +414,8 @@ createMetrics s = liftIO $ do
     statKey <- V.newKey
     return WebMetrics{..}
   where
-    d x = createStatDist ("web_" <> x) s
-    g x = Metrics.createGauge ("web_" <> x) s
+    d x = createStatDist ("web." <> x) s
+    g x = Metrics.createGauge ("web." <> x) s
 
 withGaugeIO :: MonadUnliftIO m => Metrics.Gauge -> m a -> m a
 withGaugeIO g =
