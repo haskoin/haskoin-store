@@ -212,7 +212,7 @@ newCacheMetrics s = liftIO $ do
     cacheLockFailed <- c "cache_lock_failed"
     cacheIndexTime <- d "cache_index"
     cacheBlockSyncTime <- d "cache_block_sync"
-    cacheXPubBals <- c "cache_xpub_balsances"
+    cacheXPubBals <- c "cache_xpub_balances"
     cacheXPubUnspents <- c "cache_xpub_unspents"
     cacheXPubTxs <- c "cache_xpub_txs"
     cacheXPubTxCount <- c "cache_xpub_tx_count"
