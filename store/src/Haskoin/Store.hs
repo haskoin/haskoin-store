@@ -1,5 +1,5 @@
-module Haskoin.Store (
-    Store (..),
+module Haskoin.Store
+  ( Store (..),
     StoreConfig (..),
     StoreEvent (..),
     withStore,
@@ -32,7 +32,8 @@ module Haskoin.Store (
 
     -- * Other Data
     PubExcept (..),
-) where
+  )
+where
 
 import Haskoin.Store.BlockStore
 import Haskoin.Store.Cache

@@ -9,16 +9,16 @@ import Test.QuickCheck (Gen, choose, forAll, listOf, oneof)
 
 spec :: Spec
 spec = do
-    describe "Score for block reference" $ do
-        prop "sorts correctly" $
-            forAll arbitraryBlockRefs $ \ts ->
-                let scores = map blockRefScore (sort ts)
-                 in sort scores == reverse scores
-        prop "respects identity" $
-            forAll arbitraryBlockRef $ \b ->
-                let score = blockRefScore b
-                    ref = scoreBlockRef score
-                 in ref == b
+  describe "Score for block reference" $ do
+    prop "sorts correctly" $
+      forAll arbitraryBlockRefs $ \ts ->
+        let scores = map blockRefScore (sort ts)
+         in sort scores == reverse scores
+    prop "respects identity" $
+      forAll arbitraryBlockRef $ \b ->
+        let score = blockRefScore b
+            ref = scoreBlockRef score
+         in ref == b
 
 arbitraryBlockRefs :: Gen [BlockRef]
 arbitraryBlockRefs = listOf arbitraryBlockRef
@@ -27,9 +27,9 @@ arbitraryBlockRef :: Gen BlockRef
 arbitraryBlockRef = oneof [b, m]
   where
     b = do
-        h <- choose (0, 0x07ffffff)
-        p <- choose (0, 0x03ffffff)
-        return BlockRef{blockRefHeight = h, blockRefPos = p}
+      h <- choose (0, 0x07ffffff)
+      p <- choose (0, 0x03ffffff)
+      return BlockRef {blockRefHeight = h, blockRefPos = p}
     m = do
-        t <- choose (0, 0x001fffffffffffff)
-        return MemRef{memRefTime = t}
+      t <- choose (0, 0x001fffffffffffff)
+      return MemRef {memRefTime = t}
