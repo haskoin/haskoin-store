@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Use better Fourmolu format.
 - Be more precise when counting retrieved items.
 
+### Fixed
+- Avoid transactions duplicated in xpub data.
+- Refactor some functions to make them more robust.
+
 ## 0.64.7
 ### Fixed
 - Optimisations for various Blockchain endpoints.

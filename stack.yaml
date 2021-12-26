@@ -13,3 +13,4 @@ packages:
 extra-deps:
   - haskoin-node-0.17.14
   - haskoin-core-0.21.1
+  - rocksdb-haskell-jprupp-2.1.4

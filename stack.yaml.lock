@@ -18,6 +18,13 @@ packages:
       sha256: fbcb9818de0fbe306db40d12b8c337328f5d9486bdc0c5065fc4ed25595e4c1e
   original:
     hackage: haskoin-core-0.21.1
+- completed:
+    hackage: rocksdb-haskell-jprupp-2.1.4@sha256:d3244f5538dbee2fc4d3ceb9c5fb849fb7882f9dcfee57cddad1d7e0c0fe3c4d,1735
+    pantry-tree:
+      size: 712
+      sha256: f63a78fbd9931022bdad7f97c66756fb3853b9dd7970594f285ff2fbd9870879
+  original:
+    hackage: rocksdb-haskell-jprupp-2.1.4
 snapshots:
 - completed:
     size: 586296

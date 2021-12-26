@@ -22,11 +22,13 @@ where
 
 import Conduit
   ( ConduitT,
+    dropC,
     dropWhileC,
     lift,
     mapC,
     runConduit,
     sinkList,
+    takeC,
     (.|),
   )
 import Control.Monad.Except (runExceptT, throwError)
@@ -235,6 +237,24 @@ unspentConduit a s it =
                   .| (dropWhileC (cond . fst) >> mapC id)
           Nothing -> return ()
 
+withManyIters :: MonadUnliftIO m
+              => DB
+              -> ColumnFamily
+              -> Int
+              -> ([Iterator] -> m a)
+              -> m a
+withManyIters db cf i f = go [] i
+  where
+    go acc 0 = f acc
+    go acc n = withIterCF db cf $ \it -> go (it : acc) (n - 1)
+
+joinConduits :: (Monad m, Ord o)
+             => [ConduitT () o m ()]
+             -> Limits
+             -> m [o]
+joinConduits cs l =
+    runConduit $ joinDescStreams cs .| applyLimitsC l .| sinkList
+
 instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
   getNetwork = asks databaseNetwork
 
@@ -256,7 +276,8 @@ instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
 
   getUnspent p = do
     db <- asks databaseHandle
-    fmap (valToUnspent p) <$> retrieveCF db (unspentCF db) (UnspentKey p) >>= \case
+    val <- retrieveCF db (unspentCF db) (UnspentKey p)
+    case fmap (valToUnspent p) val of
       Nothing -> return Nothing
       Just u -> do
         incrementCounter dataUnspentCount 1
@@ -294,61 +315,34 @@ instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
 
 instance MonadUnliftIO m => StoreReadExtra (DatabaseReaderT m) where
   getAddressesTxs addrs limits = do
-    txs <- applyLimits limits . sortOn Down . concat <$> mapM f addrs
-    incrementCounter dataAddrTxCount (length txs)
-    return txs
+    db <- asks databaseHandle
+    withManyIters db (addrTxCF db) (length addrs) $ \its -> do
+      txs <- joinConduits (cs its) limits
+      incrementCounter dataAddrTxCount (length txs)
+      return txs
     where
-      l = deOffset limits
-      f a = do
-        db <- asks databaseHandle
-        withIterCF db (addrTxCF db) $ \it ->
-          runConduit $
-            addressConduit a (start l) it
-              .| applyLimitC (limit l)
-              .| sinkList
+      cs = map (uncurry c) . zip addrs
+      c a = addressConduit a (start limits)
 
   getAddressesUnspents addrs limits = do
-    us <- applyLimits limits . sortOn Down . concat <$> mapM f addrs
-    incrementCounter dataUnspentCount (length us)
-    return us
+    db <- asks databaseHandle
+    withManyIters db (addrOutCF db) (length addrs) $ \its -> do
+      uns <- joinConduits (cs its) limits
+      incrementCounter dataUnspentCount (length uns)
+      return uns
     where
-      l = deOffset limits
-      f a = do
-        db <- asks databaseHandle
-        withIterCF db (addrOutCF db) $ \it ->
-          runConduit $
-            unspentConduit a (start l) it
-              .| applyLimitC (limit l)
-              .| sinkList
+      cs = map (uncurry c) . zip addrs
+      c a = unspentConduit a (start limits)
 
   getAddressUnspents a limits = do
     db <- asks databaseHandle
     us <- withIterCF db (addrOutCF db) $ \it ->
       runConduit $
-        x it .| applyLimitsC limits .| mapC (uncurry toUnspent) .| sinkList
+        unspentConduit a (start limits) it
+        .| applyLimitsC limits
+        .| sinkList
     incrementCounter dataUnspentCount (length us)
     return us
-    where
-      x it = case start limits of
-        Nothing ->
-          matching it (AddrOutKeyA a)
-        Just (AtBlock h) ->
-          matchingSkip
-            it
-            (AddrOutKeyA a)
-            (AddrOutKeyB a (BlockRef h maxBound))
-        Just (AtTx txh) ->
-          lift (getTxData txh) >>= \case
-            Just TxData {txDataBlock = b@BlockRef {}} ->
-              matchingSkip it (AddrOutKeyA a) (AddrOutKeyB a b)
-            Just TxData {txDataBlock = MemRef {}} ->
-              let cond (AddrOutKey _a MemRef {} p) =
-                    outPointHash p /= txh
-                  cond (AddrOutKey _a BlockRef {} _p) =
-                    False
-               in matching it (AddrOutKeyA a)
-                    .| (dropWhileC (cond . fst) >> mapC id)
-            _ -> matching it (AddrOutKeyA a)
 
   getAddressTxs a limits = do
     db <- asks databaseHandle
