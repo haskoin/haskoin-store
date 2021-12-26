@@ -29,6 +29,7 @@ import Conduit
     dropC,
     dropWhileC,
     headC,
+    iterMC,
     mapC,
     runConduit,
     sinkList,
@@ -454,6 +455,15 @@ addItemCount i =
         forM_ (V.lookup (statKey m) (vault req)) \t ->
           readTVarIO t >>= mapM_ \s ->
             addStatItems (s m) (fromIntegral i)
+
+getItemCounter :: (MonadIO m, MonadIO n) => WebT m (Int -> n ())
+getItemCounter =
+  fromMaybe (\_ -> return ()) <$> runMaybeT do
+    q <- lift S.request
+    m <- MaybeT $ asks webMetrics
+    t <- MaybeT . return $ V.lookup (statKey m) (vault q)
+    s <- MaybeT $ readTVarIO t
+    return $ addStatItems (s m) . fromIntegral
 
 data WebTimeouts = WebTimeouts
   { txTimeout :: !Word64,
@@ -1700,11 +1710,11 @@ scottyBinfoUnspent = do
   let mn BinfoUnspent {..} = min_conf > getBinfoUnspentConfirmations
   xbals <- lift $ getXBals xspecs
   addItemCount . sum . map length $ HashMap.elems xbals
+  counter <- getItemCounter
   bus <-
     lift . runConduit $
-      getBinfoUnspents numtxid height xbals xspecs addrs
+      getBinfoUnspents counter numtxid height xbals xspecs addrs
         .| (dropWhileC mn >> takeC limit .| sinkList)
-  addItemCount (length bus) -- TODO: does not include bypassed items
   setHeaders
   streamEncoding (binfoUnspentsToEncoding net (BinfoUnspents bus))
   where
@@ -1713,13 +1723,14 @@ scottyBinfoUnspent = do
 
 getBinfoUnspents ::
   (StoreReadExtra m, MonadIO m) =>
+  (Int -> m ()) ->
   Bool ->
   H.BlockHeight ->
   HashMap XPubSpec [XPubBal] ->
   HashSet XPubSpec ->
   HashSet Address ->
   ConduitT () BinfoUnspent m ()
-getBinfoUnspents numtxid height xbals xspecs addrs = do
+getBinfoUnspents counter numtxid height xbals xspecs addrs = do
   cs' <- conduits
   joinDescStreams cs' .| mapC (uncurry binfo)
   where
@@ -1750,18 +1761,26 @@ getBinfoUnspents numtxid height xbals xspecs addrs = do
           g x = do
             return $
               streamThings
-                (xPubUnspents x (xBals x xbals))
+                ( \l -> do
+                    us <- xPubUnspents x (xBals x xbals) l
+                    counter (length us)
+                    return us
+                )
                 Nothing
-                def {limit = 250}
+                def {limit = 16}
                 .| mapC (f x)
       mapM g (HashSet.toList xspecs)
     acounduits =
       let f u = (u, Nothing)
           g a =
             streamThings
-              (getAddressUnspents a)
+              ( \l -> do
+                  us <- getAddressUnspents a l
+                  counter (length us)
+                  return us
+              )
               Nothing
-              def {limit = 250}
+              def {limit = 16}
               .| mapC f
        in map g (HashSet.toList addrs)
 
@@ -1780,6 +1799,7 @@ xBals = HashMap.findWithDefault []
 
 getBinfoTxs ::
   (StoreReadExtra m, MonadIO m) =>
+  (Int -> m ()) -> -- counter
   HashMap XPubSpec [XPubBal] -> -- xpub balances
   HashMap Address (Maybe BinfoXPubPath) -> -- address book
   HashSet XPubSpec -> -- show xpubs
@@ -1790,60 +1810,86 @@ getBinfoTxs ::
   Bool -> -- prune outputs
   Int64 -> -- starting balance
   ConduitT () BinfoTx m ()
-getBinfoTxs xbals abook sxspecs saddrs baddrs bfilter numtxid prune bal = do
-  cs' <- conduits
-  joinDescStreams cs' .| go bal
-  where
-    sxspecs_ls = HashSet.toList sxspecs
-    saddrs_ls = HashSet.toList saddrs
-    conduits = (<>) <$> mapM xpub_c sxspecs_ls <*> pure (map addr_c saddrs_ls)
-    xpub_c x =
-      lift $
-        return $ streamThings (xPubTxs x (xBals x xbals)) (Just txRefHash) def {limit = 50}
-    addr_c a = streamThings (getAddressTxs a) (Just txRefHash) def {limit = 50}
-    binfo_tx b = toBinfoTx numtxid abook prune b
-    compute_bal_change BinfoTx {..} =
-      let ins = map getBinfoTxInputPrevOut getBinfoTxInputs
-          out = getBinfoTxOutputs
-          f b BinfoTxOutput {..} =
-            let val = fromIntegral getBinfoTxOutputValue
-             in case getBinfoTxOutputAddress of
-                  Nothing -> 0
-                  Just a
-                    | a `HashSet.member` baddrs ->
-                      if b then val else negate val
-                    | otherwise -> 0
-       in sum $ map (f False) ins <> map (f True) out
-    go b =
-      await >>= \case
-        Nothing -> return ()
-        Just (TxRef _ t) ->
-          lift (getTransaction t) >>= \case
-            Nothing -> go b
-            Just x -> do
-              let a = binfo_tx b x
-                  b' = b - compute_bal_change a
-                  c = isJust (getBinfoTxBlockHeight a)
-                  Just (d, _) = getBinfoTxResultBal a
-                  r = d + fromIntegral (getBinfoTxFee a)
-              case bfilter of
-                BinfoFilterAll ->
-                  yield a >> go b'
-                BinfoFilterSent
-                  | 0 > r -> yield a >> go b'
-                  | otherwise -> go b'
-                BinfoFilterReceived
-                  | r > 0 -> yield a >> go b'
-                  | otherwise -> go b'
-                BinfoFilterMoved
-                  | r == 0 -> yield a >> go b'
-                  | otherwise -> go b'
-                BinfoFilterConfirmed
-                  | c -> yield a >> go b'
-                  | otherwise -> go b'
-                BinfoFilterMempool
-                  | c -> return ()
-                  | otherwise -> yield a >> go b'
+getBinfoTxs
+  counter
+  xbals
+  abook
+  sxspecs
+  saddrs
+  baddrs
+  bfilter
+  numtxid
+  prune
+  bal = do
+    cs' <- conduits
+    joinDescStreams cs' .| go bal
+    where
+      sxspecs_ls = HashSet.toList sxspecs
+      saddrs_ls = HashSet.toList saddrs
+      conduits = (<>) <$> mapM xpub_c sxspecs_ls <*> pure (map addr_c saddrs_ls)
+      xpub_c x =
+        lift . return $
+          streamThings
+            ( \l -> do
+                ts <- xPubTxs x (xBals x xbals) l
+                counter (length ts)
+                return ts
+            )
+            (Just txRefHash)
+            def {limit = 16}
+      addr_c a =
+        streamThings
+          ( \l -> do
+              as <- getAddressTxs a l
+              counter (length as)
+              return as
+          )
+          (Just txRefHash)
+          def {limit = 16}
+      binfo_tx b = toBinfoTx numtxid abook prune b
+      compute_bal_change BinfoTx {..} =
+        let ins = map getBinfoTxInputPrevOut getBinfoTxInputs
+            out = getBinfoTxOutputs
+            f b BinfoTxOutput {..} =
+              let val = fromIntegral getBinfoTxOutputValue
+               in case getBinfoTxOutputAddress of
+                    Nothing -> 0
+                    Just a
+                      | a `HashSet.member` baddrs ->
+                        if b then val else negate val
+                      | otherwise -> 0
+         in sum $ map (f False) ins <> map (f True) out
+      go b =
+        await >>= \case
+          Nothing -> return ()
+          Just (TxRef _ t) ->
+            lift (getTransaction t) >>= \case
+              Nothing -> go b
+              Just x -> do
+                lift $ counter 1
+                let a = binfo_tx b x
+                    b' = b - compute_bal_change a
+                    c = isJust (getBinfoTxBlockHeight a)
+                    Just (d, _) = getBinfoTxResultBal a
+                    r = d + fromIntegral (getBinfoTxFee a)
+                case bfilter of
+                  BinfoFilterAll ->
+                    yield a >> go b'
+                  BinfoFilterSent
+                    | 0 > r -> yield a >> go b'
+                    | otherwise -> go b'
+                  BinfoFilterReceived
+                    | r > 0 -> yield a >> go b'
+                    | otherwise -> go b'
+                  BinfoFilterMoved
+                    | r == 0 -> yield a >> go b'
+                    | otherwise -> go b'
+                  BinfoFilterConfirmed
+                    | c -> yield a >> go b'
+                    | otherwise -> go b'
+                  BinfoFilterMempool
+                    | c -> return ()
+                    | otherwise -> yield a >> go b'
 
 getCashAddr :: Monad m => WebT m Bool
 getCashAddr = S.param "cashaddr" `S.rescue` const (return False)
@@ -1873,10 +1919,11 @@ scottyBinfoHistory = do
   (code, price') <- getPrice
   xbals <- getXBals xspecs
   addItemCount . sum . map length $ HashMap.elems xbals
+  counter <- getItemCounter
   let xaddrs = HashSet.fromList $ concatMap (map get_addr) (HashMap.elems xbals)
       aaddrs = xaddrs <> addrs
       cur = binfoTicker15m price'
-      cs' = conduits (HashMap.toList xbals) addrs endM
+      cs' = conduits counter (HashMap.toList xbals) addrs endM
   txs <-
     lift . runConduit $
       joinDescStreams cs'
@@ -1925,23 +1972,31 @@ scottyBinfoHistory = do
       startM <- blockAtOrAfter ch start
       endM <- blockAtOrBefore ch end
       return (startM, endM)
-    conduits xpubs addrs endM =
-      map (uncurry (xpub_c endM)) xpubs
-        <> map (addr_c endM) (HashSet.toList addrs)
-    addr_c endM a =
+    conduits counter xpubs addrs endM =
+      map (uncurry (xpub_c counter endM)) xpubs
+        <> map (addr_c counter endM) (HashSet.toList addrs)
+    addr_c counter endM a =
       streamThings
-        (getAddressTxs a)
+        ( \l -> do
+            ts <- getAddressTxs a l
+            counter (length ts)
+            return ts
+        )
         (Just txRefHash)
         def
-          { limit = 50,
+          { limit = 16,
             start = AtBlock . blockDataHeight <$> endM
           }
-    xpub_c endM x bs =
+    xpub_c counter endM x bs =
       streamThings
-        (xPubTxs x bs)
+        ( \l -> do
+            ts <- xPubTxs x bs l
+            counter (length ts)
+            return ts
+        )
         (Just txRefHash)
         def
-          { limit = 50,
+          { limit = 16,
             start = AtBlock . blockDataHeight <$> endM
           }
 
@@ -2007,12 +2062,22 @@ scottyMultiAddr = do
       sxaddrs = compute_xaddrs sxbals
       salladdrs = saddrs <> sxaddrs
       bal = compute_bal allbals
-  let ibal = fromIntegral sbal
+      ibal = fromIntegral sbal
+  counter <- getItemCounter
   ftxs <-
     lift . runConduit $
-      getBinfoTxs xbals abook sxspecs saddrs salladdrs fltr numtxid prune ibal
+      getBinfoTxs
+        counter
+        xbals
+        abook
+        sxspecs
+        saddrs
+        salladdrs
+        fltr
+        numtxid
+        prune
+        ibal
         .| (dropC offset >> takeC n .| sinkList)
-  addItemCount (length ftxs)
   best <- get_best_block
   addItemCount 1
   peers <- get_peers
@@ -2176,9 +2241,11 @@ scottyRawAddr =
           amnt =
             xPubSummaryConfirmed summary
               + xPubSummaryZero summary
+      counter <- getItemCounter
       txs <-
         lift . runConduit $
           getBinfoTxs
+            counter
             xbals
             abook
             xspecs
@@ -2189,7 +2256,6 @@ scottyRawAddr =
             False
             (fromIntegral amnt)
             .| (dropC off >> takeC n .| sinkList)
-      addItemCount (length txs)
       let ra =
             BinfoRawAddr
               { binfoRawAddr = BinfoXpub xpub,
@@ -2224,9 +2290,11 @@ scottyRawAddr =
           saddrs = HashSet.singleton addr
           bfilter = BinfoFilterAll
           amnt = balanceAmount bal + balanceZero bal
+      counter <- getItemCounter
       txs <-
         lift . runConduit $
           getBinfoTxs
+            counter
             HashMap.empty
             abook
             xspecs
@@ -2237,7 +2305,6 @@ scottyRawAddr =
             False
             (fromIntegral amnt)
             .| (dropC off >> takeC n .| sinkList)
-      addItemCount (length txs)
       let ra =
             BinfoRawAddr
               { binfoRawAddr = BinfoAddr addr,
@@ -2667,13 +2734,21 @@ scottyBinfoPubKeyAddr = do
     Left e -> raise $ UserError e
     Right t -> return t
   setHeaders
-  addItemCount 1
   S.text $ encodeHexLazy $ L.fromStrict pk
   where
-    strm addr =
+    strm addr = do
+      counter <- getItemCounter
       runConduit $
-        streamThings (getAddressTxs addr) (Just txRefHash) def {limit = 50}
+        streamThings
+          ( \l -> do
+              ts <- getAddressTxs addr l
+              counter (length ts)
+              return ts
+          )
+          (Just txRefHash)
+          def {limit = 8}
           .| concatMapMC (getTransaction . txRefHash)
+          .| iterMC (\_ -> counter 1)
           .| concatMapC (filter (inp addr) . transactionInputs)
           .| headC
     inp addr StoreInput {inputAddress = Just a} = a == addr
