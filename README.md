@@ -35,6 +35,16 @@ stack build --copy-bins
 ~/.local/bin/haskoin-store --help
 ```
 
+## Install on Fedora
+
+```sh
+dnf install git zlib-devel libsecp256k1-devel rocksdb-devel stack
+git clone https://github.com/haskoin/haskoin-store.git
+cd haskoin-store
+stack build --copy-bins
+~/.local/bin/haskoin-store --help
+```
+
 ## Non-Haskell Dependencies
 
 * [zlib](https://zlib.net/)

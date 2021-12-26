@@ -3316,8 +3316,8 @@ relevantTxs addrs prune t@Transaction{..} =
 
 toBinfoAddrs ::
     HashMap Address Balance ->
-    HashMap XPubKey [XPubBal] ->
-    HashMap XPubKey Int ->
+    HashMap XPubSpec [XPubBal] ->
+    HashMap XPubSpec Word64 ->
     [BinfoBalance]
 toBinfoAddrs only_addrs only_xpubs xpub_txs =
     xpub_bals <> addr_bals
@@ -3333,11 +3333,11 @@ toBinfoAddrs only_addrs only_xpubs xpub_txs =
             received = sum (map f xs)
             bal = fromIntegral (sum (map g xs))
             sent = if bal <= received then received - bal else 0
-            count = maybe 0 fromIntegral $ HashMap.lookup k xpub_txs
+            count = HashMap.lookupDefault 0 k xpub_txs
             ax = foldl max 0 (map (i 0) xs)
             cx = foldl max 0 (map (i 1) xs)
          in BinfoXPubBalance
-                { getBinfoXPubKey = k
+                { getBinfoXPubKey = xPubSpecKey k
                 , getBinfoAddrTxCount = count
                 , getBinfoAddrReceived = received
                 , getBinfoAddrSent = sent

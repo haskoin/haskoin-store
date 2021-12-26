@@ -31,15 +31,7 @@ module Haskoin.Store.Cache (
 ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad (
-    forM,
-    forM_,
-    forever,
-    guard,
-    unless,
-    void,
-    when,
- )
+import Control.Monad (forM, forM_, forever, guard, unless, void, when, (>=>))
 import Control.Monad.Logger (
     MonadLoggerIO,
     logDebugS,
@@ -883,15 +875,8 @@ newXPubC ::
     [XPubBal] ->
     CacheX m ()
 newXPubC xpub xbals =
-    should_index >>= \i ->
-        when i $ withMetrics cacheIndexTime index
-  where
-    op XPubUnspent{xPubUnspent = u} = (unspentPoint u, unspentBlock u)
-    should_index =
-        asks cacheMin >>= \x ->
-            if x <= lenNotNull xbals then inSync else return False
-    index =
-        bracket set_index unset_index $ \y -> when y $
+    should_index >>= \i -> when i $
+        bracket set_index unset_index $ \j -> when j $
             withMetrics cacheIndexTime $ do
                 xpubtxt <- xpubText xpub
                 $(logDebugS) "Cache" $
@@ -916,6 +901,11 @@ newXPubC xpub xbals =
                     e <- redisAddXPubTxs xpub xtxs
                     return $ b >> c >> d >> e >> return ()
                 $(logDebugS) "Cache" $ "Cached " <> xpubtxt
+  where
+    op XPubUnspent{xPubUnspent = u} = (unspentPoint u, unspentBlock u)
+    should_index =
+        asks cacheMin >>= \x ->
+            if x <= lenNotNull xbals then inSync else return False
     key = idxPfx <> encode xpub
     opts =
         Redis.SetOpts
