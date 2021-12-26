@@ -237,23 +237,25 @@ unspentConduit a s it =
                   .| (dropWhileC (cond . fst) >> mapC id)
           Nothing -> return ()
 
-withManyIters :: MonadUnliftIO m
-              => DB
-              -> ColumnFamily
-              -> Int
-              -> ([Iterator] -> m a)
-              -> m a
+withManyIters ::
+  MonadUnliftIO m =>
+  DB ->
+  ColumnFamily ->
+  Int ->
+  ([Iterator] -> m a) ->
+  m a
 withManyIters db cf i f = go [] i
   where
     go acc 0 = f acc
     go acc n = withIterCF db cf $ \it -> go (it : acc) (n - 1)
 
-joinConduits :: (Monad m, Ord o)
-             => [ConduitT () o m ()]
-             -> Limits
-             -> m [o]
+joinConduits ::
+  (Monad m, Ord o) =>
+  [ConduitT () o m ()] ->
+  Limits ->
+  m [o]
 joinConduits cs l =
-    runConduit $ joinDescStreams cs .| applyLimitsC l .| sinkList
+  runConduit $ joinDescStreams cs .| applyLimitsC l .| sinkList
 
 instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
   getNetwork = asks databaseNetwork
@@ -339,8 +341,8 @@ instance MonadUnliftIO m => StoreReadExtra (DatabaseReaderT m) where
     us <- withIterCF db (addrOutCF db) $ \it ->
       runConduit $
         unspentConduit a (start limits) it
-        .| applyLimitsC limits
-        .| sinkList
+          .| applyLimitsC limits
+          .| sinkList
     incrementCounter dataUnspentCount (length us)
     return us
 
