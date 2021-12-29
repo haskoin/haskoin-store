@@ -451,14 +451,12 @@ syncMempool f = do
   when s f
 
 mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
-mempool p = guardMempool $
-  syncMempool $
-    void $
-      async $ do
-        isInSync >>= \s -> when s $ do
-          $(logDebugS) "BlockStore" $
-            "Requesting mempool from peer: " <> peerText p
-          MMempool `sendMessage` p
+mempool p =
+  guardMempool . syncMempool $
+    isInSync >>= \s -> when s $ do
+      $(logDebugS) "BlockStore" $
+        "Requesting mempool from peer: " <> peerText p
+      MMempool `sendMessage` p
 
 processBlock ::
   (MonadUnliftIO m, MonadLoggerIO m) =>
@@ -758,7 +756,7 @@ notify :: MonadIO m => Maybe Block -> BlockT m a -> BlockT m a
 notify block go = do
   old <- HashSet.union e . HashSet.fromList . map snd <$> getMempool
   x <- go
-  new <- HashSet.fromList . map snd <$> getMempool
+  new <- HashSet.union e . HashSet.fromList . map snd <$> getMempool
   l <- asks (blockConfListener . myConfig)
   forM_ (old `HashSet.difference` new) $ \h ->
     publish (StoreMempoolDelete h) l
