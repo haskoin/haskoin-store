@@ -1581,12 +1581,11 @@ scottyXPubBalances ::
   (MonadUnliftIO m, MonadLoggerIO m) => GetXPubBalances -> WebT m [XPubBal]
 scottyXPubBalances (GetXPubBalances xpub deriv (NoCache noCache)) = do
   setMetrics statXpubBalances
-  balances <- filter f <$> lift (runNoCache noCache (xPubBals spec))
+  balances <- lift (runNoCache noCache (xPubBals spec))
   addItemCount (length balances)
   return balances
   where
     spec = XPubSpec xpub deriv
-    f = not . nullBalance . xPubBal
 
 scottyXPubUnspent ::
   (MonadUnliftIO m, MonadLoggerIO m) =>

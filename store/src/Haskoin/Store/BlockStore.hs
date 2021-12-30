@@ -616,11 +616,9 @@ addRequestedTx :: MonadIO m => TxHash -> BlockT m ()
 addRequestedTx th = do
   qbox <- asks requested
   atomically $ modifyTVar qbox $ HashSet.insert th
-  liftIO $
-    void $
-      async $ do
-        threadDelay 20000000
-        atomically $ modifyTVar qbox $ HashSet.delete th
+  liftIO . void . async $ do
+    threadDelay 20000000
+    atomically $ modifyTVar qbox $ HashSet.delete th
 
 isPending :: MonadIO m => TxHash -> BlockT m Bool
 isPending th = do
