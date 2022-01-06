@@ -812,6 +812,14 @@ withLockRetry i f
         withLockRetry (i - 1) f
       x -> return x
 
+isFull ::
+  (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
+  CacheX m Bool
+isFull = do
+  x <- asks cacheMax
+  s <- runRedis Redis.dbsize
+  return $ s > x
+
 pruneDB ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
   CacheX m Integer
@@ -823,14 +831,13 @@ pruneDB = do
     flush n =
       case n `div` 64 of
         0 -> return 0
-        x -> fmap (fromMaybe 0) $
-          withLock $ do
-            ks <-
-              fmap (map fst) . runRedis $
-                getFromSortedSet maxKey Nothing 0 (fromIntegral x)
-            $(logDebugS) "Cache" $
-              "Pruning " <> cs (show (length ks)) <> " old xpubs"
-            delXPubKeys ks
+        x -> do
+          ks <-
+            fmap (map fst) . runRedis $
+              getFromSortedSet maxKey Nothing 0 (fromIntegral x)
+          $(logDebugS) "Cache" $
+            "Pruning " <> cs (show (length ks)) <> " old xpubs"
+          delXPubKeys ks
 
 touchKeys :: MonadLoggerIO m => [XPubSpec] -> CacheX m ()
 touchKeys xpubs = do
@@ -863,11 +870,12 @@ cacheWriterReact (CacheNewTx txid) =
             lift (getTxData txid) >>= mapM_ \tx -> do
               $(logDebugS) "Cache" $ "Importing mempool tx: " <> hex
               importMultiTxC [tx]
+              pruneDB
 
 doSync ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheX m ()
-doSync = newBlockC >> void pruneDB
+doSync = newBlockC
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull = length . filter (not . nullBalance . xPubBal)
@@ -908,7 +916,13 @@ newXPubC xpub xbals =
     op XPubUnspent {xPubUnspent = u} = (unspentPoint u, unspentBlock u)
     should_index =
       asks cacheMin >>= \x ->
-        if x <= lenNotNull xbals then inSync else return False
+        if x <= lenNotNull xbals
+          then
+            inSync >>= \s ->
+              if s
+                then not <$> isFull
+                else return False
+          else return False
     key = idxPfx <> encode xpub
     opts =
       Redis.SetOpts
@@ -951,7 +965,7 @@ newBlockC =
               if hb == headerHash (nodeHeader bn)
                 then $(logDebugS) "Cache" "Cache in sync"
                 else
-                  withLock (sync ch hb bn) >>= \case
+                  withLock (sync ch hb bn >> void pruneDB) >>= \case
                     Nothing -> smallDelay >> newBlockC
                     Just () -> return ()
   where

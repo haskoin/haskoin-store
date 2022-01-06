@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.54.0
+  version: &version 0.64.11
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Haskoin
@@ -6242,9 +6242,9 @@ components:
       required: false
       schema:
         type: string
-        enum: [segwit, compat, standard]
+        enum: [segwit, compat, normal]
       description: |
-        * `standard`: derive regular P2PKH addresses.
+        * `normal`: derive regular P2PKH addresses.
         * `segwit`: derive segwit P2WPKH addresses.
         * `compat`: derive P2SH-P2WPKH backwards-compatible segwit addresses.
 
