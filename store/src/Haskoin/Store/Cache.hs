@@ -975,10 +975,6 @@ newBlockC =
           $(logErrorS) "Cache" $
             "Cache head block node not found: "
               <> blockHashToHex hb
-          throwIO $
-            LogicError $
-              "Cache head block node not found: "
-                <> cs (blockHashToHex hb)
         Just hn ->
           chainBlockMain hb ch >>= \m ->
             if m
