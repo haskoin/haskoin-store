@@ -834,7 +834,7 @@ pruneDB = do
         x -> do
           ks <-
             fmap (map fst) . runRedis $
-              getFromSortedSet maxKey Nothing 0 (fromIntegral x)
+              getFromSortedSet maxKey Nothing 0 (fromIntegral x * 2)
           $(logDebugS) "Cache" $
             "Pruning " <> cs (show (length ks)) <> " old xpubs"
           delXPubKeys ks
