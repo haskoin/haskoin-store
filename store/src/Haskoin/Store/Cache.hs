@@ -829,7 +829,7 @@ pruneDB = do
   if s > x then flush (s - x) else return 0
   where
     flush n =
-      case n `div` 8 of
+      case n `div` 64 of
         0 -> return 0
         x -> do
           ks <-
