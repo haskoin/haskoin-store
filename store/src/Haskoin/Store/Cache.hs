@@ -824,17 +824,17 @@ pruneDB ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
   CacheX m Integer
 pruneDB = do
-  x <- asks cacheMax
+  x <- (`div` 10) . (* 8) <$> asks cacheMax -- Prune to 80% of max
   s <- runRedis Redis.dbsize
   if s > x then flush (s - x) else return 0
   where
     flush n =
-      case n `div` 64 of
+      case n `div` 8 of
         0 -> return 0
         x -> do
           ks <-
             fmap (map fst) . runRedis $
-              getFromSortedSet maxKey Nothing 0 (fromIntegral x * 2)
+              getFromSortedSet maxKey Nothing 0 (fromIntegral x)
           $(logDebugS) "Cache" $
             "Pruning " <> cs (show (length ks)) <> " old xpubs"
           delXPubKeys ks

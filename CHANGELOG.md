@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.64.14
+### Fixed
+- Always prune to 80% of max cache size.
+
 ## 0.64.13
 ### Fixed
 - Avoid doing a hissy fit on transient cache issue.
