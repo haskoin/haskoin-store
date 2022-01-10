@@ -25,6 +25,8 @@ module Haskoin.Store.Data
     -- * Transactions
     TxRef (..),
     TxData (..),
+    txDataFee,
+    isCoinbaseTx,
     Transaction (..),
     transactionToJSON,
     transactionToEncoding,
@@ -836,6 +838,9 @@ instance Binary StoreInput where
   put = serialize
   get = deserialize
 
+isCoinbaseTx :: Tx -> Bool
+isCoinbaseTx = all ((== nullOutPoint) . prevOutput) . txIn
+
 isCoinbase :: StoreInput -> Bool
 isCoinbase StoreCoinbase {} = True
 isCoinbase StoreInput {} = False
@@ -1156,6 +1161,13 @@ instance Serialize TxData where
 instance Binary TxData where
   put = serialize
   get = deserialize
+
+txDataFee :: TxData -> Word64
+txDataFee TxData {..} =
+  if isCoinbaseTx txData then 0 else inputs - outputs
+  where
+    inputs = sum . map prevAmount $ IntMap.elems txDataPrevs
+    outputs = sum . map outValue $ txOut txData
 
 toTransaction :: TxData -> IntMap Spender -> Transaction
 toTransaction t sm =

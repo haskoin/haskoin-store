@@ -84,6 +84,8 @@ import Haskoin.Store.Data
     UnixTime,
     Unspent (..),
     confirmed,
+    isCoinbaseTx,
+    txDataFee,
   )
 import UnliftIO (Exception)
 
@@ -203,10 +205,10 @@ checkNewBlock b n =
             <> blockHashToHex (headerHash (blockHeader b))
         throwError PrevBlockNotBest
 
-importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> m ()
+importOrConfirm :: MonadImport m => BlockNode -> [Tx] -> m [TxData]
 importOrConfirm bn txns = do
   mapM_ (freeOutputs True False . snd) (reverse txs)
-  mapM_ (uncurry action) txs
+  mapM (uncurry action) txs
   where
     txs = sortTxs txns
     br i = BlockRef {blockRefHeight = nodeHeight bn, blockRefPos = i}
@@ -222,7 +224,6 @@ importOrConfirm bn txns = do
             "Confirming tx: "
               <> txHashToHex (txHash tx)
           confirmTx t (br i)
-          return Nothing
         Nothing -> do
           $(logErrorS) "BlockStore" $
             "Cannot find tx to confirm: "
@@ -232,9 +233,8 @@ importOrConfirm bn txns = do
       $(logDebugS) "BlockStore" $
         "Importing tx: " <> txHashToHex (txHash tx)
       importTx (br i) bn_time False tx
-      return Nothing
 
-importBlock :: MonadImport m => Block -> BlockNode -> m ()
+importBlock :: MonadImport m => Block -> BlockNode -> m (BlockData, [TxData])
 importBlock b n = do
   $(logDebugS) "BlockStore" $
     "Checking new block: "
@@ -247,27 +247,29 @@ importBlock b n = do
   $(logDebugS) "BlockStore" $
     "Inserting block entries for: "
       <> blockHashToHex (headerHash (nodeHeader n))
-  insertBlock
-    BlockData
-      { blockDataHeight = nodeHeight n,
-        blockDataMainChain = True,
-        blockDataWork = nodeWork n,
-        blockDataHeader = nodeHeader n,
-        blockDataSize = fromIntegral (B.length (encode b)),
-        blockDataTxs = map txHash (blockTxns b),
-        blockDataWeight = if getSegWit net then w else 0,
-        blockDataSubsidy = subsidy,
-        blockDataFees = cb_out_val - subsidy,
-        blockDataOutputs = ts_out_val
-      }
   setBlocksAtHeight
     (nub (headerHash (nodeHeader n) : bs))
     (nodeHeight n)
   setBest (headerHash (nodeHeader n))
-  importOrConfirm n (blockTxns b)
+  tds <- importOrConfirm n (blockTxns b)
+  let bd =
+        BlockData
+          { blockDataHeight = nodeHeight n,
+            blockDataMainChain = True,
+            blockDataWork = nodeWork n,
+            blockDataHeader = nodeHeader n,
+            blockDataSize = fromIntegral (B.length (encode b)),
+            blockDataTxs = map txHash (blockTxns b),
+            blockDataWeight = if getSegWit net then w else 0,
+            blockDataSubsidy = subsidy,
+            blockDataFees = sum $ map txDataFee tds,
+            blockDataOutputs = ts_out_val
+          }
+  insertBlock bd
   $(logDebugS) "BlockStore" $
-    "Finished importing transactions for: "
+    "Finished importing block: "
       <> blockHashToHex (headerHash (nodeHeader n))
+  return (bd, tds)
   where
     cb_out_val =
       sum $ map outValue $ txOut $ head $ blockTxns b
@@ -292,7 +294,7 @@ checkNewTx tx = do
     $(logErrorS) "BlockStore" $
       "Orphan: " <> txHashToHex (txHash tx)
     throwError Orphan
-  when (isCoinbase tx) $ do
+  when (isCoinbaseTx tx) $ do
     $(logErrorS) "BlockStore" $
       "Coinbase cannot be imported into mempool: "
         <> txHashToHex (txHash tx)
@@ -335,7 +337,7 @@ importTx ::
   -- | RBF
   Bool ->
   Tx ->
-  m ()
+  m TxData
 importTx br tt rbf tx = do
   mus <- getUnspentOutputs tx
   us <- forM mus $ \case
@@ -347,11 +349,12 @@ importTx br tt rbf tx = do
     Just u -> return u
   let td = prepareTxData rbf br tt tx us
   commitAddTx td
+  return td
 
-unConfirmTx :: MonadImport m => TxData -> m ()
+unConfirmTx :: MonadImport m => TxData -> m TxData
 unConfirmTx t = confTx t Nothing
 
-confirmTx :: MonadImport m => TxData -> BlockRef -> m ()
+confirmTx :: MonadImport m => TxData -> BlockRef -> m TxData
 confirmTx t br = confTx t (Just br)
 
 replaceAddressTx :: MonadImport m => TxData -> BlockRef -> m ()
@@ -419,7 +422,7 @@ adjustAddressOutput op o old new = do
       decreaseBalance (confirmed old) a (outValue o)
       increaseBalance (confirmed new) a (outValue o)
 
-confTx :: MonadImport m => TxData -> Maybe BlockRef -> m ()
+confTx :: MonadImport m => TxData -> Maybe BlockRef -> m TxData
 confTx t mbr = do
   replaceAddressTx t new
   forM_ (zip [0 ..] (txOut (txData t))) $ \(n, o) -> do
@@ -429,6 +432,7 @@ confTx t mbr = do
   let td = t {txDataBlock = new, txDataRBF = rbf}
   insertTx td
   updateMempool td
+  return td
   where
     new = fromMaybe (MemRef (txDataTime t)) mbr
     old = txDataBlock t
@@ -766,9 +770,6 @@ txDataAddresses t =
   where
     prevs = I.elems (txDataPrevs t)
     outs = txOut (txData t)
-
-isCoinbase :: Tx -> Bool
-isCoinbase = all ((== nullOutPoint) . prevOutput) . txIn
 
 prevOuts :: Tx -> [OutPoint]
 prevOuts tx = filter (/= nullOutPoint) (map prevOutput (txIn tx))

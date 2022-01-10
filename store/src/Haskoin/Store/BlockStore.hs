@@ -490,7 +490,7 @@ processBlock peer block = void . runMaybeT $ do
   lift . notify (Just block) $
     runImport (importBlock block node) >>= \case
       Left e -> failure e
-      Right () -> success node
+      Right _ -> success node
   where
     header = blockHeader block
     blockhash = headerHash header
