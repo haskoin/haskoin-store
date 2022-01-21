@@ -1440,8 +1440,10 @@ redisGetAddrsInfo as = do
 addrsToAdd :: KeyIndex -> [XPubBal] -> AddressXPub -> [(Address, AddressXPub)]
 addrsToAdd gap xbals addrinfo
   | null fbals = []
+  | not haschange = zipWith f addrs list <> zipWith f changeaddrs changelist
   | otherwise = zipWith f addrs list
   where
+    haschange = any ((== 1) . head . xPubBalPath) xbals
     f a p = (a, AddressXPub {addressXPubSpec = xpub, addressXPubPath = p})
     dchain = head (addressXPubPath addrinfo)
     fbals = filter ((== dchain) . head . xPubBalPath) xbals
@@ -1453,10 +1455,13 @@ addrsToAdd gap xbals addrinfo
         then [maxidx + 1 .. aidx + gap]
         else []
     paths = map (Deriv :/ dchain :/) ixs
-    keys = map (\p -> derivePubPath p (xPubSpecKey xpub)) paths
+    keys = map (\p -> derivePubPath p (xPubSpecKey xpub))
     list = map pathToList paths
     xpubf = xPubAddrFunction (xPubDeriveType xpub)
-    addrs = map xpubf keys
+    addrs = map xpubf (keys paths)
+    changepaths = map (Deriv :/ 1 :/) [0 .. gap]
+    changeaddrs = map xpubf (keys changepaths)
+    changelist = map pathToList changepaths
 
 sortTxData :: [TxData] -> [TxData]
 sortTxData tds =

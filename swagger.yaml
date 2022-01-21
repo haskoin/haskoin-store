@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.64.16
+  version: &version 0.64.17
   title: Bitcoin (BCH/BTC) Query API
   contact:
     name: Haskoin
@@ -1957,6 +1957,7 @@ paths:
       summary: Delete Cached Extended Key
       parameters:
         - $ref: '#/components/parameters/xpubParam'
+        - $ref: '#/components/parameters/xpubDerive'
         - $ref: '#/components/parameters/nocacheParam'
       responses:
         '200':

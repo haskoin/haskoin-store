@@ -4,10 +4,10 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f48a7ae3c9a67fe4458dc559bf0f7f70208a69d48472e728ca1a78a14bc95fb9
+-- hash: 137cdf231cdcee756431b16c70d282c75c46c36ae509238595347136e2b2dc33
 
 name:           haskoin-store-data
-version:        0.64.16
+version:        0.64.17
 synopsis:       Data for Haskoin Store
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
