@@ -1459,7 +1459,7 @@ addrsToAdd gap xbals addrinfo
     list = map pathToList paths
     xpubf = xPubAddrFunction (xPubDeriveType xpub)
     addrs = map xpubf (keys paths)
-    changepaths = map (Deriv :/ 1 :/) [0 .. gap]
+    changepaths = map (Deriv :/ 1 :/) [0 .. gap - 1]
     changeaddrs = map xpubf (keys changepaths)
     changelist = map pathToList changepaths
 
