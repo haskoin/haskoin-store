@@ -12,7 +12,6 @@ module Haskoin.Store.Database.Reader
     addrTxCF,
     addrOutCF,
     txCF,
-    spenderCF,
     unspentCF,
     blockCF,
     heightCF,
@@ -33,10 +32,12 @@ import Conduit
   )
 import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.Reader (ReaderT, ask, asks, runReaderT)
+import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Bits ((.&.))
 import qualified Data.ByteString as BS
 import Data.Default (def)
 import Data.Function (on)
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..))
@@ -97,7 +98,7 @@ incrementCounter f i =
     Nothing -> return ()
 
 dataVersion :: Word32
-dataVersion = 17
+dataVersion = 18
 
 withDatabaseReader ::
   MonadUnliftIO m =>
@@ -128,7 +129,7 @@ columnFamilyConfig =
   [ ("addr-tx", def {prefixLength = Just 22, bloomFilter = True}),
     ("addr-out", def {prefixLength = Just 22, bloomFilter = True}),
     ("tx", def {prefixLength = Just 33, bloomFilter = True}),
-    ("spender", def {prefixLength = Just 33, bloomFilter = True}),
+    ("spender", def {prefixLength = Just 33, bloomFilter = True}), -- unused
     ("unspent", def {prefixLength = Just 37, bloomFilter = True}),
     ("block", def {prefixLength = Just 33, bloomFilter = True}),
     ("height", def {prefixLength = Nothing, bloomFilter = True}),
@@ -143,9 +144,6 @@ addrOutCF db = columnFamilies db !! 1
 
 txCF :: DB -> ColumnFamily
 txCF db = columnFamilies db !! 2
-
-spenderCF :: DB -> ColumnFamily
-spenderCF db = columnFamilies db !! 3
 
 unspentCF :: DB -> ColumnFamily
 unspentCF db = columnFamilies db !! 4
@@ -268,13 +266,10 @@ instance MonadIO m => StoreReadBase (DatabaseReaderT m) where
         incrementCounter dataTxCount 1
         return (Just t)
 
-  getSpender op = do
-    db <- asks databaseHandle
-    retrieveCF db (spenderCF db) (SpenderKey op) >>= \case
-      Nothing -> return Nothing
-      Just s -> do
-        incrementCounter dataSpenderCount 1
-        return (Just s)
+  getSpender op = runMaybeT $ do
+    td <- MaybeT $ getTxData (outPointHash op)
+    let i = fromIntegral (outPointIndex op)
+    MaybeT . return $ i `IntMap.lookup` txDataSpenders td
 
   getUnspent p = do
     db <- asks databaseHandle

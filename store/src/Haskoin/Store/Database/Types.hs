@@ -11,7 +11,6 @@ module Haskoin.Store.Database.Types
     BalKey (..),
     HeightKey (..),
     MemKey (..),
-    SpenderKey (..),
     TxKey (..),
     decodeTxKey,
     UnspentKey (..),
@@ -211,29 +210,6 @@ decodeTxKey i =
 instance Key TxKey
 
 instance KeyValue TxKey TxData
-
-data SpenderKey
-  = SpenderKey {outputPoint :: !OutPoint}
-  | SpenderKeyS {outputKeyS :: !TxHash}
-  deriving (Show, Read, Eq, Ord, Generic, Hashable)
-
-instance Serialize SpenderKey where
-  -- 0x10 · TxHash · Index
-  put (SpenderKey OutPoint {outPointHash = h, outPointIndex = i}) = do
-    put (SpenderKeyS h)
-    put i
-  -- 0x10 · TxHash
-  put (SpenderKeyS h) = do
-    putWord8 0x10
-    put h
-  get = do
-    guard . (== 0x10) =<< getWord8
-    op <- OutPoint <$> get <*> get
-    return $ SpenderKey op
-
-instance Key SpenderKey
-
-instance KeyValue SpenderKey Spender
 
 -- | Unspent output database key.
 data UnspentKey

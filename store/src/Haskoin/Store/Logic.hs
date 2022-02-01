@@ -323,7 +323,8 @@ prepareTxData rbf br tt tx us =
       txDataPrevs = ps,
       txDataDeleted = False,
       txDataRBF = rbf,
-      txDataTime = tt
+      txDataTime = tt,
+      txDataSpenders = I.empty
     }
   where
     mkprv u = Prev (unspentScript u) (unspentAmount u)
@@ -508,20 +509,22 @@ getChain memonly rbfcheck th' = do
             throwError TxConfirmed
           | rbfcheck ->
             isRBF (txDataBlock td) (txData td) >>= \case
-              True -> return $ Just $ txData td
+              True -> return $ Just td
               False -> do
                 $(logErrorS) "BlockStore" $
                   "Double-spending transaction: "
                     <> txHashToHex th
                 throwError DoubleSpend
-          | otherwise -> return $ Just $ txData td
+          | otherwise -> return $ Just td
     go txs pdg = do
-      txs1 <- HashSet.fromList . catMaybes <$> mapM get_tx (HashSet.toList pdg)
-      pdg1 <-
-        HashSet.fromList . concatMap (map spenderHash . I.elems)
-          <$> mapM getSpenders (HashSet.toList pdg)
-      let txs' = txs1 <> txs
-          pdg' = pdg1 `HashSet.difference` HashSet.map txHash txs'
+      tds <- catMaybes <$> mapM get_tx (HashSet.toList pdg)
+      let txsn = HashSet.fromList $ fmap txData tds
+          pdgn =
+            HashSet.fromList
+              . concatMap (map spenderHash . I.elems)
+              $ fmap txDataSpenders tds
+          txs' = txsn <> txs
+          pdg' = pdgn `HashSet.difference` HashSet.map txHash txs'
       if HashSet.null pdg'
         then return $ HashSet.toList txs'
         else go txs' pdg'
@@ -533,17 +536,17 @@ deleteSingleTx th =
       $(logErrorS) "BlockStore" $
         "Already deleted: " <> txHashToHex th
       throwError TxNotFound
-    Just td -> do
-      $(logDebugS) "BlockStore" $
-        "Deleting tx: " <> txHashToHex th
-      getSpenders th >>= \case
-        m
-          | I.null m -> commitDelTx td
-          | otherwise -> do
-            $(logErrorS) "BlockStore" $
-              "Tried to delete spent tx: "
-                <> txHashToHex th
-            throwError TxSpent
+    Just td ->
+      if I.null (txDataSpenders td)
+        then do
+          $(logDebugS) "BlockStore" $
+            "Deleting tx: " <> txHashToHex th
+          commitDelTx td
+        else do
+          $(logErrorS) "BlockStore" $
+            "Tried to delete spent tx: "
+              <> txHashToHex th
+          throwError TxSpent
 
 commitDelTx :: MonadImport m => TxData -> m ()
 commitDelTx = commitModTx False
@@ -672,6 +675,22 @@ getTxOut :: Word32 -> Tx -> Maybe TxOut
 getTxOut i tx = do
   guard (fromIntegral i < length (txOut tx))
   return $ txOut tx !! fromIntegral i
+
+insertSpender :: MonadImport m => OutPoint -> Spender -> m ()
+insertSpender op s = do
+  td <- getImportTxData (outPointHash op)
+  let p = txDataSpenders td
+      p' = I.insert (fromIntegral (outPointIndex op)) s p
+      td' = td {txDataSpenders = p'}
+  insertTx td'
+
+deleteSpender :: MonadImport m => OutPoint -> m ()
+deleteSpender op = do
+  td <- getImportTxData (outPointHash op)
+  let p = txDataSpenders td
+      p' = I.delete (fromIntegral (outPointIndex op)) p
+      td' = td {txDataSpenders = p'}
+  insertTx td'
 
 spendOutput :: MonadImport m => TxHash -> Word32 -> OutPoint -> m ()
 spendOutput th ix op = do

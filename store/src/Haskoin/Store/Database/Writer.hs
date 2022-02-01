@@ -5,10 +5,12 @@
 
 module Haskoin.Store.Database.Writer (WriterT, runWriter) where
 
+import Control.Monad (join)
 import Control.Monad.Reader (ReaderT (..))
 import qualified Control.Monad.Reader as R
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as M
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (sortOn)
 import Data.Ord (Down (..))
 import Data.Tuple (swap)
@@ -73,8 +75,6 @@ data Memory = Memory
       !(HashMap BlockHeight [BlockHash]),
     hTx ::
       !(HashMap TxHash (Maybe TxData)),
-    hSpender ::
-      !(HashMap OutPoint (Maybe Spender)),
     hUnspent ::
       !(HashMap OutPoint (Maybe Unspent)),
     hBalance ::
@@ -105,14 +105,6 @@ instance MonadIO m => StoreWrite (WriterT m) where
     ReaderT $ \Writer {getState = s} ->
       liftIO . atomically . modifyTVar s $
         insertTxH t
-  insertSpender p s' =
-    ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
-        insertSpenderH p s'
-  deleteSpender p =
-    ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
-        deleteSpenderH p
   insertAddrTx a t =
     ReaderT $ \Writer {getState = s} ->
       liftIO . atomically . modifyTVar s $
@@ -181,7 +173,6 @@ hashMapOps db mem =
     <> blockHashOps db (hBlock mem)
     <> blockHeightOps db (hHeight mem)
     <> txOps db (hTx mem)
-    <> spenderOps db (hSpender mem)
     <> balOps db (hBalance mem)
     <> addrTxOps db (hAddrTx mem)
     <> addrOutOps db (hAddrOut mem)
@@ -209,12 +200,6 @@ txOps db = map (uncurry f) . M.toList
   where
     f k (Just t) = insertOpCF (txCF db) (TxKey k) t
     f k Nothing = deleteOpCF (txCF db) (TxKey k)
-
-spenderOps :: DB -> HashMap OutPoint (Maybe Spender) -> [BatchOp]
-spenderOps db = map (uncurry f) . M.toList
-  where
-    f o (Just s) = insertOpCF (spenderCF db) (SpenderKey o) s
-    f o Nothing = deleteOpCF (spenderCF db) (SpenderKey o)
 
 balOps :: DB -> HashMap Address (Maybe Balance) -> [BatchOp]
 balOps db = map (uncurry f) . M.toList
@@ -302,7 +287,6 @@ newMemory mem =
       hBlock = M.empty,
       hHeight = M.empty,
       hTx = M.empty,
-      hSpender = M.empty,
       hUnspent = M.empty,
       hBalance = M.empty,
       hAddrTx = M.empty,
@@ -323,7 +307,10 @@ getTxDataH :: TxHash -> Memory -> Maybe (Maybe TxData)
 getTxDataH t = M.lookup t . hTx
 
 getSpenderH :: OutPoint -> Memory -> Maybe (Maybe Spender)
-getSpenderH op db = M.lookup op (hSpender db)
+getSpenderH op db =
+  join . fmap f <$> getTxDataH (outPointHash op) db
+  where
+    f = IntMap.lookup (fromIntegral (outPointIndex op)) . txDataSpenders
 
 getBalanceH :: Address -> Memory -> Maybe (Maybe Balance)
 getBalanceH a = M.lookup a . hBalance
@@ -351,14 +338,6 @@ setBlocksAtHeightH hs g db =
 insertTxH :: TxData -> Memory -> Memory
 insertTxH tx db =
   db {hTx = M.insert (txHash (txData tx)) (Just tx) (hTx db)}
-
-insertSpenderH :: OutPoint -> Spender -> Memory -> Memory
-insertSpenderH op s db =
-  db {hSpender = M.insert op (Just s) (hSpender db)}
-
-deleteSpenderH :: OutPoint -> Memory -> Memory
-deleteSpenderH op db =
-  db {hSpender = M.insert op Nothing (hSpender db)}
 
 setBalanceH :: Balance -> Memory -> Memory
 setBalanceH bal db =

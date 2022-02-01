@@ -1133,7 +1133,8 @@ data TxData = TxData
     txDataPrevs :: !(IntMap Prev),
     txDataDeleted :: !Bool,
     txDataRBF :: !Bool,
-    txDataTime :: !Word64
+    txDataTime :: !Word64,
+    txDataSpenders :: !(IntMap Spender)
   }
   deriving (Show, Eq, Ord, Generic, NFData)
 
@@ -1145,6 +1146,7 @@ instance Serial TxData where
     serialize txDataDeleted
     serialize txDataRBF
     putWord64be txDataTime
+    putIntMap (putWord64be . fromIntegral) serialize txDataSpenders
   deserialize = do
     txDataBlock <- deserialize
     txData <- deserialize
@@ -1152,6 +1154,7 @@ instance Serial TxData where
     txDataDeleted <- deserialize
     txDataRBF <- deserialize
     txDataTime <- getWord64be
+    txDataSpenders <- getIntMap (fromIntegral <$> getWord64be) deserialize
     return TxData {..}
 
 instance Serialize TxData where
@@ -1169,8 +1172,8 @@ txDataFee TxData {..} =
     inputs = sum . map prevAmount $ IntMap.elems txDataPrevs
     outputs = sum . map outValue $ txOut txData
 
-toTransaction :: TxData -> IntMap Spender -> Transaction
-toTransaction t sm =
+toTransaction :: TxData -> Transaction
+toTransaction t =
   Transaction
     { transactionBlock = txDataBlock t,
       transactionVersion = txVersion (txData t),
@@ -1198,21 +1201,21 @@ toTransaction t sm =
     ws = take (length (txIn (txData t))) $ txWitness (txData t) <> repeat []
     f n i = toInput i (IntMap.lookup n (txDataPrevs t)) (ws !! n)
     ins = zipWith f [0 ..] (txIn (txData t))
-    g n o = toOutput o (IntMap.lookup n sm)
+    g n o = toOutput o (IntMap.lookup n (txDataSpenders t))
     outs = zipWith g [0 ..] (txOut (txData t))
 
-fromTransaction :: Transaction -> (TxData, IntMap Spender)
-fromTransaction t = (d, sm)
+fromTransaction :: Transaction -> TxData
+fromTransaction t =
+  TxData
+    { txDataBlock = transactionBlock t,
+      txData = transactionData t,
+      txDataPrevs = ps,
+      txDataDeleted = transactionDeleted t,
+      txDataRBF = transactionRBF t,
+      txDataTime = transactionTime t,
+      txDataSpenders = sm
+    }
   where
-    d =
-      TxData
-        { txDataBlock = transactionBlock t,
-          txData = transactionData t,
-          txDataPrevs = ps,
-          txDataDeleted = transactionDeleted t,
-          txDataRBF = transactionRBF t,
-          txDataTime = transactionTime t
-        }
     f _ StoreCoinbase {} = Nothing
     f n StoreInput {inputPkScript = s, inputAmount = v} =
       Just (n, Prev {prevScript = s, prevAmount = v})

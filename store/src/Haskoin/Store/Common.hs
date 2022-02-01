@@ -19,7 +19,6 @@ module Haskoin.Store.Common
     getActiveBlock,
     getActiveTxData,
     getDefaultBalance,
-    getSpenders,
     getTransaction,
     getNumTransaction,
     blockAtOrAfter,
@@ -178,8 +177,6 @@ class StoreWrite m where
   insertBlock :: BlockData -> m ()
   setBlocksAtHeight :: [BlockHash] -> BlockHeight -> m ()
   insertTx :: TxData -> m ()
-  insertSpender :: OutPoint -> Spender -> m ()
-  deleteSpender :: OutPoint -> m ()
   insertAddrTx :: Address -> TxRef -> m ()
   deleteAddrTx :: Address -> TxRef -> m ()
   insertAddrUnspent :: Address -> Unspent -> m ()
@@ -189,16 +186,6 @@ class StoreWrite m where
   setBalance :: Balance -> m ()
   insertUnspent :: Unspent -> m ()
   deleteUnspent :: OutPoint -> m ()
-
-getSpenders :: StoreReadBase m => TxHash -> m (IntMap Spender)
-getSpenders th =
-  getActiveTxData th >>= \case
-    Nothing -> return I.empty
-    Just td ->
-      I.fromList . catMaybes
-        <$> mapM get_spender [0 .. length (txOut (txData td)) - 1]
-  where
-    get_spender i = fmap (i,) <$> getSpender (OutPoint th (fromIntegral i))
 
 getActiveBlock :: StoreReadExtra m => BlockHash -> m (Maybe BlockData)
 getActiveBlock bh =
@@ -246,18 +233,11 @@ xPubSummary _xspec xbals =
 
 getTransaction ::
   (Monad m, StoreReadBase m) => TxHash -> m (Maybe Transaction)
-getTransaction h = runMaybeT $ do
-  d <- MaybeT $ getTxData h
-  sm <- lift $ getSpenders h
-  return $ toTransaction d sm
+getTransaction h = fmap toTransaction <$> getTxData h
 
 getNumTransaction ::
   (Monad m, StoreReadExtra m) => Word64 -> m [Transaction]
-getNumTransaction i = do
-  ds <- getNumTxData i
-  forM ds $ \d -> do
-    sm <- getSpenders (txHash (txData d))
-    return $ toTransaction d sm
+getNumTransaction i = map toTransaction <$> getNumTxData i
 
 blockAtOrAfter ::
   (MonadIO m, StoreReadExtra m) =>
@@ -437,7 +417,6 @@ data DataMetrics = DataMetrics
   { dataBestCount :: !Counter,
     dataBlockCount :: !Counter,
     dataTxCount :: !Counter,
-    dataSpenderCount :: !Counter,
     dataMempoolCount :: !Counter,
     dataBalanceCount :: !Counter,
     dataUnspentCount :: !Counter,
@@ -453,7 +432,6 @@ createDataMetrics s = liftIO $ do
   dataBestCount <- Metrics.createCounter "data.best_block" s
   dataBlockCount <- Metrics.createCounter "data.blocks" s
   dataTxCount <- Metrics.createCounter "data.txs" s
-  dataSpenderCount <- Metrics.createCounter "data.spenders" s
   dataMempoolCount <- Metrics.createCounter "data.mempool" s
   dataBalanceCount <- Metrics.createCounter "data.balances" s
   dataUnspentCount <- Metrics.createCounter "data.unspents" s

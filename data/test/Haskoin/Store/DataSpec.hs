@@ -218,6 +218,7 @@ instance Arbitrary TxData where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
+      <*> arbitrary
 
 instance Arbitrary StoreInput where
   arbitrary =
