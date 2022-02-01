@@ -164,6 +164,7 @@ import NQE
   )
 import Network.HTTP.Types
   ( Status (..),
+    hContentType,
     requestEntityTooLarge413,
     status400,
     status404,
@@ -190,6 +191,7 @@ import Network.Wai.Handler.Warp
   )
 import Network.Wai.Handler.WebSockets (websocketsOr)
 import Network.Wai.Middleware.RequestSizeLimit
+import Network.Wai.Middleware.Timeout
 import Network.WebSockets
   ( ServerApp,
     acceptRequest,
@@ -238,7 +240,8 @@ data WebLimits = WebLimits
     maxLimitDefault :: !Word32,
     maxLimitGap :: !Word32,
     maxLimitInitialGap :: !Word32,
-    maxLimitBody :: !Word32
+    maxLimitBody :: !Word32,
+    maxLimitTimeout :: !Word32
   }
   deriving (Eq, Show)
 
@@ -251,7 +254,8 @@ instance Default WebLimits where
         maxLimitDefault = 100,
         maxLimitGap = 32,
         maxLimitInitialGap = 20,
-        maxLimitBody = 1024 * 1024
+        maxLimitBody = 1024 * 1024,
+        maxLimitTimeout = 0
       }
 
 data WebConfig = WebConfig
@@ -567,6 +571,7 @@ runWeb
           S.middleware (webSocketEvents st)
           S.middleware reqLogger
           S.middleware (reqSizeLimit maxLimitBody)
+          when (maxLimitTimeout > 0) $ S.middleware (reqTimeout maxLimitTimeout)
           S.defaultHandler defHandler
           handlePaths
           S.notFound $ raise ThingNotFound
@@ -1366,7 +1371,7 @@ publishTx cfg tx =
     f p s
       | webNoMempool cfg = return $ Right ()
       | otherwise =
-        liftIO (timeout t (g p s)) >>= \case
+        liftIO (UnliftIO.timeout t (g p s)) >>= \case
           Nothing -> return $ Left PubTimeout
           Just (Left e) -> return $ Left e
           Just (Right ()) -> return $ Right ()
@@ -3132,6 +3137,14 @@ reqSizeLimit i = requestSizeLimitMiddleware lim
     too_big _ = \_app _req send ->
       send $
         waiExcept requestEntityTooLarge413 RequestTooLarge
+
+reqTimeout :: Integral i => i -> Middleware
+reqTimeout = timeoutAs res . fromIntegral
+  where
+    err = ServerTimeout
+    res = responseLBS sta [hdr] (A.encode err)
+    sta = errStatus err
+    hdr = (hContentType, "application/json")
 
 fmtReq :: ByteString -> Request -> Text
 fmtReq bs req =
