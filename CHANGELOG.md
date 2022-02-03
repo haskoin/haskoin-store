@@ -4,13 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
-## 0.65.1
-### Changed
-- Use faster IORef instead of slow TVar in some places.
-
 ## 0.65.0
 ### Changed
 - Spenders now embedded into tx objects in database for performance.
+- Use faster IORef instead of slow TVar when ingesting.
+- Use mutable hash tables when ingesting.
 
 ## 0.64.19
 ### Added
