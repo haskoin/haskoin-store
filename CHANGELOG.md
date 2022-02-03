@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Spenders now embedded into tx objects in database for performance.
 - Use faster IORef instead of slow TVar when ingesting.
 - Use mutable hash tables when ingesting.
+- Allow to disable unscalable API endpoints.
 
 ## 0.64.19
 ### Added

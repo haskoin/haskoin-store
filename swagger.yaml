@@ -19,9 +19,17 @@ info:
 
 tags:
   - name: Address
+    description: Operations on addresses and extended public keys.
   - name: Transaction
+    description: Operations related to transactions.
   - name: Block
+    description: Operations related to blocks.
   - name: Network
+    description: Network statistics and other miscelaneous operations.
+  - name: Slow
+    description: Operations not considered scalable. May be disabled.
+  - name: Blockchain
+    description: Blockchain.info compatibility. May be disabled.
 
 paths:
   '/health':
@@ -147,6 +155,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       summary: Detailed Address Transactions
       operationId: getAddressTxsFull
       parameters:
@@ -250,6 +259,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       summary: Multiple Address Transactions
       operationId: getMultipleAddressTxs
       parameters:
@@ -299,6 +309,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       summary: Multiple Address Detailed Transactions
       operationId: getMultipleAddressTxsFull
       parameters:
@@ -506,6 +517,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       summary: Multiple Address Balances
       operationId: getMultipleAddressBalances
       parameters:
@@ -613,6 +625,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       summary: Multiple Address Unspent Outputs
       operationId: getMultipleAddressUnspent
       parameters:
@@ -764,6 +777,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       summary: Raw Block Chain Head
       operationId: getRawBlockHead
       responses:
@@ -790,6 +804,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       summary: Most Recent Blocks
       operationId: getLatestBlocks
       parameters:
@@ -910,6 +925,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       operationId: getRawBlock
       summary: Raw Block
       parameters:
@@ -944,6 +960,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       operationId: getBlocks
       summary: Information for Multiple Blocks
       parameters:
@@ -1048,6 +1065,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       operationId: getRawBlocksAtHeight
       summary: Raw Blocks at Height
       parameters:
@@ -1124,6 +1142,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       operationId: getRawBlockAtTime
       summary: Raw Block Mined at Time
       parameters:
@@ -1203,6 +1222,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       operationId: getRawBlockMTP
       summary: Raw Block at Median Time Past
       parameters:
@@ -1237,6 +1257,7 @@ paths:
     get:
       tags:
         - Block
+        - Slow
       operationId: getBlocksAtHeights
       summary: Blocks at Multiple Heights
       parameters:
@@ -1408,6 +1429,7 @@ paths:
     get:
       tags:
         - Transaction
+        - Slow
       operationId: cbAfterHeight
       summary: Hard Fork Safety Check
       parameters:
@@ -1445,6 +1467,7 @@ paths:
     get:
       tags:
         - Transaction
+        - Slow
       operationId: getTransactions
       summary: Multiple Detailed Transactions
       parameters:
@@ -1594,6 +1617,7 @@ paths:
       tags:
         - Transaction
         - Block
+        - Slow
       operationId: getBlockTransactions
       summary: Transactions for Block
       parameters:
@@ -1759,6 +1783,7 @@ paths:
       tags:
         - Transaction
         - Block
+        - Slow
       operationId: getRawBlockTransactions
       summary: Raw Block Transactions
       parameters:
@@ -1917,6 +1942,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       operationId: getXPubSummary
       summary: Extended Public Key Summary
       parameters:
@@ -1953,6 +1979,7 @@ paths:
     delete:
       tags:
         - Address
+        - Slow
       operationId: deleteCachedXPub
       summary: Delete Cached Extended Key
       parameters:
@@ -1988,6 +2015,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       operationId: getXPubTransactionsFull
       summary: Detailed Extended Public Key Transactions
       parameters:
@@ -2204,6 +2232,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       operationId: getXPubTransactions
       summary: Extended Public Key Transaction List
       parameters:
@@ -2251,6 +2280,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       operationId: getXPubBalances
       summary: Extended Public Key Balances
       parameters:
@@ -2313,6 +2343,7 @@ paths:
     get:
       tags:
         - Address
+        - Slow
       operationId: getXPubUnspent
       summary: Extended Public Key Unspent Outputs
       parameters:
@@ -3000,6 +3031,7 @@ paths:
     get:
       tags:
         - Blockchain
+        - Slow
       operationId: getBinfoBlock
       summary: Raw Block
       parameters:
@@ -4805,6 +4837,7 @@ paths:
     get:
       tags:
         - Blockchain
+        - Slow
       operationId: getTxResult
       summary: Transaction Address Amount
       parameters:

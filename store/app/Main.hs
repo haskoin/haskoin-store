@@ -118,7 +118,9 @@ data Config = Config
     configStatsdPrefix :: !String,
     configWebPriceGet :: !Int,
     configWebTickerURL :: !String,
-    configWebHistoryURL :: !String
+    configWebHistoryURL :: !String,
+    configWebNoBlockchain :: !Bool,
+    configWebNoSlow :: !Bool
   }
 
 instance Default Config where
@@ -153,7 +155,9 @@ instance Default Config where
         configStatsdPrefix = defStatsdPrefix,
         configWebPriceGet = defWebPriceGet,
         configWebTickerURL = defWebTickerURL,
-        configWebHistoryURL = defWebHistoryURL
+        configWebHistoryURL = defWebHistoryURL,
+        configWebNoBlockchain = defWebNoBlockchain,
+        configWebNoSlow = defWebNoSlow
       }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -261,6 +265,18 @@ defWebLimits = unsafePerformIO $ do
         maxLimitTimeout = max_timeout
       }
 {-# NOINLINE defWebLimits #-}
+
+defWebNoBlockchain :: Bool
+defWebNoBlockchain =
+  unsafePerformIO $
+    defEnv "NO_BLOCKCHAIN" False parseBool
+{-# NOINLINE defWebNoBlockchain #-}
+
+defWebNoSlow :: Bool
+defWebNoSlow =
+  unsafePerformIO $
+    defEnv "NO_SLOW" False parseBool
+{-# NOINLINE defWebNoSlow #-}
 
 defWebTimeouts :: WebTimeouts
 defWebTimeouts = unsafePerformIO $ do
@@ -614,6 +630,10 @@ config = do
         <> help "How often to retrieve price information"
         <> showDefault
         <> value (configWebPriceGet def)
+  configWebNoBlockchain <-
+    flag (configWebNoBlockchain def) False $
+      long "no-blockchain"
+        <> help "Disable Blockchain.info compatibility layer"
   configWebTickerURL <-
     strOption $
       metavar "URL"
@@ -628,6 +648,10 @@ config = do
         <> help "Blockchain.info price history URL"
         <> showDefault
         <> value (configWebHistoryURL def)
+  configWebNoSlow <-
+    flag (configWebNoSlow def) False $
+      long "no-slow"
+        <> help "Disable non-scalable API calls (recommend also --no-blockchain)"
   pure
     Config
       { configWebLimits = WebLimits {..},
@@ -708,7 +732,9 @@ run
       configStatsdPrefix = statsdpfx,
       configWebPriceGet = wpget,
       configWebTickerURL = wturl,
-      configWebHistoryURL = whurl
+      configWebHistoryURL = whurl,
+      configWebNoSlow = no_slow,
+      configWebNoBlockchain = no_blockchain
     } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
       net <- case networkReader net_str of
@@ -757,7 +783,9 @@ run
               webStats = stats,
               webPriceGet = wpget,
               webTickerURL = wturl,
-              webHistoryURL = whurl
+              webHistoryURL = whurl,
+              webSlow = not no_slow,
+              webBlockchain = not no_blockchain
             }
     where
       with_stats go

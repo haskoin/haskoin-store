@@ -271,7 +271,9 @@ data WebConfig = WebConfig
     webStats :: !(Maybe Metrics.Store),
     webPriceGet :: !Int,
     webTickerURL :: !String,
-    webHistoryURL :: !String
+    webHistoryURL :: !String,
+    webSlow :: !Bool,
+    webBlockchain :: !Bool
   }
 
 data WebState = WebState
@@ -550,7 +552,9 @@ runWeb
       webStats = stats,
       webPriceGet = pget,
       webTickerURL = turl,
-      webMaxLimits = WebLimits {..}
+      webMaxLimits = WebLimits {..},
+      webSlow = slow,
+      webBlockchain = blockchain
     } = do
     ticker <- newTVarIO HashMap.empty
     metrics <- mapM createMetrics stats
@@ -563,7 +567,7 @@ runWeb
               webWreqSession = session
             }
         net = storeNetwork store'
-    withAsync (price net session turl pget ticker) $
+    withAsync (when blockchain $ price net session turl pget ticker) $
       const $ do
         reqLogger <- logIt metrics
         runner <- askRunInIO
@@ -573,7 +577,7 @@ runWeb
           S.middleware (reqSizeLimit maxLimitBody)
           when (maxLimitTimeout > 0) $ S.middleware (reqTimeout maxLimitTimeout)
           S.defaultHandler defHandler
-          handlePaths
+          handlePaths slow blockchain
           S.notFound $ raise ThingNotFound
     where
       opts = def {S.settings = settings defaultSettings}
@@ -669,20 +673,22 @@ defHandler e = do
 
 handlePaths ::
   (MonadUnliftIO m, MonadLoggerIO m) =>
+  Bool ->
+  Bool ->
   S.ScottyT Except (ReaderT WebState m) ()
-handlePaths = do
+handlePaths slow blockchain = do
   -- Block Paths
   pathCompact
     (GetBlock <$> paramLazy <*> paramDef)
     scottyBlock
     blockDataToEncoding
     blockDataToJSON
-  pathCompact
+  when slow $ pathCompact
     (GetBlocks <$> param <*> paramDef)
     (fmap SerialList . scottyBlocks)
     (\n -> list (blockDataToEncoding n) . getSerialList)
     (\n -> json_list blockDataToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetBlockRaw <$> paramLazy)
     scottyBlockRaw
     (const toEncoding)
@@ -692,12 +698,12 @@ handlePaths = do
     scottyBlockBest
     blockDataToEncoding
     blockDataToJSON
-  pathCompact
+  when slow $ pathCompact
     (GetBlockBestRaw & return)
     scottyBlockBestRaw
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetBlockLatest <$> paramDef)
     (fmap SerialList . scottyBlockLatest)
     (\n -> list (blockDataToEncoding n) . getSerialList)
@@ -707,12 +713,12 @@ handlePaths = do
     (fmap SerialList . scottyBlockHeight)
     (\n -> list (blockDataToEncoding n) . getSerialList)
     (\n -> json_list blockDataToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetBlockHeights <$> param <*> paramDef)
     (fmap SerialList . scottyBlockHeights)
     (\n -> list (blockDataToEncoding n) . getSerialList)
     (\n -> json_list blockDataToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetBlockHeightRaw <$> paramLazy)
     scottyBlockHeightRaw
     (const toEncoding)
@@ -722,7 +728,7 @@ handlePaths = do
     scottyBlockTime
     blockDataToEncoding
     blockDataToJSON
-  pathCompact
+  when slow $ pathCompact
     (GetBlockTimeRaw <$> paramLazy)
     scottyBlockTimeRaw
     (const toEncoding)
@@ -732,7 +738,7 @@ handlePaths = do
     scottyBlockMTP
     blockDataToEncoding
     blockDataToJSON
-  pathCompact
+  when slow $ pathCompact
     (GetBlockMTPRaw <$> paramLazy)
     scottyBlockMTPRaw
     (const toEncoding)
@@ -743,7 +749,7 @@ handlePaths = do
     scottyTx
     transactionToEncoding
     transactionToJSON
-  pathCompact
+  when slow $ pathCompact
     (GetTxs <$> param)
     (fmap SerialList . scottyTxs)
     (\n -> list (transactionToEncoding n) . getSerialList)
@@ -753,22 +759,22 @@ handlePaths = do
     scottyTxRaw
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetTxsRaw <$> param)
     scottyTxsRaw
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetTxsBlock <$> paramLazy)
     (fmap SerialList . scottyTxsBlock)
     (\n -> list (transactionToEncoding n) . getSerialList)
     (\n -> json_list transactionToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetTxsBlockRaw <$> paramLazy)
     scottyTxsBlockRaw
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetTxAfter <$> paramLazy <*> paramLazy)
     scottyTxAfter
     (const toEncoding)
@@ -789,17 +795,17 @@ handlePaths = do
     (fmap SerialList . scottyAddrTxs)
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetAddrsTxs <$> param <*> parseLimits)
     (fmap SerialList . scottyAddrsTxs)
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetAddrTxsFull <$> paramLazy <*> parseLimits)
     (fmap SerialList . scottyAddrTxsFull)
     (\n -> list (transactionToEncoding n) . getSerialList)
     (\n -> json_list transactionToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetAddrsTxsFull <$> param <*> parseLimits)
     (fmap SerialList . scottyAddrsTxsFull)
     (\n -> list (transactionToEncoding n) . getSerialList)
@@ -809,7 +815,7 @@ handlePaths = do
     scottyAddrBalance
     balanceToEncoding
     balanceToJSON
-  pathCompact
+  when slow $ pathCompact
     (GetAddrsBalance <$> param)
     (fmap SerialList . scottyAddrsBalance)
     (\n -> list (balanceToEncoding n) . getSerialList)
@@ -819,38 +825,38 @@ handlePaths = do
     (fmap SerialList . scottyAddrUnspent)
     (\n -> list (unspentToEncoding n) . getSerialList)
     (\n -> json_list unspentToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetAddrsUnspent <$> param <*> parseLimits)
     (fmap SerialList . scottyAddrsUnspent)
     (\n -> list (unspentToEncoding n) . getSerialList)
     (\n -> json_list unspentToJSON n . getSerialList)
   -- XPubs
-  pathCompact
+  when slow $ pathCompact
     (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
     scottyXPub
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
     (fmap SerialList . scottyXPubTxs)
     (const toEncoding)
     (const toJSON)
-  pathCompact
+  when slow $ pathCompact
     (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
     (fmap SerialList . scottyXPubTxsFull)
     (\n -> list (transactionToEncoding n) . getSerialList)
     (\n -> json_list transactionToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
     (fmap SerialList . scottyXPubBalances)
     (\n -> list (xPubBalToEncoding n) . getSerialList)
     (\n -> json_list xPubBalToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
     (fmap SerialList . scottyXPubUnspent)
     (\n -> list (xPubUnspentToEncoding n) . getSerialList)
     (\n -> json_list xPubUnspentToJSON n . getSerialList)
-  pathCompact
+  when slow $ pathCompact
     (DelCachedXPub <$> paramLazy <*> paramDef)
     scottyDelXPub
     (const toEncoding)
@@ -869,39 +875,40 @@ handlePaths = do
   S.get "/events" scottyEvents
   S.get "/dbstats" scottyDbStats
   -- Blockchain.info
-  S.post "/blockchain/multiaddr" scottyMultiAddr
-  S.get "/blockchain/multiaddr" scottyMultiAddr
-  S.get "/blockchain/balance" scottyShortBal
-  S.post "/blockchain/balance" scottyShortBal
-  S.get "/blockchain/rawaddr/:addr" scottyRawAddr
-  S.get "/blockchain/address/:addr" scottyRawAddr
-  S.get "/blockchain/xpub/:addr" scottyRawAddr
-  S.post "/blockchain/unspent" scottyBinfoUnspent
-  S.get "/blockchain/unspent" scottyBinfoUnspent
-  S.get "/blockchain/rawtx/:txid" scottyBinfoTx
-  S.get "/blockchain/rawblock/:block" scottyBinfoBlock
-  S.get "/blockchain/latestblock" scottyBinfoLatest
-  S.get "/blockchain/unconfirmed-transactions" scottyBinfoMempool
-  S.get "/blockchain/block-height/:height" scottyBinfoBlockHeight
-  S.get "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
-  S.get "/blockchain/export-history" scottyBinfoHistory
-  S.post "/blockchain/export-history" scottyBinfoHistory
-  S.get "/blockchain/q/addresstohash/:addr" scottyBinfoAddrToHash
-  S.get "/blockchain/q/hashtoaddress/:hash" scottyBinfoHashToAddr
-  S.get "/blockchain/q/addrpubkey/:pubkey" scottyBinfoAddrPubkey
-  S.get "/blockchain/q/pubkeyaddr/:addr" scottyBinfoPubKeyAddr
-  S.get "/blockchain/q/hashpubkey/:pubkey" scottyBinfoHashPubkey
-  S.get "/blockchain/q/getblockcount" scottyBinfoGetBlockCount
-  S.get "/blockchain/q/latesthash" scottyBinfoLatestHash
-  S.get "/blockchain/q/bcperblock" scottyBinfoSubsidy
-  S.get "/blockchain/q/txtotalbtcoutput/:txid" scottyBinfoTotalOut
-  S.get "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
-  S.get "/blockchain/q/txfee/:txid" scottyBinfoTxFees
-  S.get "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
-  S.get "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
-  S.get "/blockchain/q/getsentbyaddress/:addr" scottyBinfoSent
-  S.get "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
-  S.get "/blockchain/q/addressfirstseen/:addr" scottyFirstSeen
+  when blockchain $ do
+    S.post "/blockchain/multiaddr" scottyMultiAddr
+    S.get "/blockchain/multiaddr" scottyMultiAddr
+    S.get "/blockchain/balance" scottyShortBal
+    S.post "/blockchain/balance" scottyShortBal
+    S.get "/blockchain/rawaddr/:addr" scottyRawAddr
+    S.get "/blockchain/address/:addr" scottyRawAddr
+    S.get "/blockchain/xpub/:addr" scottyRawAddr
+    S.post "/blockchain/unspent" scottyBinfoUnspent
+    S.get "/blockchain/unspent" scottyBinfoUnspent
+    S.get "/blockchain/rawtx/:txid" scottyBinfoTx
+    S.get "/blockchain/rawblock/:block" scottyBinfoBlock
+    S.get "/blockchain/latestblock" scottyBinfoLatest
+    S.get "/blockchain/unconfirmed-transactions" scottyBinfoMempool
+    S.get "/blockchain/block-height/:height" scottyBinfoBlockHeight
+    S.get "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
+    S.get "/blockchain/export-history" scottyBinfoHistory
+    S.post "/blockchain/export-history" scottyBinfoHistory
+    S.get "/blockchain/q/addresstohash/:addr" scottyBinfoAddrToHash
+    S.get "/blockchain/q/hashtoaddress/:hash" scottyBinfoHashToAddr
+    S.get "/blockchain/q/addrpubkey/:pubkey" scottyBinfoAddrPubkey
+    S.get "/blockchain/q/pubkeyaddr/:addr" scottyBinfoPubKeyAddr
+    S.get "/blockchain/q/hashpubkey/:pubkey" scottyBinfoHashPubkey
+    S.get "/blockchain/q/getblockcount" scottyBinfoGetBlockCount
+    S.get "/blockchain/q/latesthash" scottyBinfoLatestHash
+    S.get "/blockchain/q/bcperblock" scottyBinfoSubsidy
+    S.get "/blockchain/q/txtotalbtcoutput/:txid" scottyBinfoTotalOut
+    S.get "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
+    S.get "/blockchain/q/txfee/:txid" scottyBinfoTxFees
+    S.get "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
+    S.get "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
+    S.get "/blockchain/q/getsentbyaddress/:addr" scottyBinfoSent
+    S.get "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
+    S.get "/blockchain/q/addressfirstseen/:addr" scottyFirstSeen
   where
     json_list f net = toJSONList . map (f net)
 
