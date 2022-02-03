@@ -40,6 +40,10 @@ import UnliftIO
   ( MonadIO,
     TVar,
     atomically,
+    modifyIORef,
+    readIORef,
+    newIORef,
+    IORef,
     liftIO,
     modifyTVar,
     newTVarIO,
@@ -48,7 +52,7 @@ import UnliftIO
 
 data Writer = Writer
   { getReader :: !DatabaseReader,
-    getState :: !(TVar Memory)
+    getState :: !(IORef Memory)
   }
 
 type WriterT = ReaderT Writer
@@ -91,55 +95,55 @@ data Memory = Memory
 instance MonadIO m => StoreWrite (WriterT m) where
   setBest h =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         setBestH h
   insertBlock b =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         insertBlockH b
   setBlocksAtHeight h g =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         setBlocksAtHeightH h g
   insertTx t =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         insertTxH t
   insertAddrTx a t =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         insertAddrTxH a t
   deleteAddrTx a t =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         deleteAddrTxH a t
   insertAddrUnspent a u =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         insertAddrUnspentH a u
   deleteAddrUnspent a u =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         deleteAddrUnspentH a u
   addToMempool x t =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         addToMempoolH x t
   deleteFromMempool x =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         deleteFromMempoolH x
   setBalance b =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         setBalanceH b
   insertUnspent h =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         insertUnspentH h
   deleteUnspent p =
     ReaderT $ \Writer {getState = s} ->
-      liftIO . atomically . modifyTVar s $
+      liftIO . modifyIORef s $
         deleteUnspentH p
 
 getLayered ::
@@ -149,7 +153,7 @@ getLayered ::
   WriterT m a
 getLayered f g =
   ReaderT $ \Writer {getReader = db, getState = tmem} ->
-    f <$> readTVarIO tmem >>= \case
+    f <$> readIORef tmem >>= \case
       Just x -> return x
       Nothing -> runReaderT g db
 
@@ -160,9 +164,9 @@ runWriter ::
   m a
 runWriter bdb@DatabaseReader {databaseHandle = db} f = do
   mem <- runReaderT getMempool bdb
-  hm <- newTVarIO (newMemory mem)
+  hm <- newIORef (newMemory mem)
   x <- R.runReaderT f Writer {getReader = bdb, getState = hm}
-  mem' <- readTVarIO hm
+  mem' <- readIORef hm
   let ops = hashMapOps db mem'
   writeBatch db ops
   return x
@@ -277,7 +281,7 @@ getUnspentI op = getLayered (getUnspentH op) (getUnspent op)
 getMempoolI :: MonadIO m => WriterT m [(UnixTime, TxHash)]
 getMempoolI =
   ReaderT $ \Writer {getState = tmem} ->
-    getMempoolH <$> readTVarIO tmem
+    getMempoolH <$> readIORef tmem
 
 newMemory :: [(UnixTime, TxHash)] -> Memory
 newMemory mem =
