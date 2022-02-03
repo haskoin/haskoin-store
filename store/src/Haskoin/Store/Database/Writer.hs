@@ -75,21 +75,21 @@ type NetRef = IORef (Maybe Network)
 
 type BestRef = IORef (Maybe (Maybe BlockHash))
 
-type BlockTable = H.CuckooHashTable BlockHash (Maybe BlockData)
+type BlockTable = H.BasicHashTable BlockHash (Maybe BlockData)
 
-type HeightTable = H.CuckooHashTable BlockHeight [BlockHash]
+type HeightTable = H.BasicHashTable BlockHeight [BlockHash]
 
-type TxTable = H.CuckooHashTable TxHash (Maybe TxData)
+type TxTable = H.BasicHashTable TxHash (Maybe TxData)
 
-type UnspentTable = H.CuckooHashTable OutPoint (Maybe Unspent)
+type UnspentTable = H.BasicHashTable OutPoint (Maybe Unspent)
 
-type BalanceTable = H.CuckooHashTable Address (Maybe Balance)
+type BalanceTable = H.BasicHashTable Address (Maybe Balance)
 
-type AddrTxTable = H.CuckooHashTable (Address, TxRef) (Maybe ())
+type AddrTxTable = H.BasicHashTable (Address, TxRef) (Maybe ())
 
-type AddrOutTable = H.CuckooHashTable (Address, BlockRef, OutPoint) (Maybe OutVal)
+type AddrOutTable = H.BasicHashTable (Address, BlockRef, OutPoint) (Maybe OutVal)
 
-type MempoolTable = H.CuckooHashTable TxHash UnixTime
+type MempoolTable = H.BasicHashTable TxHash UnixTime
 
 data Memory = Memory
   { hNet :: !NetRef,
