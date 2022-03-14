@@ -17,7 +17,7 @@ info:
   license:
     name: MIT
     url: https://github.com/haskoin/haskoin-store/blob/master/store/LICENSE
-  description: >
+  description: |
     Rich and fast API to query indexed block chain data for Bitcoin and Bitcoin
     Cash.
 
