@@ -8,7 +8,8 @@ servers:
 
 info:
   version: &version 0.65.0
-  title: Bitcoin (BCH/BTC) Query API
+  title: Haskoin Store
+  summary: Bitcoin (BCH/BTC) Query API
   contact:
     name: Haskoin
     url: https://github.com/haskoin
@@ -16,6 +17,12 @@ info:
   license:
     name: MIT
     url: https://github.com/haskoin/haskoin-store/blob/master/store/LICENSE
+  description: >
+    Rich and fast API to query indexed block chain data for Bitcoin and Bitcoin
+    Cash.
+
+    Note: Service is blocked for Russia and its allies in protest against
+    Ukraine's invasion. 🇺🇦
 
 tags:
   - name: Address
