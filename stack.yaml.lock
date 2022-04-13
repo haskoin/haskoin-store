@@ -5,29 +5,33 @@
 
 packages:
 - completed:
-    hackage: haskoin-node-0.17.14@sha256:d974e5705c22d5d42418e3ff93c60674082e7233563d1f6b3c5376e1040d5304,2280
-    pantry-tree:
-      size: 636
-      sha256: 1a36963b56b0feef5fe36e2d2ee78955b261f938c75b8a04e19b31e7ede45abf
-  original:
-    hackage: haskoin-node-0.17.14
-- completed:
     hackage: haskoin-core-0.21.1@sha256:91bc95c4aad397f24bda2fc3a58d057705c6c599e0ea71995d5ff3a56eedcc78,4931
     pantry-tree:
       size: 5525
       sha256: fbcb9818de0fbe306db40d12b8c337328f5d9486bdc0c5065fc4ed25595e4c1e
   original:
-    hackage: haskoin-core-0.21.1
+    hackage: haskoin-core-0.21.1@sha256:91bc95c4aad397f24bda2fc3a58d057705c6c599e0ea71995d5ff3a56eedcc78,4931
 - completed:
-    hackage: rocksdb-haskell-jprupp-2.1.4@sha256:d3244f5538dbee2fc4d3ceb9c5fb849fb7882f9dcfee57cddad1d7e0c0fe3c4d,1735
+    hackage: haskoin-node-0.17.14@sha256:d974e5705c22d5d42418e3ff93c60674082e7233563d1f6b3c5376e1040d5304,2280
     pantry-tree:
-      size: 712
-      sha256: f63a78fbd9931022bdad7f97c66756fb3853b9dd7970594f285ff2fbd9870879
+      size: 636
+      sha256: 1a36963b56b0feef5fe36e2d2ee78955b261f938c75b8a04e19b31e7ede45abf
   original:
-    hackage: rocksdb-haskell-jprupp-2.1.4
+    hackage: haskoin-node-0.17.14@sha256:d974e5705c22d5d42418e3ff93c60674082e7233563d1f6b3c5376e1040d5304,2280
+- completed:
+    name: ekg-core
+    version: 0.1.1.7
+    git: https://github.com/tibbe/ekg-core.git
+    pantry-tree:
+      size: 1280
+      sha256: 726daf8d996dae7623fe2028ccf7c57e09a18bd7ae32cbf4df54481cedb505f4
+    commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
+  original:
+    git: https://github.com/tibbe/ekg-core.git
+    commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
 snapshots:
 - completed:
-    size: 587821
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/24.yaml
-    sha256: 06d844ba51e49907bd29cb58b4a5f86ee7587a4cd7e6cf395eeec16cba619ce8
-  original: lts-18.24
+    size: 590100
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/28.yaml
+    sha256: 428ec8d5ce932190d3cbe266b9eb3c175cd81e984babf876b64019e2cbe4ea68
+  original: lts-18.28

@@ -856,9 +856,7 @@ cacheWriterReact ::
 cacheWriterReact CacheNewBlock =
   doSync
 cacheWriterReact (CacheNewTx txid) =
-  withLock go >>= \case
-    Just () -> return ()
-    Nothing -> smallDelay >> cacheWriterReact (CacheNewTx txid)
+  withLockForever go
   where
     hex = txHashToHex txid
     go =

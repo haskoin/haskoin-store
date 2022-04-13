@@ -1,16 +1,18 @@
-resolver: lts-18.24
+resolver: lts-18.28
 nix:
   packages:
-    - perl
-    - rocksdb
-    - secp256k1
-    - zlib
-    - pkg-config
-    - cacert
+  - perl
+  - rocksdb
+  - secp256k1
+  - zlib
+  - pkg-config
+  - cacert
 packages:
-  - store
-  - data
+- store
+- data
 extra-deps:
-  - haskoin-node-0.17.14
-  - haskoin-core-0.21.1
-  - rocksdb-haskell-jprupp-2.1.4
+- haskoin-core-0.21.1@sha256:91bc95c4aad397f24bda2fc3a58d057705c6c599e0ea71995d5ff3a56eedcc78,4931
+- haskoin-node-0.17.14@sha256:d974e5705c22d5d42418e3ff93c60674082e7233563d1f6b3c5376e1040d5304,2280
+- git: https://github.com/tibbe/ekg-core.git
+  commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
+
