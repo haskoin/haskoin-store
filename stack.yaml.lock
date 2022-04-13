@@ -5,19 +5,27 @@
 
 packages:
 - completed:
-    hackage: haskoin-core-0.21.1@sha256:91bc95c4aad397f24bda2fc3a58d057705c6c599e0ea71995d5ff3a56eedcc78,4931
+    name: haskoin-core
+    version: 0.21.2
+    git: https://github.com/haskoin/haskoin-core.git
     pantry-tree:
-      size: 5525
-      sha256: fbcb9818de0fbe306db40d12b8c337328f5d9486bdc0c5065fc4ed25595e4c1e
+      size: 7102
+      sha256: 44112cb8820ddd76373209f154a9cfaf35d7807909b1b68dc4ea180c7a4b0299
+    commit: 2a13ee8be20d7cd3646bb73dc5da4beeaf409ee2
   original:
-    hackage: haskoin-core-0.21.1@sha256:91bc95c4aad397f24bda2fc3a58d057705c6c599e0ea71995d5ff3a56eedcc78,4931
+    git: https://github.com/haskoin/haskoin-core.git
+    commit: 2a13ee8be20d7cd3646bb73dc5da4beeaf409ee2
 - completed:
-    hackage: haskoin-node-0.17.14@sha256:d974e5705c22d5d42418e3ff93c60674082e7233563d1f6b3c5376e1040d5304,2280
+    name: haskoin-node
+    version: 0.17.14
+    git: https://github.com/haskoin/haskoin-node.git
     pantry-tree:
-      size: 636
-      sha256: 1a36963b56b0feef5fe36e2d2ee78955b261f938c75b8a04e19b31e7ede45abf
+      size: 896
+      sha256: bf7c0daeada736912584205c9f4a1340f2f3c171ac9269485fefe9800ee75bec
+    commit: 6fd1388fa9160629aaebcec2c738aae5dcca9d88
   original:
-    hackage: haskoin-node-0.17.14@sha256:d974e5705c22d5d42418e3ff93c60674082e7233563d1f6b3c5376e1040d5304,2280
+    git: https://github.com/haskoin/haskoin-node.git
+    commit: 6fd1388fa9160629aaebcec2c738aae5dcca9d88
 - completed:
     name: ekg-core
     version: 0.1.1.7

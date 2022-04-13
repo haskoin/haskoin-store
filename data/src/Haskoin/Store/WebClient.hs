@@ -213,7 +213,7 @@ getBinary opts url = do
   resE <- try $ HTTP.getWith (binaryOpts opts) url
   return $ do
     res <- resE
-    toExcept $ runGetS deserialize $ BL.toStrict $ res ^. HTTP.responseBody
+    return . runGetL deserialize $ res ^. HTTP.responseBody
 
 postBinary ::
   (Serial a, Serial r) =>
@@ -225,7 +225,7 @@ postBinary opts url body = do
   resE <- try $ HTTP.postWith (binaryOpts opts) url (runPutL (serialize body))
   return $ do
     res <- resE
-    toExcept $ runGetL deserialize $ res ^. HTTP.responseBody
+    return . runGetL deserialize $ res ^. HTTP.responseBody
 
 binaryOpts :: Endo HTTP.Options -> HTTP.Options
 binaryOpts opts =
@@ -253,10 +253,6 @@ checkStatus req res
 ---------------
 -- Utilities --
 ---------------
-
-toExcept :: Either String a -> Either Store.Except a
-toExcept (Right a) = Right a
-toExcept (Left err) = Left $ Store.UserError err
 
 chunksOf :: Natural -> [a] -> [[a]]
 chunksOf n xs
