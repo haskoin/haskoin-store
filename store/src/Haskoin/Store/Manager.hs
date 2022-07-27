@@ -32,7 +32,6 @@ import Haskoin
 import Haskoin.Node
   ( Chain,
     ChainEvent (..),
-    HostPort,
     Node (..),
     NodeConfig (..),
     NodeEvent (..),
@@ -109,7 +108,7 @@ data StoreConfig = StoreConfig
   { -- | max peers to connect to
     storeConfMaxPeers :: !Int,
     -- | static set of peers to connect to
-    storeConfInitPeers :: ![HostPort],
+    storeConfInitPeers :: ![String],
     -- | discover new peers
     storeConfDiscover :: !Bool,
     -- | RocksDB database path

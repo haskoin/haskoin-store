@@ -1,4 +1,4 @@
-resolver: lts-18.28
+resolver: lts-19.16
 nix:
   packages:
   - perl
@@ -8,13 +8,13 @@ nix:
   - pkg-config
   - cacert
 packages:
-- store
-- data
+  - store
+  - data
+allow-newer: true
 extra-deps:
-- git: https://github.com/haskoin/haskoin-core.git
-  commit: 2a13ee8be20d7cd3646bb73dc5da4beeaf409ee2
-- git: https://github.com/haskoin/haskoin-node.git
-  commit: 6fd1388fa9160629aaebcec2c738aae5dcca9d88
-- git: https://github.com/tibbe/ekg-core.git
-  commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
-
+  - git: https://github.com/tibbe/ekg-core.git
+    commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
+  - git: https://github.com/haskoin/haskoin-node.git
+    commit: 00b5ebdc04f2a246dac7acf802fa2c3b46e9cfb4
+  - git: https://github.com/tibbe/ekg-statsd.git
+    commit: c6a9760266277cbd7641e9618f3b7cfbabc299d1

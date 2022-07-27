@@ -94,7 +94,7 @@ data Config = Config
     configPort :: !Int,
     configNetwork :: !String,
     configDiscover :: !Bool,
-    configPeers :: ![(String, Maybe Int)],
+    configPeers :: ![String],
     configVersion :: !Bool,
     configDebug :: !Bool,
     configMaxPending :: !Int,
@@ -231,10 +231,10 @@ defDiscover =
     defEnv "DISCOVER" False parseBool
 {-# NOINLINE defDiscover #-}
 
-defPeers :: [(String, Maybe Int)]
+defPeers :: [String]
 defPeers =
   unsafePerformIO $
-    defEnv "PEER" [] (mapM (eitherToMaybe . peerReader) . words)
+    defEnv "PEER" [] (pure . words)
 {-# NOINLINE defPeers #-}
 
 defDebug :: Bool
@@ -436,7 +436,7 @@ config = do
   configPeers <-
     fmap (mappend defPeers) $
       many $
-        option (eitherReader peerReader) $
+        option auto $
           metavar "HOST"
             <> long "peer"
             <> short 'p'
@@ -670,19 +670,9 @@ networkReader s
   | s == getNetworkName bchRegTest = Right bchRegTest
   | otherwise = Left "Network name invalid"
 
-peerReader :: String -> Either String (String, Maybe Int)
-peerReader s = do
-  let (host, p) = span (/= ':') s
-  when (null host) (Left "Peer name or address not defined")
-  port <-
-    case p of
-      [] -> return Nothing
-      ':' : p' ->
-        case readMaybe p' of
-          Nothing -> Left "Peer port number cannot be read"
-          Just n -> return (Just n)
-      _ -> Left "Peer information could not be parsed"
-  return (host, port)
+peerReader :: String -> Either String String
+peerReader "" = Left "Peer cannot be blank"
+peerReader s = Right s
 
 main :: IO ()
 main = do
@@ -746,8 +736,7 @@ run
       let scfg =
             StoreConfig
               { storeConfMaxPeers = maxpeers,
-                storeConfInitPeers =
-                  map (second (fromMaybe (getDefaultPort net))) peers,
+                storeConfInitPeers = peers,
                 storeConfDiscover = disc,
                 storeConfDB = wd net </> "db",
                 storeConfNetwork = net,
