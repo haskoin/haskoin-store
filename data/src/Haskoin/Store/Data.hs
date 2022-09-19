@@ -3196,13 +3196,14 @@ toBinfoHistory satoshi timestamp rate_then rate_now fee txhash =
       binfoHistoryTx =
         txhash,
       binfoHistoryFee =
-        fromRational (toRational fee / 100 * 1000 * 1000)
+        fromRational f
     }
   where
     t = posixSecondsToUTCTime (realToFrac timestamp)
     v = toRational satoshi / (100 * 1000 * 1000)
     r1 = toRational rate_then
     r2 = toRational rate_now
+    f = toRational fee / (100 * 1000 * 1000)
     v1 = v * r1
     v2 = v * r2
 
