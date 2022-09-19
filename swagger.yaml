@@ -4342,6 +4342,7 @@ paths:
                   value_now: -3.86586e-3
                   type: sent
                   value_then: -2.730919297725e-3
+                  fee: 6.75e-06
                 - tx: ae3fc465a80264f45fa6f865ede43017d9826560299b6fb344d5cde84416b931
                   amount: -1.998e-5
                   time: 11:27:24 GMT +00:00
@@ -4350,110 +4351,7 @@ paths:
                   value_now: -1.14429456e-2
                   type: sent
                   value_then: -8.798862837492e-3
-                - tx: de01f52644b2610d491d28ce474382c57655f102974526a3fba6b5a48f8ea812
-                  amount: -6.75e-6
-                  time: 14:00:06 GMT +00:00
-                  exchange_rate_then: 460.4045687
-                  date: "2021-03-10"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -3.107730838725e-3
-                - tx: 41a422e6c003596954f07eb5021d9a2d6951da297dd519a5de3885772ac60e7c
-                  amount: -6.75e-6
-                  time: 18:03:05 GMT +00:00
-                  exchange_rate_then: 405.2846028
-                  date: "2021-03-01"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.7356710689e-3
-                - tx: 26ce9896f0f64349670735bdc30fb42adadac61348e403e78c5f92c3fb697355
-                  amount: -1.998e-5
-                  time: 11:01:51 GMT +00:00
-                  exchange_rate_then: 596.5653829
-                  date: "2021-02-17"
-                  value_now: -1.14429456e-2
-                  type: sent
-                  value_then: -1.1919376350342e-2
-                - tx: 2c7316f0b66bf4c5a2078cdaacd679d96c2249a32736ea7d3ce36af8b6a215c0
-                  amount: -6.75e-6
-                  time: 10:07:57 GMT +00:00
-                  exchange_rate_then: 594.5930632
-                  date: "2021-02-17"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -4.0135031766e-3
-                - tx: 0e81fa97ae5106f6e967de912908ee261473575e890e815fa78084f9d1b68382
-                  amount: -1.557e-5
-                  time: 10:04:54 GMT +00:00
-                  exchange_rate_then: 594.2653606
-                  date: "2021-02-17"
-                  value_now: -8.9172504e-3
-                  type: sent
-                  value_then: -9.252711664542e-3
-                - tx: 671ba5996381a919c7b88415513ca1db54528e3741282a44228f7eea4d23ffad
-                  amount: -6.75e-6
-                  time: 14:15:56 GMT +00:00
-                  exchange_rate_then: 367.4438513
-                  date: "2021-02-05"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.480245996275e-3
-                - tx: 4890ab0fed725daa08879afcea302a4c7925c094c98676cab3edcaa186adbc41
-                  amount: -1.116e-5
-                  time: 15:21:38 GMT +00:00
-                  exchange_rate_then: 349.1861487
-                  date: "2021-02-04"
-                  value_now: -6.3915552e-3
-                  type: sent
-                  value_then: -3.896917419492e-3
-                - tx: 8b0aaa62cbe3caf317e7ebfb61455ccbd953114289f31eb9ec049f706d7b9996
-                  amount: -1.116e-5
-                  time: 15:09:40 GMT +00:00
-                  exchange_rate_then: 349.1861487
-                  date: "2021-02-04"
-                  value_now: -6.3915552e-3
-                  type: sent
-                  value_then: -3.896917419492e-3
-                - tx: f68e867bf6505181e737d0f761b2e8c2cbf6d6ea76859c35be7f191cc9581e5e
-                  amount: -6.75e-6
-                  time: 15:56:20 GMT +00:00
-                  exchange_rate_then: 367.3322974
-                  date: "2021-02-03"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.47949300745e-3
-                - tx: fdbd007b16bcd320d06793db2989d6ef3ff25a2337ed8da7f4535ecdc301abfc
-                  amount: -6.75e-6
-                  time: 12:07:16 GMT +00:00
-                  exchange_rate_then: 359.8777026
-                  date: "2021-02-03"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.42917449255e-3
-                - tx: f4921e437d7577d710c456c5b4a1b995faec38d7ef8613cd19b7d26894fbff62
-                  amount: -1.35e-5
-                  time: 16:55:04 GMT +00:00
-                  exchange_rate_then: 362.9386172
-                  date: "2021-01-22"
-                  value_now: -7.73172e-3
-                  type: sent
-                  value_then: -4.8996713322000006e-3
-                - tx: 369c2a28fc84b060e4423e26ac898fa4ce9eda8943a36d0a48df66e6a6275aa6
-                  amount: 9.8854e-4
-                  time: 18:23:06 GMT +00:00
-                  exchange_rate_then: 355.9324199
-                  date: "2021-01-08"
-                  value_now: 0.5661566288000001
-                  type: received
-                  value_then: 0.351853434367946
-                - tx: 99f5893d882e3e0b62554b82f0d17c4bc3b1590802fb7e3e876c8735d63ca156
-                  amount: -9.307283e-2
-                  time: 10:30:53 GMT +00:00
-                  exchange_rate_then: 216.1303268
-                  date: "2020-11-20"
-                  value_now: -53.3046711976
-                  type: sent
-                  value_then: -20.115861164100846
+                  fee: 1.998e-05
         '404':
           description: Invalid argument.
           content:
@@ -4488,6 +4386,7 @@ paths:
                   value_now: -3.86586e-3
                   type: sent
                   value_then: -2.730919297725e-3
+                  fee: 6.75e-06
                 - tx: ae3fc465a80264f45fa6f865ede43017d9826560299b6fb344d5cde84416b931
                   amount: -1.998e-5
                   time: 11:27:24 GMT +00:00
@@ -4496,110 +4395,7 @@ paths:
                   value_now: -1.14429456e-2
                   type: sent
                   value_then: -8.798862837492e-3
-                - tx: de01f52644b2610d491d28ce474382c57655f102974526a3fba6b5a48f8ea812
-                  amount: -6.75e-6
-                  time: 14:00:06 GMT +00:00
-                  exchange_rate_then: 460.4045687
-                  date: "2021-03-10"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -3.107730838725e-3
-                - tx: 41a422e6c003596954f07eb5021d9a2d6951da297dd519a5de3885772ac60e7c
-                  amount: -6.75e-6
-                  time: 18:03:05 GMT +00:00
-                  exchange_rate_then: 405.2846028
-                  date: "2021-03-01"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.7356710689e-3
-                - tx: 26ce9896f0f64349670735bdc30fb42adadac61348e403e78c5f92c3fb697355
-                  amount: -1.998e-5
-                  time: 11:01:51 GMT +00:00
-                  exchange_rate_then: 596.5653829
-                  date: "2021-02-17"
-                  value_now: -1.14429456e-2
-                  type: sent
-                  value_then: -1.1919376350342e-2
-                - tx: 2c7316f0b66bf4c5a2078cdaacd679d96c2249a32736ea7d3ce36af8b6a215c0
-                  amount: -6.75e-6
-                  time: 10:07:57 GMT +00:00
-                  exchange_rate_then: 594.5930632
-                  date: "2021-02-17"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -4.0135031766e-3
-                - tx: 0e81fa97ae5106f6e967de912908ee261473575e890e815fa78084f9d1b68382
-                  amount: -1.557e-5
-                  time: 10:04:54 GMT +00:00
-                  exchange_rate_then: 594.2653606
-                  date: "2021-02-17"
-                  value_now: -8.9172504e-3
-                  type: sent
-                  value_then: -9.252711664542e-3
-                - tx: 671ba5996381a919c7b88415513ca1db54528e3741282a44228f7eea4d23ffad
-                  amount: -6.75e-6
-                  time: 14:15:56 GMT +00:00
-                  exchange_rate_then: 367.4438513
-                  date: "2021-02-05"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.480245996275e-3
-                - tx: 4890ab0fed725daa08879afcea302a4c7925c094c98676cab3edcaa186adbc41
-                  amount: -1.116e-5
-                  time: 15:21:38 GMT +00:00
-                  exchange_rate_then: 349.1861487
-                  date: "2021-02-04"
-                  value_now: -6.3915552e-3
-                  type: sent
-                  value_then: -3.896917419492e-3
-                - tx: 8b0aaa62cbe3caf317e7ebfb61455ccbd953114289f31eb9ec049f706d7b9996
-                  amount: -1.116e-5
-                  time: 15:09:40 GMT +00:00
-                  exchange_rate_then: 349.1861487
-                  date: "2021-02-04"
-                  value_now: -6.3915552e-3
-                  type: sent
-                  value_then: -3.896917419492e-3
-                - tx: f68e867bf6505181e737d0f761b2e8c2cbf6d6ea76859c35be7f191cc9581e5e
-                  amount: -6.75e-6
-                  time: 15:56:20 GMT +00:00
-                  exchange_rate_then: 367.3322974
-                  date: "2021-02-03"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.47949300745e-3
-                - tx: fdbd007b16bcd320d06793db2989d6ef3ff25a2337ed8da7f4535ecdc301abfc
-                  amount: -6.75e-6
-                  time: 12:07:16 GMT +00:00
-                  exchange_rate_then: 359.8777026
-                  date: "2021-02-03"
-                  value_now: -3.86586e-3
-                  type: sent
-                  value_then: -2.42917449255e-3
-                - tx: f4921e437d7577d710c456c5b4a1b995faec38d7ef8613cd19b7d26894fbff62
-                  amount: -1.35e-5
-                  time: 16:55:04 GMT +00:00
-                  exchange_rate_then: 362.9386172
-                  date: "2021-01-22"
-                  value_now: -7.73172e-3
-                  type: sent
-                  value_then: -4.8996713322000006e-3
-                - tx: 369c2a28fc84b060e4423e26ac898fa4ce9eda8943a36d0a48df66e6a6275aa6
-                  amount: 9.8854e-4
-                  time: 18:23:06 GMT +00:00
-                  exchange_rate_then: 355.9324199
-                  date: "2021-01-08"
-                  value_now: 0.5661566288000001
-                  type: received
-                  value_then: 0.351853434367946
-                - tx: 99f5893d882e3e0b62554b82f0d17c4bc3b1590802fb7e3e876c8735d63ca156
-                  amount: -9.307283e-2
-                  time: 10:30:53 GMT +00:00
-                  exchange_rate_then: 216.1303268
-                  date: "2020-11-20"
-                  value_now: -53.3046711976
-                  type: sent
-                  value_then: -20.115861164100846
+                  fee: 1.998e-05
         '404':
           description: Invalid argument.
           content:
