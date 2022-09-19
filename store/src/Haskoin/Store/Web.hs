@@ -683,102 +683,115 @@ handlePaths slow blockchain = do
     scottyBlock
     blockDataToEncoding
     blockDataToJSON
-  when slow $ pathCompact
-    (GetBlocks <$> param <*> paramDef)
-    (fmap SerialList . scottyBlocks)
-    (\n -> list (blockDataToEncoding n) . getSerialList)
-    (\n -> json_list blockDataToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetBlockRaw <$> paramLazy)
-    scottyBlockRaw
-    (const toEncoding)
-    (const toJSON)
+  when slow $
+    pathCompact
+      (GetBlocks <$> param <*> paramDef)
+      (fmap SerialList . scottyBlocks)
+      (\n -> list (blockDataToEncoding n) . getSerialList)
+      (\n -> json_list blockDataToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetBlockRaw <$> paramLazy)
+      scottyBlockRaw
+      (const toEncoding)
+      (const toJSON)
   pathCompact
     (GetBlockBest <$> paramDef)
     scottyBlockBest
     blockDataToEncoding
     blockDataToJSON
-  when slow $ pathCompact
-    (GetBlockBestRaw & return)
-    scottyBlockBestRaw
-    (const toEncoding)
-    (const toJSON)
-  when slow $ pathCompact
-    (GetBlockLatest <$> paramDef)
-    (fmap SerialList . scottyBlockLatest)
-    (\n -> list (blockDataToEncoding n) . getSerialList)
-    (\n -> json_list blockDataToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetBlockBestRaw & return)
+      scottyBlockBestRaw
+      (const toEncoding)
+      (const toJSON)
+  when slow $
+    pathCompact
+      (GetBlockLatest <$> paramDef)
+      (fmap SerialList . scottyBlockLatest)
+      (\n -> list (blockDataToEncoding n) . getSerialList)
+      (\n -> json_list blockDataToJSON n . getSerialList)
   pathCompact
     (GetBlockHeight <$> paramLazy <*> paramDef)
     (fmap SerialList . scottyBlockHeight)
     (\n -> list (blockDataToEncoding n) . getSerialList)
     (\n -> json_list blockDataToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetBlockHeights <$> param <*> paramDef)
-    (fmap SerialList . scottyBlockHeights)
-    (\n -> list (blockDataToEncoding n) . getSerialList)
-    (\n -> json_list blockDataToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetBlockHeightRaw <$> paramLazy)
-    scottyBlockHeightRaw
-    (const toEncoding)
-    (const toJSON)
+  when slow $
+    pathCompact
+      (GetBlockHeights <$> param <*> paramDef)
+      (fmap SerialList . scottyBlockHeights)
+      (\n -> list (blockDataToEncoding n) . getSerialList)
+      (\n -> json_list blockDataToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetBlockHeightRaw <$> paramLazy)
+      scottyBlockHeightRaw
+      (const toEncoding)
+      (const toJSON)
   pathCompact
     (GetBlockTime <$> paramLazy <*> paramDef)
     scottyBlockTime
     blockDataToEncoding
     blockDataToJSON
-  when slow $ pathCompact
-    (GetBlockTimeRaw <$> paramLazy)
-    scottyBlockTimeRaw
-    (const toEncoding)
-    (const toJSON)
+  when slow $
+    pathCompact
+      (GetBlockTimeRaw <$> paramLazy)
+      scottyBlockTimeRaw
+      (const toEncoding)
+      (const toJSON)
   pathCompact
     (GetBlockMTP <$> paramLazy <*> paramDef)
     scottyBlockMTP
     blockDataToEncoding
     blockDataToJSON
-  when slow $ pathCompact
-    (GetBlockMTPRaw <$> paramLazy)
-    scottyBlockMTPRaw
-    (const toEncoding)
-    (const toJSON)
+  when slow $
+    pathCompact
+      (GetBlockMTPRaw <$> paramLazy)
+      scottyBlockMTPRaw
+      (const toEncoding)
+      (const toJSON)
   -- Transaction Paths
   pathCompact
     (GetTx <$> paramLazy)
     scottyTx
     transactionToEncoding
     transactionToJSON
-  when slow $ pathCompact
-    (GetTxs <$> param)
-    (fmap SerialList . scottyTxs)
-    (\n -> list (transactionToEncoding n) . getSerialList)
-    (\n -> json_list transactionToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetTxs <$> param)
+      (fmap SerialList . scottyTxs)
+      (\n -> list (transactionToEncoding n) . getSerialList)
+      (\n -> json_list transactionToJSON n . getSerialList)
   pathCompact
     (GetTxRaw <$> paramLazy)
     scottyTxRaw
     (const toEncoding)
     (const toJSON)
-  when slow $ pathCompact
-    (GetTxsRaw <$> param)
-    scottyTxsRaw
-    (const toEncoding)
-    (const toJSON)
-  when slow $ pathCompact
-    (GetTxsBlock <$> paramLazy)
-    (fmap SerialList . scottyTxsBlock)
-    (\n -> list (transactionToEncoding n) . getSerialList)
-    (\n -> json_list transactionToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetTxsBlockRaw <$> paramLazy)
-    scottyTxsBlockRaw
-    (const toEncoding)
-    (const toJSON)
-  when slow $ pathCompact
-    (GetTxAfter <$> paramLazy <*> paramLazy)
-    scottyTxAfter
-    (const toEncoding)
-    (const toJSON)
+  when slow $
+    pathCompact
+      (GetTxsRaw <$> param)
+      scottyTxsRaw
+      (const toEncoding)
+      (const toJSON)
+  when slow $
+    pathCompact
+      (GetTxsBlock <$> paramLazy)
+      (fmap SerialList . scottyTxsBlock)
+      (\n -> list (transactionToEncoding n) . getSerialList)
+      (\n -> json_list transactionToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetTxsBlockRaw <$> paramLazy)
+      scottyTxsBlockRaw
+      (const toEncoding)
+      (const toJSON)
+  when slow $
+    pathCompact
+      (GetTxAfter <$> paramLazy <*> paramLazy)
+      scottyTxAfter
+      (const toEncoding)
+      (const toJSON)
   pathCompact
     (PostTx <$> parseBody)
     scottyPostTx
@@ -795,72 +808,83 @@ handlePaths slow blockchain = do
     (fmap SerialList . scottyAddrTxs)
     (const toEncoding)
     (const toJSON)
-  when slow $ pathCompact
-    (GetAddrsTxs <$> param <*> parseLimits)
-    (fmap SerialList . scottyAddrsTxs)
-    (const toEncoding)
-    (const toJSON)
-  when slow $ pathCompact
-    (GetAddrTxsFull <$> paramLazy <*> parseLimits)
-    (fmap SerialList . scottyAddrTxsFull)
-    (\n -> list (transactionToEncoding n) . getSerialList)
-    (\n -> json_list transactionToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetAddrsTxsFull <$> param <*> parseLimits)
-    (fmap SerialList . scottyAddrsTxsFull)
-    (\n -> list (transactionToEncoding n) . getSerialList)
-    (\n -> json_list transactionToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetAddrsTxs <$> param <*> parseLimits)
+      (fmap SerialList . scottyAddrsTxs)
+      (const toEncoding)
+      (const toJSON)
+  when slow $
+    pathCompact
+      (GetAddrTxsFull <$> paramLazy <*> parseLimits)
+      (fmap SerialList . scottyAddrTxsFull)
+      (\n -> list (transactionToEncoding n) . getSerialList)
+      (\n -> json_list transactionToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetAddrsTxsFull <$> param <*> parseLimits)
+      (fmap SerialList . scottyAddrsTxsFull)
+      (\n -> list (transactionToEncoding n) . getSerialList)
+      (\n -> json_list transactionToJSON n . getSerialList)
   pathCompact
     (GetAddrBalance <$> paramLazy)
     scottyAddrBalance
     balanceToEncoding
     balanceToJSON
-  when slow $ pathCompact
-    (GetAddrsBalance <$> param)
-    (fmap SerialList . scottyAddrsBalance)
-    (\n -> list (balanceToEncoding n) . getSerialList)
-    (\n -> json_list balanceToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetAddrsBalance <$> param)
+      (fmap SerialList . scottyAddrsBalance)
+      (\n -> list (balanceToEncoding n) . getSerialList)
+      (\n -> json_list balanceToJSON n . getSerialList)
   pathCompact
     (GetAddrUnspent <$> paramLazy <*> parseLimits)
     (fmap SerialList . scottyAddrUnspent)
     (\n -> list (unspentToEncoding n) . getSerialList)
     (\n -> json_list unspentToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetAddrsUnspent <$> param <*> parseLimits)
-    (fmap SerialList . scottyAddrsUnspent)
-    (\n -> list (unspentToEncoding n) . getSerialList)
-    (\n -> json_list unspentToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetAddrsUnspent <$> param <*> parseLimits)
+      (fmap SerialList . scottyAddrsUnspent)
+      (\n -> list (unspentToEncoding n) . getSerialList)
+      (\n -> json_list unspentToJSON n . getSerialList)
   -- XPubs
-  when slow $ pathCompact
-    (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
-    scottyXPub
-    (const toEncoding)
-    (const toJSON)
-  when slow $ pathCompact
-    (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
-    (fmap SerialList . scottyXPubTxs)
-    (const toEncoding)
-    (const toJSON)
-  when slow $ pathCompact
-    (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
-    (fmap SerialList . scottyXPubTxsFull)
-    (\n -> list (transactionToEncoding n) . getSerialList)
-    (\n -> json_list transactionToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
-    (fmap SerialList . scottyXPubBalances)
-    (\n -> list (xPubBalToEncoding n) . getSerialList)
-    (\n -> json_list xPubBalToJSON n . getSerialList)
-  when slow $ pathCompact
-    (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
-    (fmap SerialList . scottyXPubUnspent)
-    (\n -> list (xPubUnspentToEncoding n) . getSerialList)
-    (\n -> json_list xPubUnspentToJSON n . getSerialList)
-  when slow $ pathCompact
-    (DelCachedXPub <$> paramLazy <*> paramDef)
-    scottyDelXPub
-    (const toEncoding)
-    (const toJSON)
+  when slow $
+    pathCompact
+      (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
+      scottyXPub
+      (const toEncoding)
+      (const toJSON)
+  when slow $
+    pathCompact
+      (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+      (fmap SerialList . scottyXPubTxs)
+      (const toEncoding)
+      (const toJSON)
+  when slow $
+    pathCompact
+      (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+      (fmap SerialList . scottyXPubTxsFull)
+      (\n -> list (transactionToEncoding n) . getSerialList)
+      (\n -> json_list transactionToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
+      (fmap SerialList . scottyXPubBalances)
+      (\n -> list (xPubBalToEncoding n) . getSerialList)
+      (\n -> json_list xPubBalToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+      (fmap SerialList . scottyXPubUnspent)
+      (\n -> list (xPubUnspentToEncoding n) . getSerialList)
+      (\n -> json_list xPubUnspentToJSON n . getSerialList)
+  when slow $
+    pathCompact
+      (DelCachedXPub <$> paramLazy <*> paramDef)
+      scottyDelXPub
+      (const toEncoding)
+      (const toJSON)
   -- Network
   pathCompact
     (GetPeers & return)
@@ -1965,10 +1989,11 @@ scottyBinfoHistory = do
           fouts = filter (output_addr addrs) outs
           vin = fromIntegral . sum $ map inputAmount fins
           vout = fromIntegral . sum $ map outputAmount fouts
+          fee = transactionFees tx
           v = vout - vin
           t = transactionTime tx
           h = txHash $ transactionData tx
-       in toBinfoHistory v t rate cur h
+       in toBinfoHistory v t rate cur fee h
     input_addr addrs' StoreInput {inputAddress = Just a} =
       a `HashSet.member` addrs'
     input_addr _ _ = False

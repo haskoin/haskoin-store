@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 0.65.2
+  version: &version 0.65.5
   title: Haskoin Store
   contact:
     name: Haskoin
@@ -19,8 +19,6 @@ info:
   description: |
     Rich and fast API to query indexed block chain data for Bitcoin and Bitcoin
     Cash.
-
-    Слава Україні! 🇺🇦
 
 tags:
   - name: Address
@@ -5867,6 +5865,7 @@ components:
         - value_now
         - exchange_rate_then
         - tx
+        - fee
       properties:
         date:
           type: string
@@ -5887,6 +5886,8 @@ components:
           type: number
         tx:
           type: string
+        fee:
+          type: number
 
     BinfoTx:
       type: object

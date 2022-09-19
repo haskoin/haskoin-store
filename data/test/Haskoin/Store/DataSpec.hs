@@ -616,6 +616,7 @@ instance Arbitrary BinfoHistory where
     binfoHistoryValueNow <- arbitrary
     binfoHistoryExchangeRateThen <- arbitrary
     binfoHistoryTx <- arbitraryTxHash
+    binfoHistoryFee <- arbitrary
     return BinfoHistory {..}
 
 instance Arbitrary BinfoUnspent where

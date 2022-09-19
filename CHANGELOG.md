@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.65.5
+### Added
+- Fee field added to Blockchain.info-style export-history endpoint.
+
 ## 0.65.4
 ### Changed
 - Bump version due to Git mistake.

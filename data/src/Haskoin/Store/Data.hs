@@ -3137,7 +3137,8 @@ data BinfoHistory = BinfoHistory
     binfoHistoryValueThen :: !Double,
     binfoHistoryValueNow :: !Double,
     binfoHistoryExchangeRateThen :: !Double,
-    binfoHistoryTx :: !TxHash
+    binfoHistoryTx :: !TxHash,
+    binfoHistoryFee :: !Double
   }
   deriving (Eq, Show, Generic, NFData)
 
@@ -3151,7 +3152,8 @@ instance ToJSON BinfoHistory where
         "value_then" .= binfoHistoryValueThen,
         "value_now" .= binfoHistoryValueNow,
         "exchange_rate_then" .= binfoHistoryExchangeRateThen,
-        "tx" .= binfoHistoryTx
+        "tx" .= binfoHistoryTx,
+        "fee" .= binfoHistoryFee
       ]
 
 instance FromJSON BinfoHistory where
@@ -3164,6 +3166,7 @@ instance FromJSON BinfoHistory where
     binfoHistoryValueNow <- o .: "value_now"
     binfoHistoryExchangeRateThen <- o .: "exchange_rate_then"
     binfoHistoryTx <- o .: "tx"
+    binfoHistoryFee <- o .: "fee"
     return BinfoHistory {..}
 
 toBinfoHistory ::
@@ -3171,9 +3174,10 @@ toBinfoHistory ::
   Word64 ->
   Double ->
   Double ->
+  Word64 ->
   TxHash ->
   BinfoHistory
-toBinfoHistory satoshi timestamp rate_then rate_now txhash =
+toBinfoHistory satoshi timestamp rate_then rate_now fee txhash =
   BinfoHistory
     { binfoHistoryDate =
         T.pack $ formatTime defaultTimeLocale "%Y-%m-%d" t,
@@ -3190,7 +3194,9 @@ toBinfoHistory satoshi timestamp rate_then rate_now txhash =
       binfoHistoryExchangeRateThen =
         rate_then,
       binfoHistoryTx =
-        txhash
+        txhash,
+      binfoHistoryFee =
+        fromRational (toRational fee / 100 * 1000 * 1000)
     }
   where
     t = posixSecondsToUTCTime (realToFrac timestamp)
