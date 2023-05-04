@@ -99,7 +99,6 @@ withTestStore net t f =
                 storeConfPeerTimeout = 60,
                 storeConfPeerMaxLife = 48 * 3600,
                 storeConfConnect = dummyPeerConnect net ad,
-                storeConfCacheRetryDelay = 100000,
                 storeConfStats = Nothing
               }
       withStore cfg $ \Store {..} ->

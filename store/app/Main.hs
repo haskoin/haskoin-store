@@ -111,7 +111,6 @@ data Config = Config
     configPeerMaxLife :: !Int,
     configMaxPeers :: !Int,
     configMaxDiff :: !Int,
-    configCacheRetryDelay :: !Int,
     configStatsd :: !Bool,
     configStatsdHost :: !String,
     configStatsdPort :: !Int,
@@ -148,7 +147,6 @@ instance Default Config where
         configPeerMaxLife = defPeerMaxLife,
         configMaxPeers = defMaxPeers,
         configMaxDiff = defMaxDiff,
-        configCacheRetryDelay = defCacheRetryDelay,
         configStatsd = defStatsd,
         configStatsdHost = defStatsdHost,
         configStatsdPort = defStatsdPort,
@@ -164,12 +162,6 @@ defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
 defEnv e d p = do
   ms <- lookupEnv e
   return $ fromMaybe d $ p =<< ms
-
-defCacheRetryDelay :: Int
-defCacheRetryDelay =
-  unsafePerformIO $
-    defEnv "CACHE_RETRY_DELAY" 100000 readMaybe
-{-# NOINLINE defCacheRetryDelay #-}
 
 defMaxPending :: Int
 defMaxPending =
@@ -572,13 +564,6 @@ config = do
         <> help "Maximum number of keys in Redis xpub cache"
         <> showDefault
         <> value (configRedisMax def)
-  configCacheRetryDelay <-
-    option auto $
-      metavar "MICROSECONDS"
-        <> long "cache-retry-delay"
-        <> help "Delay to retry getting cache lock to index xpub"
-        <> showDefault
-        <> value (configCacheRetryDelay def)
   configNoMempool <-
     flag (configNoMempool def) True $
       long "no-mempool"
@@ -715,7 +700,6 @@ run
       configMaxDiff = maxdiff,
       configNoMempool = nomem,
       configSyncMempool = syncmem,
-      configCacheRetryDelay = cretrydelay,
       configStatsd = statsd,
       configStatsdHost = statsdhost,
       configStatsdPort = statsdport,
@@ -754,7 +738,6 @@ run
                 storeConfPeerTimeout = fromIntegral peertimeout,
                 storeConfPeerMaxLife = fromIntegral peerlife,
                 storeConfConnect = withConnection,
-                storeConfCacheRetryDelay = cretrydelay,
                 storeConfStats = stats
               }
       withStore scfg $ \st ->
@@ -779,17 +762,18 @@ run
     where
       with_stats go
         | statsd = do
-          $(logInfoS) "Main" $
-            "Sending stats to " <> T.pack statsdhost
-              <> ":"
-              <> cs (show statsdport)
-              <> " with prefix: "
-              <> T.pack statsdpfx
-          withStats
-            (T.pack statsdhost)
-            statsdport
-            (T.pack statsdpfx)
-            (go . Just)
+            $(logInfoS) "Main" $
+              "Sending stats to "
+                <> T.pack statsdhost
+                <> ":"
+                <> cs (show statsdport)
+                <> " with prefix: "
+                <> T.pack statsdpfx
+            withStats
+              (T.pack statsdhost)
+              statsdport
+              (T.pack statsdpfx)
+              (go . Just)
         | otherwise = go Nothing
       l _ lvl
         | deb = True

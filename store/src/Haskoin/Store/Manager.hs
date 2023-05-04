@@ -137,8 +137,6 @@ data StoreConfig = StoreConfig
     storeConfPeerMaxLife :: !NominalDiffTime,
     -- | connect to peers using the function 'withConnection'
     storeConfConnect :: !(SockAddr -> WithConnection),
-    -- | delay in microseconds to retry getting cache lock
-    storeConfCacheRetryDelay :: !Int,
     -- | stats store
     storeConfStats :: !(Maybe Metrics.Store)
   }
@@ -252,7 +250,6 @@ withCache cfg chain db pub action =
           cacheMin = storeConfCacheMin cfg,
           cacheChain = chain,
           cacheMax = storeConfMaxKeys cfg,
-          cacheRetryDelay = storeConfCacheRetryDelay cfg,
           cacheMetrics = metrics
         }
 
