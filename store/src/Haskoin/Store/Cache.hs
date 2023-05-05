@@ -896,27 +896,26 @@ inSync =
     Just bb -> do
       ch <- asks cacheChain
       cb <- chainGetBest ch
-      return $ headerHash (nodeHeader cb) == bb
+      return $ nodeHeight cb > 0 && headerHash (nodeHeader cb) == bb
 
 newBlockC ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheX m ()
 newBlockC =
-  inSync >>= \s ->
-    when s . void $ withLock $ do
-      ch <- asks cacheChain
-      bn <- chainGetBest ch
-      cn <- cacheGetHead
-      case cn of
-        Nothing -> do
-          $(logInfoS) "Cache" "Initializing best cache block"
-          do_import bn
-        Just hb ->
-          if hb == headerHash (nodeHeader bn)
-            then $(logDebugS) "Cache" "Cache in sync"
-            else do
-              sync ch hb bn
-              void pruneDB
+  inSync >>= \s -> when s . void . withLock $ do
+    ch <- asks cacheChain
+    bn <- chainGetBest ch
+    cn <- cacheGetHead
+    case cn of
+      Nothing -> do
+        $(logInfoS) "Cache" "Initializing best cache block"
+        do_import bn
+      Just hb ->
+        if hb == headerHash (nodeHeader bn)
+          then $(logDebugS) "Cache" "Cache in sync"
+          else do
+            sync ch hb bn
+            void pruneDB
   where
     sync ch hb bn =
       chainGetBlock hb ch >>= \case
@@ -1235,13 +1234,14 @@ getNewAddrs gap xpubs =
 syncMempoolC ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheX m ()
-syncMempoolC = void . withLock $ do
-  nodepool <- HashSet.fromList . map snd <$> lift getMempool
-  cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-  getem (HashSet.difference nodepool cachepool)
-  refreshLock
-  getem (HashSet.difference cachepool nodepool)
-  refreshLock
+syncMempoolC =
+  inSync >>= \s -> when s . void . withLock $ do
+    nodepool <- HashSet.fromList . map snd <$> lift getMempool
+    cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
+    getem (HashSet.difference nodepool cachepool)
+    refreshLock
+    getem (HashSet.difference cachepool nodepool)
+    refreshLock
   where
     getem tset = do
       let tids = HashSet.toList tset
