@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## 0.65.7
+### Changed
+- Do not sync mempool to Redis if node is not up-to-date.
+
 ## 0.65.6
 ### Changed
 - Improve caching ingestion performance.
