@@ -6,6 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Haskoin.Store.BlockStore
   ( -- * Block Store
@@ -61,11 +62,11 @@ import Control.Monad.Reader
   )
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Maybe (runMaybeT)
-import qualified Data.ByteString as B
+import Data.ByteString qualified as B
 import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
+import Data.HashMap.Strict qualified as HashMap
 import Data.HashSet (HashSet)
-import qualified Data.HashSet as HashSet
+import Data.HashSet qualified as HashSet
 import Data.List (delete)
 import Data.Maybe
   ( catMaybes,
@@ -90,7 +91,6 @@ import Data.Time.Clock.POSIX
 import Data.Time.Format
   ( defaultTimeLocale,
     formatTime,
-    iso8601DateFormat,
   )
 import Haskoin
   ( Block (..),
@@ -155,9 +155,9 @@ import NQE
     send,
     sendSTM,
   )
-import qualified System.Metrics as Metrics
-import qualified System.Metrics.Gauge as Metrics (Gauge)
-import qualified System.Metrics.Gauge as Metrics.Gauge
+import System.Metrics qualified as Metrics
+import System.Metrics.Gauge qualified as Metrics (Gauge)
+import System.Metrics.Gauge qualified as Metrics.Gauge
 import System.Random (randomRIO)
 import UnliftIO
   ( Exception,
@@ -411,9 +411,9 @@ withBlockStore cfg action = do
           Right () -> wipe_it txs2
     wipe
       | blockConfWipeMempool cfg =
-        getMempool >>= wipe_it
+          getMempool >>= wipe_it
       | otherwise =
-        return ()
+          return ()
     ini =
       runImport initBest >>= \case
         Left e -> do
@@ -468,7 +468,8 @@ processBlock peer block = void . runMaybeT $ do
     True -> return ()
     False -> do
       $(logErrorS) "BlockStore" $
-        "Non-syncing peer " <> peerText peer
+        "Non-syncing peer "
+          <> peerText peer
           <> " sent me a block: "
           <> blockHashToHex blockhash
       PeerMisbehaving "Sent unexpected block" `killPeer` peer
@@ -478,13 +479,15 @@ processBlock peer block = void . runMaybeT $ do
       Just b -> return b
       Nothing -> do
         $(logErrorS) "BlockStore" $
-          "Peer " <> peerText peer
+          "Peer "
+            <> peerText peer
             <> " sent unknown block: "
             <> blockHashToHex blockhash
         PeerMisbehaving "Sent unknown block" `killPeer` peer
         mzero
   $(logDebugS) "BlockStore" $
-    "Processing block: " <> blockText node Nothing
+    "Processing block: "
+      <> blockText node Nothing
       <> " from peer: "
       <> peerText peer
   lift . notify (Just block) $
@@ -507,7 +510,8 @@ processBlock peer block = void . runMaybeT $ do
           mempool peer
     failure e = do
       $(logErrorS) "BlockStore" $
-        "Error importing block " <> hexhash
+        "Error importing block "
+          <> hexhash
           <> " from peer: "
           <> peerText peer
           <> ": "
@@ -588,7 +592,8 @@ processTx :: MonadLoggerIO m => Peer -> Tx -> BlockT m ()
 processTx p tx = guardMempool $ do
   t <- liftIO getCurrentTime
   $(logDebugS) "BlockManager" $
-    "Received tx " <> txHashToHex (txHash tx)
+    "Received tx "
+      <> txHashToHex (txHash tx)
       <> " by peer: "
       <> peerText p
   addPendingTx $ PendingTx t tx HashSet.empty
@@ -740,13 +745,15 @@ importMempoolTx block_read time tx =
       newMempoolTx tx seconds >>= \case
         True -> do
           $(logInfoS) "BlockStore" $
-            "Import tx " <> txHashToHex (txHash tx)
+            "Import tx "
+              <> txHashToHex (txHash tx)
               <> ": OK"
           fulfillOrphans block_read tx_hash
           return True
         False -> do
           $(logDebugS) "BlockStore" $
-            "Import tx " <> txHashToHex (txHash tx)
+            "Import tx "
+              <> txHashToHex (txHash tx)
               <> ": Already imported"
           return False
 
@@ -811,7 +818,10 @@ processTxs p hs = guardMempool $ do
       isPending h >>= \case
         True -> do
           $(logDebugS) "BlockStore" $
-            "Tx " <> cs (show i) <> "/" <> cs (show len)
+            "Tx "
+              <> cs (show i)
+              <> "/"
+              <> cs (show len)
               <> " "
               <> txHashToHex h
               <> ": "
@@ -821,7 +831,10 @@ processTxs p hs = guardMempool $ do
           getActiveTxData h >>= \case
             Just _ -> do
               $(logDebugS) "BlockStore" $
-                "Tx " <> cs (show i) <> "/" <> cs (show len)
+                "Tx "
+                  <> cs (show i)
+                  <> "/"
+                  <> cs (show len)
                   <> " "
                   <> txHashToHex h
                   <> ": "
@@ -829,7 +842,10 @@ processTxs p hs = guardMempool $ do
               return Nothing
             Nothing -> do
               $(logDebugS) "BlockStore" $
-                "Tx " <> cs (show i) <> "/" <> cs (show len)
+                "Tx "
+                  <> cs (show i)
+                  <> "/"
+                  <> cs (show len)
                   <> " "
                   <> txHashToHex h
                   <> ": "
@@ -856,7 +872,8 @@ touchPeer =
       now <- liftIO getCurrentTime
       atomically $
         modifyTVar box $
-          fmap $ \x -> x {syncingTime = now}
+          fmap $
+            \x -> x {syncingTime = now}
 
 checkTime :: MonadLoggerIO m => BlockT m ()
 checkTime =
@@ -1207,22 +1224,13 @@ blockStorePendingTxsSTM BlockStore {..} = do
 blockText :: BlockNode -> Maybe Block -> Text
 blockText bn mblock = case mblock of
   Nothing ->
-    height <> sep <> time <> sep <> hash
+    height <> sep <> t <> sep <> hash
   Just block ->
-    height <> sep <> time <> sep <> hash <> sep <> size block
+    height <> sep <> t <> sep <> hash <> sep <> size block
   where
     height = cs $ show (nodeHeight bn)
-    systime =
-      posixSecondsToUTCTime $
-        fromIntegral $
-          blockTimestamp $
-            nodeHeader bn
-    time =
-      cs $
-        formatTime
-          defaultTimeLocale
-          (iso8601DateFormat (Just "%H:%M"))
-          systime
+    b = posixSecondsToUTCTime . fromIntegral . blockTimestamp $ nodeHeader bn
+    t = cs $ formatTime defaultTimeLocale "%FT%T" b
     hash = blockHashToHex (headerHash (nodeHeader bn))
     sep = " | "
     size = (<> " bytes") . cs . show . B.length . encode

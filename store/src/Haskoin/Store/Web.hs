@@ -9,6 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Haskoin.Store.Web
@@ -48,6 +49,7 @@ import Control.Monad
     unless,
     when,
     (<=<),
+    (>=>),
   )
 import Control.Monad.Logger
   ( MonadLoggerIO,
@@ -72,7 +74,7 @@ import Data.Aeson
     ToJSON (..),
     Value,
   )
-import qualified Data.Aeson as A
+import Data.Aeson qualified as A
 import Data.Aeson.Encode.Pretty
   ( Config (..),
     defConfig,
@@ -84,11 +86,11 @@ import Data.Aeson.Encoding
   )
 import Data.Aeson.Text (encodeToLazyText)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Base16 as B16
+import Data.ByteString qualified as B
+import Data.ByteString.Base16 qualified as B16
 import Data.ByteString.Builder (lazyByteString)
-import qualified Data.ByteString.Char8 as C
-import qualified Data.ByteString.Lazy as L
+import Data.ByteString.Char8 qualified as C
+import Data.ByteString.Lazy qualified as L
 import Data.Bytes.Get
 import Data.Bytes.Put
 import Data.Bytes.Serial
@@ -96,9 +98,9 @@ import Data.Char (isSpace)
 import Data.Default (Default (..))
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
+import Data.HashMap.Strict qualified as HashMap
 import Data.HashSet (HashSet)
-import qualified Data.HashSet as HashSet
+import Data.HashSet qualified as HashSet
 import Data.Int (Int64)
 import Data.List (nub)
 import Data.Maybe
@@ -114,24 +116,25 @@ import Data.Serialize (decode)
 import Data.String (fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
 import Data.Text.Lazy (toStrict)
-import qualified Data.Text.Lazy as TL
+import Data.Text.Lazy qualified as TL
 import Data.Time.Clock (diffUTCTime)
 import Data.Time.Clock.System
   ( getSystemTime,
     systemSeconds,
     systemToUTCTime,
   )
-import qualified Data.Vault.Lazy as V
+import Data.Vault.Lazy qualified as V
 import Data.Word (Word32, Word64)
 import Database.RocksDB
   ( Property (..),
     getProperty,
   )
+import GHC.RTS.Flags (ConcFlags (ConcFlags))
 import Haskoin.Address
-import qualified Haskoin.Block as H
+import Haskoin.Block qualified as H
 import Haskoin.Constants
 import Haskoin.Data
 import Haskoin.Keys
@@ -201,19 +204,20 @@ import Network.WebSockets
     requestPath,
     sendTextData,
   )
-import qualified Network.WebSockets as WebSockets
-import qualified Network.Wreq as Wreq
+import Network.WebSockets qualified as WebSockets
+import Network.Wreq qualified as Wreq
 import Network.Wreq.Session as Wreq (Session)
-import qualified Network.Wreq.Session as Wreq.Session
+import Network.Wreq.Session qualified as Wreq.Session
 import System.IO.Unsafe (unsafeInterleaveIO)
-import qualified System.Metrics as Metrics
-import qualified System.Metrics.Gauge as Metrics (Gauge)
-import qualified System.Metrics.Gauge as Metrics.Gauge
+import System.Metrics qualified as Metrics
+import System.Metrics.Gauge qualified as Metrics (Gauge)
+import System.Metrics.Gauge qualified as Metrics.Gauge
 import UnliftIO
   ( MonadIO,
     MonadUnliftIO,
     TVar,
     askRunInIO,
+    async,
     atomically,
     bracket,
     bracket_,
@@ -229,7 +233,7 @@ import UnliftIO
   )
 import UnliftIO.Concurrent (threadDelay)
 import Web.Scotty.Internal.Types (ActionT)
-import qualified Web.Scotty.Trans as S
+import Web.Scotty.Trans qualified as S
 
 type WebT m = ActionT Except (ReaderT WebState m)
 
@@ -273,14 +277,16 @@ data WebConfig = WebConfig
     webTickerURL :: !String,
     webHistoryURL :: !String,
     webSlow :: !Bool,
-    webBlockchain :: !Bool
+    webBlockchain :: !Bool,
+    webHealthCheckInterval :: !Int
   }
 
 data WebState = WebState
   { webConfig :: !WebConfig,
     webTicker :: !(TVar (HashMap Text BinfoTicker)),
     webMetrics :: !(Maybe WebMetrics),
-    webWreqSession :: !Wreq.Session
+    webWreqSession :: !Wreq.Session,
+    webHealthCheck :: !(TVar HealthCheck)
   }
 
 data WebMetrics = WebMetrics
@@ -455,12 +461,11 @@ setMetrics df =
 
 addItemCount :: MonadUnliftIO m => Int -> WebT m ()
 addItemCount i =
-  asks webMetrics >>= mapM_ \m ->
+  asks webMetrics >>= mapM_ \m -> do
     addStatItems (statAll m) (fromIntegral i)
-      >> S.request >>= \req ->
-        forM_ (V.lookup (statKey m) (vault req)) \t ->
-          readTVarIO t >>= mapM_ \s ->
-            addStatItems (s m) (fromIntegral i)
+    req <- S.request
+    forM_ (V.lookup (statKey m) (vault req)) $
+      readTVarIO >=> mapM_ \s -> addStatItems (s m) (fromIntegral i)
 
 getItemCounter :: (MonadIO m, MonadIO n) => WebT m (Int -> n ())
 getItemCounter =
@@ -554,21 +559,27 @@ runWeb
       webTickerURL = turl,
       webMaxLimits = WebLimits {..},
       webSlow = slow,
-      webBlockchain = blockchain
+      webBlockchain = blockchain,
+      webHealthCheckInterval = healthint
     } = do
     ticker <- newTVarIO HashMap.empty
     metrics <- mapM createMetrics stats
     session <- liftIO Wreq.Session.newAPISession
+    health' <- hcheck >>= newTVarIO
     let st =
           WebState
             { webConfig = cfg,
               webTicker = ticker,
               webMetrics = metrics,
-              webWreqSession = session
+              webWreqSession = session,
+              webHealthCheck = health'
             }
         net = storeNetwork store'
-    withAsync (when blockchain $ price net session turl pget ticker) $
-      const $ do
+    withAsync (when blockchain $ price net session turl pget ticker)
+      . const
+      . withAsync (health health')
+      . const
+      $ do
         reqLogger <- logIt metrics
         runner <- askRunInIO
         S.scottyOptsT opts (runner . (`runReaderT` st)) $ do
@@ -580,6 +591,10 @@ runWeb
           handlePaths slow blockchain
           S.notFound $ raise ThingNotFound
     where
+      hcheck = runReaderT (healthCheck cfg) (storeDB store')
+      health v = forever $ do
+        threadDelay (healthint * 1000 * 1000)
+        hcheck >>= atomically . writeTVar v
       opts = def {S.settings = settings defaultSettings}
       settings = setPort port . setHost (fromString host)
 
@@ -644,15 +659,15 @@ raise err =
       let status = errStatus err
       if
           | statusIsClientError status ->
-            liftIO $ do
-              addClientError (statAll m)
-              forM_ mM $ \f -> addClientError (f m)
+              liftIO $ do
+                addClientError (statAll m)
+                forM_ mM $ \f -> addClientError (f m)
           | statusIsServerError status ->
-            liftIO $ do
-              addServerError (statAll m)
-              forM_ mM $ \f -> addServerError (f m)
+              liftIO $ do
+                addServerError (statAll m)
+                forM_ mM $ \f -> addServerError (f m)
           | otherwise ->
-            return ()
+              return ()
       S.raise err
 
 errStatus :: Except -> Status
@@ -1130,8 +1145,8 @@ scottyBlockLatest (GetBlockLatest (NoTx noTx)) = do
       | blockDataHeight b <= 0 = return $ reverse acc
       | length acc == 99 = return . reverse $ pruneTx noTx b : acc
       | otherwise = do
-        let prev = H.prevBlock (blockDataHeader b)
-        go (pruneTx noTx b : acc) =<< getBlock prev
+          let prev = H.prevBlock (blockDataHeader b)
+          go (pruneTx noTx b : acc) =<< getBlock prev
 
 -- GET BlockHeight / BlockHeights / BlockHeightRaw --
 
@@ -1345,11 +1360,11 @@ cbAfterHeight height txid =
         Nothing -> return (Nothing, n - i)
         Just tx
           | height_check tx ->
-            if cb_check tx
-              then return (Just True, n - i + 1)
-              else
-                let ns' = HashSet.union (ins tx) ns
-                 in inputs (i - 1) is ns' ts
+              if cb_check tx
+                then return (Just True, n - i + 1)
+                else
+                  let ns' = HashSet.union (ins tx) ns
+                   in inputs (i - 1) is ns' ts
           | otherwise -> inputs (i - 1) is ns ts
     cb_check = any isCoinbase . transactionInputs
     ins = HashSet.fromList . map (outPointHash . inputPoint) . transactionInputs
@@ -1402,10 +1417,10 @@ publishTx cfg tx =
     f p s
       | webNoMempool cfg = return $ Right ()
       | otherwise =
-        liftIO (UnliftIO.timeout t (g p s)) >>= \case
-          Nothing -> return $ Left PubTimeout
-          Just (Left e) -> return $ Left e
-          Just (Right ()) -> return $ Right ()
+          liftIO (UnliftIO.timeout t (g p s)) >>= \case
+            Nothing -> return $ Left PubTimeout
+            Just (Left e) -> return $ Left e
+            Just (Right ()) -> return $ Right ()
     g p s =
       receive s >>= \case
         StoreTxReject p' h' c _
@@ -1644,32 +1659,32 @@ scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) = do
 netBinfoSymbol :: Network -> BinfoSymbol
 netBinfoSymbol net
   | net == btc =
-    BinfoSymbol
-      { getBinfoSymbolCode = "BTC",
-        getBinfoSymbolString = "BTC",
-        getBinfoSymbolName = "Bitcoin",
-        getBinfoSymbolConversion = 100 * 1000 * 1000,
-        getBinfoSymbolAfter = True,
-        getBinfoSymbolLocal = False
-      }
+      BinfoSymbol
+        { getBinfoSymbolCode = "BTC",
+          getBinfoSymbolString = "BTC",
+          getBinfoSymbolName = "Bitcoin",
+          getBinfoSymbolConversion = 100 * 1000 * 1000,
+          getBinfoSymbolAfter = True,
+          getBinfoSymbolLocal = False
+        }
   | net == bch =
-    BinfoSymbol
-      { getBinfoSymbolCode = "BCH",
-        getBinfoSymbolString = "BCH",
-        getBinfoSymbolName = "Bitcoin Cash",
-        getBinfoSymbolConversion = 100 * 1000 * 1000,
-        getBinfoSymbolAfter = True,
-        getBinfoSymbolLocal = False
-      }
+      BinfoSymbol
+        { getBinfoSymbolCode = "BCH",
+          getBinfoSymbolString = "BCH",
+          getBinfoSymbolName = "Bitcoin Cash",
+          getBinfoSymbolConversion = 100 * 1000 * 1000,
+          getBinfoSymbolAfter = True,
+          getBinfoSymbolLocal = False
+        }
   | otherwise =
-    BinfoSymbol
-      { getBinfoSymbolCode = "XTS",
-        getBinfoSymbolString = "¤",
-        getBinfoSymbolName = "Test",
-        getBinfoSymbolConversion = 100 * 1000 * 1000,
-        getBinfoSymbolAfter = False,
-        getBinfoSymbolLocal = False
-      }
+      BinfoSymbol
+        { getBinfoSymbolCode = "XTS",
+          getBinfoSymbolString = "¤",
+          getBinfoSymbolName = "Test",
+          getBinfoSymbolConversion = 100 * 1000 * 1000,
+          getBinfoSymbolAfter = False,
+          getBinfoSymbolLocal = False
+        }
 
 binfoTickerToSymbol :: Text -> BinfoTicker -> BinfoSymbol
 binfoTickerToSymbol code BinfoTicker {..} =
@@ -1891,7 +1906,7 @@ getBinfoTxs
                     Nothing -> 0
                     Just a
                       | a `HashSet.member` baddrs ->
-                        if b then val else negate val
+                          if b then val else negate val
                       | otherwise -> 0
          in sum $ map (f False) ins <> map (f True) out
       go b =
@@ -2063,10 +2078,10 @@ scottyBinfoBlocksDay = do
     go _ Nothing = return []
     go t (Just b)
       | H.blockTimestamp (blockDataHeader b) <= fromIntegral t =
-        return []
+          return []
       | otherwise = do
-        b' <- getBlock (H.prevBlock (blockDataHeader b))
-        (b :) <$> go t b'
+          b' <- getBlock (H.prevBlock (blockDataHeader b))
+          (b :) <$> go t b'
 
 scottyMultiAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyMultiAddr = do
@@ -2249,13 +2264,15 @@ getBinfoOffset = do
   o <- S.param "offset" `S.rescue` const (return 0)
   when (o > x) $
     raise $
-      UserError $ "offset exceeded: " <> show o <> " > " <> show x
+      UserError $
+        "offset exceeded: " <> show o <> " > " <> show x
   return (fromIntegral o :: Int)
 
 scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyRawAddr =
   setMetrics statBlockchainRawaddr
-    >> getBinfoAddr "addr" >>= \case
+    >> getBinfoAddr "addr"
+    >>= \case
       BinfoAddr addr -> do_addr addr
       BinfoXpub xpub -> do_xpub xpub
   where
@@ -2493,7 +2510,8 @@ scottyBinfoBlockHeight = do
     get_tx th =
       withRunInIO $ \run ->
         unsafeInterleaveIO $
-          run $ fromJust <$> getTransaction th
+          run $
+            fromJust <$> getTransaction th
     get_binfo_blocks numtxid next_block_headers block_header = do
       let my_hash = H.headerHash (blockDataHeader block_header)
           get_prev = H.prevBlock . blockDataHeader
@@ -2545,7 +2563,8 @@ scottyBinfoBlock = do
     get_tx th =
       withRunInIO $ \run ->
         unsafeInterleaveIO $
-          run $ fromJust <$> getTransaction th
+          run $
+            fromJust <$> getTransaction th
     go numtxid hex bh =
       getBlock bh >>= \case
         Nothing -> raise ThingNotFound
@@ -2862,7 +2881,7 @@ scottyHealth ::
   (MonadUnliftIO m, MonadLoggerIO m) => GetHealth -> WebT m HealthCheck
 scottyHealth _ = do
   setMetrics statHealth
-  h <- lift $ asks webConfig >>= healthCheck
+  h <- asks webHealthCheck >>= readTVarIO
   unless (isOK h) $ S.status status503
   addItemCount 1
   return h

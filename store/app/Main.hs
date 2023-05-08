@@ -119,7 +119,8 @@ data Config = Config
     configWebTickerURL :: !String,
     configWebHistoryURL :: !String,
     configWebNoBlockchain :: !Bool,
-    configWebNoSlow :: !Bool
+    configWebNoSlow :: !Bool,
+    configHealthCheckInterval :: !Int
   }
 
 instance Default Config where
@@ -155,7 +156,8 @@ instance Default Config where
         configWebTickerURL = defWebTickerURL,
         configWebHistoryURL = defWebHistoryURL,
         configWebNoBlockchain = defWebNoBlockchain,
-        configWebNoSlow = defWebNoSlow
+        configWebNoSlow = defWebNoSlow,
+        configHealthCheckInterval = defHealthCheckInterval
       }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -373,6 +375,12 @@ defStatsdPrefix =
       service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
       return $ "app." <> task <> "." <> service
 {-# NOINLINE defStatsdPrefix #-}
+
+defHealthCheckInterval :: Int
+defHealthCheckInterval =
+  unsafePerformIO $
+    defEnv "HEALTH_CHECK_INTERVAL" 30 readMaybe
+{-# NOINLINE defHealthCheckInterval #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -637,6 +645,13 @@ config = do
     flag (configWebNoSlow def) False $
       long "no-slow"
         <> help "Disable non-scalable API calls (recommend also --no-blockchain)"
+  configHealthCheckInterval <-
+    option auto $
+      metavar "SECONDS"
+        <> long "health-check-interval"
+        <> help "Background check update interval"
+        <> showDefault
+        <> value (configHealthCheckInterval def)
   pure
     Config
       { configWebLimits = WebLimits {..},
@@ -708,7 +723,8 @@ run
       configWebTickerURL = wturl,
       configWebHistoryURL = whurl,
       configWebNoSlow = no_slow,
-      configWebNoBlockchain = no_blockchain
+      configWebNoBlockchain = no_blockchain,
+      configHealthCheckInterval = health_check_interval
     } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
       net <- case networkReader net_str of
@@ -757,7 +773,8 @@ run
               webTickerURL = wturl,
               webHistoryURL = whurl,
               webSlow = not no_slow,
-              webBlockchain = not no_blockchain
+              webBlockchain = not no_blockchain,
+              webHealthCheckInterval = health_check_interval
             }
     where
       with_stats go
