@@ -59,7 +59,7 @@ import Haskoin.Store.Cache
     cacheNewTx,
     cacheWriter,
     connectRedis,
-    newCacheMetrics,
+    newCacheMetrics, cacheSyncMempool,
   )
 import Haskoin.Store.Common
   ( StoreEvent (..),
@@ -138,7 +138,9 @@ data StoreConfig = StoreConfig
     -- | connect to peers using the function 'withConnection'
     storeConfConnect :: !(SockAddr -> WithConnection),
     -- | stats store
-    storeConfStats :: !(Maybe Metrics.Store)
+    storeConfStats :: !(Maybe Metrics.Store),
+    -- | sync mempool against cache every this many seconds
+    storeConfCacheMempoolSync :: !Int
   }
 
 withStore ::
@@ -240,9 +242,10 @@ withCache cfg chain db pub action =
           withSubscription pub $ \evts ->
             let conf = c conn metrics
              in withProcess (f conf) $ \p ->
-                  cacheWriterProcesses evts (getProcessMailbox p) $ do
+                  cacheWriterProcesses interval evts (getProcessMailbox p) $ do
                     action (Just conf)
   where
+    interval = storeConfCacheMempoolSync cfg
     f conf cwinbox = runReaderT (cacheWriter conf cwinbox) db
     c conn metrics =
       CacheConfig
@@ -255,20 +258,23 @@ withCache cfg chain db pub action =
 
 cacheWriterProcesses ::
   MonadUnliftIO m =>
+  Int ->
   Inbox StoreEvent ->
   CacheWriter ->
   m a ->
   m a
-cacheWriterProcesses evts cwm action =
-  withAsync events $ \a1 -> link a1 >> action
-  where
-    events = cacheWriterEvents evts cwm
+cacheWriterProcesses interval evts cwm action =
+  withAsync (cacheWriterEvents interval evts cwm) $ \a1 -> link a1 >> action
 
-cacheWriterEvents :: MonadIO m => Inbox StoreEvent -> CacheWriter -> m ()
-cacheWriterEvents evts cwm =
-  forever $
+cacheWriterEvents :: MonadUnliftIO m => Int -> Inbox StoreEvent -> CacheWriter -> m ()
+cacheWriterEvents interval evts cwm =
+  withAsync mempool . const $ forever $
     receive evts >>= \e ->
       e `cacheWriterDispatch` cwm
+  where
+    mempool = forever $ do
+      threadDelay (interval * 1000 * 1000)
+      cacheSyncMempool cwm
 
 cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
 cacheWriterDispatch (StoreBestBlock _) = cacheNewBlock

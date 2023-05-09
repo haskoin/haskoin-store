@@ -99,7 +99,8 @@ withTestStore net t f =
                 storeConfPeerTimeout = 60,
                 storeConfPeerMaxLife = 48 * 3600,
                 storeConfConnect = dummyPeerConnect net ad,
-                storeConfStats = Nothing
+                storeConfStats = Nothing,
+                storeConfCacheMempoolSync = 30
               }
       withStore cfg $ \Store {..} ->
         withSubscription storePublisher $ \sub ->

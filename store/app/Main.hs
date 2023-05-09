@@ -120,7 +120,8 @@ data Config = Config
     configWebHistoryURL :: !String,
     configWebNoBlockchain :: !Bool,
     configWebNoSlow :: !Bool,
-    configHealthCheckInterval :: !Int
+    configHealthCheckInterval :: !Int,
+    configCacheMempoolSync :: !Int
   }
 
 instance Default Config where
@@ -157,7 +158,8 @@ instance Default Config where
         configWebHistoryURL = defWebHistoryURL,
         configWebNoBlockchain = defWebNoBlockchain,
         configWebNoSlow = defWebNoSlow,
-        configHealthCheckInterval = defHealthCheckInterval
+        configHealthCheckInterval = defHealthCheckInterval,
+        configCacheMempoolSync = defCacheMempoolSync
       }
 
 defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
@@ -381,6 +383,12 @@ defHealthCheckInterval =
   unsafePerformIO $
     defEnv "HEALTH_CHECK_INTERVAL" 30 readMaybe
 {-# NOINLINE defHealthCheckInterval #-}
+
+defCacheMempoolSync :: Int
+defCacheMempoolSync =
+  unsafePerformIO $
+    defEnv "CACHE_MEMPOOL_SYNC" 30 readMaybe
+{-# NOINLINE defCacheMempoolSync #-}
 
 netNames :: String
 netNames = intercalate "|" (map getNetworkName allNets)
@@ -652,6 +660,13 @@ config = do
         <> help "Background check update interval"
         <> showDefault
         <> value (configHealthCheckInterval def)
+  configCacheMempoolSync <-
+    option auto $
+      metavar "SECONDS"
+        <> long "cache-mempool-sync"
+        <> help "Sync mempool to cache interval"
+        <> showDefault
+        <> value (configCacheMempoolSync def)
   pure
     Config
       { configWebLimits = WebLimits {..},
@@ -724,7 +739,8 @@ run
       configWebHistoryURL = whurl,
       configWebNoSlow = no_slow,
       configWebNoBlockchain = no_blockchain,
-      configHealthCheckInterval = health_check_interval
+      configHealthCheckInterval = health_check_interval,
+      configCacheMempoolSync = cachesync
     } =
     runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
       net <- case networkReader net_str of
@@ -754,7 +770,8 @@ run
                 storeConfPeerTimeout = fromIntegral peertimeout,
                 storeConfPeerMaxLife = fromIntegral peerlife,
                 storeConfConnect = withConnection,
-                storeConfStats = stats
+                storeConfStats = stats,
+                storeConfCacheMempoolSync = cachesync
               }
       withStore scfg $ \st ->
         runWeb

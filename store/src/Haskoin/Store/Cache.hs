@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -25,6 +26,7 @@ module Haskoin.Store.Cache
     CacheWriterInbox,
     cacheNewBlock,
     cacheNewTx,
+    cacheSyncMempool,
     cacheWriter,
     cacheDelXPubs,
     isInCache,
@@ -45,17 +47,17 @@ import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Bits (complement, shift, (.&.), (.|.))
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import Data.ByteString qualified as B
 import Data.Default (def)
 import Data.Either (fromRight, isRight, rights)
 import Data.Functor ((<&>))
 import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
+import Data.HashMap.Strict qualified as HashMap
 import Data.HashSet (HashSet)
-import qualified Data.HashSet as HashSet
-import qualified Data.IntMap.Strict as I
+import Data.HashSet qualified as HashSet
+import Data.IntMap.Strict qualified as I
 import Data.List (sort)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe
   ( catMaybes,
     fromMaybe,
@@ -87,8 +89,8 @@ import Database.Redis
     zrangebyscoreWithscoresLimit,
     zrem,
   )
-import qualified Database.Redis as Redis
-import qualified Database.Redis as Reids
+import Database.Redis qualified as Redis
+import Database.Redis qualified as Reids
 import GHC.Generics (Generic)
 import Haskoin
   ( Address,
@@ -135,13 +137,13 @@ import NQE
     receive,
     send,
   )
-import qualified System.Metrics as Metrics
-import qualified System.Metrics.Counter as Metrics (Counter)
-import qualified System.Metrics.Counter as Metrics.Counter
-import qualified System.Metrics.Distribution as Metrics (Distribution)
-import qualified System.Metrics.Distribution as Metrics.Distribution
-import qualified System.Metrics.Gauge as Metrics (Gauge)
-import qualified System.Metrics.Gauge as Metrics.Gauge
+import System.Metrics qualified as Metrics
+import System.Metrics.Counter qualified as Metrics (Counter)
+import System.Metrics.Counter qualified as Metrics.Counter
+import System.Metrics.Distribution qualified as Metrics (Distribution)
+import System.Metrics.Distribution qualified as Metrics.Distribution
+import System.Metrics.Gauge qualified as Metrics (Gauge)
+import System.Metrics.Gauge qualified as Metrics.Gauge
 import System.Random (randomIO, randomRIO)
 import UnliftIO
   ( Exception,
@@ -659,7 +661,8 @@ getAllFromMap n = do
 
 data CacheWriterMessage
   = CacheNewBlock
-  | CacheNewTx TxHash
+  | CacheNewTx !TxHash
+  | CacheSyncMempool !(Listen ())
 
 type CacheWriterInbox = Inbox CacheWriterMessage
 
@@ -707,8 +710,7 @@ lockIt :: MonadLoggerIO m => CacheX m Bool
 lockIt = do
   go >>= \case
     Right Redis.Ok -> do
-      $(logDebugS) "Cache" $
-        "Acquired lock"
+      $(logDebugS) "Cache" "Acquired lock"
       incrementCounter cacheLockAcquired 1
       return True
     Right Redis.Pong -> do
@@ -764,8 +766,13 @@ withLock ::
   CacheX m (Maybe a)
 withLock f =
   bracket lockIt unlockIt $ \case
-    True -> Just <$> f
+    True -> Just <$> go
     False -> return Nothing
+  where
+    go = withAsync refresh $ const f
+    refresh = forever $ do
+      threadDelay (150 * 1000 * 1000)
+      refreshLock
 
 isFull ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
@@ -808,17 +815,14 @@ cacheWriterReact ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheWriterMessage ->
   CacheX m ()
-cacheWriterReact CacheNewBlock =
-  doSync
-cacheWriterReact (CacheNewTx txid) =
-  doSync
-
-doSync ::
-  (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
-  CacheX m ()
-doSync = do
+cacheWriterReact CacheNewBlock = do
   newBlockC
   syncMempoolC
+cacheWriterReact (CacheNewTx txid) =
+  syncNewTxC [txid]
+cacheWriterReact (CacheSyncMempool l) = do
+  syncMempoolC
+  atomically $ l ()
 
 lenNotNull :: [XPubBal] -> Int
 lenNotNull = length . filter (not . nullBalance . xPubBal)
@@ -1231,6 +1235,19 @@ getNewAddrs gap xpubs =
       Nothing -> []
       Just bals -> addrsToAdd gap bals a
 
+syncNewTxC ::
+  (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
+  [TxHash] ->
+  CacheX m ()
+syncNewTxC ths =
+  inSync >>= \s -> when s . void . withLock $ do
+    txs <- catMaybes <$> mapM (lift . getTxData) ths
+    unless (null txs) $ do
+      forM_ txs $ \tx ->
+        $(logDebugS) "Cache" $
+          "Synchronizing transaction: " <> txHashToHex (txHash (txData tx))
+      importMultiTxC txs
+
 syncMempoolC ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheX m ()
@@ -1238,18 +1255,15 @@ syncMempoolC =
   inSync >>= \s -> when s . void . withLock $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
-    getem (HashSet.difference nodepool cachepool)
-    refreshLock
-    getem (HashSet.difference cachepool nodepool)
-    refreshLock
-  where
-    getem tset = do
-      let tids = HashSet.toList tset
-      txs <- catMaybes <$> mapM (lift . getTxData) tids
-      unless (null txs) $ do
-        $(logDebugS) "Cache" $
-          "Importing mempool transactions: " <> cs (show (length txs))
-        importMultiTxC txs
+    let diff1 = HashSet.difference nodepool cachepool
+    let diff2 = HashSet.difference cachepool nodepool
+    let diffset = diff1 <> diff2
+    let tids = HashSet.toList diffset
+    txs <- catMaybes <$> mapM (lift . getTxData) tids
+    unless (null txs) $ do
+      $(logDebugS) "Cache" $
+        "Synchronizing " <> cs (show (length txs)) <> " mempool transactions"
+      importMultiTxC txs
 
 cacheGetMempool :: MonadLoggerIO m => CacheX m [(UnixTime, TxHash)]
 cacheGetMempool = runRedis redisGetMempool
@@ -1479,3 +1493,6 @@ cacheNewBlock = send CacheNewBlock
 
 cacheNewTx :: MonadIO m => TxHash -> CacheWriter -> m ()
 cacheNewTx = send . CacheNewTx
+
+cacheSyncMempool :: MonadIO m => CacheWriter -> m ()
+cacheSyncMempool = query CacheSyncMempool
