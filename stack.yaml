@@ -1,4 +1,4 @@
-resolver: lts-20.19
+resolver: lts-19.16
 nix:
   packages:
   - perl

@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Haskoin.Store.Manager
   ( StoreConfig (..),
@@ -57,9 +58,10 @@ import Haskoin.Store.Cache
     CacheWriter,
     cacheNewBlock,
     cacheNewTx,
+    cacheSyncMempool,
     cacheWriter,
     connectRedis,
-    newCacheMetrics, cacheSyncMempool,
+    newCacheMetrics,
   )
 import Haskoin.Store.Common
   ( StoreEvent (..),
@@ -81,7 +83,7 @@ import NQE
     withSubscription,
   )
 import Network.Socket (SockAddr (..))
-import qualified System.Metrics as Metrics (Store)
+import System.Metrics qualified as Metrics (Store)
 import UnliftIO
   ( MonadIO,
     MonadUnliftIO,
@@ -268,9 +270,10 @@ cacheWriterProcesses interval evts cwm action =
 
 cacheWriterEvents :: MonadUnliftIO m => Int -> Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents interval evts cwm =
-  withAsync mempool . const $ forever $
-    receive evts >>= \e ->
-      e `cacheWriterDispatch` cwm
+  withAsync mempool . const $
+    forever $
+      receive evts >>= \e ->
+        e `cacheWriterDispatch` cwm
   where
     mempool = forever $ do
       threadDelay (interval * 1000 * 1000)

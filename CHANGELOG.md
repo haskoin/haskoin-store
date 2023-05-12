@@ -4,7 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
-## Unreleased
+## 0.65.10
+### Changed
+- Revert to older LTS Haskell to attempt to resolve memory leak.
+
+### Removed
+- Remove unnecessary lock release.
+
+## 0.65.9
 ### Changed
 - Be more aggressive caching individual transactions.
 - Introduce a periodic cache mempool sync task.

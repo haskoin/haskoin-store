@@ -963,7 +963,6 @@ newBlockC =
               $(logInfoS) "Cache" "Cache best block higher than this node's"
     do_import bn = do
       importBlockC . headerHash $ nodeHeader bn
-      refreshLock
 
 importBlockC ::
   (MonadUnliftIO m, StoreReadExtra m, MonadLoggerIO m) =>
