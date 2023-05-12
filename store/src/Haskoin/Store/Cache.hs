@@ -151,7 +151,6 @@ import UnliftIO
     MonadUnliftIO,
     TQueue,
     TVar,
-    async,
     atomically,
     bracket,
     liftIO,

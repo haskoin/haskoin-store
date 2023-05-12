@@ -217,7 +217,6 @@ import UnliftIO
     MonadUnliftIO,
     TVar,
     askRunInIO,
-    async,
     atomically,
     bracket,
     bracket_,
