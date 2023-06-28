@@ -26,6 +26,13 @@ packages:
   original:
     hackage: haskoin-core-0.22.0@sha256:d6a180619df675f070e88b4be8ba2bff72e5e85fe03a696cde5815849e517227,4938
 - completed:
+    hackage: haskoin-node-0.19.0@sha256:399257bbd00bf6e3a60f76cf21bf47b20d46cd4484677f703eb71b6aaa2b262e,2279
+    pantry-tree:
+      sha256: 988e1e3bffb2a47148f788baac0a2ce1bc3dccdb0dab9a6179d3048f5c507173
+      size: 636
+  original:
+    hackage: haskoin-node-0.19.0@sha256:399257bbd00bf6e3a60f76cf21bf47b20d46cd4484677f703eb71b6aaa2b262e,2279
+- completed:
     commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
     git: https://github.com/tibbe/ekg-core.git
     name: ekg-core
