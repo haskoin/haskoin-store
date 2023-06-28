@@ -1,13 +1,13 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.35.1.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 4d0d11cec087e9b2fb4e83ec304affb161540dcb95249d85f6580b161d85abf7
+-- hash: d49ffcc465d5b9f2861113961f9b4104f3162ee34db457c4968c4acc3f9074d4
 
 name:           haskoin-store-data
-version:        0.65.5
+version:        0.66.0
 synopsis:       Data for Haskoin Store
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -46,7 +46,7 @@ library
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.21.0
+    , haskoin-core >=0.22.0
     , http-client >=0.6.4.1
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -82,7 +82,7 @@ test-suite haskoin-store-test
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.21.0
+    , haskoin-core >=0.22.0
     , haskoin-store-data
     , hspec >=2.7.1
     , http-client >=0.6.4.1

@@ -1,6 +1,7 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -9,7 +10,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE ImportQualifiedPost #-}
 {-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Haskoin.Store.Web
@@ -85,9 +85,10 @@ import Data.Aeson.Encoding
     list,
   )
 import Data.Aeson.Text (encodeToLazyText)
+import Data.Base16.Types (assertBase16)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
-import Data.ByteString.Base16 qualified as B16
+import Data.ByteString.Base16 (decodeBase16, isBase16)
 import Data.ByteString.Builder (lazyByteString)
 import Data.ByteString.Char8 qualified as C
 import Data.ByteString.Lazy qualified as L
@@ -350,7 +351,7 @@ data WebMetrics = WebMetrics
     statKey :: !(V.Key (TVar (Maybe (WebMetrics -> StatDist))))
   }
 
-createMetrics :: MonadIO m => Metrics.Store -> m WebMetrics
+createMetrics :: (MonadIO m) => Metrics.Store -> m WebMetrics
 createMetrics s = liftIO $ do
   statAll <- d "all"
 
@@ -430,14 +431,14 @@ createMetrics s = liftIO $ do
     d x = createStatDist ("web." <> x) s
     g x = Metrics.createGauge ("web." <> x) s
 
-withGaugeIO :: MonadUnliftIO m => Metrics.Gauge -> m a -> m a
+withGaugeIO :: (MonadUnliftIO m) => Metrics.Gauge -> m a -> m a
 withGaugeIO g =
   bracket_
     (liftIO $ Metrics.Gauge.inc g)
     (liftIO $ Metrics.Gauge.dec g)
 
 withGaugeIncrease ::
-  MonadUnliftIO m =>
+  (MonadUnliftIO m) =>
   (WebMetrics -> Metrics.Gauge) ->
   WebT m a ->
   WebT m a
@@ -448,7 +449,7 @@ withGaugeIncrease gf go =
       s <- liftWith $ \run -> withGaugeIO (gf m) (run go)
       restoreT $ return s
 
-setMetrics :: MonadUnliftIO m => (WebMetrics -> StatDist) -> WebT m ()
+setMetrics :: (MonadUnliftIO m) => (WebMetrics -> StatDist) -> WebT m ()
 setMetrics df =
   asks webMetrics >>= mapM_ go
   where
@@ -458,7 +459,7 @@ setMetrics df =
       atomically $ writeTVar t (Just df)
     e = error "the ways of the warrior are yet to be mastered"
 
-addItemCount :: MonadUnliftIO m => Int -> WebT m ()
+addItemCount :: (MonadUnliftIO m) => Int -> WebT m ()
 addItemCount i =
   asks webMetrics >>= mapM_ \m -> do
     addStatItems (statAll m) (fromIntegral i)
@@ -646,7 +647,7 @@ price net session url pget v = forM_ purl $ \u -> forever $ do
           | net == bch = Just "bch"
           | otherwise = Nothing
 
-raise :: MonadIO m => Except -> WebT m a
+raise :: (MonadIO m) => Except -> WebT m a
 raise err =
   lift (asks webMetrics) >>= \case
     Nothing -> S.raise err
@@ -679,7 +680,7 @@ errStatus TxIndexConflict {} = status409
 errStatus ServerTimeout = status500
 errStatus RequestTooLarge = status413
 
-defHandler :: Monad m => Except -> WebT m ()
+defHandler :: (Monad m) => Except -> WebT m ()
 defHandler e = do
   setHeaders
   S.status $ errStatus e
@@ -981,13 +982,13 @@ pathCommon parser action encJson encValue pretty =
     toProxy = const Proxy
     proxy = toProxy parser
 
-streamEncoding :: Monad m => Encoding -> WebT m ()
+streamEncoding :: (Monad m) => Encoding -> WebT m ()
 streamEncoding e = do
   S.setHeader "Content-Type" "application/json; charset=utf-8"
   S.raw (encodingToLazyByteString e)
 
 protoSerial ::
-  Serial a =>
+  (Serial a) =>
   SerialAs ->
   (a -> Encoding) ->
   (a -> Value) ->
@@ -1011,18 +1012,18 @@ waiExcept s e =
       ]
     e' = A.encode e
 
-setupJSON :: Monad m => Bool -> ActionT Except m SerialAs
+setupJSON :: (Monad m) => Bool -> ActionT Except m SerialAs
 setupJSON pretty = do
   S.setHeader "Content-Type" "application/json"
   p <- S.param "pretty" `S.rescue` const (return pretty)
   return $ if p then SerialAsPrettyJSON else SerialAsJSON
 
-setupBinary :: Monad m => ActionT Except m SerialAs
+setupBinary :: (Monad m) => ActionT Except m SerialAs
 setupBinary = do
   S.setHeader "Content-Type" "application/octet-stream"
   return SerialAsBinary
 
-setupContentType :: Monad m => Bool -> ActionT Except m SerialAs
+setupContentType :: (Monad m) => Bool -> ActionT Except m SerialAs
 setupContentType pretty = do
   accept <- S.header "accept"
   maybe (setupJSON pretty) setType accept
@@ -1704,7 +1705,7 @@ binfoTickerToSymbol code BinfoTicker {..} =
       x -> x
 
 getBinfoAddrsParam ::
-  MonadIO m =>
+  (MonadIO m) =>
   Text ->
   WebT m (HashSet BinfoAddr)
 getBinfoAddrsParam name = do
@@ -1717,7 +1718,7 @@ getBinfoAddrsParam name = do
       Just xs -> return $ HashSet.fromList xs
 
 getBinfoActive ::
-  MonadIO m =>
+  (MonadIO m) =>
   WebT m (HashSet XPubSpec, HashSet Address)
 getBinfoActive = do
   active <- getBinfoAddrsParam "active"
@@ -1739,7 +1740,7 @@ getBinfoActive = do
     xpub (BinfoXpub x) = Just x
     xpub (BinfoAddr _) = Nothing
 
-getNumTxId :: MonadIO m => WebT m Bool
+getNumTxId :: (MonadIO m) => WebT m Bool
 getNumTxId = fmap not $ S.param "txidindex" `S.rescue` const (return False)
 
 getChainHeight :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m H.BlockHeight
@@ -1833,7 +1834,7 @@ getBinfoUnspents counter numtxid height xbals xspecs addrs = do
               .| mapC f
        in map g (HashSet.toList addrs)
 
-getXBals :: StoreReadExtra m => HashSet XPubSpec -> m (HashMap XPubSpec [XPubBal])
+getXBals :: (StoreReadExtra m) => HashSet XPubSpec -> m (HashMap XPubSpec [XPubBal])
 getXBals =
   fmap HashMap.fromList
     . mapM
@@ -1940,7 +1941,7 @@ getBinfoTxs
                     | c -> return ()
                     | otherwise -> yield a >> go b'
 
-getCashAddr :: Monad m => WebT m Bool
+getCashAddr :: (Monad m) => WebT m Bool
 getCashAddr = S.param "cashaddr" `S.rescue` const (return False)
 
 getAddress :: (Monad m, MonadUnliftIO m) => TL.Text -> WebT m Address
@@ -1951,7 +1952,7 @@ getAddress param' = do
     Nothing -> raise ThingNotFound
     Just a -> return a
 
-getBinfoAddr :: Monad m => TL.Text -> WebT m BinfoAddr
+getBinfoAddr :: (Monad m) => TL.Text -> WebT m BinfoAddr
 getBinfoAddr param' = do
   txt <- S.param param'
   net <- lift $ asks (storeNetwork . webStore . webConfig)
@@ -2050,7 +2051,7 @@ scottyBinfoHistory = do
             start = AtBlock . blockDataHeight <$> endM
           }
 
-getPrice :: MonadIO m => WebT m (Text, BinfoTicker)
+getPrice :: (MonadIO m) => WebT m (Text, BinfoTicker)
 getPrice = do
   code <- T.toUpper <$> S.param "currency" `S.rescue` const (return "USD")
   ticker <- lift $ asks webTicker
@@ -2059,7 +2060,7 @@ getPrice = do
     Nothing -> return (code, def)
     Just p -> return (code, p)
 
-getSymbol :: MonadIO m => WebT m BinfoSymbol
+getSymbol :: (MonadIO m) => WebT m BinfoSymbol
 getSymbol = uncurry binfoTickerToSymbol <$> getPrice
 
 scottyBinfoBlocksDay :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2484,7 +2485,7 @@ scottyShortBal = do
               }
       return (xPubExport net (xPubSpecKey xpub), sbl)
 
-getBinfoHex :: Monad m => WebT m Bool
+getBinfoHex :: (Monad m) => WebT m Bool
 getBinfoHex =
   (== ("hex" :: Text))
     <$> S.param "format" `S.rescue` const (return "json")
@@ -2856,7 +2857,7 @@ scottyPeers _ = do
 
 -- | Obtain information about connected peers from peer manager process.
 getPeersInformation ::
-  MonadLoggerIO m => PeerManager -> m [PeerInformation]
+  (MonadLoggerIO m) => PeerManager -> m [PeerInformation]
 getPeersInformation mgr =
   mapMaybe toInfo <$> getPeers mgr
   where
@@ -3035,11 +3036,13 @@ parseBody = do
     Right x -> return x
   where
     bin = runGetS deserialize
-    hex b = case B16.decodeBase16 $ C.filter (not . isSpace) b of
-      Right x -> bin x
-      Left s -> Left (T.unpack s)
+    hex b =
+      let ns = C.filter (not . isSpace) b
+       in if isBase16 ns
+            then bin . decodeBase16 $ assertBase16 ns
+            else Left "Invalid hex input"
 
-parseOffset :: MonadIO m => WebT m OffsetParam
+parseOffset :: (MonadIO m) => WebT m OffsetParam
 parseOffset = do
   res@(OffsetParam o) <- paramDef
   limits <- lift $ asks (webMaxLimits . webConfig)
@@ -3073,7 +3076,7 @@ parseStart (Just s) =
       let g = blockDataHeight b
       return $ AtBlock g
 
-parseLimits :: MonadIO m => WebT m LimitsParam
+parseLimits :: (MonadIO m) => WebT m LimitsParam
 parseLimits = LimitsParam <$> paramOptional <*> parseOffset <*> paramOptional
 
 paramToLimits ::
@@ -3102,7 +3105,7 @@ validateLimit wl full limitM =
 ---------------
 
 runInWebReader ::
-  MonadIO m =>
+  (MonadIO m) =>
   CacheT (DatabaseReaderT m) a ->
   ReaderT WebState m a
 runInWebReader f = do
@@ -3110,7 +3113,7 @@ runInWebReader f = do
   mc <- asks (storeCache . webStore . webConfig)
   lift $ runReaderT (withCache mc f) bdb
 
-runNoCache :: MonadIO m => Bool -> ReaderT WebState m a -> ReaderT WebState m a
+runNoCache :: (MonadIO m) => Bool -> ReaderT WebState m a -> ReaderT WebState m a
 runNoCache False f = f
 runNoCache True f = local g f
   where
@@ -3175,7 +3178,7 @@ logIt metrics = do
           $(logWarnS) "Web" $
             "Slow [" <> cs (show diff) <> " ms]: " <> fmtReq b req
 
-reqSizeLimit :: Integral i => i -> Middleware
+reqSizeLimit :: (Integral i) => i -> Middleware
 reqSizeLimit i = requestSizeLimitMiddleware lim
   where
     max_len _req = return (Just (fromIntegral i))
@@ -3188,7 +3191,7 @@ reqSizeLimit i = requestSizeLimitMiddleware lim
       send $
         waiExcept requestEntityTooLarge413 RequestTooLarge
 
-reqTimeout :: Integral i => i -> Middleware
+reqTimeout :: (Integral i) => i -> Middleware
 reqTimeout = timeoutAs res . fromIntegral
   where
     err = ServerTimeout

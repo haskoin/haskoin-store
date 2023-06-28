@@ -5,6 +5,27 @@
 
 packages:
 - completed:
+    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
+    pantry-tree:
+      sha256: 3a0f4b633d58e312d6e6fa556c7abbd0f483ebc35d767a77315f98e2d9840fd8
+      size: 1457
+  original:
+    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
+- completed:
+    hackage: secp256k1-haskell-0.7.0@sha256:1585601c67d7c62c698402ffe8462de216a499608521a8136d0aa15f0a03a23f,2140
+    pantry-tree:
+      sha256: a7726275193ac4ef14c9d97378222d3ca494524c48354edf69214513def7d48d
+      size: 599
+  original:
+    hackage: secp256k1-haskell-0.7.0@sha256:1585601c67d7c62c698402ffe8462de216a499608521a8136d0aa15f0a03a23f,2140
+- completed:
+    hackage: haskoin-core-0.22.0@sha256:d6a180619df675f070e88b4be8ba2bff72e5e85fe03a696cde5815849e517227,4938
+    pantry-tree:
+      sha256: e5504bd8f6c2fe3f9da792a6423f7cd79eb988f0db806f1cfcb824770ad56b7b
+      size: 5525
+  original:
+    hackage: haskoin-core-0.22.0@sha256:d6a180619df675f070e88b4be8ba2bff72e5e85fe03a696cde5815849e517227,4938
+- completed:
     commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
     git: https://github.com/tibbe/ekg-core.git
     name: ekg-core
@@ -15,17 +36,6 @@ packages:
   original:
     commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
     git: https://github.com/tibbe/ekg-core.git
-- completed:
-    commit: 00b5ebdc04f2a246dac7acf802fa2c3b46e9cfb4
-    git: https://github.com/haskoin/haskoin-node.git
-    name: haskoin-node
-    pantry-tree:
-      sha256: 366bf1d033b9f8b18b855b7023b6adb405f44b5fe4c9a3ec5eb19c30020e07af
-      size: 895
-    version: 0.18.1
-  original:
-    commit: 00b5ebdc04f2a246dac7acf802fa2c3b46e9cfb4
-    git: https://github.com/haskoin/haskoin-node.git
 - completed:
     commit: c6a9760266277cbd7641e9618f3b7cfbabc299d1
     git: https://github.com/tibbe/ekg-statsd.git
@@ -39,7 +49,7 @@ packages:
     git: https://github.com/tibbe/ekg-statsd.git
 snapshots:
 - completed:
-    sha256: a27a5761890ade44d7dd21a5f5f93c87e60b9c063655fff835d69dd1071474f0
-    size: 619163
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/19/16.yaml
-  original: lts-19.16
+    sha256: 1867d84255dff8c87373f5dd03e5a5cb1c10a99587e26c8793e750c54e83ffdc
+    size: 639139
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/21/0.yaml
+  original: lts-21.0

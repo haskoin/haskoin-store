@@ -1,4 +1,4 @@
-resolver: lts-19.16
+resolver: lts-21.0
 nix:
   packages:
   - perl
@@ -12,9 +12,10 @@ packages:
   - data
 allow-newer: true
 extra-deps:
+  - base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
+  - secp256k1-haskell-0.7.0@sha256:1585601c67d7c62c698402ffe8462de216a499608521a8136d0aa15f0a03a23f,2140
+  - haskoin-core-0.22.0@sha256:d6a180619df675f070e88b4be8ba2bff72e5e85fe03a696cde5815849e517227,4938
   - git: https://github.com/tibbe/ekg-core.git
     commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
-  - git: https://github.com/haskoin/haskoin-node.git
-    commit: 00b5ebdc04f2a246dac7acf802fa2c3b46e9cfb4
   - git: https://github.com/tibbe/ekg-statsd.git
     commit: c6a9760266277cbd7641e9618f3b7cfbabc299d1
