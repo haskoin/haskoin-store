@@ -29,7 +29,7 @@ arbitraryBlockRef = oneof [b, m]
     b = do
       h <- choose (0, 0x07ffffff)
       p <- choose (0, 0x03ffffff)
-      return BlockRef {blockRefHeight = h, blockRefPos = p}
+      return BlockRef {height = h, position = p}
     m = do
       t <- choose (0, 0x001fffffffffffff)
-      return MemRef {memRefTime = t}
+      return MemRef {timestamp = t}

@@ -1,8 +1,12 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.Store.WebClient
   ( ApiConfig (..),
@@ -67,8 +71,8 @@ import Control.Arrow (second)
 import Control.Exception
 import Control.Lens ((.~), (?~), (^.))
 import Control.Monad.Except
-import qualified Data.Aeson as A
-import qualified Data.ByteString.Lazy as BL
+import Data.Aeson qualified as A
+import Data.ByteString.Lazy qualified as BL
 import Data.Bytes.Get
 import Data.Bytes.Put
 import Data.Bytes.Serial
@@ -76,17 +80,17 @@ import Data.Default (Default, def)
 import Data.Monoid (Endo (..), appEndo)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
-import qualified Data.Text as Text
-import Haskoin.Constants
-import Haskoin.Data
-import qualified Haskoin.Store.Data as Store
+import Data.Text qualified as Text
+import Haskoin.Crypto (Ctx)
+import Haskoin.Network
+import Haskoin.Store.Data qualified as Store
 import Haskoin.Store.WebCommon
 import Haskoin.Transaction
 import Haskoin.Util
 import Network.HTTP.Client (Request (..))
 import Network.HTTP.Types (StdMethod (..))
 import Network.HTTP.Types.Status
-import qualified Network.Wreq as HTTP
+import Network.Wreq qualified as HTTP
 import Network.Wreq.Types (ResponseChecker)
 import Numeric.Natural (Natural)
 
@@ -95,40 +99,41 @@ import Numeric.Natural (Natural)
 --
 -- @
 -- ApiConfig
--- { configNetwork = bch
--- , configHost = "https://api.haskoin.com/"
+-- { net = bch
+-- , host = "https://api.haskoin.com/"
 -- }
 -- @
 data ApiConfig = ApiConfig
-  { configNetwork :: !Network,
-    configHost :: !String
+  { net :: !Network,
+    host :: !String
   }
   deriving (Eq, Show)
 
 instance Default ApiConfig where
   def =
     ApiConfig
-      { configNetwork = bch,
-        configHost = "https://api.haskoin.com/"
+      { net = bch,
+        host = "https://api.haskoin.com/"
       }
 
 -- | Make a call to the haskoin-store API.
 --
 -- Usage (default options):
 --
--- > apiCall def $ GetAddrsTxs addrs def
+-- > apiCall ctx def $ GetAddrsTxs addrs def
 --
 -- With options:
 --
--- > apiCall def $ GetAddrsUnspent addrs def{ paramLimit = Just 10 }
+-- > apiCall ctx def $ GetAddrsUnspent addrs def{ paramLimit = Just 10 }
 apiCall ::
   (ApiResource a b, MonadIO m, MonadError Store.Except m) =>
+  Ctx ->
   ApiConfig ->
   a ->
   m b
-apiCall (ApiConfig net apiHost) res = do
-  args <- liftEither $ toOptions net res
-  let url = apiHost <> getNetworkName net <> cs (queryPath net res)
+apiCall ctx (ApiConfig net apiHost) res = do
+  args <- liftEither $ toOptions net ctx res
+  let url = apiHost <> net.name <> cs (queryPath net ctx res)
   case resourceMethod $ asProxy res of
     GET -> liftEither =<< liftIO (getBinary args url)
     POST ->
@@ -143,11 +148,13 @@ apiCall (ApiConfig net apiHost) res = do
 -- > apiBatch 20 def (GetAddrsTxs addrs def)
 apiBatch ::
   (Batchable a b, MonadIO m, MonadError Store.Except m) =>
+  Ctx ->
   Natural ->
   ApiConfig ->
   a ->
   m b
-apiBatch i conf res = mconcat <$> mapM (apiCall conf) (resourceBatch i res)
+apiBatch ctx i conf res =
+  mconcat <$> mapM (apiCall ctx conf) (resourceBatch i res)
 
 class (ApiResource a b, Monoid b) => Batchable a b where
   resourceBatch :: Natural -> a -> [a]
@@ -190,22 +197,33 @@ instance Batchable GetAddrsUnspent (Store.SerialList Store.Unspent) where
 ------------------
 
 toOptions ::
-  ApiResource a b => Network -> a -> Either Store.Except (Endo HTTP.Options)
-toOptions net res =
+  (ApiResource a b) =>
+  Network ->
+  Ctx ->
+  a ->
+  Either Store.Except (Endo HTTP.Options)
+toOptions net ctx res =
   mconcat <$> mapM f (snd $ queryParams res)
   where
-    f (ParamBox p) = toOption net p
+    f (ParamBox p) = toOption net ctx p
 
-toOption :: Param a => Network -> a -> Either Store.Except (Endo HTTP.Options)
-toOption net a = do
-  res <- maybeToEither (Store.UserError "Invalid Param") $ encodeParam net a
+toOption ::
+  (Param a) =>
+  Network ->
+  Ctx ->
+  a ->
+  Either Store.Except (Endo HTTP.Options)
+toOption net ctx a = do
+  res <-
+    maybeToEither (Store.UserError "Invalid Param") $
+      encodeParam net ctx a
   return $ applyOpt (paramLabel a) res
 
 applyOpt :: Text -> [Text] -> Endo HTTP.Options
 applyOpt p t = Endo $ HTTP.param p .~ [Text.intercalate "," t]
 
 getBinary ::
-  Serial a =>
+  (Serial a) =>
   Endo HTTP.Options ->
   String ->
   IO (Either Store.Except a)
@@ -239,11 +257,11 @@ checkStatus req res
   | statusIsSuccessful status = return ()
   | isHealthPath && code == 503 = return () -- Ignore health checks
   | otherwise = do
-    e <- A.decodeStrict <$> res ^. HTTP.responseBody
-    throwIO $
-      case e of
-        Just except -> except :: Store.Except
-        Nothing -> Store.StringError "could not decode error"
+      e <- A.decodeStrict <$> res ^. HTTP.responseBody
+      throwIO $
+        case e of
+          Just except -> except :: Store.Except
+          Nothing -> Store.StringError "could not decode error"
   where
     code = res ^. HTTP.responseStatus . HTTP.statusCode
     message = res ^. HTTP.responseStatus . HTTP.statusMessage
@@ -258,4 +276,4 @@ chunksOf :: Natural -> [a] -> [[a]]
 chunksOf n xs
   | null xs = []
   | otherwise =
-    uncurry (:) $ second (chunksOf n) $ splitAt (fromIntegral n) xs
+      uncurry (:) $ second (chunksOf n) $ splitAt (fromIntegral n) xs

@@ -1,16 +1,21 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Main where
 
 import Control.Applicative ((<|>))
 import Control.Arrow (second)
 import Control.Monad (when)
+import Control.Monad.Cont (ContT (ContT), lift, runContT)
 import Control.Monad.Logger
   ( LogLevel (..),
     filterLogger,
@@ -23,7 +28,7 @@ import Data.Default (Default (..))
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Data.String.Conversions (cs)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Word (Word32)
 import Haskoin
   ( Network (..),
@@ -36,6 +41,8 @@ import Haskoin
     btcRegTest,
     btcTest,
     eitherToMaybe,
+    netByName,
+    withContext,
   )
 import Haskoin.Node (withConnection)
 import Haskoin.Store
@@ -89,309 +96,164 @@ version = "Unavailable"
 #endif
 
 data Config = Config
-  { configDir :: !FilePath,
-    configHost :: !String,
-    configPort :: !Int,
-    configNetwork :: !String,
-    configDiscover :: !Bool,
-    configPeers :: ![String],
-    configVersion :: !Bool,
-    configDebug :: !Bool,
-    configMaxPending :: !Int,
-    configWebLimits :: !WebLimits,
-    configWebTimeouts :: !WebTimeouts,
-    configRedis :: !Bool,
-    configRedisURL :: !String,
-    configRedisMin :: !Int,
-    configRedisMax :: !Integer,
-    configWipeMempool :: !Bool,
-    configNoMempool :: !Bool,
-    configSyncMempool :: !Bool,
-    configPeerTimeout :: !Int,
-    configPeerMaxLife :: !Int,
-    configMaxPeers :: !Int,
-    configMaxDiff :: !Int,
-    configStatsd :: !Bool,
-    configStatsdHost :: !String,
-    configStatsdPort :: !Int,
-    configStatsdPrefix :: !String,
-    configWebPriceGet :: !Int,
-    configWebTickerURL :: !String,
-    configWebHistoryURL :: !String,
-    configWebNoBlockchain :: !Bool,
-    configWebNoSlow :: !Bool,
-    configHealthCheckInterval :: !Int,
-    configCacheMempoolSync :: !Int
+  { dir :: !FilePath,
+    host :: !String,
+    port :: !Int,
+    net :: !String,
+    discover :: !Bool,
+    peers :: ![String],
+    version :: !Bool,
+    debug :: !Bool,
+    maxPendingTxs :: !Int,
+    maxLaggingBlocks :: !Int,
+    minPeers :: !Int,
+    webLimits :: !WebLimits,
+    webTimeouts :: !WebTimeouts,
+    redis :: !Bool,
+    redisURL :: !String,
+    redisMinAddrs :: !Int,
+    redisMaxKeys :: !Integer,
+    redisSyncInterval :: !Int,
+    noMempool :: !Bool,
+    wipeMempool :: !Bool,
+    syncMempool :: !Bool,
+    peerTimeout :: !Int,
+    maxPeerLife :: !Int,
+    maxPeers :: !Int,
+    statsd :: !Bool,
+    statsdHost :: !String,
+    statsdPort :: !Int,
+    statsdPrefix :: !String,
+    tickerRefresh :: !Int,
+    tickerURL :: !String,
+    priceHistoryURL :: !String,
+    noBlockchainInfo :: !Bool,
+    noSlow :: !Bool,
+    healthCheckInterval :: !Int
   }
 
-instance Default Config where
-  def =
-    Config
-      { configDir = defDirectory,
-        configHost = defHost,
-        configPort = defPort,
-        configNetwork = defNetwork,
-        configDiscover = defDiscover,
-        configPeers = defPeers,
-        configVersion = False,
-        configDebug = defDebug,
-        configMaxPending = defMaxPending,
-        configWebLimits = defWebLimits,
-        configWebTimeouts = defWebTimeouts,
-        configRedis = defRedis,
-        configRedisURL = defRedisURL,
-        configRedisMin = defRedisMin,
-        configRedisMax = defRedisMax,
-        configWipeMempool = defWipeMempool,
-        configNoMempool = defNoMempool,
-        configSyncMempool = defSyncMempool,
-        configPeerTimeout = defPeerTimeout,
-        configPeerMaxLife = defPeerMaxLife,
-        configMaxPeers = defMaxPeers,
-        configMaxDiff = defMaxDiff,
-        configStatsd = defStatsd,
-        configStatsdHost = defStatsdHost,
-        configStatsdPort = defStatsdPort,
-        configStatsdPrefix = defStatsdPrefix,
-        configWebPriceGet = defWebPriceGet,
-        configWebTickerURL = defWebTickerURL,
-        configWebHistoryURL = defWebHistoryURL,
-        configWebNoBlockchain = defWebNoBlockchain,
-        configWebNoSlow = defWebNoSlow,
-        configHealthCheckInterval = defHealthCheckInterval,
-        configCacheMempoolSync = defCacheMempoolSync
-      }
-
-defEnv :: MonadIO m => String -> a -> (String -> Maybe a) -> m a
-defEnv e d p = do
+env :: (MonadIO m) => String -> a -> (String -> Maybe a) -> m a
+env e d p = do
   ms <- lookupEnv e
   return $ fromMaybe d $ p =<< ms
 
-defMaxPending :: Int
-defMaxPending =
-  unsafePerformIO $
-    defEnv "MAX_PENDING_TXS" 100 readMaybe
-{-# NOINLINE defMaxPending #-}
-
-defMaxPeers :: Int
-defMaxPeers =
-  unsafePerformIO $
-    defEnv "MAX_PEERS" 20 readMaybe
-{-# NOINLINE defMaxPeers #-}
-
-defDirectory :: FilePath
-defDirectory = unsafePerformIO $ do
-  d <- getAppUserDataDirectory "haskoin-store"
-  defEnv "DIR" d pure
-{-# NOINLINE defDirectory #-}
-
-defHost :: String
-defHost =
-  unsafePerformIO $
-    defEnv "HOST" "*" pure
-{-# NOINLINE defHost #-}
-
-defPort :: Int
-defPort =
-  unsafePerformIO $
-    defEnv "PORT" 3000 readMaybe
-{-# NOINLINE defPort #-}
-
-defNetwork :: String
-defNetwork =
-  unsafePerformIO $
-    defEnv "NET" "bch" pure
-{-# NOINLINE defNetwork #-}
-
-defRedisMin :: Int
-defRedisMin =
-  unsafePerformIO $
-    defEnv "CACHE_MIN" 100 readMaybe
-{-# NOINLINE defRedisMin #-}
-
-defRedis :: Bool
-defRedis =
-  unsafePerformIO $
-    defEnv "CACHE" False parseBool
-{-# NOINLINE defRedis #-}
-
-defSyncMempool :: Bool
-defSyncMempool =
-  unsafePerformIO $
-    defEnv "SYNC_MEMPOOL" False parseBool
-{-# NOINLINE defSyncMempool #-}
-
-defDiscover :: Bool
-defDiscover =
-  unsafePerformIO $
-    defEnv "DISCOVER" False parseBool
-{-# NOINLINE defDiscover #-}
-
-defPeers :: [String]
-defPeers =
-  unsafePerformIO $
-    defEnv "PEER" [] (pure . words)
-{-# NOINLINE defPeers #-}
-
-defDebug :: Bool
-defDebug =
-  unsafePerformIO $
-    defEnv "DEBUG" False parseBool
-{-# NOINLINE defDebug #-}
-
-defWebLimits :: WebLimits
-defWebLimits = unsafePerformIO $ do
-  max_limit <- defEnv "MAX_LIMIT" (maxLimitCount def) readMaybe
-  max_full <- defEnv "MAX_FULL" (maxLimitFull def) readMaybe
-  max_offset <- defEnv "MAX_OFFSET" (maxLimitOffset def) readMaybe
-  def_limit <- defEnv "DEF_LIMIT" (maxLimitDefault def) readMaybe
-  max_gap <- defEnv "MAX_GAP" (maxLimitGap def) readMaybe
-  init_gap <- defEnv "INIT_GAP" (maxLimitInitialGap def) readMaybe
-  max_body <- defEnv "MAX_BODY" (maxLimitBody def) readMaybe
-  max_timeout <- defEnv "MAX_TIMEOUT" (maxLimitTimeout def) readMaybe
-  return
-    WebLimits
-      { maxLimitCount = max_limit,
-        maxLimitFull = max_full,
-        maxLimitOffset = max_offset,
-        maxLimitDefault = def_limit,
-        maxLimitGap = max_gap,
-        maxLimitInitialGap = init_gap,
-        maxLimitBody = max_body,
-        maxLimitTimeout = max_timeout
-      }
-{-# NOINLINE defWebLimits #-}
-
-defWebNoBlockchain :: Bool
-defWebNoBlockchain =
-  unsafePerformIO $
-    defEnv "NO_BLOCKCHAIN" False parseBool
-{-# NOINLINE defWebNoBlockchain #-}
-
-defWebNoSlow :: Bool
-defWebNoSlow =
-  unsafePerformIO $
-    defEnv "NO_SLOW" False parseBool
-{-# NOINLINE defWebNoSlow #-}
-
-defWebTimeouts :: WebTimeouts
-defWebTimeouts = unsafePerformIO $ do
-  block_timeout <- defEnv "BLOCK_TIMEOUT" (blockTimeout def) readMaybe
-  tx_timeout <- defEnv "TX_TIMEOUT" (txTimeout def) readMaybe
-  return
-    WebTimeouts
-      { txTimeout = tx_timeout,
-        blockTimeout = block_timeout
-      }
-{-# NOINLINE defWebTimeouts #-}
-
-defWipeMempool :: Bool
-defWipeMempool =
-  unsafePerformIO $
-    defEnv "WIPE_MEMPOOL" False parseBool
-{-# NOINLINE defWipeMempool #-}
-
-defNoMempool :: Bool
-defNoMempool =
-  unsafePerformIO $
-    defEnv "NO_MEMPOOL" False parseBool
-{-# NOINLINE defNoMempool #-}
-
-defRedisURL :: String
-defRedisURL =
-  unsafePerformIO $
-    defEnv "REDIS" "" pure
-{-# NOINLINE defRedisURL #-}
-
-defRedisMax :: Integer
-defRedisMax =
-  unsafePerformIO $
-    defEnv "CACHE_KEYS" 100000000 readMaybe
-{-# NOINLINE defRedisMax #-}
-
-defPeerTimeout :: Int
-defPeerTimeout =
-  unsafePerformIO $
-    defEnv "PEER_TIMEOUT" 120 readMaybe
-{-# NOINLINE defPeerTimeout #-}
-
-defPeerMaxLife :: Int
-defPeerMaxLife =
-  unsafePerformIO $
-    defEnv "PEER_MAX_LIFE" (48 * 3600) readMaybe
-{-# NOINLINE defPeerMaxLife #-}
-
-defMaxDiff :: Int
-defMaxDiff =
-  unsafePerformIO $
-    defEnv "MAX_DIFF" 2 readMaybe
-{-# NOINLINE defMaxDiff #-}
-
-defStatsd :: Bool
-defStatsd =
-  unsafePerformIO $
-    defEnv "STATSD" False parseBool
-{-# NOINLINE defStatsd #-}
-
-defStatsdHost :: String
-defStatsdHost =
-  unsafePerformIO $
-    defEnv "STATSD_HOST" "localhost" pure
-{-# NOINLINE defStatsdHost #-}
-
-defStatsdPort :: Int
-defStatsdPort =
-  unsafePerformIO $
-    defEnv "STATSD_PORT" 8125 readMaybe
-{-# NOINLINE defStatsdPort #-}
-
-defWebPriceGet :: Int
-defWebPriceGet =
-  unsafePerformIO $
-    defEnv "WEB_PRICE_GET" (90 * 1000 * 1000) readMaybe
-{-# NOINLINE defWebPriceGet #-}
-
-defWebTickerURL :: String
-defWebTickerURL =
-  unsafePerformIO $
-    defEnv "PRICE_TICKER_URL" "https://api.blockchain.info/ticker" pure
-{-# NOINLINE defWebTickerURL #-}
-
-defWebHistoryURL :: String
-defWebHistoryURL =
-  unsafePerformIO $
-    defEnv "PRICE_HISTORY_URL" "https://api.blockchain.info/price/index-series" pure
-{-# NOINLINE defWebHistoryURL #-}
-
-defStatsdPrefix :: String
-defStatsdPrefix =
-  unsafePerformIO $
-    runMaybeT go >>= \case
-      Nothing -> return "haskoin_store"
-      Just x -> return x
+defConfig :: (MonadIO m) => m Config
+defConfig = do
+  dir <-
+    getDir
+  host <-
+    env "HOST" "*" pure
+  port <-
+    env "PORT" 3000 readMaybe
+  net <-
+    env "NET" "bch" pure
+  discover <-
+    env "DISCOVER" False parseBool
+  peers <-
+    env "PEER" [] (pure . words)
+  debug <-
+    env "DEBUG" False parseBool
+  maxPendingTxs <-
+    env "MAX_PENDING_TXS" 10000 readMaybe
+  maxLaggingBlocks <-
+    env "MAX_LAGGING_BLOCKS" 3 readMaybe
+  minPeers <-
+    env "MIN_PEERS" 1 readMaybe
+  webLimits <-
+    getWebLimits
+  webTimeouts <-
+    getWebTimeouts
+  redis <-
+    env "REDIS" False parseBool
+  redisURL <-
+    env "REDIS_URL" "" pure
+  redisMinAddrs <-
+    env "REDIS_MIN_ADDRS" 100 readMaybe
+  redisMaxKeys <-
+    env "REDIS_MAX_KEYS" 100000000 readMaybe
+  redisSyncInterval <-
+    env "REDIS_SYNC_INTERVAL" 30 readMaybe
+  noMempool <-
+    env "NO_MEMPOOL" False parseBool
+  wipeMempool <-
+    env "WIPE_MEMPOOL" False parseBool
+  syncMempool <-
+    env "SYNC_MEMPOOL" False parseBool
+  peerTimeout <-
+    env "PEER_TIMEOUT" 120 readMaybe
+  maxPeerLife <-
+    env "MAX_PEER_LIFE" (48 * 3600) readMaybe
+  maxPeers <-
+    env "MAX_PEERS" 20 readMaybe
+  statsd <-
+    env "STATSD" False parseBool
+  statsdHost <-
+    env "STATSD_HOST" "localhost" pure
+  statsdPort <-
+    env "STATSD_PORT" 8125 readMaybe
+  statsdPrefix <-
+    getStatsdPrefix
+  tickerRefresh <-
+    env "TICKER_REFRESH" (90 * 1000 * 1000) readMaybe
+  tickerURL <-
+    env "TICKER_URL" tickerString pure
+  priceHistoryURL <-
+    env "PRICE_HISTORY_URL" priceHistoryString pure
+  noBlockchainInfo <-
+    env "NO_BLOCKCHAIN_INFO" False parseBool
+  noSlow <-
+    env "NO_SLOW" False parseBool
+  healthCheckInterval <-
+    env "HEALTH_CHECK_INTERVAL" 30 readMaybe
+  return Config {version = False, ..}
   where
-    go = prefix <|> nomad
-    prefix = MaybeT $ lookupEnv "STATSD_PREFIX"
-    nomad = do
-      task <- MaybeT $ lookupEnv "NOMAD_TASK_NAME"
-      service <- MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
-      return $ "app." <> task <> "." <> service
-{-# NOINLINE defStatsdPrefix #-}
-
-defHealthCheckInterval :: Int
-defHealthCheckInterval =
-  unsafePerformIO $
-    defEnv "HEALTH_CHECK_INTERVAL" 30 readMaybe
-{-# NOINLINE defHealthCheckInterval #-}
-
-defCacheMempoolSync :: Int
-defCacheMempoolSync =
-  unsafePerformIO $
-    defEnv "CACHE_MEMPOOL_SYNC" 30 readMaybe
-{-# NOINLINE defCacheMempoolSync #-}
+    tickerString =
+      "https://api.blockchain.info/ticker"
+    priceHistoryString =
+      "https://api.blockchain.info/price/index-series"
+    getDir =
+      getAppUserDataDirectory "haskoin-store" >>= \d ->
+        env "DIR" d pure
+    getWebLimits = do
+      let WebLimits {..} = def
+      maxItemCount <-
+        env "MAX_ITEM_COUNT" maxItemCount readMaybe
+      maxFullItemCount <-
+        env "MAX_FULL_ITEM_COUNT" maxFullItemCount readMaybe
+      maxOffset <-
+        env "MAX_OFFSET" maxOffset readMaybe
+      defItemCount <-
+        env "DEF_ITEM_COUNT" defItemCount readMaybe
+      xpubGap <-
+        env "XPUB_GAP" xpubGap readMaybe
+      xpubGapInit <-
+        env "XPUB_GAP_INIT" xpubGapInit readMaybe
+      maxBodySize <-
+        env "MAX_BODY_SIZE" maxBodySize readMaybe
+      requestTimeout <-
+        env "REQUEST_TIMEOUT" requestTimeout readMaybe
+      return WebLimits {..}
+    getWebTimeouts = do
+      let WebTimeouts {..} = def
+      block <-
+        env "BLOCK_TIMEOUT" block readMaybe
+      tx <-
+        env "TX_TIMEOUT" tx readMaybe
+      return WebTimeouts {..}
+    getStatsdPrefix = do
+      let go = prefix <|> nomad
+          prefix =
+            MaybeT $ lookupEnv "STATSD_PREFIX"
+          nomad = do
+            task <-
+              MaybeT $ lookupEnv "NOMAD_TASK_NAME"
+            service <-
+              MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
+            return $ "app." <> task <> "." <> service
+      fromMaybe "haskoin_store" <$> runMaybeT go
 
 netNames :: String
-netNames = intercalate "|" (map getNetworkName allNets)
+netNames = intercalate "|" $ map (.name) allNets
 
 parseBool :: String -> Maybe Bool
 parseBool str = case map toLower str of
@@ -405,285 +267,286 @@ parseBool str = case map toLower str of
   "0" -> Just False
   _ -> Nothing
 
-config :: Parser Config
-config = do
-  configDir <-
+config :: Config -> Parser Config
+config c = do
+  dir <-
     strOption $
-      metavar "PATH"
+      metavar "DIRECTORY"
         <> long "dir"
         <> short 'd'
         <> help "Data directory"
         <> showDefault
-        <> value (configDir def)
-  configHost <-
+        <> value c.dir
+  host <-
     strOption $
-      metavar "HOST"
+      metavar "ADDRESS"
         <> long "host"
-        <> help "Host to bind"
+        <> help "Network address to bind"
         <> showDefault
-        <> value (configHost def)
-  configPort <-
+        <> value c.host
+  port <-
     option auto $
-      metavar "INT"
+      metavar "PORT"
         <> long "port"
         <> help "REST API listening port"
         <> showDefault
-        <> value (configPort def)
-  configNetwork <-
+        <> value c.port
+  net <-
     strOption $
       metavar netNames
         <> long "net"
         <> short 'n'
         <> help "Network to connect to"
         <> showDefault
-        <> value (configNetwork def)
-  configDiscover <-
-    flag (configDiscover def) True $
+        <> value c.net
+  discover <-
+    flag c.discover True $
       long "discover"
         <> help "Peer discovery"
-  configPeers <-
-    fmap (mappend defPeers) $
+  peers <-
+    fmap (mappend c.peers) $
       many $
         option auto $
-          metavar "HOST"
+          metavar "HOSTNAME[:PORT]"
             <> long "peer"
             <> short 'p'
             <> help "Network peer (as many as required)"
-  configMaxPeers <-
-    option auto $
-      metavar "INT"
-        <> long "max-peers"
-        <> help "Do not connect to more than this many peers"
-        <> showDefault
-        <> value (configMaxPeers def)
-  configVersion <-
+  version <-
     switch $
       long "version"
         <> short 'v'
         <> help "Show version"
-  configDebug <-
-    flag (configDebug def) True $
+  debug <-
+    flag c.debug True $
       long "debug"
         <> help "Show debug messages"
-  maxLimitCount <-
+  maxPendingTxs <-
     option auto $
-      metavar "INT"
-        <> long "max-limit"
-        <> help "Hard limit for simple listings (0 = inf)"
+      metavar "COUNT"
+        <> long "max-pending-txs"
+        <> help "Maximum pending txs to fail health check"
         <> showDefault
-        <> value (maxLimitCount (configWebLimits def))
-  maxLimitFull <-
+        <> value c.maxPendingTxs
+  maxLaggingBlocks <-
     option auto $
-      metavar "INT"
-        <> long "max-full"
-        <> help "Hard limit for full listings (0 = inf)"
+      metavar "COUNT"
+        <> long "max-lagging-blocks"
+        <> help "Maximum number of unindexed blocks"
         <> showDefault
-        <> value (maxLimitFull (configWebLimits def))
-  maxLimitOffset <-
+        <> value c.maxLaggingBlocks
+  minPeers <-
     option auto $
-      metavar "INT"
-        <> long "max-offset"
-        <> help "Hard limit for offsets (0 = inf)"
+      metavar "COUNT"
+        <> long "min-peers"
+        <> help "Minimum number of connected peers for health check"
         <> showDefault
-        <> value (maxLimitOffset (configWebLimits def))
-  maxLimitDefault <-
+        <> value c.minPeers
+  webLimits <- do
+    maxItemCount <-
+      option auto $
+        metavar "COUNT"
+          <> long "max-item-count"
+          <> help "Hard limit for simple listings (0 = inf)"
+          <> showDefault
+          <> value c.webLimits.maxItemCount
+    maxFullItemCount <-
+      option auto $
+        metavar "COUNT"
+          <> long "max-full-item-count"
+          <> help "Hard limit for full listings (0 = inf)"
+          <> showDefault
+          <> value c.webLimits.maxFullItemCount
+    maxOffset <-
+      option auto $
+        metavar "OFFSET"
+          <> long "max-offset"
+          <> help "Hard limit for offsets (0 = inf)"
+          <> showDefault
+          <> value c.webLimits.maxOffset
+    defItemCount <-
+      option auto $
+        metavar "COUNT"
+          <> long "def-item-count"
+          <> help "Soft default limit (0 = inf)"
+          <> showDefault
+          <> value c.webLimits.defItemCount
+    xpubGap <-
+      option auto $
+        metavar "GAP"
+          <> long "xpub-gap"
+          <> help "Max gap for xpub queries"
+          <> showDefault
+          <> value c.webLimits.xpubGap
+    xpubGapInit <-
+      option auto $
+        metavar "GAP"
+          <> long "xpub-gap-init"
+          <> help "Max gap for empty xpubs"
+          <> showDefault
+          <> value c.webLimits.xpubGapInit
+    maxBodySize <-
+      option auto $
+        metavar "BYTES"
+          <> long "max-body-size"
+          <> help "Maximum request body size"
+          <> showDefault
+          <> value c.webLimits.maxBodySize
+    requestTimeout <-
+      option auto $
+        metavar "SECONDS"
+          <> long "request-timeout"
+          <> help "Web request timeout"
+          <> showDefault
+          <> value c.webLimits.requestTimeout
+    return WebLimits {..}
+  webTimeouts <- do
+    block <-
+      option auto $
+        metavar "SECONDS"
+          <> long "block-timeout"
+          <> help "Block lag health timeout"
+          <> showDefault
+          <> value c.webTimeouts.block
+    tx <-
+      option auto $
+        metavar "SECONDS"
+          <> long "tx-timeout"
+          <> help "Last tx received health timeout"
+          <> showDefault
+          <> value c.webTimeouts.tx
+    return WebTimeouts {..}
+  redis <-
+    flag c.redis True $
+      long "redis"
+        <> help "Redis cache for xpub data"
+  redisURL <-
+    strOption $
+      metavar "URL"
+        <> long "redis-url"
+        <> help "URL for Redis cache"
+        <> value c.redisURL
+  redisMinAddrs <-
     option auto $
-      metavar "INT"
-        <> long "def-limit"
-        <> help "Soft default limit (0 = inf)"
+      metavar "GAP"
+        <> long "redis-min-gap"
+        <> help "Minimum xpub address count to cache in Redis"
         <> showDefault
-        <> value (maxLimitDefault (configWebLimits def))
-  maxLimitGap <-
+        <> value c.redisMinAddrs
+  redisMaxKeys <-
     option auto $
-      metavar "INT"
-        <> long "max-gap"
-        <> help "Max gap for xpub queries"
+      metavar "COUNT"
+        <> long "redis-max-keys"
+        <> help "Maximum number of keys in Redis"
         <> showDefault
-        <> value (maxLimitGap (configWebLimits def))
-  maxLimitInitialGap <-
-    option auto $
-      metavar "INT"
-        <> long "init-gap"
-        <> help "Max gap for empty xpub"
-        <> showDefault
-        <> value (maxLimitInitialGap (configWebLimits def))
-  maxLimitBody <-
-    option auto $
-      metavar "BYTES"
-        <> long "max-body"
-        <> help "Maximum request body size"
-        <> showDefault
-        <> value (maxLimitBody (configWebLimits def))
-  maxLimitTimeout <-
+        <> value c.redisMaxKeys
+  redisSyncInterval <-
     option auto $
       metavar "SECONDS"
-        <> long "max-timeout"
-        <> help "Web request timeout"
+        <> long "redis-sync-interval"
+        <> help "Sync mempool to Redis interval"
         <> showDefault
-        <> value (maxLimitTimeout (configWebLimits def))
-  blockTimeout <-
-    option auto $
-      metavar "SECONDS"
-        <> long "block-timeout"
-        <> help "Last block mined health timeout"
-        <> showDefault
-        <> value (blockTimeout (configWebTimeouts def))
-  txTimeout <-
-    option auto $
-      metavar "SECONDS"
-        <> long "tx-timeout"
-        <> help "Last tx recived health timeout"
-        <> showDefault
-        <> value (txTimeout (configWebTimeouts def))
-  configPeerTimeout <-
+        <> value c.redisSyncInterval
+  noMempool <-
+    flag c.noMempool True $
+      long "no-mempool"
+        <> help "Do not index mempool transactions"
+  wipeMempool <-
+    flag c.wipeMempool True $
+      long "wipe-mempool"
+        <> help "Wipe indexed mempool at start"
+  syncMempool <-
+    flag c.syncMempool True $
+      long "sync-mempool"
+        <> help "Attempt to download peer mempools"
+  peerTimeout <-
     option auto $
       metavar "SECONDS"
         <> long "peer-timeout"
         <> help "Unresponsive peer timeout"
         <> showDefault
-        <> value (configPeerTimeout def)
-  configPeerMaxLife <-
+        <> value c.peerTimeout
+  maxPeerLife <-
     option auto $
       metavar "SECONDS"
-        <> long "peer-max-life"
-        <> help "Disconnect peers older than this"
+        <> long "max-peer-life"
+        <> help "Maximum peer connection time"
         <> showDefault
-        <> value (configPeerMaxLife def)
-  configMaxPending <-
+        <> value c.maxPeerLife
+  maxPeers <-
     option auto $
-      metavar "INT"
-        <> long "max-pending-txs"
-        <> help "Maximum pending txs to fail health check"
+      metavar "COUNT"
+        <> long "max-peers"
+        <> help "Do not connect to more than this many peers"
         <> showDefault
-        <> value (configMaxPending def)
-  configRedis <-
-    flag (configRedis def) True $
-      long "cache"
-        <> help "Redis cache for extended public keys"
-  configRedisURL <-
-    strOption $
-      metavar "URL"
-        <> long "redis"
-        <> help "URL for Redis cache"
-        <> value (configRedisURL def)
-  configRedisMin <-
-    option auto $
-      metavar "INT"
-        <> long "cache-min"
-        <> help "Minimum used xpub addresses to cache"
-        <> showDefault
-        <> value (configRedisMin def)
-  configRedisMax <-
-    option auto $
-      metavar "INT"
-        <> long "cache-keys"
-        <> help "Maximum number of keys in Redis xpub cache"
-        <> showDefault
-        <> value (configRedisMax def)
-  configNoMempool <-
-    flag (configNoMempool def) True $
-      long "no-mempool"
-        <> help "Do not index new mempool transactions"
-  configWipeMempool <-
-    flag (configWipeMempool def) True $
-      long "wipe-mempool"
-        <> help "Wipe mempool at start"
-  configSyncMempool <-
-    flag (configSyncMempool def) True $
-      long "sync-mempool"
-        <> help "Sync mempool from peers"
-  configMaxDiff <-
-    option auto $
-      metavar "INT"
-        <> long "max-diff"
-        <> help "Maximum difference between headers and blocks"
-        <> showDefault
-        <> value (configMaxDiff def)
-  configStatsd <-
-    flag (configStatsd def) True $
+        <> value c.maxPeers
+  statsd <-
+    flag c.statsd True $
       long "statsd"
         <> help "Enable statsd metrics"
-  configStatsdHost <-
+  statsdHost <-
     strOption $
-      metavar "HOST"
+      metavar "HOSTNAME"
         <> long "statsd-host"
         <> help "Host to send statsd metrics"
         <> showDefault
-        <> value (configStatsdHost def)
-  configStatsdPort <-
+        <> value c.statsdHost
+  statsdPort <-
     option auto $
       metavar "PORT"
         <> long "statsd-port"
         <> help "Port to send statsd metrics"
         <> showDefault
-        <> value (configStatsdPort def)
-  configStatsdPrefix <-
+        <> value c.statsdPort
+  statsdPrefix <-
     strOption $
       metavar "PREFIX"
         <> long "statsd-prefix"
         <> help "Prefix for statsd metrics"
         <> showDefault
-        <> value (configStatsdPrefix def)
-  configWebPriceGet <-
+        <> value c.statsdPrefix
+  tickerRefresh <-
     option auto $
       metavar "MICROSECONDS"
-        <> long "web-price-get"
+        <> long "ticker-refresh"
         <> help "How often to retrieve price information"
         <> showDefault
-        <> value (configWebPriceGet def)
-  configWebNoBlockchain <-
-    flag (configWebNoBlockchain def) False $
-      long "no-blockchain"
-        <> help "Disable Blockchain.info compatibility layer"
-  configWebTickerURL <-
+        <> value c.tickerRefresh
+  tickerURL <-
     strOption $
       metavar "URL"
-        <> long "price-ticker-url"
+        <> long "ticker-url"
         <> help "Blockchain.info price ticker URL"
         <> showDefault
-        <> value (configWebTickerURL def)
-  configWebHistoryURL <-
+        <> value c.tickerURL
+  priceHistoryURL <-
     strOption $
       metavar "URL"
         <> long "price-history-url"
         <> help "Blockchain.info price history URL"
         <> showDefault
-        <> value (configWebHistoryURL def)
-  configWebNoSlow <-
-    flag (configWebNoSlow def) False $
+        <> value c.priceHistoryURL
+  noBlockchainInfo <-
+    flag c.noBlockchainInfo False $
+      long "no-blockchain-info"
+        <> help "Disable Blockchain.info-style API endpoints"
+  noSlow <-
+    flag c.noSlow False $
       long "no-slow"
-        <> help "Disable non-scalable API calls (recommend also --no-blockchain)"
-  configHealthCheckInterval <-
+        <> help "Disable potentially slow API endpoints"
+  healthCheckInterval <-
     option auto $
       metavar "SECONDS"
         <> long "health-check-interval"
         <> help "Background check update interval"
         <> showDefault
-        <> value (configHealthCheckInterval def)
-  configCacheMempoolSync <-
-    option auto $
-      metavar "SECONDS"
-        <> long "cache-mempool-sync"
-        <> help "Sync mempool to cache interval"
-        <> showDefault
-        <> value (configCacheMempoolSync def)
-  pure
-    Config
-      { configWebLimits = WebLimits {..},
-        configWebTimeouts = WebTimeouts {..},
-        ..
-      }
+        <> value c.healthCheckInterval
+  pure Config {..}
 
 networkReader :: String -> Either String Network
-networkReader s
-  | s == getNetworkName btc = Right btc
-  | s == getNetworkName btcTest = Right btcTest
-  | s == getNetworkName btcRegTest = Right btcRegTest
-  | s == getNetworkName bch = Right bch
-  | s == getNetworkName bchTest = Right bchTest
-  | s == getNetworkName bchTest4 = Right bchTest4
-  | s == getNetworkName bchRegTest = Right bchRegTest
-  | otherwise = Left "Network name invalid"
+networkReader s =
+  case netByName s of
+    Just net -> Right net
+    Nothing -> Left "Network name invalid"
 
 peerReader :: String -> Either String String
 peerReader "" = Left "Peer cannot be blank"
@@ -691,125 +554,92 @@ peerReader s = Right s
 
 main :: IO ()
 main = do
-  conf <- execParser opts
-  when (configVersion conf) $ do
+  c <- execParser . opts =<< defConfig
+  when c.version $ do
     putStrLn version
     exitSuccess
-  if null (configPeers conf) && not (configDiscover conf)
-    then run conf {configDiscover = True}
-    else run conf
+  if null c.peers && not c.discover
+    then run $ let Config {..} = c in Config {discover = True, ..}
+    else run c
   where
-    opts =
-      info (helper <*> config) $
+    opts c =
+      info (helper <*> config c) $
         fullDesc
           <> progDesc "Bitcoin (BCH & BTC) block chain index with HTTP API"
           <> Options.Applicative.header
             ("haskoin-store version " <> version)
 
 run :: Config -> IO ()
-run
-  Config
-    { configHost = host,
-      configPort = port,
-      configNetwork = net_str,
-      configDiscover = disc,
-      configPeers = peers,
-      configDir = db_dir,
-      configDebug = deb,
-      configMaxPending = pend,
-      configWebLimits = limits,
-      configWebTimeouts = tos,
-      configRedis = redis,
-      configRedisURL = redisurl,
-      configRedisMin = cachemin,
-      configRedisMax = redismax,
-      configWipeMempool = wipemempool,
-      configPeerTimeout = peertimeout,
-      configPeerMaxLife = peerlife,
-      configMaxPeers = maxpeers,
-      configMaxDiff = maxdiff,
-      configNoMempool = nomem,
-      configSyncMempool = syncmem,
-      configStatsd = statsd,
-      configStatsdHost = statsdhost,
-      configStatsdPort = statsdport,
-      configStatsdPrefix = statsdpfx,
-      configWebPriceGet = wpget,
-      configWebTickerURL = wturl,
-      configWebHistoryURL = whurl,
-      configWebNoSlow = no_slow,
-      configWebNoBlockchain = no_blockchain,
-      configHealthCheckInterval = health_check_interval,
-      configCacheMempoolSync = cachesync
-    } =
-    runStderrLoggingT . filterLogger l . with_stats $ \stats -> do
-      net <- case networkReader net_str of
-        Right n -> return n
-        Left e -> error e
-      $(logInfoS) "Main" $
-        "Creating working directory if not found: " <> cs (wd net)
-      createDirectoryIfMissing True (wd net)
-      let scfg =
+run cfg =
+  withContext $ \ctx ->
+    runStderrLoggingT $ filterLogger l $ flip runContT return $ do
+      stats <- ContT $ with_stats
+      net <- either error return $ networkReader cfg.net
+      let dir = cfg.dir </> net.name
+      $(logInfoS) "haskoin-store" $
+        "Creating working directory (if not found): " <> cs dir
+      createDirectoryIfMissing True dir
+      store <-
+        ContT $
+          withStore
             StoreConfig
-              { storeConfMaxPeers = maxpeers,
-                storeConfInitPeers = peers,
-                storeConfDiscover = disc,
-                storeConfDB = wd net </> "db",
-                storeConfNetwork = net,
-                storeConfCache =
-                  if redis
-                    then Just redisurl
-                    else Nothing,
-                storeConfGap = maxLimitGap limits,
-                storeConfInitialGap = maxLimitInitialGap limits,
-                storeConfCacheMin = cachemin,
-                storeConfMaxKeys = redismax,
-                storeConfWipeMempool = wipemempool,
-                storeConfNoMempool = nomem,
-                storeConfSyncMempool = syncmem,
-                storeConfPeerTimeout = fromIntegral peertimeout,
-                storeConfPeerMaxLife = fromIntegral peerlife,
-                storeConfConnect = withConnection,
-                storeConfStats = stats,
-                storeConfCacheMempoolSync = cachesync
+              { maxPeers = cfg.maxPeers,
+                initPeers = cfg.peers,
+                discover = cfg.discover,
+                db = dir </> "db",
+                net = net,
+                ctx = ctx,
+                redis = if cfg.redis then Just cfg.redisURL else Nothing,
+                gap = cfg.webLimits.xpubGap,
+                initGap = cfg.webLimits.xpubGapInit,
+                redisMinAddrs = cfg.redisMinAddrs,
+                redisMaxKeys = cfg.redisMaxKeys,
+                wipeMempool = cfg.wipeMempool,
+                noMempool = cfg.noMempool,
+                syncMempool = cfg.syncMempool,
+                peerTimeout = fromIntegral cfg.peerTimeout,
+                maxPeerLife = fromIntegral cfg.maxPeerLife,
+                connect = withConnection,
+                statsStore = stats,
+                redisSyncInterval = cfg.redisSyncInterval
               }
-      withStore scfg $ \st ->
+      lift $
         runWeb
           WebConfig
-            { webHost = host,
-              webPort = port,
-              webStore = st,
-              webMaxLimits = limits,
-              webTimeouts = tos,
-              webMaxPending = pend,
-              webVersion = version,
-              webMaxDiff = maxdiff,
-              webNoMempool = nomem,
-              webStats = stats,
-              webPriceGet = wpget,
-              webTickerURL = wturl,
-              webHistoryURL = whurl,
-              webSlow = not no_slow,
-              webBlockchain = not no_blockchain,
-              webHealthCheckInterval = health_check_interval
+            { host = cfg.host,
+              port = cfg.port,
+              store = store,
+              limits = cfg.webLimits,
+              timeouts = cfg.webTimeouts,
+              maxPendingTxs = cfg.maxPendingTxs,
+              maxLaggingBlocks = cfg.maxLaggingBlocks,
+              minPeers = cfg.minPeers,
+              version = version,
+              noMempool = cfg.noMempool,
+              statsStore = stats,
+              tickerRefresh = cfg.tickerRefresh,
+              tickerURL = cfg.tickerURL,
+              priceHistoryURL = cfg.priceHistoryURL,
+              noSlow = cfg.noSlow,
+              noBlockchainInfo = cfg.noBlockchainInfo,
+              healthCheckInterval = cfg.healthCheckInterval
             }
-    where
-      with_stats go
-        | statsd = do
-            $(logInfoS) "Main" $
-              "Sending stats to "
-                <> T.pack statsdhost
-                <> ":"
-                <> cs (show statsdport)
-                <> " with prefix: "
-                <> T.pack statsdpfx
-            withStats
-              (T.pack statsdhost)
-              statsdport
-              (T.pack statsdpfx)
-              (go . Just)
-        | otherwise = go Nothing
-      l _ lvl
-        | deb = True
-        | otherwise = LevelInfo <= lvl
-      wd net = db_dir </> getNetworkName net
+  where
+    with_stats go
+      | cfg.statsd = do
+          $(logInfoS) "Main" $
+            "Sending stats to "
+              <> T.pack cfg.statsdHost
+              <> ":"
+              <> cs (show cfg.statsdPort)
+              <> " with prefix: "
+              <> T.pack cfg.statsdPrefix
+          withStats
+            (T.pack cfg.statsdHost)
+            cfg.statsdPort
+            (T.pack cfg.statsdPrefix)
+            (go . Just)
+      | otherwise = go Nothing
+    l _ lvl
+      | cfg.debug = True
+      | otherwise = LevelInfo <= lvl

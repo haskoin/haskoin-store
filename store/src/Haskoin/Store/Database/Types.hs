@@ -1,7 +1,11 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.Store.Database.Types
   ( AddrTxKey (..),
@@ -37,7 +41,7 @@ import Data.Bits
     (.|.),
   )
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
+import Data.ByteString qualified as BS
 import Data.Default (Default (..))
 import Data.Either (fromRight)
 import Data.Hashable (Hashable)
@@ -67,6 +71,7 @@ import Haskoin
     eitherToMaybe,
     scriptToAddressBS,
   )
+import Haskoin.Crypto
 import Haskoin.Store.Data
   ( Balance (..),
     BlockData,
@@ -82,14 +87,16 @@ import Haskoin.Store.Data
 data AddrTxKey
   = -- | key for a transaction affecting an address
     AddrTxKey
-      { addrTxKeyA :: !Address,
-        addrTxKeyT :: !TxRef
+      { address :: !Address,
+        tx :: !TxRef
       }
   | -- | short key that matches all entries
-    AddrTxKeyA {addrTxKeyA :: !Address}
+    AddrTxKeyA
+      { address :: !Address
+      }
   | AddrTxKeyB
-      { addrTxKeyA :: !Address,
-        addrTxKeyB :: !BlockRef
+      { address :: !Address,
+        block :: !BlockRef
       }
   | AddrTxKeyS
   deriving (Show, Eq, Ord, Generic, Hashable)
@@ -99,18 +106,18 @@ instance Serialize AddrTxKey where
 
   put
     AddrTxKey
-      { addrTxKeyA = a,
-        addrTxKeyT = TxRef {txRefBlock = b, txRefHash = t}
+      { address = a,
+        tx = TxRef {block = b, txid = t}
       } = do
-      put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b}
+      put AddrTxKeyB {address = a, block = b}
       put t
   -- 0x05 · Address
-  put AddrTxKeyA {addrTxKeyA = a} = do
+  put AddrTxKeyA {address = a} = do
     put AddrTxKeyS
     put a
   -- 0x05 · Address · BlockRef
-  put AddrTxKeyB {addrTxKeyA = a, addrTxKeyB = b} = do
-    put AddrTxKeyA {addrTxKeyA = a}
+  put AddrTxKeyB {address = a, block = b} = do
+    put AddrTxKeyA {address = a}
     put b
   -- 0x05
   put AddrTxKeyS = putWord8 0x05
@@ -121,8 +128,8 @@ instance Serialize AddrTxKey where
     t <- get
     return
       AddrTxKey
-        { addrTxKeyA = a,
-          addrTxKeyT = TxRef {txRefBlock = b, txRefHash = t}
+        { address = a,
+          tx = TxRef {block = b, txid = t}
         }
 
 instance Key AddrTxKey
@@ -133,15 +140,17 @@ instance KeyValue AddrTxKey ()
 data AddrOutKey
   = -- | full key
     AddrOutKey
-      { addrOutKeyA :: !Address,
-        addrOutKeyB :: !BlockRef,
-        addrOutKeyP :: !OutPoint
+      { address :: !Address,
+        block :: !BlockRef,
+        outpoint :: !OutPoint
       }
   | -- | short key for all spent or unspent outputs
-    AddrOutKeyA {addrOutKeyA :: !Address}
+    AddrOutKeyA
+      { address :: !Address
+      }
   | AddrOutKeyB
-      { addrOutKeyA :: !Address,
-        addrOutKeyB :: !BlockRef
+      { address :: !Address,
+        block :: !BlockRef
       }
   | AddrOutKeyS
   deriving (Show, Read, Eq, Ord, Generic, Hashable)
@@ -149,15 +158,15 @@ data AddrOutKey
 instance Serialize AddrOutKey where
   -- 0x06 · StoreAddr · BlockRef · OutPoint
 
-  put AddrOutKey {addrOutKeyA = a, addrOutKeyB = b, addrOutKeyP = p} = do
-    put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b}
+  put AddrOutKey {address = a, block = b, outpoint = p} = do
+    put AddrOutKeyB {address = a, block = b}
     put p
   -- 0x06 · StoreAddr · BlockRef
-  put AddrOutKeyB {addrOutKeyA = a, addrOutKeyB = b} = do
-    put AddrOutKeyA {addrOutKeyA = a}
+  put AddrOutKeyB {address = a, block = b} = do
+    put AddrOutKeyA {address = a}
     put b
   -- 0x06 · StoreAddr
-  put AddrOutKeyA {addrOutKeyA = a} = do
+  put AddrOutKeyA {address = a} = do
     put AddrOutKeyS
     put a
   -- 0x06
@@ -169,8 +178,8 @@ instance Serialize AddrOutKey where
 instance Key AddrOutKey
 
 data OutVal = OutVal
-  { outValAmount :: !Word64,
-    outValScript :: !ByteString
+  { value :: !Word64,
+    script :: !ByteString
   }
   deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize)
 
@@ -178,8 +187,8 @@ instance KeyValue AddrOutKey OutVal
 
 -- | Transaction database key.
 data TxKey
-  = TxKey {txKey :: TxHash}
-  | TxKeyS {txKeyShort :: (Word32, Word16)}
+  = TxKey {txid :: TxHash}
+  | TxKeyS {short :: (Word32, Word16)}
   deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize TxKey where
@@ -213,19 +222,19 @@ instance KeyValue TxKey TxData
 
 -- | Unspent output database key.
 data UnspentKey
-  = UnspentKey {unspentKey :: !OutPoint}
-  | UnspentKeyS {unspentKeyS :: !TxHash}
+  = UnspentKey {outpoint :: !OutPoint}
+  | UnspentKeyS {txid :: !TxHash}
   | UnspentKeyB
   deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize UnspentKey where
   -- 0x09 · TxHash · Index
-  put UnspentKey {unspentKey = OutPoint {outPointHash = h, outPointIndex = i}} = do
+  put UnspentKey {outpoint = OutPoint {hash = h, index = i}} = do
     putWord8 0x09
     put h
     put i
   -- 0x09 · TxHash
-  put UnspentKeyS {unspentKeyS = t} = do
+  put UnspentKeyS {txid = t} = do
     putWord8 0x09
     put t
   -- 0x09
@@ -234,20 +243,20 @@ instance Serialize UnspentKey where
     guard . (== 0x09) =<< getWord8
     h <- get
     i <- get
-    return $ UnspentKey OutPoint {outPointHash = h, outPointIndex = i}
+    return $ UnspentKey OutPoint {hash = h, index = i}
 
 instance Key UnspentKey
 
 instance KeyValue UnspentKey UnspentVal
 
-toUnspent :: AddrOutKey -> OutVal -> Unspent
-toUnspent b v =
+toUnspent :: Ctx -> AddrOutKey -> OutVal -> Unspent
+toUnspent ctx AddrOutKey {..} OutVal {..} =
   Unspent
-    { unspentBlock = addrOutKeyB b,
-      unspentAmount = outValAmount v,
-      unspentScript = outValScript v,
-      unspentPoint = addrOutKeyP b,
-      unspentAddress = eitherToMaybe (scriptToAddressBS (outValScript v))
+    { block = block,
+      value = value,
+      script = script,
+      outpoint = outpoint,
+      address = eitherToMaybe (scriptToAddressBS ctx script)
     }
 
 -- | Mempool transaction database key.
@@ -268,7 +277,7 @@ instance KeyValue MemKey [(UnixTime, TxHash)]
 
 -- | Block entry database key.
 newtype BlockKey = BlockKey
-  { blockKey :: BlockHash
+  { hash :: BlockHash
   }
   deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
@@ -287,15 +296,15 @@ instance KeyValue BlockKey BlockData
 
 -- | Block height database key.
 newtype HeightKey = HeightKey
-  { heightKey :: BlockHeight
+  { height :: BlockHeight
   }
   deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize HeightKey where
   -- 0x03 · BlockHeight
-  put (HeightKey height) = do
+  put (HeightKey h) = do
     putWord8 0x03
-    put height
+    put h
   get = do
     guard . (== 0x03) =<< getWord8
     HeightKey <$> get
@@ -307,14 +316,14 @@ instance KeyValue HeightKey [BlockHash]
 -- | Address balance database key.
 data BalKey
   = BalKey
-      { balanceKey :: !Address
+      { address :: !Address
       }
   | BalKeyS
   deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance Serialize BalKey where
   -- 0x04 · Address
-  put BalKey {balanceKey = a} = do
+  put (BalKey a) = do
     putWord8 0x04
     put a
   -- 0x04
@@ -360,96 +369,45 @@ instance Key VersionKey
 instance KeyValue VersionKey Word32
 
 data BalVal = BalVal
-  { balValAmount :: !Word64,
-    balValZero :: !Word64,
-    balValUnspentCount :: !Word64,
-    balValTxCount :: !Word64,
-    balValTotalReceived :: !Word64
+  { confirmed :: !Word64,
+    unconfirmed :: !Word64,
+    utxo :: !Word64,
+    txs :: !Word64,
+    received :: !Word64
   }
   deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 valToBalance :: Address -> BalVal -> Balance
-valToBalance
-  a
-  BalVal
-    { balValAmount = v,
-      balValZero = z,
-      balValUnspentCount = u,
-      balValTxCount = t,
-      balValTotalReceived = r
-    } =
-    Balance
-      { balanceAddress = a,
-        balanceAmount = v,
-        balanceZero = z,
-        balanceUnspentCount = u,
-        balanceTxCount = t,
-        balanceTotalReceived = r
-      }
+valToBalance address BalVal {..} =
+  Balance {..}
 
 balanceToVal :: Balance -> BalVal
-balanceToVal
-  Balance
-    { balanceAmount = v,
-      balanceZero = z,
-      balanceUnspentCount = u,
-      balanceTxCount = t,
-      balanceTotalReceived = r
-    } =
-    BalVal
-      { balValAmount = v,
-        balValZero = z,
-        balValUnspentCount = u,
-        balValTxCount = t,
-        balValTotalReceived = r
-      }
+balanceToVal Balance {..} =
+  BalVal {..}
 
 -- | Default balance for an address.
 instance Default BalVal where
   def =
     BalVal
-      { balValAmount = 0,
-        balValZero = 0,
-        balValUnspentCount = 0,
-        balValTxCount = 0,
-        balValTotalReceived = 0
+      { confirmed = 0,
+        unconfirmed = 0,
+        utxo = 0,
+        txs = 0,
+        received = 0
       }
 
 data UnspentVal = UnspentVal
-  { unspentValBlock :: !BlockRef,
-    unspentValAmount :: !Word64,
-    unspentValScript :: !ByteString
+  { block :: !BlockRef,
+    value :: !Word64,
+    script :: !ByteString
   }
   deriving (Show, Read, Eq, Ord, Generic, Hashable, Serialize, NFData)
 
 unspentToVal :: Unspent -> (OutPoint, UnspentVal)
-unspentToVal
-  Unspent
-    { unspentBlock = b,
-      unspentPoint = p,
-      unspentAmount = v,
-      unspentScript = s
-    } =
-    ( p,
-      UnspentVal
-        { unspentValBlock = b,
-          unspentValAmount = v,
-          unspentValScript = s
-        }
-    )
+unspentToVal Unspent {..} = (outpoint, UnspentVal {..})
 
-valToUnspent :: OutPoint -> UnspentVal -> Unspent
-valToUnspent
-  p
-  UnspentVal
-    { unspentValBlock = b,
-      unspentValAmount = v,
-      unspentValScript = s
-    } =
-    Unspent
-      { unspentBlock = b,
-        unspentPoint = p,
-        unspentAmount = v,
-        unspentScript = s,
-        unspentAddress = eitherToMaybe (scriptToAddressBS s)
-      }
+valToUnspent :: Ctx -> OutPoint -> UnspentVal -> Unspent
+valToUnspent ctx outpoint UnspentVal {..} =
+  Unspent {..}
+  where
+    address = eitherToMaybe (scriptToAddressBS ctx script)

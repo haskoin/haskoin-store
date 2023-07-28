@@ -2,5 +2,5 @@
 
 for DIR in data/src data/test store/app store/src store/test
 do
-	find "$DIR" -type f -name '*.hs' | xargs fourmolu -i
+	find "$DIR" -type f -name '*.hs' | xargs ormolu -i
 done

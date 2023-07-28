@@ -1,11 +1,15 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.Store.Common
   ( Limits (..),
@@ -59,12 +63,12 @@ import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Control.Monad.Trans.Reader (runReaderT)
 import Data.ByteString (ByteString)
 import Data.Default (Default (..))
-import qualified Data.HashSet as H
+import Data.HashSet qualified as H
 import Data.Hashable (Hashable)
 import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as I
+import Data.IntMap.Strict qualified as I
 import Data.List (sortOn)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.Ord (Down (..))
 import Data.Serialize (Serialize (..))
@@ -76,29 +80,6 @@ import Data.Time.Clock.System
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import Haskoin
-  ( Address,
-    BlockHash,
-    BlockHeader (..),
-    BlockHeight,
-    BlockNode (..),
-    KeyIndex,
-    Network (..),
-    OutPoint (..),
-    RejectCode (..),
-    Tx (..),
-    TxHash (..),
-    TxIn (..),
-    XPubKey (..),
-    deriveAddr,
-    deriveCompatWitnessAddr,
-    deriveWitnessAddr,
-    firstGreaterOrEqual,
-    headerHash,
-    lastSmallerOrEqual,
-    mtp,
-    pubSubKey,
-    txHash,
-  )
 import Haskoin.Node (Chain, Peer)
 import Haskoin.Store.Data
   ( Balance (..),
@@ -118,9 +99,9 @@ import Haskoin.Store.Data
     toTransaction,
     zeroBalance,
   )
-import qualified System.Metrics as Metrics
+import System.Metrics qualified as Metrics
 import System.Metrics.Counter (Counter)
-import qualified System.Metrics.Counter as Counter
+import System.Metrics.Counter qualified as Counter
 import UnliftIO (MonadIO, liftIO)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
@@ -147,8 +128,9 @@ defaultLimits = Limits {limit = 0, offset = 0, start = Nothing}
 instance Default Limits where
   def = defaultLimits
 
-class Monad m => StoreReadBase m where
+class (Monad m) => StoreReadBase m where
   getNetwork :: m Network
+  getCtx :: m Ctx
   getBestBlock :: m (Maybe BlockHash)
   getBlocksAtHeight :: BlockHeight -> m [BlockHash]
   getBlock :: BlockHash -> m (Maybe BlockData)
@@ -158,7 +140,7 @@ class Monad m => StoreReadBase m where
   getUnspent :: OutPoint -> m (Maybe Unspent)
   getMempool :: m [(UnixTime, TxHash)]
 
-class StoreReadBase m => StoreReadExtra m where
+class (StoreReadBase m) => StoreReadExtra m where
   getAddressesTxs :: [Address] -> Limits -> m [TxRef]
   getAddressesUnspents :: [Address] -> Limits -> m [Unspent]
   getInitialGap :: m Word32
@@ -187,19 +169,19 @@ class StoreWrite m where
   insertUnspent :: Unspent -> m ()
   deleteUnspent :: OutPoint -> m ()
 
-getActiveBlock :: StoreReadExtra m => BlockHash -> m (Maybe BlockData)
+getActiveBlock :: (StoreReadExtra m) => BlockHash -> m (Maybe BlockData)
 getActiveBlock bh =
   getBlock bh >>= \case
-    Just b | blockDataMainChain b -> return (Just b)
+    Just b | b.main -> return (Just b)
     _ -> return Nothing
 
-getActiveTxData :: StoreReadBase m => TxHash -> m (Maybe TxData)
+getActiveTxData :: (StoreReadBase m) => TxHash -> m (Maybe TxData)
 getActiveTxData th =
   getTxData th >>= \case
-    Just td | not (txDataDeleted td) -> return (Just td)
+    Just td | not (td.deleted) -> return (Just td)
     _ -> return Nothing
 
-getDefaultBalance :: StoreReadBase m => Address -> m Balance
+getDefaultBalance :: (StoreReadBase m) => Address -> m Balance
 getDefaultBalance a =
   getBalance a >>= \case
     Nothing -> return $ zeroBalance a
@@ -208,36 +190,40 @@ getDefaultBalance a =
 deriveAddresses :: DeriveAddr -> XPubKey -> Word32 -> [(Word32, Address)]
 deriveAddresses derive xpub start = map (\i -> (i, derive xpub i)) [start ..]
 
-deriveFunction :: DeriveType -> DeriveAddr
-deriveFunction DeriveNormal i = fst . deriveAddr i
-deriveFunction DeriveP2SH i = fst . deriveCompatWitnessAddr i
-deriveFunction DeriveP2WPKH i = fst . deriveWitnessAddr i
+deriveFunction :: Ctx -> DeriveType -> DeriveAddr
+deriveFunction ctx DeriveNormal i = fst . deriveAddr ctx i
+deriveFunction ctx DeriveP2SH i = fst . deriveCompatWitnessAddr ctx i
+deriveFunction ctx DeriveP2WPKH i = fst . deriveWitnessAddr ctx i
 
 xPubSummary :: XPubSpec -> [XPubBal] -> XPubSummary
 xPubSummary _xspec xbals =
   XPubSummary
-    { xPubSummaryConfirmed = sum (map (balanceAmount . xPubBal) bs),
-      xPubSummaryZero = sum (map (balanceZero . xPubBal) bs),
-      xPubSummaryReceived = rx,
-      xPubUnspentCount = uc,
-      xPubChangeIndex = ch,
-      xPubExternalIndex = ex
+    { confirmed = sum (map (.balance.confirmed) bs),
+      unconfirmed = sum (map (.balance.unconfirmed) bs),
+      received = rx,
+      utxo = uc,
+      change = ch,
+      external = ex
     }
   where
-    bs = filter (not . nullBalance . xPubBal) xbals
-    ex = foldl max 0 [i | XPubBal {xPubBalPath = [0, i]} <- bs]
-    ch = foldl max 0 [i | XPubBal {xPubBalPath = [1, i]} <- bs]
-    uc = sum [balanceUnspentCount (xPubBal b) | b <- bs]
-    xt = [b | b@XPubBal {xPubBalPath = [0, _]} <- bs]
-    rx = sum [balanceTotalReceived (xPubBal b) | b <- xt]
+    bs = filter (not . nullBalance . (.balance)) xbals
+    ex = foldl max 0 [i | XPubBal {path = [0, i]} <- bs]
+    ch = foldl max 0 [i | XPubBal {path = [1, i]} <- bs]
+    uc = sum [b.balance.utxo | b <- bs]
+    xt = [b | b@XPubBal {path = [0, _]} <- bs]
+    rx = sum [b.balance.received | b <- xt]
 
 getTransaction ::
   (Monad m, StoreReadBase m) => TxHash -> m (Maybe Transaction)
-getTransaction h = fmap toTransaction <$> getTxData h
+getTransaction h = do
+  ctx <- getCtx
+  fmap (toTransaction ctx) <$> getTxData h
 
 getNumTransaction ::
   (Monad m, StoreReadExtra m) => Word64 -> m [Transaction]
-getNumTransaction i = map toTransaction <$> getNumTxData i
+getNumTransaction i =
+  getCtx >>= \ctx ->
+    map (toTransaction ctx) <$> getNumTxData i
 
 blockAtOrAfter ::
   (MonadIO m, StoreReadExtra m) =>
@@ -247,10 +233,10 @@ blockAtOrAfter ::
 blockAtOrAfter ch q = runMaybeT $ do
   net <- lift getNetwork
   x <- MaybeT $ liftIO $ runReaderT (firstGreaterOrEqual net f) ch
-  MaybeT $ getBlock (headerHash (nodeHeader x))
+  MaybeT $ getBlock $ headerHash x.header
   where
     f x =
-      let t = fromIntegral (blockTimestamp (nodeHeader x))
+      let t = fromIntegral x.header.timestamp
        in return $ t `compare` q
 
 blockAtOrBefore ::
@@ -261,10 +247,10 @@ blockAtOrBefore ::
 blockAtOrBefore ch q = runMaybeT $ do
   net <- lift getNetwork
   x <- MaybeT $ liftIO $ runReaderT (lastSmallerOrEqual net f) ch
-  MaybeT $ getBlock (headerHash (nodeHeader x))
+  MaybeT $ getBlock $ headerHash x.header
   where
     f x =
-      let t = fromIntegral (blockTimestamp (nodeHeader x))
+      let t = fromIntegral x.header.timestamp
        in return $ t `compare` q
 
 blockAtOrAfterMTP ::
@@ -275,7 +261,7 @@ blockAtOrAfterMTP ::
 blockAtOrAfterMTP ch q = runMaybeT $ do
   net <- lift getNetwork
   x <- MaybeT $ liftIO $ runReaderT (firstGreaterOrEqual net f) ch
-  MaybeT $ getBlock (headerHash (nodeHeader x))
+  MaybeT $ getBlock $ headerHash x.header
   where
     f x = do
       t <- fromIntegral <$> mtp x
@@ -328,17 +314,17 @@ applyLimit 0 = id
 applyLimit l = take (fromIntegral l)
 
 deOffset :: Limits -> Limits
-deOffset l = case limit l of
+deOffset l = case l.limit of
   0 -> l {offset = 0}
-  _ -> l {limit = limit l + offset l, offset = 0}
+  _ -> l {limit = l.limit + l.offset, offset = 0}
 
-applyLimitsC :: Monad m => Limits -> ConduitT i i m ()
+applyLimitsC :: (Monad m) => Limits -> ConduitT i i m ()
 applyLimitsC Limits {..} = applyOffsetC offset >> applyLimitC limit
 
-applyOffsetC :: Monad m => Offset -> ConduitT i i m ()
+applyOffsetC :: (Monad m) => Offset -> ConduitT i i m ()
 applyOffsetC = dropC . fromIntegral
 
-applyLimitC :: Monad m => Limit -> ConduitT i i m ()
+applyLimitC :: (Monad m) => Limit -> ConduitT i i m ()
 applyLimitC 0 = mapC id
 applyLimitC l = takeC (fromIntegral l)
 
@@ -349,7 +335,7 @@ sortTxs txs = go [] thset $ zip [0 ..] txs
     go [] _ [] = []
     go orphans ths [] = go [] ths orphans
     go orphans ths ((i, tx) : xs) =
-      let ops = map (outPointHash . prevOutput) (txIn tx)
+      let ops = map (.outpoint.hash) tx.inputs
           orp = any (`H.member` ths) ops
        in if orp
             then go ((i, tx) : orphans) ths xs
@@ -358,7 +344,7 @@ sortTxs txs = go [] thset $ zip [0 ..] txs
 nub' :: (Eq a, Hashable a) => [a] -> [a]
 nub' = H.toList . H.fromList
 
-microseconds :: MonadIO m => m Integer
+microseconds :: (MonadIO m) => m Integer
 microseconds =
   let f t =
         toInteger (systemSeconds t) * 1000000
@@ -366,7 +352,7 @@ microseconds =
    in liftIO $ f <$> getSystemTime
 
 streamThings ::
-  Monad m =>
+  (Monad m) =>
   (Limits -> m [a]) ->
   Maybe (a -> TxHash) ->
   Limits ->
@@ -378,9 +364,9 @@ streamThings getit gettx limits =
   where
     h l x = case gettx of
       Just g -> Just l {offset = 1, start = Just (AtTx (g x))}
-      Nothing -> case limit l of
+      Nothing -> case l.limit of
         0 -> Nothing
-        _ -> Just l {offset = offset l + limit l}
+        _ -> Just l {offset = l.offset + l.limit}
     go l x = case h l x of
       Nothing -> return ()
       Just l' ->
@@ -427,7 +413,7 @@ data DataMetrics = DataMetrics
     dataXPubTxCount :: !Counter
   }
 
-createDataMetrics :: MonadIO m => Metrics.Store -> m DataMetrics
+createDataMetrics :: (MonadIO m) => Metrics.Store -> m DataMetrics
 createDataMetrics s = liftIO $ do
   dataBestCount <- Metrics.createCounter "data.best_block" s
   dataBlockCount <- Metrics.createCounter "data.blocks" s

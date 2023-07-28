@@ -1,5 +1,9 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.Store.Manager
   ( StoreConfig (..),
@@ -9,6 +13,14 @@ module Haskoin.Store.Manager
 where
 
 import Control.Monad (forever, unless, when)
+import Control.Monad.Cont
+  ( ContT (..),
+    MonadCont (callCC),
+    cont,
+    lift,
+    runCont,
+    runContT,
+  )
 import Control.Monad.Logger (MonadLoggerIO)
 import Control.Monad.Reader (ReaderT (ReaderT), runReaderT)
 import Data.Serialize (decode)
@@ -16,6 +28,7 @@ import Data.Time.Clock (NominalDiffTime)
 import Data.Word (Word32)
 import Haskoin
   ( BlockHash (..),
+    Ctx,
     Inv (..),
     InvType (..),
     InvVector (..),
@@ -37,7 +50,7 @@ import Haskoin.Node
     NodeConfig (..),
     NodeEvent (..),
     PeerEvent (..),
-    PeerManager,
+    PeerMgr,
     WithConnection,
     withNode,
   )
@@ -96,53 +109,56 @@ import UnliftIO.Concurrent (threadDelay)
 
 -- | Store mailboxes.
 data Store = Store
-  { storeManager :: !PeerManager,
-    storeChain :: !Chain,
-    storeBlock :: !BlockStore,
-    storeDB :: !DatabaseReader,
-    storeCache :: !(Maybe CacheConfig),
-    storePublisher :: !(Publisher StoreEvent),
-    storeNetwork :: !Network
+  { peerMgr :: !PeerMgr,
+    chain :: !Chain,
+    block :: !BlockStore,
+    db :: !DatabaseReader,
+    cache :: !(Maybe CacheConfig),
+    pub :: !(Publisher StoreEvent),
+    net :: !Network,
+    ctx :: !Ctx
   }
 
 -- | Configuration for a 'Store'.
 data StoreConfig = StoreConfig
   { -- | max peers to connect to
-    storeConfMaxPeers :: !Int,
+    maxPeers :: !Int,
     -- | static set of peers to connect to
-    storeConfInitPeers :: ![String],
+    initPeers :: ![String],
     -- | discover new peers
-    storeConfDiscover :: !Bool,
+    discover :: !Bool,
     -- | RocksDB database path
-    storeConfDB :: !FilePath,
+    db :: !FilePath,
     -- | network constants
-    storeConfNetwork :: !Network,
+    net :: !Network,
     -- | Redis cache configuration
-    storeConfCache :: !(Maybe String),
+    redis :: !(Maybe String),
+    -- | Secp256k1 context
+    ctx :: !Ctx,
     -- | gap on extended public key with no transactions
-    storeConfInitialGap :: !Word32,
+    initGap :: !Word32,
     -- | gap for extended public keys
-    storeConfGap :: !Word32,
+    gap :: !Word32,
     -- | cache xpubs with more than this many used addresses
-    storeConfCacheMin :: !Int,
+    redisMinAddrs :: !Int,
     -- | maximum number of keys in Redis cache
-    storeConfMaxKeys :: !Integer,
+    redisMaxKeys :: !Integer,
     -- | do not index new mempool transactions
-    storeConfNoMempool :: !Bool,
+    noMempool :: !Bool,
     -- | wipe mempool when starting
-    storeConfWipeMempool :: !Bool,
+    wipeMempool :: !Bool,
     -- | sync mempool from peers
-    storeConfSyncMempool :: !Bool,
+    syncMempool :: !Bool,
     -- | disconnect peer if message not received for this many seconds
-    storeConfPeerTimeout :: !NominalDiffTime,
+    peerTimeout :: !NominalDiffTime,
     -- | disconnect peer if it has been connected this long
-    storeConfPeerMaxLife :: !NominalDiffTime,
+    maxPeerLife :: !NominalDiffTime,
     -- | connect to peers using the function 'withConnection'
-    storeConfConnect :: !(SockAddr -> WithConnection),
+    connect :: !(SockAddr -> WithConnection),
     -- | stats store
-    storeConfStats :: !(Maybe Metrics.Store),
+    statsStore :: !(Maybe Metrics.Store),
     -- | sync mempool against cache every this many seconds
-    storeConfCacheMempoolSync :: !Int
+    redisSyncInterval :: !Int
   }
 
 withStore ::
@@ -152,34 +168,41 @@ withStore ::
   m a
 withStore cfg action =
   connectDB cfg $
-    ReaderT $ \db ->
-      withPublisher $ \pub ->
-        withPublisher $ \node_pub ->
-          withSubscription node_pub $ \node_sub ->
-            withNode (nodeCfg cfg db node_pub) $ \node ->
-              withCache cfg (nodeChain node) db pub $ \mcache ->
-                withBlockStore (blockStoreCfg cfg node pub db) $ \b ->
-                  withAsync (nodeForwarder b pub node_sub) $ \a1 ->
-                    link a1
-                      >> action
-                        Store
-                          { storeManager = nodeManager node,
-                            storeChain = nodeChain node,
-                            storeBlock = b,
-                            storeDB = db,
-                            storeCache = mcache,
-                            storePublisher = pub,
-                            storeNetwork = storeConfNetwork cfg
-                          }
+    ReaderT $ \db -> flip runContT return $ do
+      pub <- ContT withPublisher
+      node_pub <- ContT withPublisher
+      node_sub <- ContT $ withSubscription node_pub
+      node <- ContT $ withNode $ nodeCfg cfg db node_pub
+      cache_cfg <- ContT $ withCache cfg node.chain db pub
+      block_store <- ContT $ withBlockStore $ blockStoreCfg cfg node pub db
+      fwd <- ContT $ withAsync $ nodeForwarder block_store pub node_sub
+      link fwd
+      lift $
+        action
+          Store
+            { peerMgr = node.peerMgr,
+              chain = node.chain,
+              block = block_store,
+              db = db,
+              cache = cache_cfg,
+              pub = pub,
+              net = cfg.net,
+              ctx = cfg.ctx
+            }
 
-connectDB :: MonadUnliftIO m => StoreConfig -> DatabaseReaderT m a -> m a
+connectDB ::
+  (MonadUnliftIO m) =>
+  StoreConfig ->
+  DatabaseReaderT m a ->
+  m a
 connectDB cfg f = do
-  stats <- mapM createDataMetrics (storeConfStats cfg)
+  stats <- mapM createDataMetrics cfg.statsStore
   withDatabaseReader
-    (storeConfNetwork cfg)
-    (storeConfInitialGap cfg)
-    (storeConfGap cfg)
-    (storeConfDB cfg)
+    cfg.net
+    cfg.ctx
+    cfg.initGap
+    cfg.gap
+    cfg.db
     stats
     f
 
@@ -191,16 +214,17 @@ blockStoreCfg ::
   BlockStoreConfig
 blockStoreCfg cfg node pub db =
   BlockStoreConfig
-    { blockConfChain = nodeChain node,
-      blockConfManager = nodeManager node,
-      blockConfListener = pub,
-      blockConfDB = db,
-      blockConfNet = storeConfNetwork cfg,
-      blockConfNoMempool = storeConfNoMempool cfg,
-      blockConfWipeMempool = storeConfWipeMempool cfg,
-      blockConfSyncMempool = storeConfSyncMempool cfg,
-      blockConfPeerTimeout = storeConfPeerTimeout cfg,
-      blockConfStats = storeConfStats cfg
+    { chain = node.chain,
+      peerMgr = node.peerMgr,
+      pub = pub,
+      db = db,
+      net = cfg.net,
+      ctx = cfg.ctx,
+      noMempool = cfg.noMempool,
+      wipeMempool = cfg.wipeMempool,
+      syncMempool = cfg.syncMempool,
+      peerTimeout = cfg.peerTimeout,
+      statsStore = cfg.statsStore
     }
 
 nodeCfg ::
@@ -210,20 +234,20 @@ nodeCfg ::
   NodeConfig
 nodeCfg cfg db pub =
   NodeConfig
-    { nodeConfMaxPeers = storeConfMaxPeers cfg,
-      nodeConfDB = databaseHandle db,
-      nodeConfColumnFamily = Nothing,
-      nodeConfPeers = storeConfInitPeers cfg,
-      nodeConfDiscover = storeConfDiscover cfg,
-      nodeConfEvents = pub,
-      nodeConfNetAddr =
+    { maxPeers = cfg.maxPeers,
+      db = db.db,
+      cf = Nothing,
+      peers = cfg.initPeers,
+      discover = cfg.discover,
+      pub = pub,
+      address =
         NetworkAddress
           0
           (sockToHostAddress (SockAddrInet 0 0)),
-      nodeConfNet = storeConfNetwork cfg,
-      nodeConfTimeout = storeConfPeerTimeout cfg,
-      nodeConfPeerMaxLife = storeConfPeerMaxLife cfg,
-      nodeConfConnect = storeConfConnect cfg
+      net = cfg.net,
+      timeout = cfg.peerTimeout,
+      maxPeerLife = cfg.maxPeerLife,
+      connect = cfg.connect
     }
 
 withCache ::
@@ -235,31 +259,33 @@ withCache ::
   (Maybe CacheConfig -> m a) ->
   m a
 withCache cfg chain db pub action =
-  case storeConfCache cfg of
+  case cfg.redis of
     Nothing ->
       action Nothing
-    Just redisurl ->
-      mapM newCacheMetrics (storeConfStats cfg) >>= \metrics ->
-        connectRedis redisurl >>= \conn ->
-          withSubscription pub $ \evts ->
-            let conf = c conn metrics
-             in withProcess (f conf) $ \p ->
-                  cacheWriterProcesses interval evts (getProcessMailbox p) $ do
-                    action (Just conf)
+    Just redisurl -> do
+      metrics <- mapM newCacheMetrics cfg.statsStore
+      conn <- connectRedis redisurl
+      withSubscription pub $ \evts ->
+        let conf = c conn metrics
+         in withProcess (f conf) $ \p ->
+              cacheWriterProcesses
+                cfg.redisSyncInterval
+                evts
+                (getProcessMailbox p)
+                $ action (Just conf)
   where
-    interval = storeConfCacheMempoolSync cfg
     f conf cwinbox = runReaderT (cacheWriter conf cwinbox) db
     c conn metrics =
       CacheConfig
-        { cacheConn = conn,
-          cacheMin = storeConfCacheMin cfg,
-          cacheChain = chain,
-          cacheMax = storeConfMaxKeys cfg,
-          cacheMetrics = metrics
+        { redis = conn,
+          minAddrs = cfg.redisMinAddrs,
+          chain = chain,
+          maxKeys = cfg.redisMaxKeys,
+          metrics = metrics
         }
 
 cacheWriterProcesses ::
-  MonadUnliftIO m =>
+  (MonadUnliftIO m) =>
   Int ->
   Inbox StoreEvent ->
   CacheWriter ->
@@ -268,7 +294,7 @@ cacheWriterProcesses ::
 cacheWriterProcesses interval evts cwm action =
   withAsync (cacheWriterEvents interval evts cwm) $ \a1 -> link a1 >> action
 
-cacheWriterEvents :: MonadUnliftIO m => Int -> Inbox StoreEvent -> CacheWriter -> m ()
+cacheWriterEvents :: (MonadUnliftIO m) => Int -> Inbox StoreEvent -> CacheWriter -> m ()
 cacheWriterEvents interval evts cwm =
   withAsync mempool . const $
     forever $
@@ -279,14 +305,14 @@ cacheWriterEvents interval evts cwm =
       threadDelay (interval * 1000 * 1000)
       cacheSyncMempool cwm
 
-cacheWriterDispatch :: MonadIO m => StoreEvent -> CacheWriter -> m ()
+cacheWriterDispatch :: (MonadIO m) => StoreEvent -> CacheWriter -> m ()
 cacheWriterDispatch (StoreBestBlock _) = cacheNewBlock
 cacheWriterDispatch (StoreMempoolNew t) = cacheNewTx t
 cacheWriterDispatch (StoreMempoolDelete t) = cacheNewTx t
 cacheWriterDispatch _ = const (return ())
 
 nodeForwarder ::
-  MonadIO m =>
+  (MonadIO m) =>
   BlockStore ->
   Publisher StoreEvent ->
   Inbox NodeEvent ->
@@ -300,44 +326,49 @@ storeDispatch ::
   Publisher StoreEvent ->
   NodeEvent ->
   STM ()
-storeDispatch b pub (PeerEvent (PeerConnected p)) = do
-  publishSTM (StorePeerConnected p) pub
-  blockStorePeerConnectSTM p b
-storeDispatch b pub (PeerEvent (PeerDisconnected p)) = do
-  publishSTM (StorePeerDisconnected p) pub
-  blockStorePeerDisconnectSTM p b
+storeDispatch b pub (PeerEvent pe) =
+  case pe of
+    PeerConnected p -> do
+      publishSTM (StorePeerConnected p) pub
+      blockStorePeerConnectSTM p b
+    PeerDisconnected p -> do
+      publishSTM (StorePeerDisconnected p) pub
+      blockStorePeerDisconnectSTM p b
+    PeerMessage p msg ->
+      case msg of
+        MPong (Pong n) ->
+          publishSTM (StorePeerPong p n) pub
+        MBlock block ->
+          blockStoreBlockSTM p block b
+        MTx tx ->
+          blockStoreTxSTM p tx b
+        MNotFound (NotFound is) -> do
+          let blocks =
+                [ BlockHash h
+                  | InvVector t h <- is,
+                    t == InvBlock || t == InvWitnessBlock
+                ]
+          unless (null blocks) $ blockStoreNotFoundSTM p blocks b
+        MInv (Inv is) -> do
+          let txs =
+                [ TxHash h
+                  | InvVector t h <- is,
+                    t == InvTx || t == InvWitnessTx
+                ]
+          publishSTM (StoreTxAnnounce p txs) pub
+          unless (null txs) $ blockStoreTxHashSTM p txs b
+        MReject Reject {message = MCTx, extra, code, reason} ->
+          case decode extra of
+            Left _ -> return ()
+            Right th ->
+              let reject =
+                    StoreTxReject
+                      p
+                      th
+                      code
+                      reason.get
+               in publishSTM reject pub
+        _ -> return ()
 storeDispatch b _ (ChainEvent (ChainBestBlock bn)) =
   blockStoreHeadSTM bn b
-storeDispatch _ _ (ChainEvent _) =
-  return ()
-storeDispatch _ pub (PeerMessage p (MPong (Pong n))) =
-  publishSTM (StorePeerPong p n) pub
-storeDispatch b _ (PeerMessage p (MBlock block)) =
-  blockStoreBlockSTM p block b
-storeDispatch b _ (PeerMessage p (MTx tx)) =
-  blockStoreTxSTM p tx b
-storeDispatch b _ (PeerMessage p (MNotFound (NotFound is))) = do
-  let blocks =
-        [ BlockHash h
-          | InvVector t h <- is,
-            t == InvBlock || t == InvWitnessBlock
-        ]
-  unless (null blocks) $ blockStoreNotFoundSTM p blocks b
-storeDispatch b pub (PeerMessage p (MInv (Inv is))) = do
-  let txs = [TxHash h | InvVector t h <- is, t == InvTx || t == InvWitnessTx]
-  publishSTM (StoreTxAnnounce p txs) pub
-  unless (null txs) $ blockStoreTxHashSTM p txs b
-storeDispatch _ pub (PeerMessage p (MReject r)) =
-  when (rejectMessage r == MCTx) $
-    case decode (rejectData r) of
-      Left _ -> return ()
-      Right th ->
-        let reject =
-              StoreTxReject
-                p
-                th
-                (rejectCode r)
-                (getVarString (rejectReason r))
-         in publishSTM reject pub
-storeDispatch _ _ _ =
-  return ()
+storeDispatch _ _ (ChainEvent _) = return ()

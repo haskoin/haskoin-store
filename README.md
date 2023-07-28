@@ -12,6 +12,7 @@ Block chain store and index featuring:
 - Optional accelerated xpub cache using Redis.
 - RESTful API with JSON and binary serialization.
 - High performance concurrent architecture.
+- Compatibility with Blockchain.info-style endpoints.
 
 ## Install with Nix on any distribution
 

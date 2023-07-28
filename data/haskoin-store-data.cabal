@@ -1,13 +1,13 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.35.1.
+-- This file has been generated from package.yaml by hpack version 0.35.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: d49ffcc465d5b9f2861113961f9b4104f3162ee34db457c4968c4acc3f9074d4
+-- hash: 5c6d0f79cd18954de7032dc7b391fccf7ff90f5afd84f693d4533a84f7a2afcc
 
 name:           haskoin-store-data
-version:        0.66.0
+version:        1.0.0
 synopsis:       Data for Haskoin Store
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -46,7 +46,7 @@ library
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.22.0
+    , haskoin-core >=1.0.0
     , http-client >=0.6.4.1
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -57,10 +57,11 @@ library
     , text >=1.2.3.0
     , time >=1.9.3
     , unordered-containers >=0.2.10
+    , vector >=0.13.0.0
     , wreq >=0.5.3.2
   default-language: Haskell2010
 
-test-suite haskoin-store-test
+test-suite spec
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
@@ -82,7 +83,7 @@ test-suite haskoin-store-test
     , data-default >=0.7.1.1
     , deepseq >=1.4.4.0
     , hashable >=1.3.0.0
-    , haskoin-core >=0.22.0
+    , haskoin-core >=1.0.0
     , haskoin-store-data
     , hspec >=2.7.1
     , http-client >=0.6.4.1
@@ -95,6 +96,7 @@ test-suite haskoin-store-test
     , text >=1.2.3.0
     , time >=1.9.3
     , unordered-containers >=0.2.10
+    , vector >=0.13.0.0
     , wreq >=0.5.3.2
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover

@@ -1,5 +1,9 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.Store.Stats
   ( StatDist,
@@ -18,13 +22,13 @@ import Control.Concurrent.STM.TQueue
     flushTQueue,
     writeTQueue,
   )
-import qualified Control.Foldl as L
+import Control.Foldl qualified as L
 import Control.Monad (forever)
 import Data.Function (on)
 import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
+import Data.HashMap.Strict qualified as HashMap
 import Data.Int (Int64)
-import Data.List (sort, sortBy)
+import Data.List (sort, sortBy, sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..), comparing)
 import Data.String.Conversions (cs)
@@ -58,7 +62,7 @@ import UnliftIO
   )
 import UnliftIO.Concurrent (threadDelay)
 
-withStats :: MonadIO m => Text -> Int -> Text -> (Store -> m a) -> m a
+withStats :: (MonadIO m) => Text -> Int -> Text -> (Store -> m a) -> m a
 withStats h p pfx go = do
   store <- liftIO newStore
   _statsd <-
@@ -74,62 +78,62 @@ withStats h p pfx go = do
   go store
 
 data StatData = StatData
-  { statTimes :: ![Int64],
-    statQueries :: !Int64,
-    statItems :: !Int64,
-    statClientErrors :: !Int64,
-    statServerErrors :: !Int64
+  { times :: ![Int64],
+    queries :: !Int64,
+    items :: !Int64,
+    clientErrors :: !Int64,
+    serverErrors :: !Int64
   }
 
 data StatDist = StatDist
-  { distQueue :: !(TQueue Int64),
-    distQueries :: !(TVar Int64),
-    distItems :: !(TVar Int64),
-    distClientErrors :: !(TVar Int64),
-    distServerErrors :: !(TVar Int64)
+  { queue :: !(TQueue Int64),
+    queries :: !(TVar Int64),
+    items :: !(TVar Int64),
+    clientErrors :: !(TVar Int64),
+    serverErrors :: !(TVar Int64)
   }
 
-createStatDist :: MonadIO m => Text -> Store -> m StatDist
+createStatDist :: (MonadIO m) => Text -> Store -> m StatDist
 createStatDist t store = liftIO $ do
-  distQueue <- newTQueueIO
-  distQueries <- newTVarIO 0
-  distItems <- newTVarIO 0
-  distClientErrors <- newTVarIO 0
-  distServerErrors <- newTVarIO 0
+  queue <- newTQueueIO
+  queries <- newTVarIO 0
+  items <- newTVarIO 0
+  clientErrors <- newTVarIO 0
+  serverErrors <- newTVarIO 0
   let metrics =
         HashMap.fromList
           [ ( t <> ".request_count",
-              Counter . statQueries
+              Counter . (.queries)
             ),
             ( t <> ".item_count",
-              Counter . statItems
+              Counter . (.items)
             ),
             ( t <> ".client_errors",
-              Counter . statClientErrors
+              Counter . (.clientErrors)
             ),
             ( t <> ".server_errors",
-              Counter . statServerErrors
+              Counter . (.serverErrors)
             ),
             ( t <> ".mean_ms",
-              Gauge . mean . statTimes
+              Gauge . mean . (.times)
             ),
             ( t <> ".avg_ms",
-              Gauge . avg . statTimes
+              Gauge . avg . (.times)
             ),
             ( t <> ".max_ms",
-              Gauge . maxi . statTimes
+              Gauge . maxi . (.times)
             ),
             ( t <> ".min_ms",
-              Gauge . mini . statTimes
+              Gauge . mini . (.times)
             ),
             ( t <> ".p90max_ms",
-              Gauge . p90max . statTimes
+              Gauge . p90max . (.times)
             ),
             ( t <> ".p90avg_ms",
-              Gauge . p90avg . statTimes
+              Gauge . p90avg . (.times)
             ),
             ( t <> ".var_ms",
-              Gauge . var . statTimes
+              Gauge . var . (.times)
             )
           ]
   let sd = StatDist {..}
@@ -139,36 +143,36 @@ createStatDist t store = liftIO $ do
 toDouble :: Int64 -> Double
 toDouble = fromIntegral
 
-addStatTime :: MonadIO m => StatDist -> Int64 -> m ()
+addStatTime :: (MonadIO m) => StatDist -> Int64 -> m ()
 addStatTime q =
-  liftIO . atomically . writeTQueue (distQueue q)
+  liftIO . atomically . writeTQueue q.queue
 
-addStatQuery :: MonadIO m => StatDist -> m ()
+addStatQuery :: (MonadIO m) => StatDist -> m ()
 addStatQuery q =
-  liftIO . atomically $ modifyTVar (distQueries q) (+ 1)
+  liftIO . atomically $ modifyTVar q.queries (+ 1)
 
-addStatItems :: MonadIO m => StatDist -> Int64 -> m ()
+addStatItems :: (MonadIO m) => StatDist -> Int64 -> m ()
 addStatItems q =
-  liftIO . atomically . modifyTVar (distItems q) . (+)
+  liftIO . atomically . modifyTVar q.items . (+)
 
-addClientError :: MonadIO m => StatDist -> m ()
+addClientError :: (MonadIO m) => StatDist -> m ()
 addClientError q =
-  liftIO . atomically $ modifyTVar (distClientErrors q) (+ 1)
+  liftIO . atomically $ modifyTVar q.clientErrors (+ 1)
 
-addServerError :: MonadIO m => StatDist -> m ()
+addServerError :: (MonadIO m) => StatDist -> m ()
 addServerError q =
-  liftIO . atomically $ modifyTVar (distServerErrors q) (+ 1)
+  liftIO . atomically $ modifyTVar q.serverErrors (+ 1)
 
-flush :: MonadIO m => StatDist -> m StatData
+flush :: (MonadIO m) => StatDist -> m StatData
 flush StatDist {..} = atomically $ do
-  statTimes <- flushTQueue distQueue
-  statQueries <- readTVar distQueries
-  statItems <- readTVar distItems
-  statClientErrors <- readTVar distClientErrors
-  statServerErrors <- readTVar distServerErrors
+  times <- flushTQueue queue
+  queries <- readTVar queries
+  items <- readTVar items
+  clientErrors <- readTVar clientErrors
+  serverErrors <- readTVar serverErrors
   return $ StatData {..}
 
-average :: Fractional a => L.Fold a a
+average :: (Fractional a) => L.Fold a a
 average = (/) <$> L.sum <*> L.genericLength
 
 avg :: [Int64] -> Int64
@@ -192,14 +196,14 @@ p90max ls =
     [] -> 0
     h : _ -> h
   where
-    sorted = sortBy (comparing Down) ls
+    sorted = sortOn Down ls
     len = length sorted
-    chopped = drop (length sorted * 1 `div` 10) sorted
+    chopped = drop (length sorted `div` 10) sorted
 
 p90avg :: [Int64] -> Int64
 p90avg ls =
   avg chopped
   where
-    sorted = sortBy (comparing Down) ls
+    sorted = sortOn Down ls
     len = length sorted
-    chopped = drop (length sorted * 1 `div` 10) sorted
+    chopped = drop (length sorted `div` 10) sorted

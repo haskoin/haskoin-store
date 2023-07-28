@@ -1,6 +1,11 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.StoreSpec (spec) where
 
@@ -9,7 +14,7 @@ import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
+import Data.ByteString qualified as B
 import Data.ByteString.Base64
 import Data.Either
 import Data.List
@@ -37,10 +42,10 @@ data TestStore = TestStore
   }
 
 spec :: Spec
-spec = do
+spec = prepareContext $ \ctx -> do
   describe "Download" $ do
     it "gets 8 blocks" $
-      withTestStore bchRegTest "eight-blocks" $ \TestStore {..} -> do
+      withTestStore bchRegTest ctx "eight-blocks" $ \TestStore {..} -> do
         bs <- replicateM 8 . receiveMatch testStoreEvents $ \case
           StoreBestBlock b -> Just b
           _ -> Nothing
@@ -48,10 +53,10 @@ spec = do
         bestNodeM <- chainGetBlock bestHash testStoreChain
         bestNodeM `shouldSatisfy` isJust
         let bestNode = fromJust bestNodeM
-            bestHeight = nodeHeight bestNode
+            bestHeight = bestNode.height
         bestHeight `shouldBe` 8
     it "get a block and its transactions" $
-      withTestStore bchRegTest "get-block-txs" $ \TestStore {..} ->
+      withTestStore bchRegTest ctx "get-block-txs" $ \TestStore {..} ->
         flip runReaderT testStoreDB $ do
           let h1 = "5369ef2386c72acdf513ffd80aeba2a1774e2f004d120761e54a8bf614173f3e"
               get_the_block h =
@@ -59,22 +64,27 @@ spec = do
                   StoreBestBlock b
                     | h <= 1 -> return b
                     | otherwise ->
-                      get_the_block ((h :: Int) - 1)
+                        get_the_block ((h :: Int) - 1)
                   _ -> get_the_block h
           bh <- get_the_block 15
           m <- getBlock bh
           let bd = fromMaybe (error "Could not get block") m
           t1 <- getTransaction h1
           lift $ do
-            blockDataHeight bd `shouldBe` 15
-            length (blockDataTxs bd) `shouldBe` 1
-            head (blockDataTxs bd) `shouldBe` h1
+            bd.height `shouldBe` 15
+            length bd.txs `shouldBe` 1
+            head bd.txs `shouldBe` h1
             t1 `shouldSatisfy` isJust
             txHash (transactionData (fromJust t1)) `shouldBe` h1
 
 withTestStore ::
-  MonadUnliftIO m => Network -> String -> (TestStore -> m a) -> m a
-withTestStore net t f =
+  (MonadUnliftIO m) =>
+  Network ->
+  Ctx ->
+  String ->
+  (TestStore -> m a) ->
+  m a
+withTestStore net ctx t f =
   withSystemTempDirectory ("haskoin-store-test-" <> t <> "-") $ \w ->
     runNoLoggingT $ do
       let ad =
@@ -83,33 +93,34 @@ withTestStore net t f =
               (sockToHostAddress (SockAddrInet 0 0))
           cfg =
             StoreConfig
-              { storeConfMaxPeers = 20,
-                storeConfInitPeers = [],
-                storeConfDiscover = True,
-                storeConfDB = w,
-                storeConfNetwork = net,
-                storeConfCache = Nothing,
-                storeConfGap = gap,
-                storeConfInitialGap = 20,
-                storeConfCacheMin = 100,
-                storeConfMaxKeys = 100 * 1000 * 1000,
-                storeConfNoMempool = False,
-                storeConfWipeMempool = False,
-                storeConfSyncMempool = False,
-                storeConfPeerTimeout = 60,
-                storeConfPeerMaxLife = 48 * 3600,
-                storeConfConnect = dummyPeerConnect net ad,
-                storeConfStats = Nothing,
-                storeConfCacheMempoolSync = 30
+              { maxPeers = 20,
+                initPeers = [],
+                discover = True,
+                db = w,
+                net = net,
+                ctx = ctx,
+                redis = Nothing,
+                gap = gap,
+                initGap = 20,
+                redisMinAddrs = 100,
+                redisMaxKeys = 100 * 1000 * 1000,
+                noMempool = False,
+                wipeMempool = False,
+                syncMempool = False,
+                peerTimeout = 60,
+                maxPeerLife = 48 * 3600,
+                connect = dummyPeerConnect net ad,
+                statsStore = Nothing,
+                redisSyncInterval = 30
               }
       withStore cfg $ \Store {..} ->
-        withSubscription storePublisher $ \sub ->
+        withSubscription pub $ \sub ->
           lift $
             f
               TestStore
-                { testStoreDB = storeDB,
-                  testStoreBlockStore = storeBlock,
-                  testStoreChain = storeChain,
+                { testStoreDB = db,
+                  testStoreBlockStore = block,
+                  testStoreChain = chain,
                   testStoreEvents = sub
                 }
 
@@ -194,7 +205,9 @@ dummyPeerConnect net ad sa f = do
           ver = buildVersion net nonce 0 ad rmt now
       runPut (putMessage net (MVersion ver)) `send` s
       runConduit $
-        forever (receive r >>= yield) .| inc .| concatMapC mockPeerReact
+        forever (receive r >>= yield)
+          .| inc
+          .| concatMapC mockPeerReact
           .| outc
           .| awaitForever (`send` s)
     outc = mapMC $ \msg' -> return $ runPut (putMessage net msg')
@@ -216,11 +229,11 @@ mockPeerReact (MPing (Ping n)) = [MPong (Pong n)]
 mockPeerReact (MVersion _) = [MVerAck]
 mockPeerReact (MGetHeaders (GetHeaders _ _hs _)) = [MHeaders (Headers hs')]
   where
-    f b = (blockHeader b, VarInt (fromIntegral (length (blockTxns b))))
+    f b = (b.header, VarInt $ fromIntegral $ length b.txs)
     hs' = map f allBlocks
 mockPeerReact (MGetData (GetData ivs)) = mapMaybe f ivs
   where
     f (InvVector InvBlock h) = MBlock <$> find (l h) allBlocks
     f _ = Nothing
-    l h b = headerHash (blockHeader b) == BlockHash h
+    l h b = headerHash b.header == BlockHash h
 mockPeerReact _ = []

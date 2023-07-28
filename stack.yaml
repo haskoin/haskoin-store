@@ -1,4 +1,4 @@
-resolver: lts-21.0
+resolver: lts-21.4
 nix:
   packages:
   - perl
@@ -11,12 +11,14 @@ packages:
   - store
   - data
 allow-newer: true
+ghc-options:
+  "$everything": -O2
 extra-deps:
   - base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
-  - secp256k1-haskell-0.7.0@sha256:1585601c67d7c62c698402ffe8462de216a499608521a8136d0aa15f0a03a23f,2140
-  - haskoin-core-0.22.0@sha256:d6a180619df675f070e88b4be8ba2bff72e5e85fe03a696cde5815849e517227,4938
-  - haskoin-node-0.19.0@sha256:399257bbd00bf6e3a60f76cf21bf47b20d46cd4484677f703eb71b6aaa2b262e,2279
-  - git: https://github.com/tibbe/ekg-core.git
+  - haskoin-core-1.0.0@sha256:8143c623715455a27ff50cbcdaa11437d2776d63b47f619639f5099c312507d3,5065
+  - secp256k1-haskell-1.0.0@sha256:42e1dc0ddba74b752bddf7d55c19aa10b24ff6f51889a53bc07c2ff2107aca16,2082
+  - haskoin-node-1.0.0@sha256:2419d6622f7e3455033addf1a26f1e0847308b162c850278d27dab7ea9200a91,2276
+  - github: tibbe/ekg-core
     commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
-  - git: https://github.com/tibbe/ekg-statsd.git
+  - github: tibbe/ekg-statsd
     commit: c6a9760266277cbd7641e9618f3b7cfbabc299d1
