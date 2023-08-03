@@ -5,19 +5,12 @@
 
 packages:
 - completed:
-    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
+    hackage: haskoin-core-1.0.1@sha256:3b373c31079b1ebe7925c4e281f5c155279c36152f2af912159bfb8c80ed1904,5065
     pantry-tree:
-      sha256: 3a0f4b633d58e312d6e6fa556c7abbd0f483ebc35d767a77315f98e2d9840fd8
-      size: 1457
-  original:
-    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
-- completed:
-    hackage: haskoin-core-1.0.0@sha256:8143c623715455a27ff50cbcdaa11437d2776d63b47f619639f5099c312507d3,5065
-    pantry-tree:
-      sha256: fed2245e446d25f08e3d98d898da59bceb1d874f656632b6e323219f98fccd5d
+      sha256: cd45b1dfa99375827f75ba4a196f96891a9e21ddaa649cff7cff2f92a2039630
       size: 5732
   original:
-    hackage: haskoin-core-1.0.0@sha256:8143c623715455a27ff50cbcdaa11437d2776d63b47f619639f5099c312507d3,5065
+    hackage: haskoin-core-1.0.1@sha256:3b373c31079b1ebe7925c4e281f5c155279c36152f2af912159bfb8c80ed1904,5065
 - completed:
     hackage: secp256k1-haskell-1.0.0@sha256:42e1dc0ddba74b752bddf7d55c19aa10b24ff6f51889a53bc07c2ff2107aca16,2082
     pantry-tree:
@@ -26,12 +19,12 @@ packages:
   original:
     hackage: secp256k1-haskell-1.0.0@sha256:42e1dc0ddba74b752bddf7d55c19aa10b24ff6f51889a53bc07c2ff2107aca16,2082
 - completed:
-    hackage: haskoin-node-1.0.0@sha256:2419d6622f7e3455033addf1a26f1e0847308b162c850278d27dab7ea9200a91,2276
+    hackage: haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
     pantry-tree:
-      sha256: 5231ec4b2273ab4ab91da7fda01421b8b293ab5178dc5a4900478d9d29ca7b7a
+      sha256: 0f6366d8d157223378b60322e7dcc6ed0d41cd2b9408e957b48a4795eb8cb382
       size: 636
   original:
-    hackage: haskoin-node-1.0.0@sha256:2419d6622f7e3455033addf1a26f1e0847308b162c850278d27dab7ea9200a91,2276
+    hackage: haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
 - completed:
     name: ekg-core
     pantry-tree:
@@ -56,7 +49,7 @@ packages:
     url: https://github.com/tibbe/ekg-statsd/archive/c6a9760266277cbd7641e9618f3b7cfbabc299d1.tar.gz
 snapshots:
 - completed:
-    sha256: caa77fdbc5b9f698262b21ee78030133272ec53116ad6ddbefdc4c321f668e0c
-    size: 640014
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/21/4.yaml
-  original: lts-21.4
+    sha256: d4a54df12888fc5d1ef2d4ff987225fa7bedb2cff74385b33fbec4a384ebd619
+    size: 644615
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2023/8/2.yaml
+  original: nightly-2023-08-02

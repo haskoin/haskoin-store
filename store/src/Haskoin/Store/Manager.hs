@@ -17,12 +17,12 @@ import Control.Monad.Cont
   ( ContT (..),
     MonadCont (callCC),
     cont,
-    lift,
     runCont,
     runContT,
   )
 import Control.Monad.Logger (MonadLoggerIO)
 import Control.Monad.Reader (ReaderT (ReaderT), runReaderT)
+import Control.Monad.Trans (lift)
 import Data.Serialize (decode)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Word (Word32)
