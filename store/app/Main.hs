@@ -50,7 +50,6 @@ import Haskoin.Store
   ( StoreConfig (..),
     WebConfig (..),
     WebLimits (..),
-    WebTimeouts (..),
     runWeb,
     withStore,
   )
@@ -79,7 +78,6 @@ import Options.Applicative
   )
 import System.Exit (exitSuccess)
 import System.FilePath ((</>))
-import System.IO.Unsafe (unsafePerformIO)
 import Text.Read (readMaybe)
 import UnliftIO (MonadIO)
 import UnliftIO.Directory
@@ -109,7 +107,6 @@ data Config = Config
     maxLaggingBlocks :: !Int,
     minPeers :: !Int,
     webLimits :: !WebLimits,
-    webTimeouts :: !WebTimeouts,
     redis :: !Bool,
     redisURL :: !String,
     redisMinAddrs :: !Int,
@@ -162,8 +159,6 @@ defConfig = do
     env "MIN_PEERS" 1 readMaybe
   webLimits <-
     getWebLimits
-  webTimeouts <-
-    getWebTimeouts
   redis <-
     env "REDIS" False parseBool
   redisURL <-
@@ -231,16 +226,11 @@ defConfig = do
         env "XPUB_GAP_INIT" xpubGapInit readMaybe
       maxBodySize <-
         env "MAX_BODY_SIZE" maxBodySize readMaybe
-      requestTimeout <-
-        env "REQUEST_TIMEOUT" requestTimeout readMaybe
+      blockTimeout <-
+        env "BLOCK_TIMEOUT" blockTimeout readMaybe
+      txTimeout <-
+        env "TX_TIMEOUT" blockTimeout readMaybe
       return WebLimits {..}
-    getWebTimeouts = do
-      let WebTimeouts {..} = def
-      block <-
-        env "BLOCK_TIMEOUT" block readMaybe
-      tx <-
-        env "TX_TIMEOUT" tx readMaybe
-      return WebTimeouts {..}
     getStatsdPrefix = do
       let go = prefix <|> nomad
           prefix =
@@ -392,30 +382,21 @@ config c = do
           <> help "Maximum request body size"
           <> showDefault
           <> value c.webLimits.maxBodySize
-    requestTimeout <-
-      option auto $
-        metavar "SECONDS"
-          <> long "request-timeout"
-          <> help "Web request timeout"
-          <> showDefault
-          <> value c.webLimits.requestTimeout
-    return WebLimits {..}
-  webTimeouts <- do
-    block <-
+    blockTimeout <-
       option auto $
         metavar "SECONDS"
           <> long "block-timeout"
           <> help "Block lag health timeout"
           <> showDefault
-          <> value c.webTimeouts.block
-    tx <-
+          <> value c.webLimits.blockTimeout
+    txTimeout <-
       option auto $
         metavar "SECONDS"
           <> long "tx-timeout"
           <> help "Last tx received health timeout"
           <> showDefault
-          <> value c.webTimeouts.tx
-    return WebTimeouts {..}
+          <> value c.webLimits.txTimeout
+    return WebLimits {..}
   redis <-
     flag c.redis True $
       long "redis"
@@ -611,7 +592,6 @@ run cfg =
               port = cfg.port,
               store = store,
               limits = cfg.webLimits,
-              timeouts = cfg.webTimeouts,
               maxPendingTxs = cfg.maxPendingTxs,
               maxLaggingBlocks = cfg.maxLaggingBlocks,
               minPeers = cfg.minPeers,

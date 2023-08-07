@@ -20,7 +20,6 @@ module Haskoin.Store.Web
     WebConfig (..),
     Except (..),
     WebLimits (..),
-    WebTimeouts (..),
     runWeb,
   )
 where
@@ -101,6 +100,7 @@ import Data.Bytes.Serial
 import Data.Char (isSpace)
 import Data.Default (Default (..))
 import Data.Function ((&))
+import Data.Functor (void)
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HashMap
 import Data.HashSet (HashSet)
@@ -249,7 +249,8 @@ data WebLimits = WebLimits
     xpubGap :: !Word32,
     xpubGapInit :: !Word32,
     maxBodySize :: !Word32,
-    requestTimeout :: !Word32
+    txTimeout :: !Word64,
+    blockTimeout :: !Word64
   }
   deriving (Eq, Show)
 
@@ -263,7 +264,8 @@ instance Default WebLimits where
         xpubGap = 32,
         xpubGapInit = 20,
         maxBodySize = 1024 * 1024,
-        requestTimeout = 0
+        txTimeout = 3600 `div` 2,
+        blockTimeout = 4 * 3600
       }
 
 data WebConfig = WebConfig
@@ -274,7 +276,6 @@ data WebConfig = WebConfig
     maxPendingTxs :: !Int,
     minPeers :: !Int,
     limits :: !WebLimits,
-    timeouts :: !WebTimeouts,
     version :: !String,
     noMempool :: !Bool,
     statsStore :: !(Maybe Metrics.Store),
@@ -454,7 +455,7 @@ setMetrics df =
       req <- S.request
       let t = fromMaybe e $ V.lookup m.key (vault req)
       atomically $ writeTVar t (Just df)
-    e = error "the ways of the warrior are yet to be mastered"
+    e = error "The ways of the warrior are yet to be mastered."
 
 addItemCount :: (MonadUnliftIO m) => Int -> WebT m ()
 addItemCount i =
@@ -473,17 +474,8 @@ getItemCounter =
     s <- MaybeT $ readTVarIO t
     return $ addStatItems (s m) . fromIntegral
 
-data WebTimeouts = WebTimeouts
-  { tx :: !Word64,
-    block :: !Word64
-  }
-  deriving (Eq, Show)
-
 data SerialAs = SerialAsBinary | SerialAsJSON | SerialAsPrettyJSON
   deriving (Eq, Show)
-
-instance Default WebTimeouts where
-  def = WebTimeouts {tx = 3600 `div` 2, block = 4 * 3600}
 
 instance
   (MonadUnliftIO m, MonadLoggerIO m) =>
@@ -562,7 +554,6 @@ runWeb config = do
         S.middleware $ webSocketEvents state
         S.middleware logger
         S.middleware $ reqSizeLimit config.limits.maxBodySize
-        timeoutMiddleware
         S.defaultHandler defHandler
         handlePaths config
         S.notFound $ raise ThingNotFound
@@ -574,10 +565,6 @@ runWeb config = do
           session
           config.tickerURL
           config.tickerRefresh
-    timeoutMiddleware =
-      when (config.limits.requestTimeout > 0) $
-        S.middleware $
-          reqTimeout config.limits.requestTimeout
     runHealthCheck = runReaderT (healthCheck config) config.store.db
     healthCheckLoop v = forever $ do
       threadDelay (config.healthCheckInterval * 1000 * 1000)
@@ -2864,22 +2851,22 @@ blockHealthCheck cfg = do
 lastBlockHealthCheck ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
   Chain ->
-  WebTimeouts ->
+  WebLimits ->
   m TimeHealth
-lastBlockHealthCheck ch tos = do
+lastBlockHealthCheck ch WebLimits {blockTimeout} = do
   n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
   t <- fromIntegral . (.header.timestamp) <$> chainGetBest ch
   return
     TimeHealth
       { age = n - t,
-        max = fromIntegral tos.block
+        max = fromIntegral blockTimeout
       }
 
 lastTxHealthCheck ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
   WebConfig ->
   m TimeHealth
-lastTxHealthCheck WebConfig {..} = do
+lastTxHealthCheck WebConfig {noMempool, store, limits} = do
   n <- fromIntegral . systemSeconds <$> liftIO getSystemTime
   b <- fromIntegral . (.header.timestamp) <$> chainGetBest ch
   t <-
@@ -2897,8 +2884,8 @@ lastTxHealthCheck WebConfig {..} = do
     ch = store.chain
     to =
       if noMempool
-        then timeouts.block
-        else timeouts.tx
+        then limits.blockTimeout
+        else limits.txTimeout
 
 pendingTxsHealthCheck ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) =>
@@ -2926,7 +2913,7 @@ healthCheck ::
   m HealthCheck
 healthCheck cfg = do
   blocks <- blockHealthCheck cfg
-  lastBlock <- lastBlockHealthCheck cfg.store.chain cfg.timeouts
+  lastBlock <- lastBlockHealthCheck cfg.store.chain cfg.limits
   lastTx <- lastTxHealthCheck cfg
   pendingTxs <- pendingTxsHealthCheck cfg
   peers <- peerHealthCheck cfg
@@ -3105,9 +3092,7 @@ logIt metrics = do
             Nothing -> return rq
             Just m -> do
               stat_var <- newTVarIO Nothing
-              let vt =
-                    V.insert m.key stat_var $
-                      vault rq
+              let vt = V.insert m.key stat_var $ vault rq
               return rq {vault = vt}
     bracket start (end var runner req') $ \_ ->
       app req' $ \res -> do
@@ -3127,25 +3112,22 @@ logIt metrics = do
     add_stat d s = do
       addStatQuery s
       addStatTime s d
-    end var runner req t1 = do
-      t2 <- systemToUTCTime <$> getSystemTime
+    end var runner req t1 = void $ runMaybeT $ do
+      t2 <- systemToUTCTime <$> liftIO getSystemTime
       let diff = round $ diffUTCTime t2 t1 * 1000
-      case metrics of
-        Nothing -> return ()
-        Just m -> do
-          let m_stat_var = V.lookup m.key (vault req)
-          add_stat diff m.all
-          case m_stat_var of
-            Nothing -> return ()
-            Just stat_var ->
-              readTVarIO stat_var >>= \case
-                Nothing -> return ()
-                Just f -> add_stat diff (f m)
-      when (diff > 10000) $ do
+      when (diff > 10000) $ lift $ do
         b <- readTVarIO var
         runner $
           $(logWarnS) "Web" $
-            "Slow [" <> cs (show diff) <> " ms]: " <> fmtReq b req
+            "Slow ["
+              <> cs (show diff)
+              <> " ms]: "
+              <> fmtReq b req
+      m <- MaybeT $ return metrics
+      add_stat diff m.all
+      stat_var <- MaybeT $ return $ V.lookup m.key $ vault req
+      f <- MaybeT $ readTVarIO stat_var
+      add_stat diff $ f m
 
 reqSizeLimit :: (Integral i) => i -> Middleware
 reqSizeLimit i = requestSizeLimitMiddleware lim
