@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - Do not impose time limits on REST API responses.
 
+### Fixed
+
+- Remove loop in Blockchain.info unspents function.
+
 ## [1.0.1] - 2023-08-03
 
 ### Changed

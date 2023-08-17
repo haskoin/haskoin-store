@@ -632,16 +632,16 @@ raise err =
         Just t -> readTVarIO t
       let status = errStatus err
       if
-          | statusIsClientError status ->
-              liftIO $ do
-                addClientError m.all
-                forM_ mM $ \f -> addClientError (f m)
-          | statusIsServerError status ->
-              liftIO $ do
-                addServerError m.all
-                forM_ mM $ \f -> addServerError (f m)
-          | otherwise ->
-              return ()
+        | statusIsClientError status ->
+            liftIO $ do
+              addClientError m.all
+              forM_ mM $ \f -> addClientError (f m)
+        | statusIsServerError status ->
+            liftIO $ do
+              addServerError m.all
+              forM_ mM $ \f -> addServerError (f m)
+        | otherwise ->
+            return ()
       S.raise err
 
 errStatus :: Except -> Status
@@ -1683,7 +1683,7 @@ getBinfoActive = do
               mapMaybe (xspec DeriveP2SH) (HashSet.toList p2sh),
               mapMaybe (xspec DeriveP2WPKH) (HashSet.toList bech32)
             ]
-      addrs = HashSet.fromList . mapMaybe addr $ HashSet.toList active
+      addrs = HashSet.fromList $ mapMaybe addr $ HashSet.toList active
   return (xspecs, addrs)
   where
     addr (BinfoAddr a) = Just a
@@ -1709,7 +1709,7 @@ scottyBinfoUnspent = do
   net <- lift $ asks (.config.store.net)
   ctx <- lift $ asks (.config.store.ctx)
   height <- getChainHeight
-  let mn BinfoUnspent {..} = min_conf > confirmations
+  let mn u = min_conf > u.confirmations
   xbals <- lift $ getXBals xspecs
   addItemCount . sum . map length $ HashMap.elems xbals
   counter <- getItemCounter
@@ -1736,22 +1736,17 @@ getBinfoUnspents counter numtxid height xbals xspecs addrs = do
   cs' <- conduits
   joinDescStreams cs' .| mapC (uncurry binfo)
   where
-    binfo Unspent {..} xp =
-      let conf = case block of
+    binfo u xp =
+      let conf = case u.block of
             MemRef _ -> 0
             BlockRef h _ -> height - h + 1
-          hash = outpoint.hash
-          idx = outpoint.index
-          val = value
-          script = script
-          txi = encodeBinfoTxId numtxid hash
        in BinfoUnspent
-            { txid = hash,
-              index = idx,
-              script,
-              value = val,
+            { txid = u.outpoint.hash,
+              index = u.outpoint.index,
+              script = u.script,
+              value = u.value,
               confirmations = fromIntegral conf,
-              txidx = txi,
+              txidx = encodeBinfoTxId numtxid u.outpoint.hash,
               xpub = xp
             }
     conduits = (<>) <$> xconduits <*> pure acounduits
@@ -1765,7 +1760,7 @@ getBinfoUnspents counter numtxid height xbals xspecs addrs = do
                   us <- xPubUnspents x (xBals x xbals) l
                   counter (length us)
                   return us
-                l = let Limits {..} = def in Limits {limit = 16, ..}
+                l = def {limit = 16} :: Limits
             return $ streamThings h Nothing l .| mapC (f x)
       mapM g (HashSet.toList xspecs)
     acounduits =
@@ -1774,7 +1769,7 @@ getBinfoUnspents counter numtxid height xbals xspecs addrs = do
             us <- getAddressUnspents a l
             counter (length us)
             return us
-          l = let Limits {..} = def in Limits {limit = 16, ..}
+          l = def {limit = 16} :: Limits
           g a = streamThings (h a) Nothing l .| mapC f
        in map g (HashSet.toList addrs)
 
@@ -1828,7 +1823,7 @@ getBinfoTxs
               ts <- xPubTxs x (xBals x xbals) l
               counter (length ts)
               return ts
-            l = let Limits {..} = def in Limits {limit = 16, ..}
+            l = def {limit = 16} :: Limits
         lift . return $
           streamThings f (Just (.txid)) l
       addr_c a = do
@@ -1836,12 +1831,12 @@ getBinfoTxs
               as <- getAddressTxs a l
               counter (length as)
               return as
-            l = let Limits {..} = def in Limits {limit = 16, ..}
+            l = def {limit = 16} :: Limits
         streamThings f (Just (.txid)) l
       binfo_tx = toBinfoTx numtxid abook prune
-      compute_bal_change BinfoTx {..} =
-        let ins = map (.output) inputs
-            out = outputs
+      compute_bal_change t =
+        let ins = map (.output) t.inputs
+            out = t.outputs
             f b BinfoTxOutput {..} =
               let val = fromIntegral value
                in case address of
@@ -1976,26 +1971,14 @@ scottyBinfoHistory = do
             ts <- getAddressTxs a l
             counter (length ts)
             return ts
-          l =
-            let Limits {..} = def
-             in Limits
-                  { limit = 16,
-                    start = AtBlock . (.height) <$> endM,
-                    ..
-                  }
+          l = def {limit = 16, start = AtBlock . (.height) <$> endM} :: Limits
       streamThings f (Just (.txid)) l
     xpub_c counter endM x bs = do
       let f l = do
             ts <- xPubTxs x bs l
             counter (length ts)
             return ts
-          l =
-            let Limits {..} = def
-             in Limits
-                  { limit = 16,
-                    start = AtBlock . (.height) <$> endM,
-                    ..
-                  }
+          l = def {limit = 16, start = AtBlock . (.height) <$> endM} :: Limits
       streamThings f (Just (.txid)) l
 
 getPrice :: (MonadIO m) => WebT m (Text, BinfoTicker)
@@ -2180,11 +2163,11 @@ scottyMultiAddr = do
       let f b = b.confirmed + b.unconfirmed
        in sum . map f . HashMap.elems
     compute_abook addrs xbals =
-      let f XPubSpec {..} XPubBal {..} =
-            let a = balance.address
+      let f xs xb =
+            let a = xb.balance.address
                 e = error "lions and tigers and bears"
-                s = toSoft (listToPath path)
-             in (a, Just (BinfoXPubPath key (fromMaybe e s)))
+                s = toSoft (listToPath xb.path)
+             in (a, Just (BinfoXPubPath xs.key (fromMaybe e s)))
           amap =
             HashMap.map (const Nothing) $
               HashSet.toMap addrs
@@ -2217,12 +2200,11 @@ getBinfoOffset = do
   return (fromIntegral o :: Int)
 
 scottyRawAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
-scottyRawAddr =
+scottyRawAddr = do
   setMetrics (.binfoAddressRaw)
-    >> getBinfoAddr "addr"
-    >>= \case
-      BinfoAddr addr -> do_addr addr
-      BinfoXpub xpub -> do_xpub xpub
+  getBinfoAddr "addr" >>= \case
+    BinfoAddr addr -> do_addr addr
+    BinfoXpub xpub -> do_xpub xpub
   where
     do_xpub xpub = do
       numtxid <- getNumTxId
@@ -2270,10 +2252,10 @@ scottyRawAddr =
       ctx <- asks (.config.store.ctx)
       streamEncoding $ marshalEncoding (net, ctx) ra
     compute_abook xpub xbals =
-      let f XPubBal {..} =
-            let a = balance.address
+      let f xb =
+            let a = xb.balance.address
                 e = error "black hole swallows all your code"
-                s = toSoft $ listToPath path
+                s = toSoft $ listToPath xb.path
                 m = fromMaybe e s
              in (a, Just (BinfoXPubPath xpub m))
        in HashMap.fromList $ map f xbals
@@ -2366,11 +2348,11 @@ scottyFirstSeen = do
       y <- hasone a mid
       z <- hasone a top
       if
-          | x -> getblocktime ch bb bot
-          | n -> getblocktime ch bb top
-          | y -> go ch bb a bot mid
-          | z -> go ch bb a mid top
-          | otherwise -> return 0
+        | x -> getblocktime ch bb bot
+        | n -> getblocktime ch bb top
+        | y -> go ch bb a bot mid
+        | z -> go ch bb a mid top
+        | otherwise -> return 0
     getblocktime ch bb h =
       (.header.timestamp) . fromJust <$> chainGetAncestor h bb ch
     hasone a h = do
@@ -2394,20 +2376,20 @@ scottyShortBal = do
   setHeaders
   streamEncoding $ toEncoding res
   where
-    to_short_bal Balance {..} =
+    to_short_bal bal =
       BinfoShortBal
-        { final = confirmed + unconfirmed,
-          ntx = txs,
-          received = received
+        { final = bal.confirmed + bal.unconfirmed,
+          ntx = bal.txs,
+          received = bal.received
         }
     get_addr_balance net cashaddr a =
       let net' =
             if
-                | cashaddr -> net
-                | net == bch -> btc
-                | net == bchTest -> btcTest
-                | net == bchTest4 -> btcTest
-                | otherwise -> net
+              | cashaddr -> net
+              | net == bch -> btc
+              | net == bchTest -> btcTest
+              | net == bchTest4 -> btcTest
+              | otherwise -> net
        in case addrToText net' a of
             Nothing -> return Nothing
             Just a' ->
@@ -2606,8 +2588,8 @@ scottyBinfoTxFees = do
     getBinfoTx txid >>= \case
       Right t -> return t
       Left e -> raise e
-  let i = sum $ map (.value) $ filter f $ tx.inputs
-      o = sum $ map (.value) $ tx.outputs
+  let i = sum $ map (.value) $ filter f tx.inputs
+      o = sum $ map (.value) tx.outputs
   addItemCount 1
   S.text . cs . show $ i - o
   where
@@ -2623,8 +2605,8 @@ scottyBinfoTxResult = do
     getBinfoTx txid >>= \case
       Right t -> return t
       Left e -> raise e
-  let i = toInteger $ sum $ map (.value) $ filter (f addr) $ tx.inputs
-      o = toInteger $ sum $ map (.value) $ filter (g addr) $ tx.outputs
+  let i = toInteger $ sum $ map (.value) $ filter (f addr) tx.inputs
+      o = toInteger $ sum $ map (.value) $ filter (g addr) tx.outputs
   addItemCount 1
   S.text $ cs $ show $ o - i
   where
@@ -2670,7 +2652,7 @@ scottyBinfoGetBlockCount = do
   bn <- chainGetBest ch
   setHeaders
   addItemCount 1
-  S.text $ cs $ show $ bn.height
+  S.text $ cs $ show bn.height
 
 scottyBinfoLatestHash :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoLatestHash = do
@@ -2679,7 +2661,7 @@ scottyBinfoLatestHash = do
   bn <- chainGetBest ch
   setHeaders
   addItemCount 1
-  S.text $ TL.fromStrict $ H.blockHashToHex $ H.headerHash $ bn.header
+  S.text $ TL.fromStrict $ H.blockHashToHex $ H.headerHash bn.header
 
 scottyBinfoSubsidy :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoSubsidy = do
@@ -2702,15 +2684,15 @@ scottyBinfoAddrToHash = do
   addr <- getAddress "addr"
   setHeaders
   addItemCount 1
-  S.text $ encodeHexLazy $ runPutL $ serialize $ addr.hash160
+  S.text $ encodeHexLazy $ runPutL $ serialize addr.hash160
 
 scottyBinfoHashToAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
 scottyBinfoHashToAddr = do
   setMetrics (.binfoQhashtoaddress)
   bs <- maybe S.next return . decodeHex =<< S.param "hash"
   net <- asks (.config.store.net)
-  hash <- either (const S.next) return (decode bs)
-  addr <- maybe S.next return (addrToText net (PubKeyAddress hash))
+  hash <- either (const S.next) return $ decode bs
+  addr <- maybe S.next return $ addrToText net $ PubKeyAddress hash
   setHeaders
   addItemCount 1
   S.text $ TL.fromStrict addr
@@ -2752,7 +2734,7 @@ scottyBinfoPubKeyAddr = do
               ts <- getAddressTxs addr l
               counter (length ts)
               return ts
-            l = let Limits {..} = def in Limits {limit = 8, ..}
+            l = def {limit = 8} :: Limits
         streamThings f (Just (.txid)) l
           .| concatMapMC (getTransaction . (.txid))
           .| iterMC (\_ -> counter 1)
@@ -2791,7 +2773,7 @@ scottyBinfoHashPubkey = do
     Just pk -> return $ pubKeyAddr ctx pk
   setHeaders
   addItemCount 1
-  S.text $ encodeHexLazy $ runPutL $ serialize $ addr.hash160
+  S.text $ encodeHexLazy $ runPutL $ serialize addr.hash160
 
 -- GET Network Information --
 
