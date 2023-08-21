@@ -17,9 +17,6 @@ maintainer:     jprupp@protonmail.ch
 license:        MIT
 license-file:   LICENSE
 build-type:     Simple
-extra-source-files:
-    README.md
-    CHANGELOG.md
 
 source-repository head
   type: git

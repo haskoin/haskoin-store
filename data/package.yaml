@@ -10,9 +10,6 @@ license-file: LICENSE
 github: haskoin/haskoin-store.git
 homepage: http://github.com/haskoin/haskoin-store#readme
 bug-reports: http://github.com/haskoin/haskoin-store/issues
-extra-source-files:
-  - README.md
-  - CHANGELOG.md
 dependencies:
   - aeson >= 1.4.7.1
   - base >=4.9 && <5

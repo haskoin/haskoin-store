@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 80b85357d83ca388b5a3f6db388b765cb40be5283d83350b8bd15aa4935b2b79
+-- hash: 07f397f4d35028ec91157d52fbbb99bff1985edfce6dc845c5a3134e2755d1c7
 
 name:           haskoin-store-data
 version:        1.0.1
@@ -18,9 +18,6 @@ maintainer:     jprupp@protonmail.ch
 license:        MIT
 license-file:   LICENSE
 build-type:     Simple
-extra-source-files:
-    README.md
-    CHANGELOG.md
 
 source-repository head
   type: git
