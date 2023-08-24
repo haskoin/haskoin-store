@@ -1931,8 +1931,10 @@ scottyBinfoHistory = do
   setHeaders
   streamEncoding $ toEncoding hs
   where
-    is_newer (Just b@BlockData {}) TxRef {block = t@BlockRef {}} =
-      b.height <= t.height
+    is_newer
+      (Just BlockData {height = bh})
+      TxRef {block = BlockRef {height = th}} = 
+        bh <= th
     is_newer Nothing TxRef {} = True
     get_addr = (.balance.address)
     get_transaction TxRef {txid = h} =

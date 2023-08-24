@@ -714,21 +714,21 @@ data StoreInput
   deriving (Show, Read, Eq, Ord, Generic, Hashable, NFData)
 
 instance Serial StoreInput where
-  serialize i@StoreCoinbase {} = do
+  serialize StoreCoinbase {..} = do
     putWord8 0x00
-    serialize i.outpoint
-    putWord32be i.sequence
-    putLengthBytes i.script
-    putList putLengthBytes i.witness
-  serialize i@StoreInput {} = do
+    serialize outpoint
+    putWord32be sequence
+    putLengthBytes script
+    putList putLengthBytes witness
+  serialize StoreInput {..} = do
     putWord8 0x01
-    serialize i.outpoint
-    putWord32be i.sequence
-    putLengthBytes i.script
-    putLengthBytes i.pkscript
-    putWord64be i.value
-    putList putLengthBytes i.witness
-    putMaybe serialize i.address
+    serialize outpoint
+    putWord32be sequence
+    putLengthBytes script
+    putLengthBytes pkscript
+    putWord64be value
+    putList putLengthBytes witness
+    putMaybe serialize address
 
   deserialize =
     getWord8 >>= \case
@@ -765,56 +765,56 @@ isCoinbase StoreCoinbase {} = True
 isCoinbase StoreInput {} = False
 
 instance MarshalJSON Network StoreInput where
-  marshalValue net i@StoreInput {} =
+  marshalValue net StoreInput {..} =
     A.object
       [ "coinbase" .= False,
-        "txid" .= i.outpoint.hash,
-        "output" .= i.outpoint.index,
-        "sigscript" .= String (encodeHex i.script),
-        "sequence" .= i.sequence,
-        "pkscript" .= String (encodeHex i.pkscript),
-        "value" .= i.value,
-        "address" .= (marshalValue net <$> i.address),
-        "witness" .= map encodeHex i.witness
+        "txid" .= outpoint.hash,
+        "output" .= outpoint.index,
+        "sigscript" .= String (encodeHex script),
+        "sequence" .= sequence,
+        "pkscript" .= String (encodeHex pkscript),
+        "value" .= value,
+        "address" .= (marshalValue net <$> address),
+        "witness" .= map encodeHex witness
       ]
-  marshalValue net i@StoreCoinbase {} =
+  marshalValue net StoreCoinbase {..} =
     A.object
       [ "coinbase" .= True,
-        "txid" .= i.outpoint.hash,
-        "output" .= i.outpoint.index,
-        "sigscript" .= String (encodeHex i.script),
-        "sequence" .= i.sequence,
+        "txid" .= outpoint.hash,
+        "output" .= outpoint.index,
+        "sigscript" .= String (encodeHex script),
+        "sequence" .= sequence,
         "pkscript" .= Null,
         "value" .= Null,
         "address" .= Null,
-        "witness" .= map encodeHex i.witness
+        "witness" .= map encodeHex witness
       ]
 
-  marshalEncoding net i@StoreInput {} =
+  marshalEncoding net StoreInput {..} =
     A.pairs $
       mconcat
         [ "coinbase" `A.pair` A.bool False,
-          "txid" `A.pair` toEncoding i.outpoint.hash,
-          "output" `A.pair` A.word32 i.outpoint.index,
-          "sigscript" `A.pair` hexEncoding (B.fromStrict i.script),
-          "sequence" `A.pair` A.word32 i.sequence,
-          "pkscript" `A.pair` hexEncoding (B.fromStrict i.pkscript),
-          "value" `A.pair` A.word64 i.value,
-          "address" `A.pair` maybe A.null_ (marshalEncoding net) i.address,
-          "witness" `A.pair` A.list (hexEncoding . B.fromStrict) i.witness
+          "txid" `A.pair` toEncoding outpoint.hash,
+          "output" `A.pair` A.word32 outpoint.index,
+          "sigscript" `A.pair` hexEncoding (B.fromStrict script),
+          "sequence" `A.pair` A.word32 sequence,
+          "pkscript" `A.pair` hexEncoding (B.fromStrict pkscript),
+          "value" `A.pair` A.word64 value,
+          "address" `A.pair` maybe A.null_ (marshalEncoding net) address,
+          "witness" `A.pair` A.list (hexEncoding . B.fromStrict) witness
         ]
-  marshalEncoding net i@StoreCoinbase {} =
+  marshalEncoding net StoreCoinbase {..} =
     A.pairs $
       mconcat
         [ "coinbase" .= True,
-          "txid" `A.pair` toEncoding i.outpoint.hash,
-          "output" `A.pair` A.word32 i.outpoint.index,
-          "sigscript" `A.pair` hexEncoding (B.fromStrict i.script),
-          "sequence" `A.pair` A.word32 i.sequence,
+          "txid" `A.pair` toEncoding outpoint.hash,
+          "output" `A.pair` A.word32 outpoint.index,
+          "sigscript" `A.pair` hexEncoding (B.fromStrict script),
+          "sequence" `A.pair` A.word32 sequence,
           "pkscript" `A.pair` A.null_,
           "value" `A.pair` A.null_,
           "address" `A.pair` A.null_,
-          "witness" `A.pair` A.list (hexEncoding . B.fromStrict) i.witness
+          "witness" `A.pair` A.list (hexEncoding . B.fromStrict) witness
         ]
 
   unmarshalValue net =
@@ -3175,7 +3175,7 @@ relevantTxs addrs prune t =
         && getTxResult addrs t > 0
         && not (HashSet.member a addrs)
     f o = do
-      Spender {..} <- o.spender
+      Spender {txid} <- o.spender
       a <- o.address
       guard $ p a
       return txid
@@ -3310,7 +3310,7 @@ getTxResult aset t =
   where
     inputSum = sum $ map inputValue t.inputs
     inputValue StoreCoinbase {} = 0
-    inputValue StoreInput {..} =
+    inputValue StoreInput {address, value} =
       case address of
         Nothing -> 0
         Just a ->
@@ -3319,7 +3319,7 @@ getTxResult aset t =
             else 0
     testAddr a = HashSet.member a aset
     outputSum = sum $ map outValue t.outputs
-    outValue StoreOutput {..} =
+    outValue StoreOutput {address, value} =
       case address of
         Nothing -> 0
         Just a ->
@@ -3391,7 +3391,10 @@ inputToBinfoTxOutput numtxid abook t n i =
             (encodeBinfoTxId numtxid (txHash (transactionData t)))
             n
         ],
-      xpub = i.address >>= join . flip HashMap.lookup abook
+      xpub =
+        case i of
+          StoreCoinbase {} -> Nothing
+          StoreInput {address} -> address >>= join . flip HashMap.lookup abook
     }
 
 data BinfoAddr
@@ -3403,8 +3406,7 @@ parseBinfoAddr :: Network -> Ctx -> Text -> Maybe [BinfoAddr]
 parseBinfoAddr net ctx "" = Just []
 parseBinfoAddr net ctx s =
   mapM f $
-    filter (not . T.null) $
-      concatMap (T.splitOn ",") (T.splitOn "|" s)
+    concatMap (filter (not . T.null) . T.splitOn ",") (T.splitOn "|" s)
   where
     f x =
       BinfoAddr <$> textToAddr net x

@@ -765,9 +765,9 @@ importMempoolTx block_read time tx =
     new_mempool_tx = do
       t <- newMempoolTx tx seconds
       $(logInfoS) "BlockStore" $
-        "Tx "
+        bool "Already have" "Imported" t
+          <> " tx "
           <> txHashToHex (txHash tx)
-          <> bool " was already imported" " imported" t
       when t $ fulfillOrphans block_read tx_hash
       return t
 

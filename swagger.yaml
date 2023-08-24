@@ -7,7 +7,7 @@ servers:
   - url: 'https://api.haskoin.com/btctest/'
 
 info:
-  version: &version 1.0.0
+  version: &version 1.0.2
   title: Haskoin Store
   contact:
     name: Haskoin
@@ -63,7 +63,7 @@ paths:
                   ok: true
                   max: 100
                   count: 0
-                version: 0.52.14
+                version: *version
                 last-tx:
                   ok: true
                   max: 300
@@ -2487,6 +2487,7 @@ paths:
         - $ref: '#/components/parameters/binfoLimit'
         - $ref: '#/components/parameters/binfoOffset'
         - $ref: '#/components/parameters/xpubDerive'
+        - $ref: '#/components/parameters/binfoTxIdIndex'
       responses:
         '200':
           description: Address balance & transactions.
@@ -2622,6 +2623,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/binfoLimit'
         - $ref: '#/components/parameters/binfoOffset'
+        - $ref: '#/components/parameters/binfoTxIdIndex'
       responses:
         '200':
           description: Mempool transactions array.
@@ -3040,6 +3042,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/binfoBlockId'
         - $ref: '#/components/parameters/binfoFormat'
+        - $ref: '#/components/parameters/binfoTxIdIndex'
       responses:
         '200':
           description: Raw block with transaction data.
@@ -4053,6 +4056,7 @@ paths:
           schema:
             type: integer
             example: 100
+        - $ref: '#/components/parameters/binfoTxIdIndex'
       responses:
         '200':
           description: List of blocks with transaction data.
@@ -4195,6 +4199,7 @@ paths:
         - $ref: '#/components/parameters/binfoActiveBech32'
         - $ref: '#/components/parameters/binfoLimit'
         - $ref: '#/components/parameters/binfoConfirmations'
+        - $ref: '#/components/parameters/binfoTxIdIndex'
       responses:
         '200':
           description: Unspent outputs.
@@ -5896,6 +5901,9 @@ components:
         confirmations:
           type: integer
           example: 6
+        txidindex:
+          type: boolean
+          example: true
 
   parameters:
 
