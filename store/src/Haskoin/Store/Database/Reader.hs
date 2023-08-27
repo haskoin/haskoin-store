@@ -133,14 +133,14 @@ withDatabaseReader net ctx igap gap dir stats f =
 
 columnFamilyConfig :: [(String, Config)]
 columnFamilyConfig =
-  [ ("addr-tx", def {prefixLength = Just 22, bloomFilter = True}),
-    ("addr-out", def {prefixLength = Just 22, bloomFilter = True}),
-    ("tx", def {prefixLength = Just 33, bloomFilter = True}),
-    ("spender", def {prefixLength = Just 33, bloomFilter = True}), -- unused
-    ("unspent", def {prefixLength = Just 37, bloomFilter = True}),
-    ("block", def {prefixLength = Just 33, bloomFilter = True}),
-    ("height", def {prefixLength = Nothing, bloomFilter = True}),
-    ("balance", def {prefixLength = Just 22, bloomFilter = True})
+  [ ("addr-tx", def {prefixLength = Just 22, bloomFilter = False}),
+    ("addr-out", def {prefixLength = Just 22, bloomFilter = False}),
+    ("tx", def {prefixLength = Just 33, bloomFilter = False}),
+    ("spender", def {prefixLength = Just 33, bloomFilter = False}), -- unused
+    ("unspent", def {prefixLength = Just 37, bloomFilter = False}),
+    ("block", def {prefixLength = Just 33, bloomFilter = False}),
+    ("height", def {prefixLength = Nothing, bloomFilter = False}),
+    ("balance", def {prefixLength = Just 22, bloomFilter = False})
   ]
 
 addrTxCF :: DB -> ColumnFamily
