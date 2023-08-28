@@ -26,6 +26,13 @@ packages:
   original:
     hackage: haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
 - completed:
+    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
+    pantry-tree:
+      sha256: 3a0f4b633d58e312d6e6fa556c7abbd0f483ebc35d767a77315f98e2d9840fd8
+      size: 1457
+  original:
+    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
+- completed:
     name: ekg-core
     pantry-tree:
       sha256: 726daf8d996dae7623fe2028ccf7c57e09a18bd7ae32cbf4df54481cedb505f4
@@ -49,7 +56,7 @@ packages:
     url: https://github.com/tibbe/ekg-statsd/archive/c6a9760266277cbd7641e9618f3b7cfbabc299d1.tar.gz
 snapshots:
 - completed:
-    sha256: d4a54df12888fc5d1ef2d4ff987225fa7bedb2cff74385b33fbec4a384ebd619
-    size: 644615
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2023/8/2.yaml
-  original: nightly-2023-08-02
+    sha256: 2fc12a405ab6f7eac73eb11a0ca5ccca0e956bd2848db780c140b7406ff9ebb5
+    size: 640035
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/21/9.yaml
+  original: lts-21.9

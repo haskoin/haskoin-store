@@ -1,4 +1,4 @@
-resolver: nightly-2023-08-02
+resolver: lts-21.9
 nix:
   packages:
   - perl
@@ -17,6 +17,7 @@ extra-deps:
   - haskoin-core-1.0.1@sha256:3b373c31079b1ebe7925c4e281f5c155279c36152f2af912159bfb8c80ed1904,5065
   - secp256k1-haskell-1.0.0@sha256:42e1dc0ddba74b752bddf7d55c19aa10b24ff6f51889a53bc07c2ff2107aca16,2082
   - haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
+  - base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
   - github: tibbe/ekg-core
     commit: ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671
   - github: tibbe/ekg-statsd
