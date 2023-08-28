@@ -200,7 +200,8 @@ data CacheMetrics = CacheMetrics
     xPubUnspents :: !Metrics.Counter,
     xPubTx :: !Metrics.Counter,
     xPubTxCount :: !Metrics.Counter,
-    indexTime :: !StatDist
+    indexTime :: !Metrics.Distribution,
+    cacheHeight :: !Metrics.Gauge
   }
 
 newCacheMetrics :: (MonadIO m) => Metrics.Store -> m CacheMetrics
@@ -210,19 +211,21 @@ newCacheMetrics s = liftIO $ do
   lockAcquired <- c "cache.lock_acquired"
   lockReleased <- c "cache.lock_released"
   lockFailed <- c "cache.lock_failed"
-  indexTime <- d "cache.index"
+  indexTime <- d "cache.index_ms"
   xPubBals <- c "cache.xpub_balances_cached"
   xPubUnspents <- c "cache.xpub_unspents_cached"
   xPubTx <- c "cache.xpub_txs_cached"
   xPubTxCount <- c "cache.xpub_tx_count_cached"
+  cacheHeight <- g "cache.height"
   return CacheMetrics {..}
   where
     c x = Metrics.createCounter x s
-    d x = createStatDist x s
+    d x = Metrics.createDistribution x s
+    g x = Metrics.createGauge x s
 
 withMetrics ::
   (MonadUnliftIO m) =>
-  (CacheMetrics -> StatDist) ->
+  (CacheMetrics -> Metrics.Distribution) ->
   CacheX m a ->
   CacheX m a
 withMetrics df go =
@@ -237,16 +240,27 @@ withMetrics df go =
     end metrics t1 = do
       t2 <- systemToUTCTime <$> liftIO getSystemTime
       let diff = realToFrac $ diffUTCTime t2 t1 * 1000
-      df metrics `addStatTime` diff
+      liftIO $ df metrics `Metrics.Distribution.add` diff
 
 incrementCounter ::
-  (MonadIO m) =>
+  (MonadIO m, Integral a) =>
   (CacheMetrics -> Metrics.Counter) ->
-  Int ->
+  a ->
   CacheX m ()
 incrementCounter f i =
   asks (.metrics) >>= \case
     Just s -> liftIO $ Metrics.Counter.add (f s) (fromIntegral i)
+    Nothing -> return ()
+
+
+setGauge ::
+  (MonadIO m, Integral a) =>
+  (CacheMetrics -> Metrics.Gauge) ->
+  a ->
+  CacheX m ()
+setGauge f i =
+  asks (.metrics) >>= \case
+    Just s -> liftIO $ Metrics.Gauge.set (f s) (fromIntegral i)
     Nothing -> return ()
 
 type CacheT = ReaderT (Maybe CacheConfig)
@@ -982,7 +996,7 @@ importBlockC bh =
           <> cs (show (length tds))
           <> " transactions from block "
           <> blockHashToHex bh
-      cacheSetHead bh
+      cacheSetHead bd
     Nothing -> do
       $(logErrorS) "Cache" $
         "Could not get block: "
@@ -1271,10 +1285,13 @@ cacheIsInMempool = runRedis . redisIsInMempool
 cacheGetHead :: (MonadLoggerIO m) => CacheX m (Maybe BlockHash)
 cacheGetHead = runRedis redisGetHead
 
-cacheSetHead :: (MonadLoggerIO m, StoreReadBase m) => BlockHash -> CacheX m ()
-cacheSetHead bh = do
+cacheSetHead :: (MonadLoggerIO m, StoreReadBase m) => BlockData -> CacheX m ()
+cacheSetHead bd = do
   $(logDebugS) "Cache" $ "Cache head set to: " <> blockHashToHex bh
   void $ runRedis (redisSetHead bh)
+  setGauge (.cacheHeight) bd.height
+ where
+  bh = headerHash bd.header
 
 cacheGetAddrsInfo ::
   (MonadLoggerIO m) => [Address] -> CacheX m [Maybe AddressXPub]
