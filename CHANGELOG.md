@@ -6,17 +6,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-### Fixed
-
-- Statsd gauge is 0 for average of no values.
-
 ### Changed
 
 - Disable Bloom filters on database to diagnose memory leak.
+- Use standard metrics from ekg-core.
 
 ### Removed
 
-- Remove unreliable p90 statsd reports.
+- No more unreliable p90 or item statistics.
 
 ## [1.0.2] - 2023-08-25
 

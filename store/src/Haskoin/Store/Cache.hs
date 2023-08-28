@@ -236,9 +236,8 @@ withMetrics df go =
   where
     end metrics t1 = do
       t2 <- systemToUTCTime <$> liftIO getSystemTime
-      let diff = round $ diffUTCTime t2 t1 * 1000
+      let diff = realToFrac $ diffUTCTime t2 t1 * 1000
       df metrics `addStatTime` diff
-      addStatQuery (df metrics)
 
 incrementCounter ::
   (MonadIO m) =>

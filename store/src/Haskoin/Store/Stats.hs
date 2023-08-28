@@ -1,10 +1,10 @@
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoFieldSelectors #-}
-{-# LANGUAGE ApplicativeDo #-}
 
 module Haskoin.Store.Stats
   ( StatDist,
@@ -13,8 +13,6 @@ module Haskoin.Store.Stats
     addStatTime,
     addClientError,
     addServerError,
-    addStatQuery,
-    addStatItems,
   )
 where
 
@@ -23,7 +21,6 @@ import Control.Concurrent.STM.TQueue
     flushTQueue,
     writeTQueue,
   )
-import Control.Foldl qualified as L
 import Control.Monad (forever)
 import Data.Function (on)
 import Data.HashMap.Strict (HashMap)
@@ -36,12 +33,15 @@ import Data.String.Conversions (cs)
 import Data.Text (Text)
 import System.Metrics
   ( Store,
-    Value (..),
+    createCounter,
+    createDistribution,
     newStore,
     registerGcMetrics,
-    registerGroup,
-    sampleAll,
   )
+import System.Metrics.Counter (Counter)
+import System.Metrics.Counter qualified as Counter
+import System.Metrics.Distribution (Distribution)
+import System.Metrics.Distribution qualified as Distribution
 import System.Remote.Monitoring.Statsd
   ( defaultStatsdOptions,
     flushInterval,
@@ -50,18 +50,7 @@ import System.Remote.Monitoring.Statsd
     port,
     prefix,
   )
-import UnliftIO
-  ( MonadIO,
-    TVar,
-    atomically,
-    liftIO,
-    modifyTVar,
-    newTQueueIO,
-    newTVarIO,
-    readTVar,
-    withAsync,
-  )
-import UnliftIO.Concurrent (threadDelay)
+import UnliftIO (MonadIO, liftIO)
 
 withStats :: (MonadIO m) => Text -> Int -> Text -> (Store -> m a) -> m a
 withStats h p pfx go = do
@@ -78,112 +67,24 @@ withStats h p pfx go = do
   liftIO $ registerGcMetrics store
   go store
 
-data StatData = StatData
-  { times :: ![Int64],
-    queries :: !Int64,
-    items :: !Int64,
-    clientErrors :: !Int64,
-    serverErrors :: !Int64
-  }
-
 data StatDist = StatDist
-  { queue :: !(TQueue Int64),
-    queries :: !(TVar Int64),
-    items :: !(TVar Int64),
-    clientErrors :: !(TVar Int64),
-    serverErrors :: !(TVar Int64)
+  { dist :: Distribution,
+    clientErrors :: !Counter,
+    serverErrors :: !Counter
   }
 
 createStatDist :: (MonadIO m) => Text -> Store -> m StatDist
 createStatDist t store = liftIO $ do
-  queue <- newTQueueIO
-  queries <- newTVarIO 0
-  items <- newTVarIO 0
-  clientErrors <- newTVarIO 0
-  serverErrors <- newTVarIO 0
-  let metrics =
-        HashMap.fromList
-          [ ( t <> ".request_count",
-              Counter . (.queries)
-            ),
-            ( t <> ".item_count",
-              Counter . (.items)
-            ),
-            ( t <> ".client_errors",
-              Counter . (.clientErrors)
-            ),
-            ( t <> ".server_errors",
-              Counter . (.serverErrors)
-            ),
-            ( t <> ".mean_ms",
-              Gauge . mean . (.times)
-            ),
-            ( t <> ".avg_ms",
-              Gauge . avg . (.times)
-            ),
-            ( t <> ".max_ms",
-              Gauge . maxi . (.times)
-            ),
-            ( t <> ".min_ms",
-              Gauge . mini . (.times)
-            ),
-            ( t <> ".var_ms",
-              Gauge . var . (.times)
-            )
-          ]
-  let sd = StatDist {..}
-  registerGroup metrics (flush sd) store
-  return sd
+  dist <- createDistribution (t <> "_ms") store
+  clientErrors <- createCounter (t <> "_client_errors") store
+  serverErrors <- createCounter (t <> "_server_errors") store
+  return StatDist {..}
 
-toDouble :: Int64 -> Double
-toDouble = fromIntegral
-
-addStatTime :: (MonadIO m) => StatDist -> Int64 -> m ()
-addStatTime q =
-  liftIO . atomically . writeTQueue q.queue
-
-addStatQuery :: (MonadIO m) => StatDist -> m ()
-addStatQuery q =
-  liftIO . atomically $ modifyTVar q.queries (+ 1)
-
-addStatItems :: (MonadIO m) => StatDist -> Int64 -> m ()
-addStatItems q =
-  liftIO . atomically . modifyTVar q.items . (+)
+addStatTime :: (MonadIO m) => StatDist -> Double -> m ()
+addStatTime d = liftIO . Distribution.add d.dist
 
 addClientError :: (MonadIO m) => StatDist -> m ()
-addClientError q =
-  liftIO . atomically $ modifyTVar q.clientErrors (+ 1)
+addClientError = liftIO . Counter.inc . (.clientErrors)
 
 addServerError :: (MonadIO m) => StatDist -> m ()
-addServerError q =
-  liftIO . atomically $ modifyTVar q.serverErrors (+ 1)
-
-flush :: (MonadIO m) => StatDist -> m StatData
-flush StatDist {..} = atomically $ do
-  times <- flushTQueue queue
-  queries <- readTVar queries
-  items <- readTVar items
-  clientErrors <- readTVar clientErrors
-  serverErrors <- readTVar serverErrors
-  return $ StatData {..}
-
-average :: (Fractional a) => L.Fold a a
-average = do
-  s <- L.sum
-  l <- L.genericLength
-  return $ if l > 0 then s / fromIntegral l else 0
-
-avg :: [Int64] -> Int64
-avg = round . L.fold average . map toDouble
-
-mean :: [Int64] -> Int64
-mean = round . L.fold L.mean . map toDouble
-
-maxi :: [Int64] -> Int64
-maxi = fromMaybe 0 . L.fold L.maximum
-
-mini :: [Int64] -> Int64
-mini = fromMaybe 0 . L.fold L.minimum
-
-var :: [Int64] -> Int64
-var = round . L.fold L.variance . map toDouble
+addServerError = liftIO . Counter.inc . (.serverErrors)

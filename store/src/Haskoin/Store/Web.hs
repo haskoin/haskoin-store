@@ -457,23 +457,6 @@ setMetrics df =
       atomically $ writeTVar t (Just df)
     e = error "The ways of the warrior are yet to be mastered."
 
-addItemCount :: (MonadUnliftIO m) => Int -> WebT m ()
-addItemCount i =
-  asks (.metrics) >>= mapM_ \m -> do
-    addStatItems m.all (fromIntegral i)
-    req <- S.request
-    forM_ (V.lookup m.key (vault req)) $
-      readTVarIO >=> mapM_ \s -> addStatItems (s m) (fromIntegral i)
-
-getItemCounter :: (MonadIO m, MonadIO n) => WebT m (Int -> n ())
-getItemCounter =
-  fromMaybe (\_ -> return ()) <$> runMaybeT do
-    q <- lift S.request
-    m <- MaybeT $ asks (.metrics)
-    t <- MaybeT . return $ V.lookup m.key (vault q)
-    s <- MaybeT $ readTVarIO t
-    return $ addStatItems (s m) . fromIntegral
-
 data SerialAs = SerialAsBinary | SerialAsJSON | SerialAsPrettyJSON
   deriving (Eq, Show)
 
@@ -986,7 +969,6 @@ scottyBlock (GetBlock h (NoTx noTx)) = do
     Nothing ->
       raise ThingNotFound
     Just b -> do
-      addItemCount 1
       return $ pruneTx noTx b
 
 getBlocks ::
@@ -1001,9 +983,7 @@ scottyBlocks ::
   (MonadUnliftIO m, MonadLoggerIO m) => GetBlocks -> WebT m [BlockData]
 scottyBlocks (GetBlocks hs (NoTx notx)) = do
   setMetrics (.block)
-  bs <- getBlocks hs notx
-  addItemCount (length bs)
-  return bs
+  getBlocks hs notx
 
 pruneTx :: Bool -> BlockData -> BlockData
 pruneTx False b = b
@@ -1018,7 +998,6 @@ scottyBlockRaw ::
 scottyBlockRaw (GetBlockRaw h) = do
   setMetrics (.blockRaw)
   b <- getRawBlock h
-  addItemCount (1 + length b.txs)
   return $ RawResult b
 
 getRawBlock ::
@@ -1053,7 +1032,6 @@ scottyBlockBest (GetBlockBest (NoTx notx)) = do
       getBlock bb >>= \case
         Nothing -> raise ThingNotFound
         Just b -> do
-          addItemCount 1
           return $ pruneTx notx b
 
 scottyBlockBestRaw ::
@@ -1066,7 +1044,6 @@ scottyBlockBestRaw _ = do
     Nothing -> raise ThingNotFound
     Just bb -> do
       b <- getRawBlock bb
-      addItemCount (1 + length b.txs)
       return $ RawResult b
 
 -- GET BlockLatest --
@@ -1082,7 +1059,6 @@ scottyBlockLatest (GetBlockLatest (NoTx noTx)) = do
       >>= maybe
         (raise ThingNotFound)
         (go [] <=< getBlock)
-  addItemCount (length blocks)
   return blocks
   where
     go acc Nothing = return $ reverse acc
@@ -1098,7 +1074,6 @@ scottyBlockHeight ::
 scottyBlockHeight (GetBlockHeight h (NoTx notx)) = do
   setMetrics (.block)
   blocks <- (`getBlocks` notx) =<< getBlocksAtHeight (fromIntegral h)
-  addItemCount (length blocks)
   return blocks
 
 scottyBlockHeights ::
@@ -1109,7 +1084,6 @@ scottyBlockHeights (GetBlockHeights (HeightsParam heights) (NoTx notx)) = do
   setMetrics (.block)
   bhs <- concat <$> mapM getBlocksAtHeight (fromIntegral <$> heights)
   blocks <- getBlocks bhs notx
-  addItemCount (length blocks)
   return blocks
 
 scottyBlockHeightRaw ::
@@ -1119,7 +1093,6 @@ scottyBlockHeightRaw ::
 scottyBlockHeightRaw (GetBlockHeightRaw h) = do
   setMetrics (.blockRaw)
   blocks <- mapM getRawBlock =<< getBlocksAtHeight (fromIntegral h)
-  addItemCount (length blocks + sum (map (length . (.txs)) blocks))
   return $ RawResultList blocks
 
 -- GET BlockTime / BlockTimeRaw --
@@ -1134,7 +1107,6 @@ scottyBlockTime (GetBlockTime (TimeParam t) (NoTx notx)) = do
   blockAtOrBefore ch t >>= \case
     Nothing -> raise ThingNotFound
     Just b -> do
-      addItemCount 1
       return $ pruneTx notx b
 
 scottyBlockMTP ::
@@ -1147,7 +1119,6 @@ scottyBlockMTP (GetBlockMTP (TimeParam t) (NoTx notx)) = do
   blockAtOrAfterMTP ch t >>= \case
     Nothing -> raise ThingNotFound
     Just b -> do
-      addItemCount 1
       return $ pruneTx notx b
 
 scottyBlockTimeRaw ::
@@ -1161,7 +1132,6 @@ scottyBlockTimeRaw (GetBlockTimeRaw (TimeParam t)) = do
     Nothing -> raise ThingNotFound
     Just b -> do
       raw <- lift $ toRawBlock b
-      addItemCount (1 + length raw.txs)
       return $ RawResult raw
 
 scottyBlockMTPRaw ::
@@ -1175,7 +1145,6 @@ scottyBlockMTPRaw (GetBlockMTPRaw (TimeParam t)) = do
     Nothing -> raise ThingNotFound
     Just b -> do
       raw <- lift $ toRawBlock b
-      addItemCount (1 + length raw.txs)
       return $ RawResult raw
 
 -- GET Transactions --
@@ -1186,7 +1155,6 @@ scottyTx (GetTx txid) = do
   getTransaction txid >>= \case
     Nothing -> raise ThingNotFound
     Just tx -> do
-      addItemCount 1
       return tx
 
 scottyTxs ::
@@ -1194,7 +1162,6 @@ scottyTxs ::
 scottyTxs (GetTxs txids) = do
   setMetrics (.tx)
   txs <- catMaybes <$> mapM f (nub txids)
-  addItemCount (length txs)
   return txs
   where
     f x = lift $
@@ -1209,7 +1176,6 @@ scottyTxRaw (GetTxRaw txid) = do
   getTransaction txid >>= \case
     Nothing -> raise ThingNotFound
     Just tx -> do
-      addItemCount 1
       return $ RawResult (transactionData tx)
 
 scottyTxsRaw ::
@@ -1219,7 +1185,6 @@ scottyTxsRaw ::
 scottyTxsRaw (GetTxsRaw txids) = do
   setMetrics (.txRaw)
   txs <- catMaybes <$> mapM f (nub txids)
-  addItemCount (length txs)
   return $ RawResultList $ transactionData <$> txs
   where
     f x = lift $
@@ -1236,7 +1201,6 @@ getTxsBlock h =
     Nothing -> raise ThingNotFound
     Just b -> do
       txs <- mapM f b.txs
-      addItemCount (length txs)
       return txs
   where
     f x = lift $
@@ -1253,7 +1217,6 @@ scottyTxsBlock ::
 scottyTxsBlock (GetTxsBlock h) = do
   setMetrics (.txBlock)
   txs <- getTxsBlock h
-  addItemCount (length txs)
   return txs
 
 scottyTxsBlockRaw ::
@@ -1263,7 +1226,6 @@ scottyTxsBlockRaw ::
 scottyTxsBlockRaw (GetTxsBlockRaw h) = do
   setMetrics (.txBlockRaw)
   txs <- fmap transactionData <$> getTxsBlock h
-  addItemCount (length txs)
   return $ RawResultList txs
 
 -- GET TransactionAfterHeight --
@@ -1275,7 +1237,6 @@ scottyTxAfter ::
 scottyTxAfter (GetTxAfter txid height) = do
   setMetrics (.txAfter)
   (result, count) <- cbAfterHeight (fromIntegral height) txid
-  addItemCount count
   return $ GenericResult result
 
 -- | Check if any of the ancestors of this transaction is a coinbase after the
@@ -1321,7 +1282,6 @@ cbAfterHeight height txid =
 scottyPostTx :: (MonadUnliftIO m, MonadLoggerIO m) => PostTx -> WebT m TxId
 scottyPostTx (PostTx tx) = do
   setMetrics (.txPost)
-  addItemCount 1
   lift (asks (.config)) >>= \cfg ->
     lift (publishTx cfg tx) >>= \case
       Right () -> return (TxId (txHash tx))
@@ -1384,7 +1344,6 @@ scottyMempool (GetMempool limitM (OffsetParam o)) = do
   let wl' = WebLimits {maxItemCount = 0, ..}
       l = Limits (validateLimit wl' False limitM) (fromIntegral o) Nothing
   ths <- map snd . applyLimits l <$> getMempool
-  addItemCount 1
   return ths
 
 webSocketEvents :: WebState -> Middleware
@@ -1454,7 +1413,6 @@ scottyAddrTxs ::
 scottyAddrTxs (GetAddrTxs addr pLimits) = do
   setMetrics (.addressTx)
   txs <- getAddressTxs addr =<< paramToLimits False pLimits
-  addItemCount (length txs)
   return txs
 
 scottyAddrsTxs ::
@@ -1462,7 +1420,6 @@ scottyAddrsTxs ::
 scottyAddrsTxs (GetAddrsTxs addrs pLimits) = do
   setMetrics (.addressTx)
   txs <- getAddressesTxs addrs =<< paramToLimits False pLimits
-  addItemCount (length txs)
   return txs
 
 scottyAddrTxsFull ::
@@ -1473,7 +1430,6 @@ scottyAddrTxsFull (GetAddrTxsFull addr pLimits) = do
   setMetrics (.addressTxFull)
   txs <- getAddressTxs addr =<< paramToLimits True pLimits
   ts <- catMaybes <$> mapM (getTransaction . (.txid)) txs
-  addItemCount (length ts)
   return ts
 
 scottyAddrsTxsFull ::
@@ -1484,7 +1440,6 @@ scottyAddrsTxsFull (GetAddrsTxsFull addrs pLimits) = do
   setMetrics (.addressTxFull)
   txs <- getAddressesTxs addrs =<< paramToLimits True pLimits
   ts <- catMaybes <$> mapM (getTransaction . (.txid)) txs
-  addItemCount (length ts)
   return ts
 
 scottyAddrBalance ::
@@ -1493,7 +1448,6 @@ scottyAddrBalance ::
   WebT m Balance
 scottyAddrBalance (GetAddrBalance addr) = do
   setMetrics (.addressBalance)
-  addItemCount 1
   getDefaultBalance addr
 
 scottyAddrsBalance ::
@@ -1501,7 +1455,6 @@ scottyAddrsBalance ::
 scottyAddrsBalance (GetAddrsBalance addrs) = do
   setMetrics (.addressBalance)
   balances <- getBalances addrs
-  addItemCount (length balances)
   return balances
 
 scottyAddrUnspent ::
@@ -1509,7 +1462,6 @@ scottyAddrUnspent ::
 scottyAddrUnspent (GetAddrUnspent addr pLimits) = do
   setMetrics (.addressUnspent)
   unspents <- getAddressUnspents addr =<< paramToLimits False pLimits
-  addItemCount (length unspents)
   return unspents
 
 scottyAddrsUnspent ::
@@ -1517,7 +1469,6 @@ scottyAddrsUnspent ::
 scottyAddrsUnspent (GetAddrsUnspent addrs pLimits) = do
   setMetrics (.addressUnspent)
   unspents <- getAddressesUnspents addrs =<< paramToLimits False pLimits
-  addItemCount (length unspents)
   return unspents
 
 -- GET XPubs --
@@ -1528,7 +1479,6 @@ scottyXPub (GetXPub xpub deriv (NoCache noCache)) = do
   setMetrics (.xpub)
   let xspec = XPubSpec xpub deriv
   xbals <- lift . runNoCache noCache $ xPubBals xspec
-  addItemCount (length xbals)
   return $ xPubSummary xspec xbals
 
 scottyDelXPub ::
@@ -1540,7 +1490,6 @@ scottyDelXPub (DelCachedXPub xpub deriv) = do
   let xspec = XPubSpec xpub deriv
   cacheM <- lift $ asks (.config.store.cache)
   n <- lift $ withCache cacheM (cacheDelXPubs [xspec])
-  addItemCount (fromIntegral n)
   return (GenericResult (n > 0))
 
 getXPubTxs ::
@@ -1554,7 +1503,6 @@ getXPubTxs xpub deriv plimits nocache = do
   limits <- paramToLimits False plimits
   let xspec = XPubSpec xpub deriv
   xbals <- xPubBals xspec
-  addItemCount (length xbals)
   lift . runNoCache nocache $ xPubTxs xspec xbals limits
 
 scottyXPubTxs ::
@@ -1562,7 +1510,6 @@ scottyXPubTxs ::
 scottyXPubTxs (GetXPubTxs xpub deriv plimits (NoCache nocache)) = do
   setMetrics (.xpubTx)
   txs <- getXPubTxs xpub deriv plimits nocache
-  addItemCount (length txs)
   return txs
 
 scottyXPubTxsFull ::
@@ -1576,7 +1523,6 @@ scottyXPubTxsFull (GetXPubTxsFull xpub deriv plimits (NoCache nocache)) = do
     fmap catMaybes $
       lift . runNoCache nocache $
         mapM (getTransaction . (.txid)) refs
-  addItemCount (length txs)
   return txs
 
 scottyXPubBalances ::
@@ -1584,7 +1530,6 @@ scottyXPubBalances ::
 scottyXPubBalances (GetXPubBalances xpub deriv (NoCache noCache)) = do
   setMetrics (.xpubBalance)
   balances <- lift (runNoCache noCache (xPubBals spec))
-  addItemCount (length balances)
   return balances
   where
     spec = XPubSpec xpub deriv
@@ -1598,9 +1543,7 @@ scottyXPubUnspent (GetXPubUnspent xpub deriv pLimits (NoCache noCache)) = do
   limits <- paramToLimits False pLimits
   let xspec = XPubSpec xpub deriv
   xbals <- xPubBals xspec
-  addItemCount (length xbals)
   unspents <- lift . runNoCache noCache $ xPubUnspents xspec xbals limits
-  addItemCount (length unspents)
   return unspents
 
 ---------------------------------------
@@ -1711,11 +1654,9 @@ scottyBinfoUnspent = do
   height <- getChainHeight
   let mn u = min_conf > u.confirmations
   xbals <- lift $ getXBals xspecs
-  addItemCount . sum . map length $ HashMap.elems xbals
-  counter <- getItemCounter
   bus <-
     lift . runConduit $
-      getBinfoUnspents counter numtxid height xbals xspecs addrs
+      getBinfoUnspents numtxid height xbals xspecs addrs
         .| (dropWhileC mn >> takeC limit .| sinkList)
   setHeaders
   streamEncoding (marshalEncoding (net, ctx) (BinfoUnspents bus))
@@ -1725,14 +1666,13 @@ scottyBinfoUnspent = do
 
 getBinfoUnspents ::
   (StoreReadExtra m, MonadIO m) =>
-  (Int -> m ()) ->
   Bool ->
   H.BlockHeight ->
   HashMap XPubSpec [XPubBal] ->
   HashSet XPubSpec ->
   HashSet Address ->
   ConduitT () BinfoUnspent m ()
-getBinfoUnspents counter numtxid height xbals xspecs addrs = do
+getBinfoUnspents numtxid height xbals xspecs addrs = do
   cs' <- conduits
   joinDescStreams cs' .| mapC (uncurry binfo)
   where
@@ -1756,19 +1696,13 @@ getBinfoUnspents counter numtxid height xbals xspecs addrs = do
                 xp = BinfoXPubPath x.key <$> path
              in (u, xp)
           g x = do
-            let h l = do
-                  us <- xPubUnspents x (xBals x xbals) l
-                  counter (length us)
-                  return us
+            let h l = xPubUnspents x (xBals x xbals) l
                 l = def {limit = 16} :: Limits
             return $ streamThings h Nothing l .| mapC (f x)
       mapM g (HashSet.toList xspecs)
     acounduits =
       let f u = (u, Nothing)
-          h a l = do
-            us <- getAddressUnspents a l
-            counter (length us)
-            return us
+          h a l = getAddressUnspents a l
           l = def {limit = 16} :: Limits
           g a = streamThings (h a) Nothing l .| mapC f
        in map g (HashSet.toList addrs)
@@ -1787,7 +1721,6 @@ xBals = HashMap.findWithDefault []
 
 getBinfoTxs ::
   (StoreReadExtra m, MonadIO m) =>
-  (Int -> m ()) -> -- counter
   HashMap XPubSpec [XPubBal] -> -- xpub balances
   HashMap Address (Maybe BinfoXPubPath) -> -- address book
   HashSet XPubSpec -> -- show xpubs
@@ -1799,7 +1732,6 @@ getBinfoTxs ::
   Int64 -> -- starting balance
   ConduitT () BinfoTx m ()
 getBinfoTxs
-  counter
   xbals
   abook
   sxspecs
@@ -1819,18 +1751,12 @@ getBinfoTxs
           <$> mapM xpub_c sxspecs_ls
           <*> pure (map addr_c saddrs_ls)
       xpub_c x = do
-        let f l = do
-              ts <- xPubTxs x (xBals x xbals) l
-              counter (length ts)
-              return ts
+        let f l = xPubTxs x (xBals x xbals) l
             l = def {limit = 16} :: Limits
         lift . return $
           streamThings f (Just (.txid)) l
       addr_c a = do
-        let f l = do
-              as <- getAddressTxs a l
-              counter (length as)
-              return as
+        let f l = getAddressTxs a l
             l = def {limit = 16} :: Limits
         streamThings f (Just (.txid)) l
       binfo_tx = toBinfoTx numtxid abook prune
@@ -1853,7 +1779,6 @@ getBinfoTxs
             lift (getTransaction t) >>= \case
               Nothing -> go b
               Just x -> do
-                lift $ counter 1
                 let a = binfo_tx b x
                     b' = b - compute_bal_change a
                     c = isJust a.blockHeight
@@ -1907,12 +1832,10 @@ scottyBinfoHistory = do
   (startM, endM) <- get_dates
   (code, price') <- getPrice
   xbals <- getXBals xspecs
-  addItemCount . sum . map length $ HashMap.elems xbals
-  counter <- getItemCounter
   let xaddrs = HashSet.fromList $ concatMap (map get_addr) (HashMap.elems xbals)
       aaddrs = xaddrs <> addrs
       cur = price'.fifteen
-      cs' = conduits counter (HashMap.toList xbals) addrs endM
+      cs' = conduits (HashMap.toList xbals) addrs endM
   txs <-
     lift $
       runConduit $
@@ -1920,20 +1843,18 @@ scottyBinfoHistory = do
           .| takeWhileC (is_newer startM)
           .| concatMapMC get_transaction
           .| sinkList
-  addItemCount (length txs)
   let times = map (\Transaction {..} -> timestamp) txs
   net <- lift $ asks (.config.store.net)
   url <- lift $ asks (.config.priceHistoryURL)
   session <- lift $ asks (.session)
   rates <- map (.price) <$> lift (getRates net session url code times)
-  addItemCount (length rates)
   let hs = zipWith (convert cur aaddrs) txs (rates <> repeat 0.0)
   setHeaders
   streamEncoding $ toEncoding hs
   where
     is_newer
       (Just BlockData {height = bh})
-      TxRef {block = BlockRef {height = th}} = 
+      TxRef {block = BlockRef {height = th}} =
         bh <= th
     is_newer Nothing TxRef {} = True
     get_addr = (.balance.address)
@@ -1965,21 +1886,15 @@ scottyBinfoHistory = do
       startM <- blockAtOrAfter ch start
       endM <- blockAtOrBefore ch end
       return (startM, endM)
-    conduits counter xpubs addrs endM =
-      map (uncurry (xpub_c counter endM)) xpubs
-        <> map (addr_c counter endM) (HashSet.toList addrs)
-    addr_c counter endM a = do
-      let f l = do
-            ts <- getAddressTxs a l
-            counter (length ts)
-            return ts
+    conduits xpubs addrs endM =
+      map (uncurry (xpub_c endM)) xpubs
+        <> map (addr_c endM) (HashSet.toList addrs)
+    addr_c endM a = do
+      let f l = getAddressTxs a l
           l = def {limit = 16, start = AtBlock . (.height) <$> endM} :: Limits
       streamThings f (Just (.txid)) l
-    xpub_c counter endM x bs = do
-      let f l = do
-            ts <- xPubTxs x bs l
-            counter (length ts)
-            return ts
+    xpub_c endM x bs = do
+      let f l = xPubTxs x bs l
           l = def {limit = 16, start = AtBlock . (.height) <$> endM} :: Limits
       streamThings f (Just (.txid)) l
 
@@ -2002,7 +1917,6 @@ scottyBinfoBlocksDay = do
   ch <- lift $ asks (.config.store.chain)
   m <- blockAtOrBefore ch t
   bs <- go (d t) m
-  addItemCount (length bs)
   streamEncoding $ toEncoding $ map toBinfoBlockInfo bs
   where
     h = fromIntegral (maxBound :: H.Timestamp)
@@ -2027,14 +1941,11 @@ scottyMultiAddr = do
   prune <- get_prune
   fltr <- get_filter
   xbals <- getXBals xspecs
-  addItemCount . sum . map length $ HashMap.elems xbals
   xtxns <- get_xpub_tx_count xbals xspecs
-  addItemCount (length xtxns)
   let sxbals = only_show_xbals sxpubs xbals
       xabals = compute_xabals xbals
       addrs = addrs' `HashSet.difference` HashMap.keysSet xabals
   abals <- get_abals addrs
-  addItemCount (length abals)
   let sxspecs = only_show_xspecs sxpubs xspecs
       sxabals = compute_xabals sxbals
       sabals = only_show_abals saddrs abals
@@ -2046,11 +1957,9 @@ scottyMultiAddr = do
       salladdrs = saddrs <> sxaddrs
       bal = compute_bal allbals
       ibal = fromIntegral sbal
-  counter <- getItemCounter
   ftxs <-
     lift . runConduit $
       getBinfoTxs
-        counter
         xbals
         abook
         sxspecs
@@ -2064,9 +1973,7 @@ scottyMultiAddr = do
   net <- lift $ asks (.config.store.net)
   ctx <- lift $ asks (.config.store.ctx)
   best <- get_best_block
-  addItemCount 1
   peers <- get_peers
-  addItemCount (fromIntegral peers)
   let baddrs = toBinfoAddrs sabals sxbals xtxns
       abaddrs = toBinfoAddrs abals xbals xtxns
       recv = sum $ map (.received) abaddrs
@@ -2215,7 +2122,6 @@ scottyRawAddr = do
       n <- getBinfoCount "limit"
       off <- getBinfoOffset
       xbals <- getXBals $ HashSet.singleton xspec
-      addItemCount . sum . map length $ HashMap.elems xbals
       net <- lift $ asks (.config.store.net)
       let summary = xPubSummary xspec (xBals xspec xbals)
           abook = compute_abook xpub (xBals xspec xbals)
@@ -2224,12 +2130,10 @@ scottyRawAddr = do
           baddrs = HashMap.keysSet abook
           bfilter = BinfoFilterAll
           amnt = summary.confirmed + summary.unconfirmed
-      counter <- getItemCounter
       txs <-
         lift $
           runConduit $
             getBinfoTxs
-              counter
               xbals
               abook
               xspecs
@@ -2266,19 +2170,16 @@ scottyRawAddr = do
       n <- getBinfoCount "limit"
       off <- getBinfoOffset
       bal <- fromMaybe (zeroBalance addr) <$> getBalance addr
-      addItemCount 1
       net <- lift $ asks (.config.store.net)
       let abook = HashMap.singleton addr Nothing
           xspecs = HashSet.empty
           saddrs = HashSet.singleton addr
           bfilter = BinfoFilterAll
           amnt = bal.confirmed + bal.unconfirmed
-      counter <- getItemCounter
       txs <-
         lift $
           runConduit $
             getBinfoTxs
-              counter
               HashMap.empty
               abook
               xspecs
@@ -2309,7 +2210,6 @@ scottyBinfoReceived = do
   a <- getAddress "addr"
   b <- fromMaybe (zeroBalance a) <$> getBalance a
   setHeaders
-  addItemCount 1
   S.text $ cs $ show b.received
 
 scottyBinfoSent :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2318,7 +2218,6 @@ scottyBinfoSent = do
   a <- getAddress "addr"
   b <- fromMaybe (zeroBalance a) <$> getBalance a
   setHeaders
-  addItemCount 1
   S.text $ cs $ show $ b.received - b.confirmed - b.unconfirmed
 
 scottyBinfoAddrBalance :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2327,7 +2226,6 @@ scottyBinfoAddrBalance = do
   a <- getAddress "addr"
   b <- fromMaybe (zeroBalance a) <$> getBalance a
   setHeaders
-  addItemCount 1
   S.text $ cs $ show $ b.confirmed + b.unconfirmed
 
 scottyFirstSeen :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2340,7 +2238,6 @@ scottyFirstSeen = do
       bot = 0
   i <- go ch bb a bot top
   setHeaders
-  addItemCount 1
   S.text $ cs $ show i
   where
     go ch bb a bot top = do
@@ -2372,7 +2269,6 @@ scottyShortBal = do
       <$> mapM
         (get_addr_balance net cashaddr)
         (HashSet.toList addrs)
-  addItemCount (length abals)
   xbals <- mapM (get_xspec_balance net) (HashSet.toList xspecs)
   let res = HashMap.fromList (abals <> xbals)
   setHeaders
@@ -2403,7 +2299,6 @@ scottyShortBal = do
     get_xspec_balance net xpub = do
       xbals <- xPubBals xpub
       xts <- xPubTxCount xpub xbals
-      addItemCount (length xbals + 1)
       let val = sum $ map (.balance.confirmed) xbals
           zro = sum $ map (.balance.unconfirmed) xbals
           exs = filter is_ext xbals
@@ -2429,10 +2324,8 @@ scottyBinfoBlockHeight = do
   setMetrics (.binfoBlockHeight)
   block_hashes <- getBlocksAtHeight height
   block_headers <- catMaybes <$> mapM getBlock block_hashes
-  addItemCount (length block_headers)
   next_block_hashes <- getBlocksAtHeight (height + 1)
   next_block_headers <- catMaybes <$> mapM getBlock next_block_hashes
-  addItemCount (length next_block_headers)
   binfo_blocks <-
     mapM (get_binfo_blocks numtxid next_block_headers) block_headers
   setHeaders
@@ -2450,7 +2343,6 @@ scottyBinfoBlockHeight = do
           get_prev = (.header.prev)
           get_hash = H.headerHash . (.header)
       txs <- lift $ mapM get_tx block_header.txs
-      addItemCount (length txs)
       let next_blocks =
             map get_hash $
               filter
@@ -2465,7 +2357,6 @@ scottyBinfoLatest = do
   numtxid <- getNumTxId
   setMetrics (.binfoBlockLatest)
   best <- get_best_block
-  addItemCount 1
   streamEncoding $
     toEncoding
       BinfoHeader
@@ -2505,9 +2396,7 @@ scottyBinfoBlock = do
       getBlock bh >>= \case
         Nothing -> raise ThingNotFound
         Just b -> do
-          addItemCount 1
           txs <- lift $ mapM get_tx b.txs
-          addItemCount (length txs)
           let my_hash = H.headerHash b.header
               get_prev = (.header.prev)
               get_hash = H.headerHash . (.header)
@@ -2515,7 +2404,6 @@ scottyBinfoBlock = do
             fmap catMaybes $
               mapM getBlock
                 =<< getBlocksAtHeight (b.height + 1)
-          addItemCount (length nxt_headers)
           let nxt =
                 map get_hash $
                   filter
@@ -2559,7 +2447,6 @@ scottyBinfoTx = do
     getBinfoTx txid >>= \case
       Right t -> return t
       Left e -> raise e
-  addItemCount 1
   if hex then hx tx else js numtxid tx
   where
     js numtxid t = do
@@ -2579,7 +2466,6 @@ scottyBinfoTotalOut = do
     getBinfoTx txid >>= \case
       Right t -> return t
       Left e -> raise e
-  addItemCount 1
   S.text $ cs $ show $ sum $ map (.value) tx.outputs
 
 scottyBinfoTxFees :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2592,7 +2478,6 @@ scottyBinfoTxFees = do
       Left e -> raise e
   let i = sum $ map (.value) $ filter f tx.inputs
       o = sum $ map (.value) tx.outputs
-  addItemCount 1
   S.text . cs . show $ i - o
   where
     f StoreInput {} = True
@@ -2609,7 +2494,6 @@ scottyBinfoTxResult = do
       Left e -> raise e
   let i = toInteger $ sum $ map (.value) $ filter (f addr) tx.inputs
       o = toInteger $ sum $ map (.value) $ filter (g addr) tx.outputs
-  addItemCount 1
   S.text $ cs $ show $ o - i
   where
     f addr StoreInput {address = Just a} = a == addr
@@ -2625,7 +2509,6 @@ scottyBinfoTotalInput = do
     getBinfoTx txid >>= \case
       Right t -> return t
       Left e -> raise e
-  addItemCount 1
   S.text $ cs $ show $ sum $ map (.value) $ filter f $ tx.inputs
   where
     f StoreInput {} = True
@@ -2643,7 +2526,6 @@ scottyBinfoMempool = do
   net <- lift $ asks (.config.store.net)
   setHeaders
   let mem = BinfoMempool $ map (toBinfoTxSimple numtxid) txs
-  addItemCount (length txs)
   ctx <- lift $ asks (.config.store.ctx)
   streamEncoding $ marshalEncoding (net, ctx) mem
 
@@ -2653,7 +2535,6 @@ scottyBinfoGetBlockCount = do
   ch <- asks (.config.store.chain)
   bn <- chainGetBest ch
   setHeaders
-  addItemCount 1
   S.text $ cs $ show bn.height
 
 scottyBinfoLatestHash :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2662,7 +2543,6 @@ scottyBinfoLatestHash = do
   ch <- asks (.config.store.chain)
   bn <- chainGetBest ch
   setHeaders
-  addItemCount 1
   S.text $ TL.fromStrict $ H.blockHashToHex $ H.headerHash bn.header
 
 scottyBinfoSubsidy :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2672,7 +2552,6 @@ scottyBinfoSubsidy = do
   net <- asks (.config.store.net)
   bn <- chainGetBest ch
   setHeaders
-  addItemCount 1
   S.text $
     cs $
       show $
@@ -2685,7 +2564,6 @@ scottyBinfoAddrToHash = do
   setMetrics (.binfoQaddresstohash)
   addr <- getAddress "addr"
   setHeaders
-  addItemCount 1
   S.text $ encodeHexLazy $ runPutL $ serialize addr.hash160
 
 scottyBinfoHashToAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2696,7 +2574,6 @@ scottyBinfoHashToAddr = do
   hash <- either (const S.next) return $ decode bs
   addr <- maybe S.next return $ addrToText net $ PubKeyAddress hash
   setHeaders
-  addItemCount 1
   S.text $ TL.fromStrict addr
 
 scottyBinfoAddrPubkey :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2712,7 +2589,6 @@ scottyBinfoAddrPubkey = do
   case addrToText net pubkey of
     Nothing -> raise ThingNotFound
     Just a -> do
-      addItemCount 1
       S.text $ TL.fromStrict a
 
 scottyBinfoPubKeyAddr :: (MonadUnliftIO m, MonadLoggerIO m) => WebT m ()
@@ -2730,16 +2606,11 @@ scottyBinfoPubKeyAddr = do
   S.text $ encodeHexLazy $ L.fromStrict pk
   where
     strm addr = do
-      counter <- getItemCounter
       runConduit $ do
-        let f l = do
-              ts <- getAddressTxs addr l
-              counter (length ts)
-              return ts
+        let f l = getAddressTxs addr l
             l = def {limit = 8} :: Limits
         streamThings f (Just (.txid)) l
           .| concatMapMC (getTransaction . (.txid))
-          .| iterMC (\_ -> counter 1)
           .| concatMapC (filter (inp addr) . (.inputs))
           .| headC
     inp addr StoreInput {address = Just a} = a == addr
@@ -2774,7 +2645,6 @@ scottyBinfoHashPubkey = do
     Nothing -> raise $ UserError "Could not decode public key"
     Just pk -> return $ pubKeyAddr ctx pk
   setHeaders
-  addItemCount 1
   S.text $ encodeHexLazy $ runPutL $ serialize addr.hash160
 
 -- GET Network Information --
@@ -2786,7 +2656,6 @@ scottyPeers ::
 scottyPeers _ = do
   setMetrics (.peers)
   ps <- lift $ getPeersInformation =<< asks (.config.store.peerMgr)
-  addItemCount (length ps)
   return ps
 
 -- | Obtain information about connected peers from peer manager process.
@@ -2812,7 +2681,6 @@ scottyHealth _ = do
   setMetrics (.health)
   h <- asks (.health) >>= readTVarIO
   unless (isOK h) $ S.status status503
-  addItemCount 1
   return h
 
 blockHealthCheck ::
@@ -2919,7 +2787,6 @@ scottyDbStats = do
   setHeaders
   db <- lift $ asks (.config.store.db.db)
   statsM <- lift (getProperty db Stats)
-  addItemCount 1
   S.text $ maybe "Could not get stats" cs statsM
 
 -----------------------
@@ -3067,51 +2934,34 @@ logIt ::
   m Middleware
 logIt metrics = do
   runner <- askRunInIO
-  return $ \app req respond -> do
-    var <- newTVarIO B.empty
-    req' <-
-      let rb = req_body var (getRequestBodyChunk req)
-          rq = req {requestBody = rb}
-       in case metrics of
-            Nothing -> return rq
-            Just m -> do
-              stat_var <- newTVarIO Nothing
-              let vt = V.insert m.key stat_var $ vault rq
-              return rq {vault = vt}
-    bracket start (end var runner req') $ \_ ->
-      app req' $ \res -> do
-        b <- readTVarIO var
+  return $ \app request respond -> do
+    req <-
+      case metrics of
+        Nothing -> return request
+        Just m -> do
+          stat_var <- newTVarIO Nothing
+          return request {vault = V.insert m.key stat_var request.vault}
+    bracket start (end req) $ \_ ->
+      app req $ \res -> do
         let s = responseStatus res
-            msg = fmtReq b req' <> ": " <> fmtStatus s
+            msg = fmtReq req <> ": " <> fmtStatus s
         if statusIsSuccessful s
           then runner $ $(logDebugS) "Web" msg
           else runner $ $(logErrorS) "Web" msg
         respond res
   where
-    start = systemToUTCTime <$> getSystemTime
-    req_body var old_body = do
-      b <- old_body
-      unless (B.null b) . atomically $ modifyTVar var (<> b)
-      return b
-    add_stat d s = do
-      addStatQuery s
-      addStatTime s d
-    end var runner req t1 = void $ runMaybeT $ do
-      t2 <- systemToUTCTime <$> liftIO getSystemTime
-      let diff = round $ diffUTCTime t2 t1 * 1000
-      when (diff > 10000) $ lift $ do
-        b <- readTVarIO var
-        runner $
-          $(logWarnS) "Web" $
-            "Slow ["
-              <> cs (show diff)
-              <> " ms]: "
-              <> fmtReq b req
+    start = runMaybeT $ do
+      _ <- MaybeT $ return metrics
+      systemToUTCTime <$> lift getSystemTime
+    end req mt1 = void $ runMaybeT $ do
       m <- MaybeT $ return metrics
-      add_stat diff m.all
-      stat_var <- MaybeT $ return $ V.lookup m.key $ vault req
+      t1 <- MaybeT $ return mt1
+      t2 <- systemToUTCTime <$> lift getSystemTime
+      let ms = realToFrac (diffUTCTime t2 t1) * 1000
+      addStatTime m.all ms
+      stat_var <- MaybeT $ return $ V.lookup m.key req.vault
       f <- MaybeT $ readTVarIO stat_var
-      add_stat diff $ f m
+      addStatTime (f m) ms
 
 reqSizeLimit :: (Integral i) => i -> Middleware
 reqSizeLimit i = requestSizeLimitMiddleware lim
@@ -3134,17 +2984,13 @@ reqTimeout = timeoutAs res . fromIntegral
     sta = errStatus err
     hdr = (hContentType, "application/json")
 
-fmtReq :: ByteString -> Request -> Text
-fmtReq bs req =
+fmtReq :: Request -> Text
+fmtReq req =
   let m = requestMethod req
       v = httpVersion req
       p = rawPathInfo req
       q = rawQueryString req
-      txt = case T.decodeUtf8' bs of
-        Left _ -> " {invalid utf8}"
-        Right "" -> ""
-        Right t -> " [" <> t <> "]"
-   in T.decodeUtf8 (m <> " " <> p <> q <> " " <> cs (show v)) <> txt
+   in T.decodeUtf8 (m <> " " <> p <> q <> " " <> cs (show v))
 
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
