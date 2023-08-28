@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE ApplicativeDo #-}
 
 module Haskoin.Store.Stats
   ( StatDist,
@@ -126,12 +127,6 @@ createStatDist t store = liftIO $ do
             ( t <> ".min_ms",
               Gauge . mini . (.times)
             ),
-            ( t <> ".p90max_ms",
-              Gauge . p90max . (.times)
-            ),
-            ( t <> ".p90avg_ms",
-              Gauge . p90avg . (.times)
-            ),
             ( t <> ".var_ms",
               Gauge . var . (.times)
             )
@@ -173,7 +168,10 @@ flush StatDist {..} = atomically $ do
   return $ StatData {..}
 
 average :: (Fractional a) => L.Fold a a
-average = (/) <$> L.sum <*> L.genericLength
+average = do
+  s <- L.sum
+  l <- L.genericLength
+  return $ if l > 0 then s / fromIntegral l else 0
 
 avg :: [Int64] -> Int64
 avg = round . L.fold average . map toDouble
@@ -189,21 +187,3 @@ mini = fromMaybe 0 . L.fold L.minimum
 
 var :: [Int64] -> Int64
 var = round . L.fold L.variance . map toDouble
-
-p90max :: [Int64] -> Int64
-p90max ls =
-  case chopped of
-    [] -> 0
-    h : _ -> h
-  where
-    sorted = sortOn Down ls
-    len = length sorted
-    chopped = drop (length sorted `div` 10) sorted
-
-p90avg :: [Int64] -> Int64
-p90avg ls =
-  avg chopped
-  where
-    sorted = sortOn Down ls
-    len = length sorted
-    chopped = drop (length sorted `div` 10) sorted

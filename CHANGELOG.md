@@ -6,9 +6,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Statsd gauge is 0 for average of no values.
+
 ### Changed
 
 - Disable Bloom filters on database to diagnose memory leak.
+
+### Removed
+
+- Remove unreliable p90 statsd reports.
 
 ## [1.0.2] - 2023-08-25
 
