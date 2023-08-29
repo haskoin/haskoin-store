@@ -75,9 +75,9 @@ data StatDist = StatDist
 
 createStatDist :: (MonadIO m) => Text -> Store -> m StatDist
 createStatDist t store = liftIO $ do
-  dist <- createDistribution (t <> "_ms") store
-  clientErrors <- createCounter (t <> "_client_errors") store
-  serverErrors <- createCounter (t <> "_server_errors") store
+  dist <- createDistribution (t <> ".requests") store
+  clientErrors <- createCounter (t <> ".errors.client") store
+  serverErrors <- createCounter (t <> ".errors.server") store
   return StatDist {..}
 
 addStatTime :: (MonadIO m) => StatDist -> Double -> m ()

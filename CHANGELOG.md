@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 
-- Disable Bloom filters on database to diagnose memory leak.
-- Use standard metrics from ekg-core.
+- Use distribution metrics from ekg-core.
+- Make names for statistics reports clearer.
 
 ### Removed
 
