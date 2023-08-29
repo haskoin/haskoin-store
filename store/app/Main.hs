@@ -224,8 +224,6 @@ defConfig = do
         env "XPUB_GAP" xpubGap readMaybe
       xpubGapInit <-
         env "XPUB_GAP_INIT" xpubGapInit readMaybe
-      maxBodySize <-
-        env "MAX_BODY_SIZE" maxBodySize readMaybe
       blockTimeout <-
         env "BLOCK_TIMEOUT" blockTimeout readMaybe
       txTimeout <-
@@ -375,13 +373,6 @@ config c = do
           <> help "Max gap for empty xpubs"
           <> showDefault
           <> value c.webLimits.xpubGapInit
-    maxBodySize <-
-      option auto $
-        metavar "BYTES"
-          <> long "max-body-size"
-          <> help "Maximum request body size"
-          <> showDefault
-          <> value c.webLimits.maxBodySize
     blockTimeout <-
       option auto $
         metavar "SECONDS"

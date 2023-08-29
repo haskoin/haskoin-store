@@ -79,7 +79,6 @@ library
     , unordered-containers >=0.2.10.0
     , vault >=0.3.1.5
     , wai >=3.2.2.1
-    , wai-extra >=3.1.6
     , wai-websockets >=3.0.1.2
     , warp >=3.3.10
     , websockets >=0.12.4
@@ -136,7 +135,6 @@ executable haskoin-store
     , unordered-containers >=0.2.10.0
     , vault >=0.3.1.5
     , wai >=3.2.2.1
-    , wai-extra >=3.1.6
     , wai-websockets >=3.0.1.2
     , warp >=3.3.10
     , websockets >=0.12.4
@@ -197,7 +195,6 @@ test-suite spec
     , unordered-containers >=0.2.10.0
     , vault >=0.3.1.5
     , wai >=3.2.2.1
-    , wai-extra >=3.1.6
     , wai-websockets >=3.0.1.2
     , warp >=3.3.10
     , websockets >=0.12.4

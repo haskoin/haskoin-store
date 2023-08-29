@@ -211,7 +211,7 @@ newCacheMetrics s = liftIO $ do
   lockAcquired <- c "cache.lock_acquired"
   lockReleased <- c "cache.lock_released"
   lockFailed <- c "cache.lock_failed"
-  indexTime <- d "cache.index_ms"
+  indexTime <- d "cache.index"
   xPubBals <- c "cache.xpub_balances_cached"
   xPubUnspents <- c "cache.xpub_unspents_cached"
   xPubTx <- c "cache.xpub_txs_cached"

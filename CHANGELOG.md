@@ -14,10 +14,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - Use distribution metrics from ekg-core.
 - Make names for statistics reports clearer.
+- Refactor Web.hs.
+- Refactor Stats.hs.
 
 ### Removed
 
-- No more unreliable p90 or item statistics.
+- Remove unreliable p90 or item statistics.
+- Remove unsafeInterleaveIO from Web.hs.
+- Remove unnecessary WAI middlewares.
+- Remove server and client error reporting per endpoint.
 
 ## [1.0.2] - 2023-08-25
 
