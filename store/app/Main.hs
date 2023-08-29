@@ -1,6 +1,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -546,8 +547,8 @@ run :: Config -> IO ()
 run cfg =
   withContext $ \ctx ->
     runStderrLoggingT $ filterLogger l $ flip runContT return $ do
-      stats <- ContT $ with_stats
       net <- either error return $ networkReader cfg.net
+      stats <- ContT $ with_stats net
       let dir = cfg.dir </> net.name
       $(logInfoS) "haskoin-store" $
         "Creating working directory (if not found): " <> cs dir
@@ -597,7 +598,7 @@ run cfg =
               healthCheckInterval = cfg.healthCheckInterval
             }
   where
-    with_stats go
+    with_stats net go
       | cfg.statsd = do
           $(logInfoS) "Main" $
             "Sending stats to "
@@ -609,7 +610,7 @@ run cfg =
           withStats
             (T.pack cfg.statsdHost)
             cfg.statsdPort
-            (T.pack cfg.statsdPrefix)
+            (T.pack cfg.statsdPrefix <> T.pack "." <> T.pack net.name)
             (go . Just)
       | otherwise = go Nothing
     l _ lvl

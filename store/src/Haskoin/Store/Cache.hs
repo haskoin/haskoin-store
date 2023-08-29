@@ -252,7 +252,6 @@ incrementCounter f i =
     Just s -> liftIO $ Metrics.Counter.add (f s) (fromIntegral i)
     Nothing -> return ()
 
-
 setGauge ::
   (MonadIO m, Integral a) =>
   (CacheMetrics -> Metrics.Gauge) ->
@@ -1290,8 +1289,8 @@ cacheSetHead bd = do
   $(logDebugS) "Cache" $ "Cache head set to: " <> blockHashToHex bh
   void $ runRedis (redisSetHead bh)
   setGauge (.cacheHeight) bd.height
- where
-  bh = headerHash bd.header
+  where
+    bh = headerHash bd.header
 
 cacheGetAddrsInfo ::
   (MonadLoggerIO m) => [Address] -> CacheX m [Maybe AddressXPub]

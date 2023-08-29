@@ -620,9 +620,9 @@ raise err = do
     liftIO $
       mapM_ Metrics.Counter.inc $
         if
-          | statusIsClientError status -> Just m.clientErrors
-          | statusIsServerError status -> Just m.serverErrors
-          | otherwise -> Nothing
+            | statusIsClientError status -> Just m.clientErrors
+            | statusIsServerError status -> Just m.serverErrors
+            | otherwise -> Nothing
   S.raise err
 
 errStatus :: Except -> Status
@@ -2168,11 +2168,11 @@ scottyFirstSeen =
       y <- hasone a mid
       z <- hasone a top
       if
-        | x -> getblocktime ch bb bot
-        | n -> getblocktime ch bb top
-        | y -> go ch bb a bot mid
-        | z -> go ch bb a mid top
-        | otherwise -> return 0
+          | x -> getblocktime ch bb bot
+          | n -> getblocktime ch bb top
+          | y -> go ch bb a bot mid
+          | z -> go ch bb a mid top
+          | otherwise -> return 0
     getblocktime ch bb h =
       chainGetAncestor h bb ch >>= \case
         Just b -> return b.header.timestamp
@@ -2208,11 +2208,11 @@ scottyShortBal =
     getabal net cashaddr a =
       let net' =
             if
-              | cashaddr -> net
-              | net == bch -> btc
-              | net == bchTest -> btcTest
-              | net == bchTest4 -> btcTest
-              | otherwise -> net
+                | cashaddr -> net
+                | net == bch -> btc
+                | net == bchTest -> btcTest
+                | net == bchTest4 -> btcTest
+                | otherwise -> net
        in case addrToText net' a of
             Nothing -> return Nothing
             Just a' ->
