@@ -150,9 +150,9 @@ import Haskoin.Store.Logic
     newMempoolTx,
     revertBlock,
   )
-import Haskoin.Store.Stats
 import NQE
-  ( Listen,
+  ( InChan,
+    Listen,
     Mailbox,
     Publisher,
     inboxToMailbox,
@@ -163,9 +163,7 @@ import NQE
     send,
     sendSTM,
   )
-import System.Metrics qualified as Metrics
-import System.Metrics.Gauge qualified as Metrics (Gauge)
-import System.Metrics.Gauge qualified as Metrics.Gauge
+import System.Metrics.StatsD
 import System.Random (randomRIO)
 import UnliftIO
   ( Exception,
@@ -229,69 +227,60 @@ data BlockStore = BlockStore
   }
 
 data StoreMetrics = StoreMetrics
-  { storeHeight :: !Metrics.Gauge,
-    headersHeight :: !Metrics.Gauge,
-    pendingTxs :: !Metrics.Gauge,
-    connectedPeers :: !Metrics.Gauge,
-    mempoolSize :: !Metrics.Gauge
+  { blocks :: !StatGauge,
+    headers :: !StatGauge,
+    queuedTxs :: !StatGauge,
+    peers :: !StatGauge,
+    mempool :: !StatGauge
   }
 
-newStoreMetrics :: (MonadIO m) => Metrics.Store -> m StoreMetrics
-newStoreMetrics s = liftIO $ do
-  storeHeight <- g "blockchain.height"
-  headersHeight <- g "blockchain.headers"
-  pendingTxs <- g "mempool.pending_txs"
-  connectedPeers <- g "network.peers_connected"
-  mempoolSize <- g "mempool.size"
-  return StoreMetrics {..}
+newStoreMetrics :: (MonadIO m) => BlockStoreConfig -> m (Maybe StoreMetrics)
+newStoreMetrics cfg =
+  forM cfg.stats $ \s -> liftIO $ do
+    m <- withDB cfg.db getMempool
+    b <- fmap (maybe 0 (.height)) $ withDB cfg.db $ runMaybeT $
+        MaybeT getBestBlock >>= MaybeT . getBlock
+    h <- chainGetBest cfg.chain
+    p <- getPeers cfg.peerMgr
+    blocks <- g s "blocks" (fromIntegral b)
+    headers <- g s "headers" (fromIntegral h.height)
+    queuedTxs <- g s "queued_txs" 0
+    peers <- g s "peers" (length p)
+    mempool <- g s "mempool" (length m)
+    return StoreMetrics {..}
   where
-    g x = Metrics.createGauge ("store." <> x) s
+    g s x = newStatGauge s ("store." <> x)
 
 setStoreHeight :: (MonadIO m) => BlockT m ()
-setStoreHeight =
-  asks (.metrics) >>= \case
-    Nothing -> return ()
-    Just m ->
-      getBestBlock >>= \case
-        Nothing -> setit m 0
-        Just bb ->
-          getBlock bb >>= \case
-            Nothing -> setit m 0
-            Just b -> setit m b.height
-  where
-    setit m i = liftIO $ m.storeHeight `Metrics.Gauge.set` fromIntegral i
+setStoreHeight = void $ runMaybeT $ do
+  m <- MaybeT (asks (.metrics))
+  h <- MaybeT getBestBlock
+  b <- MaybeT (getBlock h)
+  setGauge m.blocks (fromIntegral b.height)
 
 setHeadersHeight :: (MonadIO m) => BlockT m ()
-setHeadersHeight =
-  asks (.metrics) >>= \case
-    Nothing -> return ()
-    Just m -> do
-      h <- fmap (.height) $ chainGetBest =<< asks (.config.chain)
-      liftIO $ m.headersHeight `Metrics.Gauge.set` fromIntegral h
+setHeadersHeight = void $ runMaybeT $ do
+  m <- MaybeT (asks (.metrics))
+  n <- chainGetBest =<< asks (.config.chain)
+  setGauge m.headers (fromIntegral n.height)
 
 setPendingTxs :: (MonadIO m) => BlockT m ()
-setPendingTxs =
-  asks (.metrics) >>= \case
-    Nothing -> return ()
-    Just m -> do
-      s <- asks (.txs) >>= \t -> atomically (HashMap.size <$> readTVar t)
-      liftIO $ m.pendingTxs `Metrics.Gauge.set` fromIntegral s
+setPendingTxs = void $ runMaybeT $ do
+  m <- MaybeT (asks (.metrics))
+  p <- readTVarIO =<< asks (.txs)
+  setGauge m.queuedTxs (HashMap.size p)
 
 setPeersConnected :: (MonadIO m) => BlockT m ()
-setPeersConnected =
-  asks (.metrics) >>= \case
-    Nothing -> return ()
-    Just m -> do
-      ps <- fmap length $ getPeers =<< asks (.config.peerMgr)
-      liftIO $ m.connectedPeers `Metrics.Gauge.set` fromIntegral ps
+setPeersConnected = void $ runMaybeT $ do
+  m <- MaybeT (asks (.metrics))
+  p <- getPeers =<< asks (.config.peerMgr)
+  setGauge m.peers (length p)
 
 setMempoolSize :: (MonadIO m) => BlockT m ()
-setMempoolSize =
-  asks (.metrics) >>= \case
-    Nothing -> return ()
-    Just m -> do
-      s <- length <$> getMempool
-      liftIO $ m.mempoolSize `Metrics.Gauge.set` fromIntegral s
+setMempoolSize = void $ runMaybeT $ do
+  m <- MaybeT (asks (.metrics))
+  p <- lift getMempool
+  setGauge m.mempool (length p)
 
 -- | Configuration for a block store.
 data BlockStoreConfig = BlockStoreConfig
@@ -314,7 +303,7 @@ data BlockStoreConfig = BlockStoreConfig
     syncMempool :: !Bool,
     -- | disconnect syncing peer if inactive for this long
     peerTimeout :: !NominalDiffTime,
-    statsStore :: !(Maybe Metrics.Store)
+    stats :: !(Maybe Stats)
   }
 
 type BlockT m = ReaderT BlockStore m
@@ -391,7 +380,7 @@ withBlockStore cfg action = do
   ts <- newTVarIO HashMap.empty
   rq <- newTVarIO HashSet.empty
   inbox <- newInbox
-  metrics <- mapM newStoreMetrics cfg.statsStore
+  metrics <- newStoreMetrics cfg
   let r =
         BlockStore
           { mailbox = inboxToMailbox inbox,
@@ -442,6 +431,10 @@ withBlockStore cfg action = do
       withAsync (pingMe (inboxToMailbox inbox)) $ \a ->
         link a >> runBlockStoreLoop inbox
 
+runBlockStoreLoop ::
+  (InChan mbox, MonadUnliftIO m, MonadLoggerIO m) =>
+  mbox BlockStoreMessage ->
+  ReaderT BlockStore m b
 runBlockStoreLoop inbox =
   forever $ do
     $(logDebugS) "BlockStore" "Waiting for new event..."
@@ -470,8 +463,8 @@ syncMempool f = do
   s <- asks (.config.syncMempool)
   when s f
 
-mempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
-mempool p =
+requestMempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
+requestMempool p =
   guardMempool . syncMempool $
     isInSync >>= \s -> when s $ do
       $(logDebugS) "BlockStore" $
@@ -529,7 +522,7 @@ processBlock peer block = void . runMaybeT $ do
         False -> syncMe
         True -> do
           updateOrphans
-          mempool peer
+          requestMempool peer
     failure e = do
       $(logErrorS) "BlockStore" $
         "Error importing block "
@@ -633,7 +626,6 @@ addPendingTx p = do
   atomically $ do
     modifyTVar ts $ HashMap.insert th p
     modifyTVar rq $ HashSet.delete th
-    HashMap.size <$> readTVar ts
   setPendingTxs
   where
     th = txHash p.tx
@@ -797,9 +789,7 @@ processMempool = guardMempool . notify Nothing $ do
   unless (null txs) (import_txs block_read txs)
   where
     run_import block_read p =
-      let t = p.tx
-          h = txHash t
-       in importMempoolTx block_read p.time p.tx
+      importMempoolTx block_read p.time p.tx
     import_txs block_read txs =
       let r = mapM (run_import block_read) txs
        in do
@@ -1097,7 +1087,7 @@ trySyncing =
 trySyncingPeer :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 trySyncingPeer p =
   isInSync >>= \case
-    True -> mempool p
+    True -> requestMempool p
     False ->
       trySetPeer p >>= \case
         False -> return ()

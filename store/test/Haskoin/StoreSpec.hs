@@ -110,7 +110,7 @@ withTestStore net ctx t f =
                 peerTimeout = 60,
                 maxPeerLife = 48 * 3600,
                 connect = dummyPeerConnect net ad,
-                statsStore = Nothing,
+                stats = Nothing,
                 redisSyncInterval = 30
               }
       withStore cfg $ \Store {..} ->

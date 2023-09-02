@@ -19,7 +19,6 @@ module Haskoin.Store.Common
     StoreWrite (..),
     StoreEvent (..),
     PubExcept (..),
-    DataMetrics (..),
     getActiveBlock,
     getActiveTxData,
     getDefaultBalance,
@@ -41,7 +40,6 @@ module Haskoin.Store.Common
     microseconds,
     streamThings,
     joinDescStreams,
-    createDataMetrics,
   )
 where
 
@@ -57,7 +55,6 @@ import Conduit
   )
 import Control.DeepSeq (NFData)
 import Control.Exception (Exception)
-import Control.Monad (forM)
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Control.Monad.Trans.Reader (runReaderT)
@@ -65,12 +62,8 @@ import Data.ByteString (ByteString)
 import Data.Default (Default (..))
 import Data.HashSet qualified as H
 import Data.Hashable (Hashable)
-import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as I
-import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, mapMaybe)
-import Data.Ord (Down (..))
+import Data.Maybe (mapMaybe)
 import Data.Serialize (Serialize (..))
 import Data.Time.Clock.System
   ( getSystemTime,
@@ -99,9 +92,6 @@ import Haskoin.Store.Data
     toTransaction,
     zeroBalance,
   )
-import System.Metrics qualified as Metrics
-import System.Metrics.Counter (Counter)
-import System.Metrics.Counter qualified as Counter
 import UnliftIO (MonadIO, liftIO)
 
 type DeriveAddr = XPubKey -> KeyIndex -> Address
@@ -111,8 +101,8 @@ type Offset = Word32
 type Limit = Word32
 
 data Start
-  = AtTx {atTxHash :: !TxHash}
-  | AtBlock {atBlockHeight :: !BlockHeight}
+  = AtTx !TxHash
+  | AtBlock !BlockHeight
   deriving (Eq, Show)
 
 data Limits = Limits
@@ -214,13 +204,13 @@ xPubSummary _xspec xbals =
     rx = sum [b.balance.received | b <- xt]
 
 getTransaction ::
-  (Monad m, StoreReadBase m) => TxHash -> m (Maybe Transaction)
+  ( StoreReadBase m) =>TxHash -> m (Maybe Transaction)
 getTransaction h = do
   ctx <- getCtx
   fmap (toTransaction ctx) <$> getTxData h
 
 getNumTransaction ::
-  (Monad m, StoreReadExtra m) => Word64 -> m [Transaction]
+  ( StoreReadExtra m) =>Word64 -> m [Transaction]
 getNumTransaction i =
   getCtx >>= \ctx ->
     map (toTransaction ctx) <$> getNumTxData i
@@ -341,7 +331,7 @@ sortTxs txs = go [] thset $ zip [0 ..] txs
             then go ((i, tx) : orphans) ths xs
             else (i, tx) : go orphans (txHash tx `H.delete` ths) xs
 
-nub' :: (Eq a, Hashable a) => [a] -> [a]
+nub' :: (Hashable a) => [a] -> [a]
 nub' = H.toList . H.fromList
 
 microseconds :: (MonadIO m) => m Integer
@@ -398,32 +388,3 @@ joinDescStreams xs = do
         let mp2 = Map.deleteMax mp
             mp' = Map.unionWith (++) mp1 mp2
         go (Just x) mp'
-
-data DataMetrics = DataMetrics
-  { dataBestCount :: !Counter,
-    dataBlockCount :: !Counter,
-    dataTxCount :: !Counter,
-    dataMempoolCount :: !Counter,
-    dataBalanceCount :: !Counter,
-    dataUnspentCount :: !Counter,
-    dataAddrTxCount :: !Counter,
-    dataXPubBals :: !Counter,
-    dataXPubUnspents :: !Counter,
-    dataXPubTxs :: !Counter,
-    dataXPubTxCount :: !Counter
-  }
-
-createDataMetrics :: (MonadIO m) => Metrics.Store -> m DataMetrics
-createDataMetrics s = liftIO $ do
-  dataBestCount <- Metrics.createCounter "data.best_block" s
-  dataBlockCount <- Metrics.createCounter "data.blocks" s
-  dataTxCount <- Metrics.createCounter "data.txs" s
-  dataMempoolCount <- Metrics.createCounter "data.mempool" s
-  dataBalanceCount <- Metrics.createCounter "data.balances" s
-  dataUnspentCount <- Metrics.createCounter "data.unspents" s
-  dataAddrTxCount <- Metrics.createCounter "data.address_txs" s
-  dataXPubBals <- Metrics.createCounter "data.xpub_balances" s
-  dataXPubUnspents <- Metrics.createCounter "data.xpub_unspents" s
-  dataXPubTxs <- Metrics.createCounter "data.xpub_txs" s
-  dataXPubTxCount <- Metrics.createCounter "data.xpub_tx_count" s
-  return DataMetrics {..}

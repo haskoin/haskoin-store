@@ -11,10 +11,9 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
-module Main where
+module Main (main) where
 
 import Control.Applicative ((<|>))
-import Control.Arrow (second)
 import Control.Monad (when)
 import Control.Monad.Cont (ContT (ContT), runContT)
 import Control.Monad.Logger
@@ -31,18 +30,9 @@ import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Data.String.Conversions (cs)
 import Data.Text qualified as T
-import Data.Word (Word32)
 import Haskoin
   ( Network (..),
     allNets,
-    bch,
-    bchRegTest,
-    bchTest,
-    bchTest4,
-    btc,
-    btcRegTest,
-    btcTest,
-    eitherToMaybe,
     netByName,
     withContext,
   )
@@ -54,11 +44,9 @@ import Haskoin.Store
     runWeb,
     withStore,
   )
-import Haskoin.Store.Stats (withStats)
 import Options.Applicative
   ( Parser,
     auto,
-    eitherReader,
     execParser,
     flag,
     fullDesc,
@@ -79,6 +67,7 @@ import Options.Applicative
   )
 import System.Exit (exitSuccess)
 import System.FilePath ((</>))
+import System.Metrics.StatsD
 import Text.Read (readMaybe)
 import UnliftIO (MonadIO)
 import UnliftIO.Directory
@@ -522,10 +511,6 @@ networkReader s =
     Just net -> Right net
     Nothing -> Left "Network name invalid"
 
-peerReader :: String -> Either String String
-peerReader "" = Left "Peer cannot be blank"
-peerReader s = Right s
-
 main :: IO ()
 main = do
   c <- execParser . opts =<< defConfig
@@ -574,7 +559,7 @@ run cfg =
                 peerTimeout = fromIntegral cfg.peerTimeout,
                 maxPeerLife = fromIntegral cfg.maxPeerLife,
                 connect = withConnection,
-                statsStore = stats,
+                stats = stats,
                 redisSyncInterval = cfg.redisSyncInterval
               }
       lift $
@@ -589,7 +574,7 @@ run cfg =
               minPeers = cfg.minPeers,
               version = version,
               noMempool = cfg.noMempool,
-              statsStore = stats,
+              stats = stats,
               tickerRefresh = cfg.tickerRefresh,
               tickerURL = cfg.tickerURL,
               priceHistoryURL = cfg.priceHistoryURL,
@@ -608,9 +593,11 @@ run cfg =
               <> " with prefix: "
               <> T.pack cfg.statsdPrefix
           withStats
-            (T.pack cfg.statsdHost)
-            cfg.statsdPort
-            (T.pack cfg.statsdPrefix <> T.pack "." <> T.pack net.name)
+            defStatConfig
+              { statsdServer = cfg.statsdHost,
+                statsdPort = cfg.statsdPort,
+                namespace = cfg.statsdPrefix <> "." <> net.name
+              }
             (go . Just)
       | otherwise = go Nothing
     l _ lvl

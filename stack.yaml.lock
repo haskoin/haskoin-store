@@ -33,27 +33,12 @@ packages:
   original:
     hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
 - completed:
-    name: ekg-core
+    hackage: statsd-rupp-0.4.0.0@sha256:49677a8ac0997c3cc5b0da76e6906d46c496f793bf912a8829080e2990577986,2017
     pantry-tree:
-      sha256: 726daf8d996dae7623fe2028ccf7c57e09a18bd7ae32cbf4df54481cedb505f4
-      size: 1280
-    sha256: fef29c7593c041548bc03647035fc266a6ff0c6641f6796b5a64e64dfef3380d
-    size: 16093
-    url: https://github.com/tibbe/ekg-core/archive/ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671.tar.gz
-    version: 0.1.1.7
+      sha256: 9fd046d68e3592a596e72e744d82534ff9f0660089ab35335dc02132a0991196
+      size: 457
   original:
-    url: https://github.com/tibbe/ekg-core/archive/ddf7c1eb6d487b0e17ac1ce8428b6d9daea2f671.tar.gz
-- completed:
-    name: ekg-statsd
-    pantry-tree:
-      sha256: 9f707ee05a732e5af8ad9ede68faa75b7c0c44733483a7bbd9e36e6f5e7bfb9a
-      size: 730
-    sha256: 04c2cfe22cfc8e257a0278286ddf46081e238945efa048eac7a65bfb9184bedb
-    size: 8677
-    url: https://github.com/tibbe/ekg-statsd/archive/c6a9760266277cbd7641e9618f3b7cfbabc299d1.tar.gz
-    version: 0.2.5.0
-  original:
-    url: https://github.com/tibbe/ekg-statsd/archive/c6a9760266277cbd7641e9618f3b7cfbabc299d1.tar.gz
+    hackage: statsd-rupp-0.4.0.0@sha256:49677a8ac0997c3cc5b0da76e6906d46c496f793bf912a8829080e2990577986,2017
 snapshots:
 - completed:
     sha256: 2fc12a405ab6f7eac73eb11a0ca5ccca0e956bd2848db780c140b7406ff9ebb5

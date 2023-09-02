@@ -5,12 +5,16 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Haskoin.Store.Database.Reader
   ( -- * RocksDB Database Access
     DatabaseReader (..),
     DatabaseReaderT,
+    DataMetrics,
+    withDB,
+    createDataMetrics,
     withDatabaseReader,
     addrTxCF,
     addrOutCF,
@@ -24,28 +28,25 @@ where
 
 import Conduit
   ( ConduitT,
-    dropC,
     dropWhileC,
     lift,
     mapC,
     runConduit,
     sinkList,
-    takeC,
     (.|),
   )
 import Control.Monad.Except (runExceptT, throwError)
-import Control.Monad.Reader (ReaderT, ask, asks, runReaderT)
+import Control.Monad.Reader (MonadReader, ReaderT, asks, runReaderT)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Bits ((.&.))
 import Data.ByteString qualified as BS
 import Data.Default (def)
-import Data.Function (on)
 import Data.IntMap.Strict qualified as IntMap
 import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..))
 import Data.Serialize (encode)
-import Data.Word (Word32, Word64)
+import Data.Word (Word32)
 import Database.RocksDB
   ( ColumnFamily,
     Config (..),
@@ -63,22 +64,10 @@ import Database.RocksDB.Query
     retrieveCF,
   )
 import Haskoin
-  ( Address,
-    BlockHash,
-    BlockHeight,
-    Ctx,
-    Network,
-    OutPoint (..),
-    TxHash,
-    pubSubKey,
-    txHash,
-  )
 import Haskoin.Store.Common
 import Haskoin.Store.Data
 import Haskoin.Store.Database.Types
-import System.Metrics qualified as Metrics
-import System.Metrics.Counter (Counter)
-import System.Metrics.Counter qualified as Counter
+import System.Metrics.StatsD
 import UnliftIO (MonadIO, MonadUnliftIO, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
@@ -92,18 +81,45 @@ data DatabaseReader = DatabaseReader
     ctx :: !Ctx
   }
 
-incrementCounter ::
-  (MonadIO m) =>
-  (DataMetrics -> Counter) ->
-  Int ->
-  ReaderT DatabaseReader m ()
-incrementCounter f i =
-  asks (.metrics) >>= \case
-    Just s -> liftIO $ Counter.add (f s) (fromIntegral i)
-    Nothing -> return ()
+data DataMetrics = DataMetrics
+  { dataBestCount :: !StatCounter,
+    dataBlockCount :: !StatCounter,
+    dataTxCount :: !StatCounter,
+    dataMempoolCount :: !StatCounter,
+    dataBalanceCount :: !StatCounter,
+    dataUnspentCount :: !StatCounter,
+    dataAddrTxCount :: !StatCounter,
+    dataXPubBals :: !StatCounter,
+    dataXPubUnspents :: !StatCounter,
+    dataXPubTxs :: !StatCounter,
+    dataXPubTxCount :: !StatCounter
+  }
+
+createDataMetrics :: (MonadIO m) => Stats -> m DataMetrics
+createDataMetrics s = do
+  dataBestCount <- newStatCounter s "db.best_block" n
+  dataBlockCount <- newStatCounter s "db.blocks" n
+  dataTxCount <- newStatCounter s "db.txs" n
+  dataMempoolCount <- newStatCounter s "db.mempool" n
+  dataBalanceCount <- newStatCounter s "db.balances" n
+  dataUnspentCount <- newStatCounter s "db.unspents" n
+  dataAddrTxCount <- newStatCounter s "db.address_txs" n
+  dataXPubBals <- newStatCounter s "db.xpub_balances" n
+  dataXPubUnspents <- newStatCounter s "db.xpub_unspents" n
+  dataXPubTxs <- newStatCounter s "db.xpub_txs" n
+  dataXPubTxCount <- newStatCounter s "db.xpub_tx_count" n
+  return DataMetrics {..}
+  where
+    n = 10
+
+withMetrics :: (MonadReader DatabaseReader m) => (DataMetrics -> m a) -> m ()
+withMetrics go = asks (.metrics) >>= mapM_ go
 
 dataVersion :: Word32
 dataVersion = 18
+
+withDB :: DatabaseReader -> DatabaseReaderT m a -> m a
+withDB = flip runReaderT
 
 withDatabaseReader ::
   (MonadUnliftIO m) =>
@@ -204,10 +220,9 @@ addressConduit a s it =
           Just TxData {block = b@BlockRef {}} ->
             matchingSkip it (AddrTxKeyA a) (AddrTxKeyB a b)
           Just TxData {block = MemRef {}} ->
-            let cond (AddrTxKey _a (TxRef MemRef {} th)) =
-                  th /= txh
-                cond (AddrTxKey _a (TxRef BlockRef {} _th)) =
-                  False
+            let cond (AddrTxKey _ (TxRef MemRef {} th)) = th /= txh
+                cond (AddrTxKey _ (TxRef BlockRef {} _)) = False
+                cond _ = undefined
              in matching it (AddrTxKeyA a)
                   .| (dropWhileC (cond . fst) >> mapC id)
           Nothing -> return ()
@@ -235,10 +250,9 @@ unspentConduit ctx a s it =
           Just TxData {block = b@BlockRef {}} ->
             matchingSkip it (AddrOutKeyA a) (AddrOutKeyB a b)
           Just TxData {block = MemRef {}} ->
-            let cond (AddrOutKey _a MemRef {} p) =
-                  p.hash /= txh
-                cond (AddrOutKey _a BlockRef {} _p) =
-                  False
+            let cond (AddrOutKey _ MemRef {} p) = p.hash /= txh
+                cond (AddrOutKey _ BlockRef {} _) = False
+                cond _ = undefined
              in matching it (AddrOutKeyA a)
                   .| (dropWhileC (cond . fst) >> mapC id)
           Nothing -> return ()
@@ -272,7 +286,7 @@ instance (MonadIO m) => StoreReadBase (DatabaseReaderT m) where
     retrieveCF db (txCF db) (TxKey th) >>= \case
       Nothing -> return Nothing
       Just t -> do
-        incrementCounter (.dataTxCount) 1
+        withMetrics $ \s -> incrementCounter s.dataTxCount 1
         return (Just t)
 
   getSpender op = runMaybeT $ do
@@ -287,21 +301,21 @@ instance (MonadIO m) => StoreReadBase (DatabaseReaderT m) where
     case fmap (valToUnspent ctx p) val of
       Nothing -> return Nothing
       Just u -> do
-        incrementCounter (.dataUnspentCount) 1
+        withMetrics $ \s -> incrementCounter s.dataUnspentCount 1
         return (Just u)
 
   getBalance a = do
     db <- asks (.db)
-    incrementCounter (.dataBalanceCount) 1
+    withMetrics $ \s -> incrementCounter s.dataBalanceCount 1
     fmap (valToBalance a) <$> retrieveCF db (balanceCF db) (BalKey a)
 
   getMempool = do
     db <- asks (.db)
-    incrementCounter (.dataMempoolCount) 1
+    withMetrics $ \s -> incrementCounter s.dataMempoolCount 1
     fromMaybe [] <$> retrieve db MemKey
 
   getBestBlock = do
-    incrementCounter (.dataBestCount) 1
+    withMetrics $ \s -> incrementCounter s.dataBestCount 1
     asks (.db) >>= (`retrieve` BestKey)
 
   getBlocksAtHeight h = do
@@ -309,7 +323,7 @@ instance (MonadIO m) => StoreReadBase (DatabaseReaderT m) where
     retrieveCF db (heightCF db) (HeightKey h) >>= \case
       Nothing -> return []
       Just ls -> do
-        incrementCounter (.dataBlockCount) (length ls)
+        withMetrics $ \s -> incrementCounter s.dataBlockCount (length ls)
         return ls
 
   getBlock h = do
@@ -317,7 +331,7 @@ instance (MonadIO m) => StoreReadBase (DatabaseReaderT m) where
     retrieveCF db (blockCF db) (BlockKey h) >>= \case
       Nothing -> return Nothing
       Just b -> do
-        incrementCounter (.dataBlockCount) 1
+        withMetrics $ \s -> incrementCounter s.dataBlockCount 1
         return (Just b)
 
 instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
@@ -325,7 +339,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
     db <- asks (.db)
     withManyIters db (addrTxCF db) (length addrs) $ \its -> do
       txs <- joinConduits (cs its) limits
-      incrementCounter (.dataAddrTxCount) (length txs)
+      withMetrics $ \s -> incrementCounter s.dataAddrTxCount (length txs)
       return txs
     where
       cs = zipWith c addrs
@@ -336,7 +350,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
     ctx <- asks (.ctx)
     withManyIters db (addrOutCF db) (length addrs) $ \its -> do
       uns <- joinConduits (cs ctx its) limits
-      incrementCounter (.dataUnspentCount) (length uns)
+      withMetrics $ \s -> incrementCounter s.dataUnspentCount (length uns)
       return uns
     where
       cs ctx = zipWith (c ctx) addrs
@@ -350,7 +364,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
         unspentConduit ctx a limits.start it
           .| applyLimitsC limits
           .| sinkList
-    incrementCounter (.dataUnspentCount) (length us)
+    withMetrics $ \s -> incrementCounter s.dataUnspentCount (length us)
     return us
 
   getAddressTxs a limits = do
@@ -360,7 +374,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
         addressConduit a limits.start it
           .| applyLimitsC limits
           .| sinkList
-    incrementCounter (.dataAddrTxCount) (length txs)
+    withMetrics $ \s -> incrementCounter s.dataAddrTxCount (length txs)
     return txs
 
   getMaxGap = asks (.maxGap)
@@ -377,7 +391,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
               w' = b .&. 0xf8
            in w == w'
         txs = filter f $ map snd ls
-    incrementCounter (.dataTxCount) (length txs)
+    withMetrics $ \s -> incrementCounter s.dataTxCount (length txs)
     return txs
 
   getBalances as = do
@@ -393,13 +407,13 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
     ext1 <- derive_until_gap gap 0 (take (fromIntegral igap) (aderiv ctx 0 0))
     if all (nullBalance . (.balance)) ext1
       then do
-        incrementCounter (.dataXPubBals) (length ext1)
+        withMetrics $ \s -> incrementCounter s.dataXPubBals (length ext1)
         return ext1
       else do
         ext2 <- derive_until_gap gap 0 (aderiv ctx 0 igap)
         chg <- derive_until_gap gap 1 (aderiv ctx 1 0)
         let bals = ext1 <> ext2 <> chg
-        incrementCounter (.dataXPubBals) (length bals)
+        withMetrics $ \s -> incrementCounter s.dataXPubBals (length bals)
         return bals
     where
       aderiv ctx m =
@@ -418,7 +432,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
 
   xPubUnspents _xspec xbals limits = do
     us <- concat <$> mapM h cs
-    incrementCounter (.dataXPubUnspents) (length us)
+    withMetrics $ \s -> incrementCounter s.dataXPubUnspents (length us)
     return . applyLimits limits $ sortOn Down us
     where
       l = deOffset limits
@@ -433,9 +447,9 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
             filter (not . nullBalance) $
               map (.balance) xbals
     txs <- getAddressesTxs as limits
-    incrementCounter (.dataXPubTxs) (length txs)
+    withMetrics $ \s -> incrementCounter s.dataXPubTxs (length txs)
     return txs
 
   xPubTxCount xspec xbals = do
-    incrementCounter (.dataXPubTxCount) 1
+    withMetrics $ \s -> incrementCounter s.dataXPubTxCount 1
     fromIntegral . length <$> xPubTxs xspec xbals def

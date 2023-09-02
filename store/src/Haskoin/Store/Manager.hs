@@ -1,6 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoFieldSelectors #-}
@@ -12,12 +11,9 @@ module Haskoin.Store.Manager
   )
 where
 
-import Control.Monad (forever, unless, when)
+import Control.Monad (forever, unless)
 import Control.Monad.Cont
   ( ContT (..),
-    MonadCont (callCC),
-    cont,
-    runCont,
     runContT,
   )
 import Control.Monad.Logger (MonadLoggerIO)
@@ -78,11 +74,11 @@ import Haskoin.Store.Cache
   )
 import Haskoin.Store.Common
   ( StoreEvent (..),
-    createDataMetrics,
   )
 import Haskoin.Store.Database.Reader
   ( DatabaseReader (..),
     DatabaseReaderT,
+    createDataMetrics,
     withDatabaseReader,
   )
 import NQE
@@ -96,7 +92,7 @@ import NQE
     withSubscription,
   )
 import Network.Socket (SockAddr (..))
-import System.Metrics qualified as Metrics (Store)
+import System.Metrics.StatsD
 import UnliftIO
   ( MonadIO,
     MonadUnliftIO,
@@ -155,8 +151,8 @@ data StoreConfig = StoreConfig
     maxPeerLife :: !NominalDiffTime,
     -- | connect to peers using the function 'withConnection'
     connect :: !(SockAddr -> WithConnection),
-    -- | stats store
-    statsStore :: !(Maybe Metrics.Store),
+    -- | StatsD
+    stats :: !(Maybe Stats),
     -- | sync mempool against cache every this many seconds
     redisSyncInterval :: !Int
   }
@@ -196,7 +192,7 @@ connectDB ::
   DatabaseReaderT m a ->
   m a
 connectDB cfg f = do
-  stats <- mapM createDataMetrics cfg.statsStore
+  stats <- mapM createDataMetrics cfg.stats
   withDatabaseReader
     cfg.net
     cfg.ctx
@@ -224,7 +220,7 @@ blockStoreCfg cfg node pub db =
       wipeMempool = cfg.wipeMempool,
       syncMempool = cfg.syncMempool,
       peerTimeout = cfg.peerTimeout,
-      statsStore = cfg.statsStore
+      stats = cfg.stats
     }
 
 nodeCfg ::
@@ -263,8 +259,8 @@ withCache cfg chain db pub action =
     Nothing ->
       action Nothing
     Just redisurl -> do
-      metrics <- mapM newCacheMetrics cfg.statsStore
       conn <- connectRedis redisurl
+      metrics <- mapM (\s -> newCacheMetrics s conn db) cfg.stats
       withSubscription pub $ \evts ->
         let conf = c conn metrics
          in withProcess (f conf) $ \p ->

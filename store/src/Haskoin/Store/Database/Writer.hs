@@ -10,11 +10,8 @@
 
 module Haskoin.Store.Database.Writer (WriterT, runWriter) where
 
-import Control.Monad (join)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Reader qualified as R
-import Data.HashMap.Strict (HashMap)
-import Data.HashMap.Strict qualified as M
 import Data.HashTable.IO qualified as H
 import Data.IntMap.Strict qualified as IntMap
 import Data.List (sortOn)
@@ -46,15 +43,9 @@ import Haskoin.Store.Database.Types
 import UnliftIO
   ( IORef,
     MonadIO,
-    TVar,
-    atomically,
     liftIO,
-    modifyIORef,
-    modifyTVar,
     newIORef,
-    newTVarIO,
     readIORef,
-    readTVarIO,
     writeIORef,
   )
 
@@ -76,8 +67,6 @@ instance (MonadIO m) => StoreReadBase (WriterT m) where
   getUnspent = getUnspentI
   getBalance = getBalanceI
   getMempool = getMempoolI
-
-type NetRef = IORef (Maybe Network)
 
 type BestRef = IORef (Maybe (Maybe BlockHash))
 
@@ -219,7 +208,7 @@ blockHeightOps db t = map (uncurry f) <$> liftIO (H.toList t)
 txOps :: (MonadIO m) => DB -> TxTable -> m [BatchOp]
 txOps db t = map (uncurry f) <$> liftIO (H.toList t)
   where
-    f k (Just t) = insertOpCF (txCF db) (TxKey k) t
+    f k (Just t') = insertOpCF (txCF db) (TxKey k) t'
     f k Nothing = deleteOpCF (txCF db) (TxKey k)
 
 balOps :: (MonadIO m) => DB -> BalanceTable -> m [BatchOp]
@@ -231,8 +220,8 @@ balOps db t = map (uncurry f) <$> liftIO (H.toList t)
 addrTxOps :: (MonadIO m) => DB -> AddrTxTable -> m [BatchOp]
 addrTxOps db t = map (uncurry f) <$> liftIO (H.toList t)
   where
-    f (a, t) (Just ()) = insertOpCF (addrTxCF db) (AddrTxKey a t) ()
-    f (a, t) Nothing = deleteOpCF (addrTxCF db) (AddrTxKey a t)
+    f (a, t') (Just ()) = insertOpCF (addrTxCF db) (AddrTxKey a t') ()
+    f (a, t') Nothing = deleteOpCF (addrTxCF db) (AddrTxKey a t')
 
 addrOutOps :: (MonadIO m) => DB -> AddrOutTable -> m [BatchOp]
 addrOutOps db t = map (uncurry f) <$> liftIO (H.toList t)
@@ -313,12 +302,6 @@ newMemory net ctx mempool = do
   mempoolTable <- liftIO $ H.fromList (map swap mempool)
   return Memory {..}
 
-getNetworkH :: (Monad m) => Memory -> m Network
-getNetworkH Memory {net} = return net
-
-getCtxH :: (Monad m) => Memory -> m Ctx
-getCtxH Memory {ctx} = return ctx
-
 getBestBlockH :: Memory -> IO (Maybe (Maybe BlockHash))
 getBestBlockH = readIORef . (.best)
 
@@ -339,9 +322,6 @@ getSpenderH op s = do
 
 getBalanceH :: Address -> Memory -> IO (Maybe (Maybe Balance))
 getBalanceH a s = H.lookup s.balanceTable a
-
-getMempoolH :: Memory -> IO [(UnixTime, TxHash)]
-getMempoolH Memory {..} = sortOn Down . map swap <$> H.toList mempoolTable
 
 getUnspentH :: OutPoint -> Memory -> IO (Maybe (Maybe Unspent))
 getUnspentH p Memory {..} = H.lookup unspentTable p

@@ -33,27 +33,19 @@ where
 import Control.DeepSeq (NFData)
 import Control.Monad (guard)
 import Data.Bits
-  ( Bits,
-    shift,
-    shiftL,
-    shiftR,
+  ( shift,
     (.&.),
-    (.|.),
   )
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.Default (Default (..))
-import Data.Either (fromRight)
 import Data.Hashable (Hashable)
 import Data.Serialize
   ( Serialize (..),
-    decode,
-    encode,
     getBytes,
     getWord16be,
     getWord32be,
     getWord8,
-    putWord32be,
     putWord64be,
     putWord8,
     runGet,
@@ -76,7 +68,6 @@ import Haskoin.Store.Data
   ( Balance (..),
     BlockData,
     BlockRef,
-    Spender,
     TxData,
     TxRef (..),
     UnixTime,
