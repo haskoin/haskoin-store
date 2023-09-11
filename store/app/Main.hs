@@ -68,6 +68,10 @@ import Options.Applicative
 import System.Exit (exitSuccess)
 import System.FilePath ((</>))
 import System.Metrics.StatsD
+    ( defStatConfig,
+      withStats,
+      StatConfig(statsdPort, statsdServer, namespace, reportSamples,
+                 reportStats) )
 import Text.Read (readMaybe)
 import UnliftIO (MonadIO)
 import UnliftIO.Directory
@@ -76,12 +80,12 @@ import UnliftIO.Directory
   )
 import UnliftIO.Environment (lookupEnv)
 
-version :: String
+haskoinStoreVersion :: String
 
 #ifdef CURRENT_PACKAGE_VERSION
-version = CURRENT_PACKAGE_VERSION
+haskoinStoreVersion = CURRENT_PACKAGE_VERSION
 #else
-version = "Unavailable"
+haskoinStoreVersion = "Unavailable"
 #endif
 
 data Config = Config
@@ -112,6 +116,8 @@ data Config = Config
     statsdHost :: !String,
     statsdPort :: !Int,
     statsdPrefix :: !String,
+    statsdNoEvents :: Bool,
+    statsdAggregates :: Bool,
     tickerRefresh :: !Int,
     tickerURL :: !String,
     priceHistoryURL :: !String,
@@ -177,6 +183,10 @@ defConfig = do
     env "STATSD_HOST" "localhost" pure
   statsdPort <-
     env "STATSD_PORT" 8125 readMaybe
+  statsdNoEvents <-
+    env "STATSD_NO_EVENTS" False parseBool
+  statsdAggregates <-
+    env "STATSD_AGGREGATES" False parseBool
   statsdPrefix <-
     getStatsdPrefix
   tickerRefresh <-
@@ -201,23 +211,23 @@ defConfig = do
       getAppUserDataDirectory "haskoin-store" >>= \d ->
         env "DIR" d pure
     getWebLimits = do
-      let WebLimits {..} = def
+      let d = def :: WebLimits
       maxItemCount <-
-        env "MAX_ITEM_COUNT" maxItemCount readMaybe
+        env "MAX_ITEM_COUNT" d.maxItemCount readMaybe
       maxFullItemCount <-
-        env "MAX_FULL_ITEM_COUNT" maxFullItemCount readMaybe
+        env "MAX_FULL_ITEM_COUNT" d.maxFullItemCount readMaybe
       maxOffset <-
-        env "MAX_OFFSET" maxOffset readMaybe
+        env "MAX_OFFSET" d.maxOffset readMaybe
       defItemCount <-
-        env "DEF_ITEM_COUNT" defItemCount readMaybe
+        env "DEF_ITEM_COUNT" d.defItemCount readMaybe
       xpubGap <-
-        env "XPUB_GAP" xpubGap readMaybe
+        env "XPUB_GAP" d.xpubGap readMaybe
       xpubGapInit <-
-        env "XPUB_GAP_INIT" xpubGapInit readMaybe
+        env "XPUB_GAP_INIT" d.xpubGapInit readMaybe
       blockTimeout <-
-        env "BLOCK_TIMEOUT" blockTimeout readMaybe
+        env "BLOCK_TIMEOUT" d.blockTimeout readMaybe
       txTimeout <-
-        env "TX_TIMEOUT" blockTimeout readMaybe
+        env "TX_TIMEOUT" d.txTimeout readMaybe
       return WebLimits {..}
     getStatsdPrefix = do
       let go = prefix <|> nomad
@@ -467,6 +477,14 @@ config c = do
         <> help "Prefix for statsd metrics"
         <> showDefault
         <> value c.statsdPrefix
+  statsdNoEvents <-
+    flag c.statsdNoEvents True $
+      long "statsd-no-events"
+        <> help "Do not report individual events to statsd"
+  statsdAggregates <-
+    flag c.statsdAggregates True $
+      long "statsd-aggregates"
+        <> help "Send statistical aggregate reports to statsd every second"
   tickerRefresh <-
     option auto $
       metavar "MICROSECONDS"
@@ -515,7 +533,7 @@ main :: IO ()
 main = do
   c <- execParser . opts =<< defConfig
   when c.version $ do
-    putStrLn version
+    putStrLn haskoinStoreVersion
     exitSuccess
   if null c.peers && not c.discover
     then run $ let Config {..} = c in Config {discover = True, ..}
@@ -526,7 +544,7 @@ main = do
         fullDesc
           <> progDesc "Bitcoin (BCH & BTC) block chain index with HTTP API"
           <> Options.Applicative.header
-            ("haskoin-store version " <> version)
+            ("haskoin-store version " <> haskoinStoreVersion)
 
 run :: Config -> IO ()
 run cfg =
@@ -572,7 +590,7 @@ run cfg =
               maxPendingTxs = cfg.maxPendingTxs,
               maxLaggingBlocks = cfg.maxLaggingBlocks,
               minPeers = cfg.minPeers,
-              version = version,
+              version = haskoinStoreVersion,
               noMempool = cfg.noMempool,
               stats = stats,
               tickerRefresh = cfg.tickerRefresh,
@@ -596,7 +614,9 @@ run cfg =
             defStatConfig
               { statsdServer = cfg.statsdHost,
                 statsdPort = cfg.statsdPort,
-                namespace = cfg.statsdPrefix <> "." <> net.name
+                namespace = cfg.statsdPrefix <> "." <> net.name,
+                reportSamples = not cfg.statsdNoEvents,
+                reportStats = cfg.statsdAggregates
               }
             (go . Just)
       | otherwise = go Nothing
