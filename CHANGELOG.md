@@ -14,9 +14,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - Use statsd-rupp instead of ekg-stats.
 - All stat reporting keys changed.
+- Set open files on RocksDB to 1024.
 
 ### Removed
 
+- Remove Bloom filters from RocksDB.
 - Remove unsafeInterleaveIO from Web.hs.
 - Remove unnecessary WAI middlewares.
 - Remove server and client error reporting per endpoint.
