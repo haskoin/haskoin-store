@@ -247,6 +247,21 @@ connectRedis redisurl = do
 
 instance
   (MonadUnliftIO m, StoreReadBase m) =>
+  StoreReadBase (CacheX m)
+  where
+  getCtx = lift getCtx
+  getNetwork = lift getNetwork
+  getBestBlock = lift getBestBlock
+  getBlocksAtHeight = lift . getBlocksAtHeight
+  getBlock = lift . getBlock
+  getTxData = lift . getTxData
+  getSpender = lift . getSpender
+  getBalance = lift . getBalance
+  getUnspent = lift . getUnspent
+  getMempool = lift getMempool
+
+instance
+  (MonadUnliftIO m, StoreReadBase m) =>
   StoreReadBase (CacheT m)
   where
   getCtx = lift getCtx
@@ -262,6 +277,23 @@ instance
 
 instance
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
+  StoreReadExtra (CacheX m)
+  where
+  getBalances = lift . getBalances
+  getAddressesTxs addrs = lift . getAddressesTxs addrs
+  getAddressTxs addr = lift . getAddressTxs addr
+  getAddressUnspents addr = lift . getAddressUnspents addr
+  getAddressesUnspents addrs = lift . getAddressesUnspents addrs
+  getMaxGap = lift getMaxGap
+  getInitialGap = lift getInitialGap
+  getNumTxData = lift . getNumTxData
+  xPubTxs = getXPubTxs
+  xPubTxCount = getXPubTxCount
+  xPubBals = getXPubBalances
+  xPubUnspents = getXPubUnspents
+
+instance
+  (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   StoreReadExtra (CacheT m)
   where
   getBalances = lift . getBalances
@@ -273,37 +305,21 @@ instance
   getInitialGap = lift getInitialGap
   getNumTxData = lift . getNumTxData
   xPubBals xpub =
-    ask >>= \case
-      Nothing ->
-        lift $
-          xPubBals xpub
-      Just cfg ->
-        lift $
-          runReaderT (getXPubBalances xpub) cfg
+    ReaderT $ \case
+      Nothing -> xPubBals xpub
+      Just cfg -> runReaderT (xPubBals xpub) cfg
   xPubUnspents xpub xbals limits =
-    ask >>= \case
-      Nothing ->
-        lift $
-          xPubUnspents xpub xbals limits
-      Just cfg ->
-        lift $
-          runReaderT (getXPubUnspents xpub xbals limits) cfg
+    ReaderT $ \case
+      Nothing -> xPubUnspents xpub xbals limits
+      Just cfg -> runReaderT (xPubUnspents xpub xbals limits) cfg
   xPubTxs xpub xbals limits =
-    ask >>= \case
-      Nothing ->
-        lift $
-          xPubTxs xpub xbals limits
-      Just cfg ->
-        lift $
-          runReaderT (getXPubTxs xpub xbals limits) cfg
+    ReaderT $ \case
+      Nothing -> xPubTxs xpub xbals limits
+      Just cfg -> runReaderT (xPubTxs xpub xbals limits) cfg
   xPubTxCount xpub xbals =
-    ask >>= \case
-      Nothing ->
-        lift $
-          xPubTxCount xpub xbals
-      Just cfg ->
-        lift $
-          runReaderT (getXPubTxCount xpub xbals) cfg
+    ReaderT $ \case
+      Nothing -> xPubTxCount xpub xbals
+      Just cfg -> runReaderT (xPubTxCount xpub xbals) cfg
 
 withCache :: Maybe CacheConfig -> CacheT m a -> m a
 withCache s f = runReaderT f s
@@ -328,42 +344,41 @@ getXPubTxs ::
   CacheX m [TxRef]
 getXPubTxs xpub xbals limits = go False
   where
-    go m =
-      isXPubCached xpub >>= \c ->
-        if c
-          then do
-            txs <- cacheGetXPubTxs xpub limits
-            withMetrics $ \s ->
-              incrementCounter s.xTxs (length txs)
-            return txs
-          else do
-            if m
-              then lift $ xPubTxs xpub xbals limits
-              else do
-                newXPubC xpub xbals
-                go True
+    go recursed = do
+      cached <- isXPubCached recursed xpub
+      if cached
+        then do
+          txs <- cacheGetXPubTxs xpub limits
+          withMetrics $ \s ->
+            incrementCounter s.xTxs (length txs)
+          return txs
+        else do
+          if recursed
+            then lift $ xPubTxs xpub xbals limits
+            else do
+              newXPubC xpub xbals
+              go True
 
 getXPubTxCount ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   XPubSpec ->
   [XPubBal] ->
   CacheX m Word32
-getXPubTxCount xpub xbals =
-  go False
+getXPubTxCount xpub xbals = go False
   where
-    go t =
-      isXPubCached xpub >>= \c ->
-        if c
-          then do
-            withMetrics $ \s ->
-              incrementCounter s.xTxCount 1
-            cacheGetXPubTxCount xpub
-          else do
-            if t
-              then lift $ xPubTxCount xpub xbals
-              else do
-                newXPubC xpub xbals
-                go True
+    go recursed = do
+      cached <- isXPubCached recursed xpub
+      if cached
+        then do
+          withMetrics $ \s ->
+            incrementCounter s.xTxCount 1
+          cacheGetXPubTxCount xpub
+        else do
+          if recursed
+            then lift $ xPubTxCount xpub xbals
+            else do
+              newXPubC xpub xbals
+              go True
 
 getXPubUnspents ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
@@ -374,71 +389,69 @@ getXPubUnspents ::
 getXPubUnspents xpub xbals limits =
   go False
   where
-    xm =
-      let f x = (x.balance.address, x)
-          g = (> 0) . (.balance.utxo)
-       in HashMap.fromList $ map f $ filter g xbals
-    go m =
-      isXPubCached xpub >>= \c ->
-        if c
-          then do
-            process
-          else do
-            if m
-              then lift $ xPubUnspents xpub xbals limits
-              else do
-                newXPubC xpub xbals
-                go True
-    process = do
-      ops <- map snd <$> cacheGetXPubUnspents xpub limits
-      uns <- catMaybes <$> lift (mapM getUnspent ops)
-      ctx <- lift getCtx
-      let f u =
-            either
-              (const Nothing)
-              (\a -> Just (a, u))
-              (scriptToAddressBS ctx u.script)
-          g a = HashMap.lookup a xm
-          h u x =
-            XPubUnspent
-              { unspent = u,
-                path = x.path
-              }
-          us = mapMaybe f uns
-          i a u = h u <$> g a
-      withMetrics $ \s -> incrementCounter s.xUnspents (length us)
-      return $ mapMaybe (uncurry i) us
+    go recursed = do
+      cached <- isXPubCached recursed xpub
+      if cached
+        then do
+          ops <- map snd <$> cacheGetXPubUnspents xpub limits
+          uns <- catMaybes <$> lift (mapM getUnspent ops)
+          ctx <- lift getCtx
+          let f u =
+                either
+                  (const Nothing)
+                  (\a -> Just (a, u))
+                  (scriptToAddressBS ctx u.script)
+              xm =
+                let j x = (x.balance.address, x)
+                    k = (> 0) . (.balance.utxo)
+                 in HashMap.fromList $ map j $ filter k xbals
+              g a = HashMap.lookup a xm
+              h u x =
+                XPubUnspent
+                  { unspent = u,
+                    path = x.path
+                  }
+              us = mapMaybe f uns
+              i a u = h u <$> g a
+          withMetrics $ \s -> incrementCounter s.xUnspents (length us)
+          return $ mapMaybe (uncurry i) us
+        else do
+          if recursed
+            then lift $ xPubUnspents xpub xbals limits
+            else do
+              newXPubC xpub xbals
+              go True
 
 getXPubBalances ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   XPubSpec ->
   CacheX m [XPubBal]
-getXPubBalances xpub =
-  isXPubCached xpub >>= \c ->
-    if c
-      then do
-        xbals <- cacheGetXPubBalances xpub
-        withMetrics $ \s -> incrementCounter s.xBalances (length xbals)
-        return xbals
-      else do
-        bals <- lift $ xPubBals xpub
-        newXPubC xpub bals
-        return bals
+getXPubBalances xpub = do
+  cached <- isXPubCached False xpub
+  if cached
+    then do
+      xbals <- cacheGetXPubBalances xpub
+      withMetrics $ \s -> incrementCounter s.xBalances (length xbals)
+      return xbals
+    else do
+      bals <- lift $ xPubBals xpub
+      newXPubC xpub bals
+      return bals
 
 isInCache :: (MonadLoggerIO m) => XPubSpec -> CacheT m Bool
 isInCache xpub =
-  ask >>= \case
+  ReaderT $ \case
     Nothing -> return False
-    Just cfg -> runReaderT (isXPubCached xpub) cfg
+    Just cfg -> runReaderT (isXPubCached True xpub) cfg
 
-isXPubCached :: (MonadLoggerIO m) => XPubSpec -> CacheX m Bool
-isXPubCached xpub =
-  runRedis (redisIsXPubCached xpub) >>= \c -> do
-    withMetrics $ \s ->
-      if c
-        then incrementCounter s.hits 1
-        else incrementCounter s.misses 1
-    return c
+isXPubCached :: (MonadLoggerIO m) => Bool -> XPubSpec -> CacheX m Bool
+isXPubCached silent xpub = do
+  cached <- runRedis (redisIsXPubCached xpub)
+  unless silent $ withMetrics $ \s ->
+    if cached
+      then incrementCounter s.hits 1
+      else incrementCounter s.misses 1
+  return cached
 
 redisIsXPubCached :: (RedisCtx m f) => XPubSpec -> m (f Bool)
 redisIsXPubCached xpub = Redis.exists (balancesPfx <> encode xpub)
