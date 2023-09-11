@@ -405,7 +405,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
     igap <- getInitialGap
     gap <- getMaxGap
     ext1 <- derive_until_gap gap 0 (take (fromIntegral igap) (aderiv ctx 0 0))
-    if all (nullBalance . (.balance)) ext1
+    if all nullxb ext1
       then do
         withMetrics $ \s -> incrementCounter s.dataXPubBals (length ext1)
         return ext1
@@ -416,19 +416,27 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
         withMetrics $ \s -> incrementCounter s.dataXPubBals (length bals)
         return bals
     where
+      nullxb b = nullBalance b.balance
       aderiv ctx m =
         deriveAddresses
           (deriveFunction ctx xpub.deriv)
           (pubSubKey ctx xpub.key m)
-      xbalance m b n = XPubBal {path = [m, n], balance = b}
-      derive_until_gap _ _ [] = return []
-      derive_until_gap gap m as = do
-        let (as1, as2) = splitAt (fromIntegral gap) as
-        bs <- getBalances (map snd as1)
-        let xbs = zipWith (xbalance m) bs (map fst as1)
-        if all nullBalance bs
-          then return xbs
-          else (xbs <>) <$> derive_until_gap gap m as2
+      derive_until_gap gap m adrs =
+        let xb b n = XPubBal {path = [m, n], balance = b}
+            ig = fromIntegral gap
+            test acc =
+              let xs = take ig acc
+               in length xs == ig && all nullxb xs
+            go acc [] = return $ reverse acc
+            go acc as
+              | test acc =
+                  return $ reverse acc
+              | otherwise = do
+                  let (as', as'') = splitAt ig as
+                  bs <- getBalances (map snd as')
+                  let xs = reverse $ zipWith xb bs (map fst as')
+                  go (xs <> acc) as''
+         in go [] adrs
 
   xPubUnspents _xspec xbals limits = do
     us <- concat <$> mapM h cs

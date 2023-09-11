@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 
+- Detect xpub gap more strictly.
 - Use statsd-rupp instead of ekg-stats.
 - All stat reporting keys changed.
 - Set open files on RocksDB to 1024.
