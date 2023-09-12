@@ -44,7 +44,7 @@ import Control.Monad.Logger
     logErrorS,
     logInfoS,
   )
-import Control.Monad.Reader (ReaderT (..), ask, asks)
+import Control.Monad.Reader (ReaderT (..), asks)
 import Control.Monad.Trans (lift)
 import Data.Bits (shift, (.&.), (.|.))
 import Data.ByteString (ByteString)
