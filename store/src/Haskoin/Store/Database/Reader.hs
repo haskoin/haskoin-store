@@ -425,12 +425,14 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
         let xb b n = XPubBal {path = [m, n], balance = b}
             ig = fromIntegral gap
             test acc =
-              let xs = take ig acc
-               in length xs == ig && all nullxb xs
+              let ns = takeWhile nullxb acc
+               in length ns > ig
             go acc [] = return $ reverse acc
             go acc as
               | test acc =
-                  return $ reverse acc
+                  let (ns, ys) = span nullxb acc
+                      xs = take ig $ reverse ns
+                   in return $ reverse ys <> xs
               | otherwise = do
                   let (as', as'') = splitAt ig as
                   bs <- getBalances (map snd as')
