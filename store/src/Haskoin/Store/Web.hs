@@ -422,7 +422,7 @@ withMetrics df go =
       restoreT . return
         =<< liftWith (\run -> bracket time (stop m) (const (run go)))
   where
-    time = round . (*1000) <$> liftIO getPOSIXTime
+    time = round . (* 1000) <$> liftIO getPOSIXTime
     stop m t1 = do
       t2 <- time
       let ms = t2 - t1
@@ -2750,13 +2750,14 @@ runInWebReader f = do
   mc <- asks (.config.store.cache)
   lift $ runReaderT (withCache mc f) bdb
 
-runNoCache :: (MonadIO m) => Bool -> ReaderT WebState m a -> ReaderT WebState m a
-runNoCache False f = f
-runNoCache True f = local g f
-  where
-    g s = s {config = h s.config}
-    h c = c {store = i c.store}
-    i s = s {cache = Nothing}
+runNoCache ::
+  (MonadIO m) =>
+  Bool ->
+  ReaderT WebState m a ->
+  ReaderT WebState m a
+runNoCache False = id
+runNoCache True = local $ \s ->
+  s {config = s.config {store = s.config.store {cache = Nothing}}}
 
 logIt ::
   (MonadUnliftIO m, MonadLoggerIO m) =>

@@ -68,7 +68,7 @@ import Haskoin.Store.Common
 import Haskoin.Store.Data
 import Haskoin.Store.Database.Types
 import System.Metrics.StatsD
-import UnliftIO (MonadIO, MonadUnliftIO, liftIO)
+import UnliftIO (MonadIO, MonadUnliftIO, bracket_, liftIO)
 
 type DatabaseReaderT = ReaderT DatabaseReader
 
@@ -92,7 +92,8 @@ data DataMetrics = DataMetrics
     dataXPubBals :: !StatCounter,
     dataXPubUnspents :: !StatCounter,
     dataXPubTxs :: !StatCounter,
-    dataXPubTxCount :: !StatCounter
+    dataXPubTxCount :: !StatCounter,
+    dataIters :: !StatGauge
   }
 
 createDataMetrics :: (MonadIO m) => Stats -> m DataMetrics
@@ -108,6 +109,7 @@ createDataMetrics s = do
   dataXPubUnspents <- newStatCounter s "db.xpub_unspents" n
   dataXPubTxs <- newStatCounter s "db.xpub_txs" n
   dataXPubTxCount <- newStatCounter s "db.xpub_tx_count" n
+  dataIters <- newStatGauge s "db.iterators" 0
   return DataMetrics {..}
   where
     n = 10
@@ -257,17 +259,28 @@ unspentConduit ctx a s it =
                   .| (dropWhileC (cond . fst) >> mapC id)
           Nothing -> return ()
 
+withIterCFStat ::
+  (MonadUnliftIO m) =>
+  DB ->
+  ColumnFamily ->
+  (Iterator -> DatabaseReaderT m a) ->
+  DatabaseReaderT m a
+withIterCFStat db cf = bracket_ open close . withIterCF db cf
+  where
+    open = asks (.metrics) >>= mapM_ (\m -> incrementGauge m.dataIters 1)
+    close = asks (.metrics) >>= mapM_ (\m -> decrementGauge m.dataIters 1)
+
 withManyIters ::
   (MonadUnliftIO m) =>
   DB ->
   ColumnFamily ->
   Int ->
-  ([Iterator] -> m a) ->
-  m a
+  ([Iterator] -> DatabaseReaderT m a) ->
+  DatabaseReaderT m a
 withManyIters db cf i f = go [] i
   where
     go acc 0 = f acc
-    go acc n = withIterCF db cf $ \it -> go (it : acc) (n - 1)
+    go acc n = withIterCFStat db cf $ \it -> go (it : acc) (n - 1)
 
 joinConduits ::
   (Monad m, Ord o) =>
@@ -359,7 +372,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
   getAddressUnspents a limits = do
     db <- asks (.db)
     ctx <- asks (.ctx)
-    us <- withIterCF db (addrOutCF db) $ \it ->
+    us <- withIterCFStat db (addrOutCF db) $ \it ->
       runConduit $
         unspentConduit ctx a limits.start it
           .| applyLimitsC limits
@@ -369,7 +382,7 @@ instance (MonadUnliftIO m) => StoreReadExtra (DatabaseReaderT m) where
 
   getAddressTxs a limits = do
     db <- asks (.db)
-    txs <- withIterCF db (addrTxCF db) $ \it ->
+    txs <- withIterCFStat db (addrTxCF db) $ \it ->
       runConduit $
         addressConduit a limits.start it
           .| applyLimitsC limits

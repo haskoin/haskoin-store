@@ -30,7 +30,6 @@ import Control.Monad
     void,
     when,
     zipWithM_,
-    (<=<),
   )
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Logger
@@ -40,7 +39,6 @@ import Control.Monad.Logger
   )
 import qualified Data.ByteString as B
 import Data.Either (rights)
-import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import qualified Data.IntMap.Strict as I
 import Data.List (nub)
@@ -135,7 +133,7 @@ newMempoolTx tx w =
       freeOutputs True True tx
       rbf <- isRBF (MemRef w) tx
       checkNewTx tx
-      importTx (MemRef w) w rbf tx
+      _ <- importTx (MemRef w) w rbf tx
       return True
 
 bestBlockData :: (MonadImport m) => m BlockData
@@ -265,8 +263,6 @@ importBlock b n = do
       <> blockHashToHex (headerHash n.header)
   return (bd, tds)
   where
-    cb_out_val =
-      sum $ map (.value) $ (head b.txs).outputs
     ts_out_val =
       sum $ map (sum . map (.value) . (.outputs)) $ tail $ b.txs
     w =
@@ -481,7 +477,7 @@ deleteTx memonly rbfcheck th = do
   mapM_ (\t -> let h = txHash t in deleteSingleTx h >> return h) chain
 
 getChain ::
-  (MonadImport m, MonadLoggerIO m) =>
+  (MonadImport m) =>
   -- | only delete transaction if unconfirmed
   Bool ->
   -- | only delete RBF

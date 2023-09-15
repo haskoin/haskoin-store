@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 
 - Add cache height stats.
+- Add database iterator stats.
 
 ### Changed
 
