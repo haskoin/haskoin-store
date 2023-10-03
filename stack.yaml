@@ -1,4 +1,4 @@
-resolver: lts-21.9
+resolver: nightly-2023-10-03
 nix:
   packages:
   - perl

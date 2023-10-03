@@ -183,7 +183,7 @@ import Data.Vector qualified as V
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import Haskoin
-import Web.Scotty.Trans (Parsable (..), ScottyError (..))
+import Web.Scotty.Trans (Parsable (..))
 
 data DeriveType
   = DeriveNormal
@@ -1953,10 +1953,6 @@ data Except
   deriving (Show, Eq, Ord, Generic, NFData)
 
 instance Exception Except
-
-instance ScottyError Except where
-  stringError = StringError
-  showError = LazyText.pack . show
 
 instance ToJSON Except where
   toJSON e =

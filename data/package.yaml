@@ -1,5 +1,5 @@
 name: haskoin-store-data
-version: 1.1.0
+version: 1.2.0
 synopsis: Data for Haskoin Store
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
@@ -22,7 +22,7 @@ dependencies:
   - hashable >= 1.3.0.0
   - haskoin-core >= 1.0.0
   - network >= 3.1.1.1
-  - scotty >= 0.11.5
+  - scotty >= 0.20
   - string-conversions >= 0.4.0.1
   - text >= 1.2.3.0
   - time >= 1.9.3
