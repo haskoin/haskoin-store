@@ -607,11 +607,6 @@ handlePaths ::
 handlePaths cfg = do
   -- Block Paths
   pathCompact
-    (GetBlock <$> paramLazy <*> paramDef)
-    scottyBlock
-    (marshalEncoding net)
-    (marshalValue net)
-  pathCompact
     (GetBlockBest <$> paramDef)
     scottyBlockBest
     (marshalEncoding net)
@@ -629,6 +624,11 @@ handlePaths cfg = do
   pathCompact
     (GetBlockMTP <$> paramLazy <*> paramDef)
     scottyBlockMTP
+    (marshalEncoding net)
+    (marshalValue net)
+  pathCompact
+    (GetBlock <$> paramLazy <*> paramDef)
+    scottyBlock
     (marshalEncoding net)
     (marshalValue net)
   pathCompact

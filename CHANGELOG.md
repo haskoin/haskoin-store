@@ -6,9 +6,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [1.2.1] - 2023-10-04
 
-### Changed
+### Fixed
 
 - Correct web exception output format (JSON).
+- Correct block path parsing order.
 
 ## [1.2.0] - 2023-10-03
 
