@@ -510,7 +510,6 @@ runWeb config = do
       S.scottyOptsT opts (runner . flip runReaderT state) $ do
         S.middleware $ webSocketEvents state
         S.middleware logger
-        S.defaultHandler defHandler
         handlePaths config
         S.notFound $ raise ThingNotFound
   where
@@ -578,15 +577,18 @@ price net session url pget v = forM_ purl $ \u -> forever $ do
           | otherwise = Nothing
 
 raise :: (MonadIO m) => Except -> ActionT m a
-raise err = do
+raise e = do
   askl (.metrics) >>= mapM_ \m -> do
     liftIO $
       mapM_ (`incrementCounter` 1) $
         if
-          | statusIsClientError (errStatus err) -> Just m.clientErrors
-          | statusIsServerError (errStatus err) -> Just m.serverErrors
+          | statusIsClientError (errStatus e) -> Just m.clientErrors
+          | statusIsServerError (errStatus e) -> Just m.serverErrors
           | otherwise -> Nothing
-  S.raiseStatus (errStatus err) (TL.pack (show err))
+  setHeaders
+  S.status $ errStatus e
+  S.json e
+  S.finish
 
 errStatus :: Except -> Status
 errStatus ThingNotFound = status404
@@ -597,12 +599,6 @@ errStatus ServerError = status500
 errStatus TxIndexConflict {} = status409
 errStatus ServerTimeout = status500
 errStatus RequestTooLarge = status413
-
-defHandler :: (MonadIO m) => S.ErrorHandler (ReaderT WebState m)
-defHandler = S.Handler $ \e -> do
-  setHeaders
-  S.status $ errStatus e
-  S.json e
 
 handlePaths ::
   (MonadUnliftIO m, MonadLoggerIO m) =>
