@@ -55,10 +55,11 @@ import Control.Monad.Logger
     logErrorS,
   )
 import Control.Monad.Reader
-  ( ReaderT,
+  ( MonadReader,
+    ReaderT,
     asks,
     local,
-    runReaderT, MonadReader,
+    runReaderT,
   )
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Class (MonadTrans)
@@ -612,32 +613,32 @@ handlePaths cfg = do
     (marshalEncoding net)
     (marshalValue net)
   pathCompact
-    (GetBlockHeight <$> paramLazy <*> paramDef)
+    (GetBlockHeight <$> paramCapture <*> paramDef)
     (fmap SerialList . scottyBlockHeight)
     (list (marshalEncoding net) . (.get))
     (json_list (marshalValue net) . (.get))
   pathCompact
-    (GetBlockTime <$> paramLazy <*> paramDef)
+    (GetBlockTime <$> paramCapture <*> paramDef)
     scottyBlockTime
     (marshalEncoding net)
     (marshalValue net)
   pathCompact
-    (GetBlockMTP <$> paramLazy <*> paramDef)
+    (GetBlockMTP <$> paramCapture <*> paramDef)
     scottyBlockMTP
     (marshalEncoding net)
     (marshalValue net)
   pathCompact
-    (GetBlock <$> paramLazy <*> paramDef)
+    (GetBlock <$> paramCapture <*> paramDef)
     scottyBlock
     (marshalEncoding net)
     (marshalValue net)
   pathCompact
-    (GetTx <$> paramLazy)
+    (GetTx <$> paramCapture)
     scottyTx
     (marshalEncoding net)
     (marshalValue net)
   pathCompact
-    (GetTxRaw <$> paramLazy)
+    (GetTxRaw <$> paramCapture)
     scottyTxRaw
     toEncoding
     toJSON
@@ -652,17 +653,17 @@ handlePaths cfg = do
     toEncoding
     toJSON
   pathCompact
-    (GetAddrTxs <$> paramLazy <*> parseLimits)
+    (GetAddrTxs <$> paramCapture <*> parseLimits)
     (fmap SerialList . scottyAddrTxs)
     toEncoding
     toJSON
   pathCompact
-    (GetAddrBalance <$> paramLazy)
+    (GetAddrBalance <$> paramCapture)
     scottyAddrBalance
     (marshalEncoding net)
     (marshalValue net)
   pathCompact
-    (GetAddrUnspent <$> paramLazy <*> parseLimits)
+    (GetAddrUnspent <$> paramCapture <*> parseLimits)
     (fmap SerialList . scottyAddrUnspent)
     (list (marshalEncoding net) . (.get))
     (json_list (marshalValue net) . (.get))
@@ -680,12 +681,12 @@ handlePaths cfg = do
   S.get "/dbstats" scottyDbStats
   unless cfg.noSlow $ do
     pathCompact
-      (GetBlocks <$> param <*> paramDef)
+      (GetBlocks <$> paramRequired <*> paramDef)
       (fmap SerialList . scottyBlocks)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetBlockRaw <$> paramLazy)
+      (GetBlockRaw <$> paramCapture)
       scottyBlockRaw
       toEncoding
       toJSON
@@ -700,102 +701,102 @@ handlePaths cfg = do
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetBlockHeights <$> param <*> paramDef)
+      (GetBlockHeights <$> paramRequired <*> paramDef)
       (fmap SerialList . scottyBlockHeights)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetBlockHeightRaw <$> paramLazy)
+      (GetBlockHeightRaw <$> paramCapture)
       scottyBlockHeightRaw
       toEncoding
       toJSON
     pathCompact
-      (GetBlockTimeRaw <$> paramLazy)
+      (GetBlockTimeRaw <$> paramCapture)
       scottyBlockTimeRaw
       toEncoding
       toJSON
     pathCompact
-      (GetBlockMTPRaw <$> paramLazy)
+      (GetBlockMTPRaw <$> paramCapture)
       scottyBlockMTPRaw
       toEncoding
       toJSON
     pathCompact
-      (GetTxs <$> param)
+      (GetTxs <$> paramRequired)
       (fmap SerialList . scottyTxs)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetTxsRaw <$> param)
+      (GetTxsRaw <$> paramRequired)
       scottyTxsRaw
       toEncoding
       toJSON
     pathCompact
-      (GetTxsBlock <$> paramLazy)
+      (GetTxsBlock <$> paramCapture)
       (fmap SerialList . scottyTxsBlock)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetTxsBlockRaw <$> paramLazy)
+      (GetTxsBlockRaw <$> paramCapture)
       scottyTxsBlockRaw
       toEncoding
       toJSON
     pathCompact
-      (GetTxAfter <$> paramLazy <*> paramLazy)
+      (GetTxAfter <$> paramCapture <*> paramCapture)
       scottyTxAfter
       toEncoding
       toJSON
     pathCompact
-      (GetAddrsTxs <$> param <*> parseLimits)
+      (GetAddrsTxs <$> paramRequired <*> parseLimits)
       (fmap SerialList . scottyAddrsTxs)
       toEncoding
       toJSON
     pathCompact
-      (GetAddrTxsFull <$> paramLazy <*> parseLimits)
+      (GetAddrTxsFull <$> paramCapture <*> parseLimits)
       (fmap SerialList . scottyAddrTxsFull)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetAddrsTxsFull <$> param <*> parseLimits)
+      (GetAddrsTxsFull <$> paramRequired <*> parseLimits)
       (fmap SerialList . scottyAddrsTxsFull)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetAddrsBalance <$> param)
+      (GetAddrsBalance <$> paramRequired)
       (fmap SerialList . scottyAddrsBalance)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetAddrsUnspent <$> param <*> parseLimits)
+      (GetAddrsUnspent <$> paramRequired <*> parseLimits)
       (fmap SerialList . scottyAddrsUnspent)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetXPub <$> paramLazy <*> paramDef <*> paramDef)
+      (GetXPub <$> paramCapture <*> paramDef <*> paramDef)
       scottyXPub
       toEncoding
       toJSON
     pathCompact
-      (GetXPubTxs <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+      (GetXPubTxs <$> paramCapture <*> paramDef <*> parseLimits <*> paramDef)
       (fmap SerialList . scottyXPubTxs)
       toEncoding
       toJSON
     pathCompact
-      (GetXPubTxsFull <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+      (GetXPubTxsFull <$> paramCapture <*> paramDef <*> parseLimits <*> paramDef)
       (fmap SerialList . scottyXPubTxsFull)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetXPubBalances <$> paramLazy <*> paramDef <*> paramDef)
+      (GetXPubBalances <$> paramCapture <*> paramDef <*> paramDef)
       (fmap SerialList . scottyXPubBalances)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (GetXPubUnspent <$> paramLazy <*> paramDef <*> parseLimits <*> paramDef)
+      (GetXPubUnspent <$> paramCapture <*> paramDef <*> parseLimits <*> paramDef)
       (fmap SerialList . scottyXPubUnspent)
       (list (marshalEncoding net) . (.get))
       (json_list (marshalValue net) . (.get))
     pathCompact
-      (DelCachedXPub <$> paramLazy <*> paramDef)
+      (DelCachedXPub <$> paramCapture <*> paramDef)
       scottyDelXPub
       toEncoding
       toJSON
@@ -890,7 +891,7 @@ setHeaders = S.setHeader "Access-Control-Allow-Origin" "*"
 setupJSON :: (MonadUnliftIO m) => Bool -> S.ActionT m SerialAs
 setupJSON pretty = do
   S.setHeader "Content-Type" "application/json"
-  p <- S.queryParam "pretty" `S.rescue` \S.StatusError {} -> return pretty
+  p <- param "pretty" `rescue` return pretty
   return $ if p then SerialAsPrettyJSON else SerialAsJSON
 
 setupBinary :: (MonadIO m) => S.ActionT m SerialAs
@@ -1476,7 +1477,7 @@ getBinfoAddrsParam ::
 getBinfoAddrsParam name = do
   net <- askl (.config.store.net)
   ctx <- askl (.config.store.ctx)
-  p <- S.param (cs name) `S.rescue` \S.StatusError {} -> return ""
+  p <- param (TL.fromStrict name) `rescue` return ""
   if T.null p
     then return HashSet.empty
     else case parseBinfoAddr net ctx p of
@@ -1507,7 +1508,7 @@ getBinfoActive = do
     xpub (BinfoAddr _) = Nothing
 
 getNumTxId :: (MonadUnliftIO m) => ActionT m Bool
-getNumTxId = fmap not $ "txidindex" `paramOr` False
+getNumTxId = fmap not $ param "txidindex" `rescue` return False
 
 getChainHeight :: (MonadUnliftIO m) => ActionT m H.BlockHeight
 getChainHeight =
@@ -1532,8 +1533,8 @@ scottyBinfoUnspent =
     setHeaders
     streamEncoding (marshalEncoding (net, ctx) (BinfoUnspents bus))
   where
-    get_limit = fmap (min 1000) $ "limit" `paramOr` 250
-    get_min_conf = "confirmations" `paramOr` 0
+    get_limit = fmap (min 1000) $ param "limit" `rescue` return 250
+    get_min_conf = param "confirmations" `rescue` return 0
 
 getBinfoUnspents ::
   (StoreReadExtra m, MonadIO m) =>
@@ -1674,26 +1675,23 @@ getBinfoTxs
                     | otherwise -> yield a >> go b'
 
 getCashAddr :: (MonadUnliftIO m) => ActionT m Bool
-getCashAddr = "cashaddr" `paramOr` False
+getCashAddr = param "cashaddr" `rescue` return False
 
-getAddress :: (MonadUnliftIO m) => TL.Text -> ActionT m Address
-getAddress param' = do
-  txt <- S.param param'
+getAddress :: (MonadUnliftIO m) => Text -> ActionT m Address
+getAddress txt = do
   net <- askl (.config.store.net)
   case textToAddr net txt of
     Nothing -> raise ThingNotFound
     Just a -> return a
 
-getBinfoAddr :: (MonadIO m) => TL.Text -> ActionT m BinfoAddr
+getBinfoAddr :: (MonadUnliftIO m) => TL.Text -> ActionT m BinfoAddr
 getBinfoAddr param' = do
-  txt <- S.param param'
+  txt <- S.captureParam param'
   net <- askl (.config.store.net)
   ctx <- askl (.config.store.ctx)
-  let x =
-        BinfoAddr
-          <$> textToAddr net txt
-          <|> BinfoXpub <$> xPubImport net ctx txt
-  maybe S.next return x
+  let addr = BinfoAddr <$> textToAddr net txt
+      xpub = BinfoXpub <$> xPubImport net ctx txt
+  maybe S.next return (addr <|> xpub)
 
 scottyBinfoHistory :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoHistory =
@@ -1750,8 +1748,8 @@ scottyBinfoHistory =
       a `HashSet.member` addrs'
     output_addr _ _ = False
     get_dates = do
-      BinfoDate start <- S.param "start"
-      BinfoDate end' <- S.param "end"
+      BinfoDate start <- param "start"
+      BinfoDate end' <- param "end"
       let end = end' + 24 * 60 * 60
       ch <- askl (.config.store.chain)
       startM <- blockAtOrAfter ch start
@@ -1773,7 +1771,7 @@ scottyBinfoHistory =
 
 getPrice :: (MonadUnliftIO m) => ActionT m (Text, BinfoTicker)
 getPrice = do
-  code <- T.toUpper <$> "currency" `paramOr` "USD"
+  code <- T.toUpper <$> param "currency" `rescue` return "USD"
   ticker <- askl (.ticker)
   prices <- readTVarIO ticker
   case HashMap.lookup code prices of
@@ -1786,7 +1784,7 @@ getSymbol = uncurry binfoTickerToSymbol <$> getPrice
 scottyBinfoBlocksDay :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoBlocksDay =
   withMetrics (.binfoBlock) $ do
-    t <- min h . (`div` 1000) <$> S.param "milliseconds"
+    t <- min h . (`div` 1000) <$> S.captureParam "milliseconds"
     ch <- askl (.config.store.chain)
     m <- blockAtOrBefore ch t
     bs <- go (d t) m
@@ -1897,7 +1895,7 @@ scottyMultiAddr =
                 <$> xPubTxCount x (xBals x xbals)
           )
         . HashSet.toList
-    get_filter = "filter" `paramOr` BinfoFilterAll
+    get_filter = param "filter" `rescue` return BinfoFilterAll
     get_best_block =
       getBestBlock >>= \case
         Nothing -> raise ThingNotFound
@@ -1905,7 +1903,7 @@ scottyMultiAddr =
           getBlock bh >>= \case
             Nothing -> raise ThingNotFound
             Just b -> return b
-    get_prune = fmap not $ "no_compact" `paramOr` False
+    get_prune = fmap not $ param "no_compact" `rescue` return False
     only_show_xbals sxpubs =
       HashMap.filterWithKey (\k _ -> k.key `HashSet.member` sxpubs)
     only_show_xspecs sxpubs =
@@ -1962,7 +1960,7 @@ getBinfoCount :: (MonadUnliftIO m) => TL.Text -> ActionT m Int
 getBinfoCount str = do
   d <- askl (.config.limits.defItemCount)
   x <- askl (.config.limits.maxFullItemCount)
-  i <- min x <$> (str `paramOr` d)
+  i <- min x <$> (param str `rescue` return d)
   return (fromIntegral i :: Int)
 
 getBinfoOffset ::
@@ -1970,7 +1968,7 @@ getBinfoOffset ::
   ActionT m Int
 getBinfoOffset = do
   x <- askl (.config.limits.maxOffset)
-  o <- "offset" `paramOr` 0
+  o <- param "offset" `rescue` return 0
   when (o > x) $
     raise $
       UserError $
@@ -1986,7 +1984,7 @@ scottyRawAddr =
   where
     do_xpub xpub = do
       numtxid <- getNumTxId
-      derive <- "derive" `paramOr` DeriveNormal
+      derive <- param "derive" `rescue` return DeriveNormal
       let xspec = XPubSpec xpub derive
       n <- getBinfoCount "limit"
       off <- getBinfoOffset
@@ -2075,7 +2073,7 @@ scottyRawAddr =
 scottyBinfoReceived :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoReceived =
   withMetrics (.binfoQgetreceivedbyaddress) $ do
-    a <- getAddress "addr"
+    a <- getAddress =<< S.captureParam "addr"
     b <- fromMaybe (zeroBalance a) <$> getBalance a
     setHeaders
     S.text $ cs $ show b.received
@@ -2083,7 +2081,7 @@ scottyBinfoReceived =
 scottyBinfoSent :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoSent =
   withMetrics (.binfoQgetsentbyaddress) $ do
-    a <- getAddress "addr"
+    a <- getAddress =<< S.captureParam "addr"
     b <- fromMaybe (zeroBalance a) <$> getBalance a
     setHeaders
     S.text $ cs $ show $ b.received - b.confirmed - b.unconfirmed
@@ -2091,7 +2089,7 @@ scottyBinfoSent =
 scottyBinfoAddrBalance :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoAddrBalance =
   withMetrics (.binfoQaddressbalance) $ do
-    a <- getAddress "addr"
+    a <- getAddress =<< S.captureParam "addr"
     b <- fromMaybe (zeroBalance a) <$> getBalance a
     setHeaders
     S.text $ cs $ show $ b.confirmed + b.unconfirmed
@@ -2099,7 +2097,7 @@ scottyBinfoAddrBalance =
 scottyFirstSeen :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyFirstSeen =
   withMetrics (.binfoQaddressfirstseen) $ do
-    a <- getAddress "addr"
+    a <- getAddress =<< S.captureParam "addr"
     ch <- askl (.config.store.chain)
     bb <- chainGetBest ch
     let top = bb.height
@@ -2179,13 +2177,13 @@ scottyShortBal =
       return (xPubExport net ctx xpub.key, sbl)
 
 getBinfoHex :: (MonadUnliftIO m) => ActionT m Bool
-getBinfoHex = (== ("hex" :: Text)) <$> "format" `paramOr` "json"
+getBinfoHex = (== ("hex" :: Text)) <$> param "format" `rescue` return "json"
 
 scottyBinfoBlockHeight :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoBlockHeight =
   withMetrics (.binfoBlockHeight) $ do
     numtxid <- getNumTxId
-    height <- S.param "height"
+    height <- S.captureParam "height"
     bs <- fmap catMaybes $ getBlocksAtHeight height >>= mapM getBlock
     ns <- fmap catMaybes $ getBlocksAtHeight (height + 1) >>= mapM getBlock
     is <- mapM (get_binfo_blocks numtxid ns) bs
@@ -2222,7 +2220,7 @@ scottyBinfoBlock =
   withMetrics (.binfoBlockRaw) $ do
     numtxid <- getNumTxId
     hex <- getBinfoHex
-    S.param "block" >>= \case
+    S.captureParam "block" >>= \case
       BinfoBlockHash bh -> go numtxid hex bh
       BinfoBlockIndex i ->
         getBlocksAtHeight i >>= \case
@@ -2268,7 +2266,7 @@ scottyBinfoTx =
   withMetrics (.binfoTxRaw) $ do
     numtxid <- getNumTxId
     hex <- getBinfoHex
-    txid <- S.param "txid"
+    txid <- S.captureParam "txid"
     tx <-
       getBinfoTx txid >>= \case
         Right t -> return t
@@ -2287,7 +2285,7 @@ scottyBinfoTx =
 scottyBinfoTotalOut :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoTotalOut =
   withMetrics (.binfoQtxtotalbtcoutput) $ do
-    txid <- S.param "txid"
+    txid <- S.captureParam "txid"
     tx <-
       getBinfoTx txid >>= \case
         Right t -> return t
@@ -2297,7 +2295,7 @@ scottyBinfoTotalOut =
 scottyBinfoTxFees :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoTxFees =
   withMetrics (.binfoQtxfee) $ do
-    txid <- S.param "txid"
+    txid <- S.captureParam "txid"
     tx <-
       getBinfoTx txid >>= \case
         Right t -> return t
@@ -2312,8 +2310,8 @@ scottyBinfoTxFees =
 scottyBinfoTxResult :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoTxResult =
   withMetrics (.binfoQtxresult) $ do
-    txid <- S.param "txid"
-    addr <- getAddress "addr"
+    txid <- S.captureParam "txid"
+    addr <- getAddress =<< S.captureParam "addr"
     tx <-
       getBinfoTx txid >>= \case
         Right t -> return t
@@ -2330,7 +2328,7 @@ scottyBinfoTxResult =
 scottyBinfoTotalInput :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoTotalInput =
   withMetrics (.binfoQtxtotalbtcinput) $ do
-    txid <- S.param "txid"
+    txid <- S.captureParam "txid"
     tx <-
       getBinfoTx txid >>= \case
         Right t -> return t
@@ -2361,7 +2359,7 @@ scottyBinfoGetBlockCount =
     ch <- askl (.config.store.chain)
     bn <- chainGetBest ch
     setHeaders
-    S.text $ cs $ show bn.height
+    S.text $ TL.pack $ show bn.height
 
 scottyBinfoLatestHash :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoLatestHash =
@@ -2388,14 +2386,14 @@ scottyBinfoSubsidy =
 scottyBinfoAddrToHash :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoAddrToHash =
   withMetrics (.binfoQaddresstohash) $ do
-    addr <- getAddress "addr"
+    addr <- getAddress =<< S.captureParam "addr"
     setHeaders
     S.text $ encodeHexLazy $ runPutL $ serialize addr.hash160
 
 scottyBinfoHashToAddr :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoHashToAddr =
   withMetrics (.binfoQhashtoaddress) $ do
-    bs <- maybe S.next return . decodeHex =<< S.param "hash"
+    bs <- maybe S.next return . decodeHex =<< S.captureParam "hash"
     net <- askl (.config.store.net)
     hash <- either (const S.next) return $ decode bs
     addr <- maybe S.next return $ addrToText net $ PubKeyAddress hash
@@ -2405,7 +2403,7 @@ scottyBinfoHashToAddr =
 scottyBinfoAddrPubkey :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoAddrPubkey =
   withMetrics (.binfoQaddrpubkey) $ do
-    hex <- S.param "pubkey"
+    hex <- S.captureParam "pubkey"
     ctx <- askl (.config.store.ctx)
     pubkey <-
       maybe S.next (return . pubKeyAddr ctx) $
@@ -2414,13 +2412,12 @@ scottyBinfoAddrPubkey =
     setHeaders
     case addrToText net pubkey of
       Nothing -> raise ThingNotFound
-      Just a -> do
-        S.text $ TL.fromStrict a
+      Just a -> S.text $ TL.fromStrict a
 
 scottyBinfoPubKeyAddr :: (MonadUnliftIO m, MonadLoggerIO m) => ActionT m ()
 scottyBinfoPubKeyAddr =
   withMetrics (.binfoQpubkeyaddr) $ do
-    addr <- getAddress "addr"
+    addr <- getAddress =<< S.captureParam "addr"
     mi <- strm addr
     i <- case mi of
       Nothing -> raise ThingNotFound
@@ -2465,7 +2462,10 @@ scottyBinfoHashPubkey :: (MonadUnliftIO m) => ActionT m ()
 scottyBinfoHashPubkey =
   withMetrics (.binfoQhashpubkey) $ do
     ctx <- askl (.config.store.ctx)
-    pkm <- (eitherToMaybe . unmarshal ctx <=< decodeHex) <$> S.param "pubkey"
+    pkm <-
+      fmap
+        (eitherToMaybe . unmarshal ctx <=< decodeHex)
+        (S.captureParam "pubkey")
     addr <- case pkm of
       Nothing -> raise $ UserError "Could not decode public key"
       Just pk -> return $ pubKeyAddr ctx pk
@@ -2619,34 +2619,23 @@ scottyDbStats =
 
 -- | Returns @Nothing@ if the parameter is not supplied. Raises an exception on
 -- parse failure.
-paramOptional :: (Param a, MonadUnliftIO m) => ActionT m (Maybe a)
-paramOptional = go Proxy
+paramOptional :: forall a m. (Param a, MonadUnliftIO m) => ActionT m (Maybe a)
+paramOptional = do
+  net <- askl (.config.store.net)
+  ctx <- askl (.config.store.ctx)
+  fmap Just (param label) `rescue` return Nothing >>= \case
+    Nothing -> return Nothing -- Parameter was not supplied
+    Just ts -> maybe (raise err) (return . Just) (parseParam net ctx ts)
   where
-    go :: (Param a, MonadUnliftIO m) => Proxy a -> ActionT m (Maybe a)
-    go proxy = do
-      net <- askl (.config.store.net)
-      ctx <- askl (.config.store.ctx)
-      tsM :: Maybe [Text] <- p `S.rescue` \S.StatusError {} -> return Nothing
-      case tsM of
-        Nothing -> return Nothing -- Parameter was not supplied
-        Just ts -> maybe (raise err) (return . Just) $ parseParam net ctx ts
-      where
-        l = proxyLabel proxy
-        p = Just <$> S.param (cs l)
-        err = UserError $ "Unable to parse param " <> cs l
+    label = TL.fromStrict (proxyLabel (Proxy :: Proxy a))
+    err = UserError $ "Unable to parse param " <> TL.unpack label
 
 -- | Raises an exception if the parameter is not supplied
-param :: (Param a, MonadUnliftIO m) => ActionT m a
-param = go Proxy
+paramRequired :: forall a m. (Param a, MonadUnliftIO m) => ActionT m a
+paramRequired = maybe (raise err) return =<< paramOptional
   where
-    go :: (Param a, MonadUnliftIO m) => Proxy a -> ActionT m a
-    go proxy = do
-      resM <- paramOptional
-      case resM of
-        Just res -> return res
-        _ ->
-          raise . UserError $
-            "The param " <> cs (proxyLabel proxy) <> " was not defined"
+    label = T.unpack (proxyLabel (Proxy :: Proxy a))
+    err = UserError $ "Param " <> label <> " not defined"
 
 -- | Returns the default value of a parameter if it is not supplied. Raises an
 -- exception on parse failure.
@@ -2655,10 +2644,14 @@ paramDef = fromMaybe def <$> paramOptional
 
 -- | Does not raise exceptions. Will call @Scotty.next@ if the parameter is
 -- not supplied or if parsing fails.
-paramLazy :: (Param a, MonadUnliftIO m) => ActionT m a
-paramLazy = do
-  resM <- paramOptional `S.rescue` \S.StatusError {} -> return Nothing
-  maybe S.next return resM
+paramCapture :: forall a m. (Param a, MonadUnliftIO m) => ActionT m a
+paramCapture = do
+  net <- askl (.config.store.net)
+  ctx <- askl (.config.store.ctx)
+  p <- S.captureParam label `rescue` S.next
+  maybe S.next return (parseParam net ctx p)
+  where
+    label = TL.fromStrict (proxyLabel (Proxy :: Proxy a))
 
 parseBody :: (MonadIO m, Serial a) => ActionT m a
 parseBody = do
@@ -2778,8 +2771,18 @@ fmtReq req =
 fmtStatus :: Status -> Text
 fmtStatus s = cs (show (statusCode s)) <> " " <> cs (statusMessage s)
 
-paramOr :: (MonadUnliftIO m, S.Parsable a) => TL.Text -> a -> S.ActionT m a
-paramOr t d = S.param t `S.rescue` \S.StatusError {} -> return d
+rescue ::
+  (MonadUnliftIO m) =>
+  S.ActionT m a ->
+  S.ActionT m a ->
+  S.ActionT m a
+x `rescue` y = x `S.rescue` \S.StatusError {} -> y
+
+param ::
+  (MonadUnliftIO m, S.Parsable a) =>
+  TL.Text ->
+  S.ActionT m a
+param t = S.queryParam t `rescue` S.formParam t
 
 askl :: (MonadTrans t, MonadReader r m) => (r -> a) -> t m a
 askl f = lift (asks f)
