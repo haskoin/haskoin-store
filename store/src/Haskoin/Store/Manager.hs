@@ -268,7 +268,7 @@ withCache cfg chain db pub action =
                 cfg.redisSyncInterval
                 evts
                 (getProcessMailbox p)
-                $ action (Just conf)
+                (action (Just conf))
   where
     f conf cwinbox = runReaderT (cacheWriter conf cwinbox) db
     c conn metrics =
