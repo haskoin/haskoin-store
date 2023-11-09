@@ -17,21 +17,18 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Base64
 import Data.Either
-import Data.List
-import Data.Maybe
+import Data.List ( find )
+import Data.Maybe ( fromJust, fromMaybe, isJust, mapMaybe )
 import Data.Serialize
 import Data.Time.Clock.POSIX
 import Data.Word
 import Haskoin
 import Haskoin.Node
 import Haskoin.Store
-import Haskoin.Util.Arbitrary
 import NQE
 import Network.Socket
 import System.Random
 import Test.Hspec
-import Test.Hspec.QuickCheck
-import Test.QuickCheck
 import UnliftIO
 
 data TestStore = TestStore
@@ -113,14 +110,14 @@ withTestStore net ctx t f =
                 stats = Nothing,
                 redisSyncInterval = 30
               }
-      withStore cfg $ \Store {..} ->
-        withSubscription pub $ \sub ->
+      withStore cfg $ \store ->
+        withSubscription store.pub $ \sub ->
           lift $
             f
               TestStore
-                { testStoreDB = db,
-                  testStoreBlockStore = block,
-                  testStoreChain = chain,
+                { testStoreDB = store.db,
+                  testStoreBlockStore = store.block,
+                  testStoreChain = store.chain,
                   testStoreEvents = sub
                 }
 

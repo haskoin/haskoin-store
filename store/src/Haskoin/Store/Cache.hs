@@ -245,10 +245,7 @@ connectRedis redisurl = do
         Right r -> return r
   liftIO (checkedConnect conninfo)
 
-instance
-  (MonadUnliftIO m, StoreReadBase m) =>
-  StoreReadBase (CacheX m)
-  where
+instance (StoreReadBase m) => StoreReadBase (CacheX m) where
   getCtx = lift getCtx
   getNetwork = lift getNetwork
   getBestBlock = lift getBestBlock
@@ -260,10 +257,7 @@ instance
   getUnspent = lift . getUnspent
   getMempool = lift getMempool
 
-instance
-  (MonadUnliftIO m, StoreReadBase m) =>
-  StoreReadBase (CacheT m)
-  where
+instance (StoreReadBase m) => StoreReadBase (CacheT m) where
   getCtx = lift getCtx
   getNetwork = lift getNetwork
   getBestBlock = lift getBestBlock

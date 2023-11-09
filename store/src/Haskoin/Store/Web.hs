@@ -203,7 +203,6 @@ import UnliftIO
     liftIO,
     newTVarIO,
     readTVarIO,
-    timeout,
     withAsync,
     writeTVar,
   )
