@@ -47,7 +47,7 @@ import Control.Monad
     forever,
     unless,
     when,
-    (<=<),
+    (<=<), void,
   )
 import Control.Monad.Logger
   ( MonadLoggerIO,
@@ -204,7 +204,7 @@ import UnliftIO
     newTVarIO,
     readTVarIO,
     withAsync,
-    writeTVar,
+    writeTVar, async,
   )
 import UnliftIO.Concurrent (threadDelay)
 import Web.Scotty.Trans qualified as S
@@ -1182,9 +1182,16 @@ publishTx ::
   WebConfig ->
   Tx ->
   m ()
-publishTx cfg tx =
-  getPeers cfg.store.peerMgr
-    >>= mapM_ (sendMessage (MTx tx) . (.mailbox))
+publishTx cfg tx = do
+  ps <- getPeers cfg.store.peerMgr
+  let c = max 1 (length ps `div` 2)
+  forM_ (take c ps) $ \p -> do
+    sendMessage (MTx tx) p.mailbox
+    void . async $ do
+      threadDelay (5 * 1000 * 1000)
+      let v = if cfg.store.net.segWit then InvWitnessTx else InvTx
+          g = MGetData (GetData [InvVector v (txHash tx).get])
+      sendMessage g p.mailbox
 
 -- GET Mempool / Events --
 
