@@ -5,57 +5,15 @@
 
 packages:
 - completed:
-    hackage: haskoin-core-1.0.1@sha256:3b373c31079b1ebe7925c4e281f5c155279c36152f2af912159bfb8c80ed1904,5065
-    pantry-tree:
-      sha256: cd45b1dfa99375827f75ba4a196f96891a9e21ddaa649cff7cff2f92a2039630
-      size: 5732
-  original:
-    hackage: haskoin-core-1.0.1@sha256:3b373c31079b1ebe7925c4e281f5c155279c36152f2af912159bfb8c80ed1904,5065
-- completed:
-    hackage: secp256k1-haskell-1.0.0@sha256:42e1dc0ddba74b752bddf7d55c19aa10b24ff6f51889a53bc07c2ff2107aca16,2082
-    pantry-tree:
-      sha256: 7846a02f6292cb0179cdf7252b3832f74b3109079e45248c931791f951355702
-      size: 600
-  original:
-    hackage: secp256k1-haskell-1.0.0@sha256:42e1dc0ddba74b752bddf7d55c19aa10b24ff6f51889a53bc07c2ff2107aca16,2082
-- completed:
-    hackage: haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
-    pantry-tree:
-      sha256: 0f6366d8d157223378b60322e7dcc6ed0d41cd2b9408e957b48a4795eb8cb382
-      size: 636
-  original:
-    hackage: haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
-- completed:
-    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
-    pantry-tree:
-      sha256: 3a0f4b633d58e312d6e6fa556c7abbd0f483ebc35d767a77315f98e2d9840fd8
-      size: 1457
-  original:
-    hackage: base16-1.0@sha256:9b72a280a7af75a5026fa25a1b8ae18ec10200a070947723f1fd61dc8d407862,2472
-- completed:
     hackage: statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
     pantry-tree:
       sha256: 97fa7f2d70f00ef9d57da9b2d590187c6ad4b653248697ceab1423d52101ebfa
       size: 457
   original:
     hackage: statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
-- completed:
-    hackage: rocksdb-haskell-jprupp-2.1.6@sha256:e93d7d419718f43be4e87b95490aeda4a45caa7517ade726385df43a39889569,1709
-    pantry-tree:
-      sha256: 3e9a5b931224e8a9c98ab54ed9b15689f4d11fa285624a57c35ecea8d950e19e
-      size: 711
-  original:
-    hackage: rocksdb-haskell-jprupp-2.1.6@sha256:e93d7d419718f43be4e87b95490aeda4a45caa7517ade726385df43a39889569,1709
-- completed:
-    hackage: scotty-0.20@sha256:f9b3f21773f813e92e41a6b5eee1fbefbbe0c695ac5259413500270ec0847151,5292
-    pantry-tree:
-      sha256: 4666d49e36443b9ec6d16257fe5ed971e3fdf7111b5996a316372729523038c9
-      size: 1945
-  original:
-    hackage: scotty-0.20@sha256:f9b3f21773f813e92e41a6b5eee1fbefbbe0c695ac5259413500270ec0847151,5292
 snapshots:
 - completed:
-    sha256: 64d66303f927e87ffe6b8ccf736229bf608731e80d7afdf62bdd63c59f857740
-    size: 640037
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/21/11.yaml
-  original: lts-21.11
+    sha256: 06d6ca68d18db01d18142bd1b2c61f1a5d23383d0b98991a0b3ce04c5ca3bf3a
+    size: 698107
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2023/11/9.yaml
+  original: nightly-2023-11-09
