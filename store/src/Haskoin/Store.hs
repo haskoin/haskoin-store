@@ -27,10 +27,7 @@ module Haskoin.Store
     getTransaction,
     getDefaultBalance,
     getActiveTxData,
-    blockAtOrBefore,
-
-    -- * Other Data
-    PubExcept (..),
+    blockAtOrBefore
   )
 where
 

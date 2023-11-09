@@ -1174,56 +1174,18 @@ scottyPostTx :: (MonadUnliftIO m) => PostTx -> ActionT m TxId
 scottyPostTx (PostTx tx) =
   withMetrics (.txPost) $ do
     cfg <- askl (.config)
-    lift (publishTx cfg tx) >>= \case
-      Right () -> return (TxId (txHash tx))
-      Left e@(PubReject _) -> raise $ UserError (show e)
-      _ -> raise ServerError
+    lift (publishTx cfg tx)
+    return (TxId (txHash tx))
 
--- | Publish a new transaction to the network.
+-- | Send transaction to all connected peers.
 publishTx ::
   (MonadUnliftIO m, StoreReadBase m) =>
   WebConfig ->
   Tx ->
-  m (Either PubExcept ())
+  m ()
 publishTx cfg tx =
-  withSubscription pub $ \s ->
-    getTransaction (txHash tx) >>= \case
-      Just _ -> return $ Right ()
-      Nothing -> go s
-  where
-    pub = cfg.store.pub
-    mgr = cfg.store.peerMgr
-    net = cfg.store.net
-    go s =
-      getPeers mgr >>= \case
-        [] -> return $ Left PubNoPeers
-        OnlinePeer {mailbox = p} : _ -> do
-          MTx tx `sendMessage` p
-          let v =
-                if net.segWit
-                  then InvWitnessTx
-                  else InvTx
-          sendMessage
-            (MGetData (GetData [InvVector v (txHash tx).get]))
-            p
-          f p s
-    t = 5 * 1000 * 1000
-    f p s
-      | cfg.noMempool = return $ Right ()
-      | otherwise =
-          liftIO (UnliftIO.timeout t (g p s)) >>= \case
-            Nothing -> return $ Left PubTimeout
-            Just (Left e) -> return $ Left e
-            Just (Right ()) -> return $ Right ()
-    g p s =
-      receive s >>= \case
-        StoreTxReject p' h' c _
-          | p == p' && h' == txHash tx -> return . Left $ PubReject c
-        StorePeerDisconnected p'
-          | p == p' -> return $ Left PubPeerDisconnected
-        StoreMempoolNew h'
-          | h' == txHash tx -> return $ Right ()
-        _ -> g p s
+  getPeers cfg.store.peerMgr
+    >>= mapM_ (sendMessage (MTx tx) . (.mailbox))
 
 -- GET Mempool / Events --
 

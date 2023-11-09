@@ -1,12 +1,9 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoFieldSelectors #-}
@@ -18,7 +15,6 @@ module Haskoin.Store.Common
     StoreReadExtra (..),
     StoreWrite (..),
     StoreEvent (..),
-    PubExcept (..),
     getActiveBlock,
     getActiveTxData,
     getDefaultBalance,
@@ -53,8 +49,6 @@ import Conduit
     yield,
     ($$++),
   )
-import Control.DeepSeq (NFData)
-import Control.Exception (Exception)
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Control.Monad.Trans.Reader (runReaderT)
@@ -64,14 +58,12 @@ import Data.HashSet qualified as H
 import Data.Hashable (Hashable)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
-import Data.Serialize (Serialize (..))
 import Data.Time.Clock.System
   ( getSystemTime,
     systemNanoseconds,
     systemSeconds,
   )
 import Data.Word (Word32, Word64)
-import GHC.Generics (Generic)
 import Haskoin
 import Haskoin.Node (Chain, Peer)
 import Haskoin.Store.Data
@@ -168,7 +160,7 @@ getActiveBlock bh =
 getActiveTxData :: (StoreReadBase m) => TxHash -> m (Maybe TxData)
 getActiveTxData th =
   getTxData th >>= \case
-    Just td | not (td.deleted) -> return (Just td)
+    Just td | not td.deleted -> return (Just td)
     _ -> return Nothing
 
 getDefaultBalance :: (StoreReadBase m) => Address -> m Balance
@@ -267,31 +259,6 @@ data StoreEvent
   | StorePeerPong !Peer !Word64
   | StoreTxAnnounce !Peer ![TxHash]
   | StoreTxReject !Peer !TxHash !RejectCode !ByteString
-
-data PubExcept
-  = PubNoPeers
-  | PubReject RejectCode
-  | PubTimeout
-  | PubPeerDisconnected
-  deriving (Eq, NFData, Generic, Serialize)
-
-instance Show PubExcept where
-  show PubNoPeers = "no peers"
-  show (PubReject c) =
-    "rejected: "
-      <> case c of
-        RejectMalformed -> "malformed"
-        RejectInvalid -> "invalid"
-        RejectObsolete -> "obsolete"
-        RejectDuplicate -> "duplicate"
-        RejectNonStandard -> "not standard"
-        RejectDust -> "dust"
-        RejectInsufficientFee -> "insufficient fee"
-        RejectCheckpoint -> "checkpoint"
-  show PubTimeout = "peer timeout or silent rejection"
-  show PubPeerDisconnected = "peer disconnected"
-
-instance Exception PubExcept
 
 applyLimits :: Limits -> [a] -> [a]
 applyLimits Limits {..} = applyLimit limit . applyOffset offset
