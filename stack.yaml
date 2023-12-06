@@ -1,4 +1,4 @@
-resolver: nightly-2023-11-09
+resolver: nightly-2023-12-06
 nix:
   packages:
   - perl
@@ -14,3 +14,4 @@ ghc-options:
   "$everything": -O2
 extra-deps:
   - statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
+  - nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628

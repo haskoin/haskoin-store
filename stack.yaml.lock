@@ -11,9 +11,16 @@ packages:
       size: 457
   original:
     hackage: statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
+- completed:
+    hackage: nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
+    pantry-tree:
+      sha256: d08966e9cb80d17561c00fcf68c7c1045f75c2ea7655fdb5453576135f62cd35
+      size: 665
+  original:
+    hackage: nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
 snapshots:
 - completed:
-    sha256: 06d6ca68d18db01d18142bd1b2c61f1a5d23383d0b98991a0b3ce04c5ca3bf3a
-    size: 698107
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2023/11/9.yaml
-  original: nightly-2023-11-09
+    sha256: d88d143974e013e69643a7ab059635300ec32d865830706e9e960eaf1725e7af
+    size: 708708
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2023/12/6.yaml
+  original: nightly-2023-12-06
