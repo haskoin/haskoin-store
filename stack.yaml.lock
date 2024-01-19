@@ -20,7 +20,7 @@ packages:
     hackage: nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
 snapshots:
 - completed:
-    sha256: d88d143974e013e69643a7ab059635300ec32d865830706e9e960eaf1725e7af
-    size: 708708
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2023/12/6.yaml
-  original: nightly-2023-12-06
+    sha256: 7b975b104cb3dbf0c297dfd01f936a4d2ee523241dd0b1ae960522b833fe3027
+    size: 714096
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/22/7.yaml
+  original: lts-22.7
