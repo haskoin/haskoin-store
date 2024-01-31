@@ -35,7 +35,7 @@ params ctx =
     GenBox (arbitrarySizedNatural :: Gen HeightParam),
     GenBox (arbitrary :: Gen HeightsParam),
     GenBox (arbitrarySizedNatural :: Gen TimeParam),
-    GenBox (snd <$> arbitraryXPubKey ctx :: Gen XPubKey),
+    GenBox (arbitraryXPubKey ctx :: Gen XPubKey),
     GenBox (arbitrary :: Gen DeriveType),
     GenBox (NoCache <$> arbitrary :: Gen NoCache),
     GenBox (NoTx <$> arbitrary :: Gen NoTx),

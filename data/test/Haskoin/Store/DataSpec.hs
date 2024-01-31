@@ -24,190 +24,96 @@ import Haskoin.Util.Arbitrary
 import Test.Hspec
 import Test.QuickCheck
 
-serialVals :: Ctx -> [SerialBox]
-serialVals ctx =
-  [ SerialBox (arbitrary :: Gen DeriveType),
-    SerialBox (arbitraryXPubSpec ctx :: Gen XPubSpec),
-    SerialBox (arbitrary :: Gen BlockRef),
-    SerialBox (arbitrary :: Gen TxRef),
-    SerialBox (arbitrary :: Gen Balance),
-    SerialBox (arbitrary :: Gen Unspent),
-    SerialBox (arbitrary :: Gen BlockData),
-    SerialBox (arbitrary :: Gen StoreInput),
-    SerialBox (arbitrary :: Gen Spender),
-    SerialBox (arbitrary :: Gen StoreOutput),
-    SerialBox (arbitrary :: Gen Prev),
-    SerialBox (arbitraryTxData ctx :: Gen TxData),
-    SerialBox (arbitrary :: Gen Transaction),
-    SerialBox (arbitrary :: Gen XPubBal),
-    SerialBox (arbitrary :: Gen XPubUnspent),
-    SerialBox (arbitrary :: Gen XPubSummary),
-    SerialBox (arbitrary :: Gen HealthCheck),
-    SerialBox (arbitrary :: Gen Event),
-    SerialBox (arbitrary :: Gen TxId),
-    SerialBox (arbitrary :: Gen PeerInfo),
-    SerialBox (arbitrary :: Gen (GenericResult BlockData)),
-    SerialBox (arbitrary :: Gen (RawResult BlockData)),
-    SerialBox (arbitrary :: Gen (RawResultList BlockData))
-  ]
+identityTests :: Ctx -> IdentityTests
+identityTests ctx =
+  IdentityTests {
+    readTests = [],
+    marshalTests = [],
+    jsonTests = 
+    [ JsonBox (arbitrary :: Gen TxRef),
+      JsonBox (arbitrary :: Gen BlockRef),
+      JsonBox (arbitrary :: Gen Spender),
+      JsonBox (arbitrary :: Gen XPubSummary),
+      JsonBox (arbitrary :: Gen HealthCheck),
+      JsonBox (arbitrary :: Gen Event),
+      JsonBox (arbitrary :: Gen TxId),
+      JsonBox (arbitrary :: Gen PeerInfo),
+      JsonBox (arbitrary :: Gen (GenericResult XPubSummary)),
+      JsonBox (arbitrary :: Gen (RawResult BlockData)),
+      JsonBox (arbitrary :: Gen (RawResultList BlockData)),
+      JsonBox (arbitrary :: Gen Except),
+      JsonBox (arbitrary :: Gen BinfoWallet),
+      JsonBox (arbitrary :: Gen BinfoSymbol),
+      JsonBox (arbitrary :: Gen BinfoBlockInfo),
+      JsonBox (arbitrary :: Gen BinfoInfo),
+      JsonBox (arbitrary :: Gen BinfoSpender),
+      JsonBox (arbitrary :: Gen BinfoRate),
+      JsonBox (arbitrary :: Gen BinfoTicker),
+      JsonBox (arbitrary :: Gen BinfoTxId),
+      JsonBox (arbitrary :: Gen BinfoShortBal),
+      JsonBox (arbitrary :: Gen BinfoHistory),
+      JsonBox (arbitrary :: Gen BinfoHeader),
+      JsonBox (arbitrary :: Gen BinfoBlockInfos)
+    ],
+    serialTests =
+    [ SerialBox (arbitrary :: Gen DeriveType),
+      SerialBox (arbitraryXPubSpec ctx :: Gen XPubSpec),
+      SerialBox (arbitrary :: Gen BlockRef),
+      SerialBox (arbitrary :: Gen TxRef),
+      SerialBox (arbitrary :: Gen Balance),
+      SerialBox (arbitrary :: Gen Unspent),
+      SerialBox (arbitrary :: Gen BlockData),
+      SerialBox (arbitrary :: Gen StoreInput),
+      SerialBox (arbitrary :: Gen Spender),
+      SerialBox (arbitrary :: Gen StoreOutput),
+      SerialBox (arbitrary :: Gen Prev),
+      SerialBox (arbitraryTxData ctx :: Gen TxData),
+      SerialBox (arbitrary :: Gen Transaction),
+      SerialBox (arbitrary :: Gen XPubBal),
+      SerialBox (arbitrary :: Gen XPubUnspent),
+      SerialBox (arbitrary :: Gen XPubSummary),
+      SerialBox (arbitrary :: Gen HealthCheck),
+      SerialBox (arbitrary :: Gen Event),
+      SerialBox (arbitrary :: Gen TxId),
+      SerialBox (arbitrary :: Gen PeerInfo),
+      SerialBox (arbitrary :: Gen (GenericResult BlockData)),
+      SerialBox (arbitrary :: Gen (RawResult BlockData)),
+      SerialBox (arbitrary :: Gen (RawResultList BlockData))
+    ],
+    marshalJsonTests =
+    [ MarshalJsonBox (withNet (arbitrary :: Gen Balance)),
+      MarshalJsonBox (withNet (arbitrary :: Gen StoreOutput)),
+      MarshalJsonBox (withNet (arbitrary :: Gen Unspent)),
+      MarshalJsonBox (withNet (arbitrary :: Gen XPubBal)),
+      MarshalJsonBox (withNet (arbitrary :: Gen XPubUnspent)),
+      MarshalJsonBox arbitraryStoreInputNet,
+      MarshalJsonBox arbitraryBlockDataNet,
+      MarshalJsonBox (withNet (arbitrary :: Gen Transaction)),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoMultiAddr),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoBalance),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoBlock),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoTx),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoTxInput),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoTxOutput),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoXPubPath),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoUnspent),
+      MarshalJsonBox (withNetCtx ctx (listOf . arbitraryBinfoBlock)),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoRawAddr),
+      MarshalJsonBox (withNetCtx ctx arbitraryBinfoMempool)
+    ]
+  }
 
-jsonVals :: [JsonBox]
-jsonVals =
-  [ JsonBox (arbitrary :: Gen TxRef),
-    JsonBox (arbitrary :: Gen BlockRef),
-    JsonBox (arbitrary :: Gen Spender),
-    JsonBox (arbitrary :: Gen XPubSummary),
-    JsonBox (arbitrary :: Gen HealthCheck),
-    JsonBox (arbitrary :: Gen Event),
-    JsonBox (arbitrary :: Gen TxId),
-    JsonBox (arbitrary :: Gen PeerInfo),
-    JsonBox (arbitrary :: Gen (GenericResult XPubSummary)),
-    JsonBox (arbitrary :: Gen (RawResult BlockData)),
-    JsonBox (arbitrary :: Gen (RawResultList BlockData)),
-    JsonBox (arbitrary :: Gen Except),
-    JsonBox (arbitrary :: Gen BinfoWallet),
-    JsonBox (arbitrary :: Gen BinfoSymbol),
-    JsonBox (arbitrary :: Gen BinfoBlockInfo),
-    JsonBox (arbitrary :: Gen BinfoInfo),
-    JsonBox (arbitrary :: Gen BinfoSpender),
-    JsonBox (arbitrary :: Gen BinfoRate),
-    JsonBox (arbitrary :: Gen BinfoTicker),
-    JsonBox (arbitrary :: Gen BinfoTxId),
-    JsonBox (arbitrary :: Gen BinfoShortBal),
-    JsonBox (arbitrary :: Gen BinfoHistory),
-    JsonBox (arbitrary :: Gen BinfoHeader),
-    JsonBox (arbitrary :: Gen BinfoBlockInfos)
-  ]
+withNetCtx :: Ctx -> (Ctx -> Gen a) -> Gen ((Network, Ctx), a)
+withNetCtx ctx g = do
+  net <- arbitraryNetwork
+  x <- g ctx
+  return ((net, ctx), x)
 
-netVals :: Ctx -> [NetBox]
-netVals ctx =
-  [ NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryNetData :: Gen (Network, Balance)
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryNetData :: Gen (Network, StoreOutput)
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryNetData :: Gen (Network, Unspent)
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryNetData :: Gen (Network, XPubBal)
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryNetData :: Gen (Network, XPubUnspent)
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryStoreInputNet
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryBlockDataNet
-      ),
-    NetBox
-      ( marshalValue,
-        marshalEncoding,
-        unmarshalValue,
-        arbitraryNetData :: Gen (Network, Transaction)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoMultiAddr ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoBalance ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoBlock ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoTx ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoTxInput ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoTxOutput ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoXPubPath ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoUnspent ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (listOf (arbitraryBinfoBlock ctx))
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoRawAddr ctx)
-      ),
-    NetBox
-      ( marshalValue . (,ctx),
-        marshalEncoding . (,ctx),
-        unmarshalValue . (,ctx),
-        genNetData (arbitraryBinfoMempool ctx)
-      )
-  ]
+withNet :: Gen a -> Gen (Network, a)
+withNet g = (,) <$> arbitraryNetwork <*> g
 
 spec :: Spec
-spec = prepareContext $ \ctx -> do
-  describe "Binary Encoding" $
-    forM_ (serialVals ctx) $
-      \(SerialBox g) -> testSerial g
-  describe "JSON Encoding" $
-    forM_ jsonVals $
-      \(JsonBox g) -> testJson g
-  describe "JSON Encoding with Network" $
-    forM_ (netVals ctx) $
-      \(NetBox (j, e, p, g)) -> testNetJson j e p g
+spec = prepareContext (testIdentity . identityTests)
 
 instance Arbitrary BlockRef where
   arbitrary =
@@ -344,7 +250,7 @@ instance Arbitrary RejectCode where
       ]
 
 arbitraryXPubSpec :: Ctx -> Gen XPubSpec
-arbitraryXPubSpec ctx = XPubSpec <$> (snd <$> arbitraryXPubKey ctx) <*> arbitrary
+arbitraryXPubSpec ctx = XPubSpec <$> arbitraryXPubKey ctx <*> arbitrary
 
 instance Arbitrary DeriveType where
   arbitrary = elements [DeriveNormal, DeriveP2SH, DeriveP2WPKH]
@@ -467,7 +373,7 @@ arbitraryBinfoRawAddr ctx = do
   address <-
     oneof
       [ BinfoAddr <$> arbitraryAddress,
-        BinfoXpub . snd <$> arbitraryXPubKey ctx
+        BinfoXpub <$> arbitraryXPubKey ctx
       ]
   balance <- arbitrary
   ntx <- arbitrary
@@ -487,7 +393,7 @@ arbitraryBinfoBalance ctx = do
   received <- arbitrary
   sent <- arbitrary
   balance <- arbitrary
-  xpub <- snd <$> arbitraryXPubKey ctx
+  xpub <- arbitraryXPubKey ctx
   external <- arbitrary
   change <- arbitrary
   elements [BinfoAddrBalance {..}, BinfoXPubBalance {..}]
@@ -573,7 +479,7 @@ instance Arbitrary BinfoSpender where
 
 arbitraryBinfoXPubPath :: Ctx -> Gen BinfoXPubPath
 arbitraryBinfoXPubPath ctx = do
-  key <- snd <$> arbitraryXPubKey ctx
+  key <- arbitraryXPubKey ctx
   deriv <- arbitrarySoftPath
   return BinfoXPubPath {..}
 
