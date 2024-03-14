@@ -1,4 +1,4 @@
-resolver: lts-22.6
+resolver: lts-22.13
 nix:
   packages:
   - perl
@@ -15,6 +15,6 @@ ghc-options:
 extra-deps:
   - statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
   - nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
-  - secp256k1-haskell-1.1.0@sha256:37d65ec4352aa90a5cba7e26c0c9f11b4c740fcb40c527f0e04f066015f0ef3d,2235
-  - haskoin-core-1.0.4@sha256:75ffde22d6a1b1a7e99ff94b41fff320c7e25f89d58fb65dd856e4ecbbbe76a0,5639
-  - haskoin-node-1.0.1@sha256:5e21ae786a9a9404500c6c2b18c07eb13239d3ae3c1e06538d3cecd5de35d767,2276
+  - secp256k1-haskell-1.2.0@sha256:1a21581b0c54be26e1fb706d06dce51ef10cb72c13abfc3614a70189f23d6d50,2235
+  - haskoin-core-1.1.0@sha256:16c9bb689da0efdcedf571de7b0f0e7aa2df8c0c546b8ec7ad0c0fbec85ab135,5639
+  - haskoin-node-1.1.0@sha256:9d417ee5c38167807c9556044597758f821946da932382a618acd3f7b694a878,2276
