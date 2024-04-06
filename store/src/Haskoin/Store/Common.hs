@@ -196,13 +196,13 @@ xPubSummary _xspec xbals =
     rx = sum [b.balance.received | b <- xt]
 
 getTransaction ::
-  ( StoreReadBase m) =>TxHash -> m (Maybe Transaction)
+  (StoreReadBase m) => TxHash -> m (Maybe Transaction)
 getTransaction h = do
   ctx <- getCtx
   fmap (toTransaction ctx) <$> getTxData h
 
 getNumTransaction ::
-  ( StoreReadExtra m) =>Word64 -> m [Transaction]
+  (StoreReadExtra m) => Word64 -> m [Transaction]
 getNumTransaction i =
   getCtx >>= \ctx ->
     map (toTransaction ctx) <$> getNumTxData i

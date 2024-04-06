@@ -238,8 +238,11 @@ newStoreMetrics :: (MonadIO m) => BlockStoreConfig -> m (Maybe StoreMetrics)
 newStoreMetrics cfg =
   forM cfg.stats $ \s -> liftIO $ do
     m <- withDB cfg.db getMempool
-    b <- fmap (maybe 0 (.height)) $ withDB cfg.db $ runMaybeT $
-        MaybeT getBestBlock >>= MaybeT . getBlock
+    b <-
+      fmap (maybe 0 (.height)) $
+        withDB cfg.db $
+          runMaybeT $
+            MaybeT getBestBlock >>= MaybeT . getBlock
     h <- chainGetBest cfg.chain
     p <- getPeers cfg.peerMgr
     blocks <- g s "blocks" (fromIntegral b)

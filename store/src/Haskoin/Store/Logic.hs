@@ -199,7 +199,9 @@ checkNewBlock b n =
 
 importOrConfirm :: (MonadImport m) => BlockNode -> [Tx] -> m [TxData]
 importOrConfirm bn txns = do
+  $(logDebugS) "BlockStore" "Freeing outputs..."
   mapM_ (freeOutputs True False . snd) (reverse txs)
+  $(logDebugS) "BlockStore" "Outputs freed"
   mapM (uncurry action) txs
   where
     txs = sortTxs txns
@@ -441,6 +443,8 @@ freeOutputs ::
   Tx ->
   m ()
 freeOutputs memonly rbfcheck tx = do
+  $(logDebugS) "BlockStore" $
+    "Freeing outputs for tx " <> txHashToHex (txHash tx) <> "..."
   let prevs = prevOuts tx
   unspents <- mapM getUnspent prevs
   let spents = [p | (p, Nothing) <- zip prevs unspents]

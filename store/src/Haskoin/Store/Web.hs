@@ -46,8 +46,9 @@ import Control.Monad
   ( forM_,
     forever,
     unless,
+    void,
     when,
-    (<=<), void,
+    (<=<),
   )
 import Control.Monad.Logger
   ( MonadLoggerIO,
@@ -196,6 +197,7 @@ import UnliftIO
     MonadUnliftIO,
     TVar,
     askRunInIO,
+    async,
     atomically,
     bracket,
     bracket_,
@@ -204,7 +206,7 @@ import UnliftIO
     newTVarIO,
     readTVarIO,
     withAsync,
-    writeTVar, async,
+    writeTVar,
   )
 import UnliftIO.Concurrent (threadDelay)
 import Web.Scotty.Trans qualified as S

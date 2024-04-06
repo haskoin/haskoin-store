@@ -17,8 +17,8 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Base64
 import Data.Either
-import Data.List ( find )
-import Data.Maybe ( fromJust, fromMaybe, isJust, mapMaybe )
+import Data.List (find)
+import Data.Maybe (fromJust, fromMaybe, isJust, mapMaybe)
 import Data.Serialize
 import Data.Time.Clock.POSIX
 import Data.Word

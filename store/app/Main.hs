@@ -68,10 +68,16 @@ import Options.Applicative
 import System.Exit (exitSuccess)
 import System.FilePath ((</>))
 import System.Metrics.StatsD
-    ( defStatConfig,
-      withStats,
-      StatConfig(statsdPort, statsdServer, namespace, reportSamples,
-                 reportStats) )
+  ( StatConfig
+      ( namespace,
+        reportSamples,
+        reportStats,
+        statsdPort,
+        statsdServer
+      ),
+    defStatConfig,
+    withStats,
+  )
 import Text.Read (readMaybe)
 import UnliftIO (MonadIO)
 import UnliftIO.Directory
