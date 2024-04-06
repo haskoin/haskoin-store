@@ -54,6 +54,8 @@ import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Control.Monad.Trans.Reader (runReaderT)
 import Data.ByteString (ByteString)
 import Data.Default (Default (..))
+import Data.Graph qualified as G
+import Data.HashMap.Strict qualified as M
 import Data.HashSet qualified as H
 import Data.Hashable (Hashable)
 import Data.Map.Strict qualified as Map
@@ -286,17 +288,21 @@ applyLimitC 0 = mapC id
 applyLimitC l = takeC (fromIntegral l)
 
 sortTxs :: [Tx] -> [(Word32, Tx)]
-sortTxs txs = go [] thset $ zip [0 ..] txs
+sortTxs txs = ts
   where
-    thset = H.fromList (map txHash txs)
-    go [] _ [] = []
-    go orphans ths [] = go [] ths orphans
-    go orphans ths ((i, tx) : xs) =
-      let ops = map (.outpoint.hash) tx.inputs
-          orp = any (`H.member` ths) ops
-       in if orp
-            then go ((i, tx) : orphans) ths xs
-            else (i, tx) : go orphans (txHash tx `H.delete` ths) xs
+    hm :: M.HashMap TxHash Int
+    hm = M.fromList $ zip (map txHash txs) [0 ..]
+    ns :: [(Tx, Int, [Int])]
+    ns =
+      let is tx = nub' $ map (.outpoint.hash) tx.inputs
+          hs tx = mapMaybe (`M.lookup` hm) (is tx)
+          tp i tx = (tx, i, hs tx)
+       in zipWith tp [0 ..] txs
+    (g, n, _) = G.graphFromEdges ns
+    vs = G.reverseTopSort g
+    ts =
+      let f (tx, i, _) = (fromIntegral i, tx)
+       in map (f . n) vs
 
 nub' :: (Hashable a) => [a] -> [a]
 nub' = H.toList . H.fromList
