@@ -39,7 +39,8 @@ import Control.Monad.Logger
   )
 import qualified Data.ByteString as B
 import Data.Either (rights)
-import qualified Data.HashSet as HashSet
+import qualified Data.HashMap.Strict as M
+import qualified Data.HashSet as H
 import qualified Data.IntMap.Strict as I
 import Data.List (nub)
 import Data.Maybe
@@ -449,8 +450,8 @@ freeOutputs memonly rbfcheck tx = do
   unspents <- mapM getUnspent prevs
   let spents = [p | (p, Nothing) <- zip prevs unspents]
   spndrs <- catMaybes <$> mapM getSpender spents
-  let txids = HashSet.fromList $ filter (/= txHash tx) $ map (.txid) spndrs
-  mapM_ (deleteTx memonly rbfcheck) $ HashSet.toList txids
+  let txids = H.fromList $ filter (/= txHash tx) $ map (.txid) spndrs
+  mapM_ (deleteTx memonly rbfcheck) $ H.toList txids
 
 deleteConfirmedTx :: (MonadImport m) => TxHash -> m ()
 deleteConfirmedTx = deleteTx False False
@@ -491,7 +492,7 @@ getChain ::
 getChain memonly rbfcheck th' = do
   $(logDebugS) "BlockStore" $
     "Getting chain for tx " <> txHashToHex th'
-  sort_clean <$> go HashSet.empty (HashSet.singleton th')
+  sort_clean <$> go M.empty (H.singleton th')
   where
     sort_clean = reverse . map snd . sortTxs
     get_tx th =
@@ -515,18 +516,23 @@ getChain memonly rbfcheck th' = do
                       <> txHashToHex th
                   throwError DoubleSpend
           | otherwise -> return $ Just td
-    go txs pdg = do
-      tds <- catMaybes <$> mapM get_tx (HashSet.toList pdg)
-      let txsn = HashSet.fromList $ fmap (.tx) tds
-          pdgn =
-            HashSet.fromList
-              . concatMap (map (.txid) . I.elems)
-              $ fmap (.spenders) tds
-          txs' = txsn <> txs
-          pdg' = pdgn `HashSet.difference` HashSet.map txHash txs'
-      if HashSet.null pdg'
-        then return $ HashSet.toList txs'
-        else go txs' pdg'
+    go txm pdg = do
+      let ths = filter (not . (`M.member` txm)) (H.toList pdg)
+      tds <- catMaybes <$> mapM get_tx ths
+      let txmn = M.fromList $ fmap (\d -> (txHash d.tx, d.tx)) tds
+          spds = concatMap (map (.txid) . I.elems . (.spenders)) tds
+          pdg' = H.fromList spds
+          txm' = txmn <> txm
+      if H.null pdg'
+        then do
+          $(logDebugS) "BlockStore" $
+            "Chain for tx "
+              <> txHashToHex th'
+              <> " contains "
+              <> cs (show (M.size txm'))
+              <> " txs"
+          return $ M.elems txm'
+        else go txm' pdg'
 
 deleteSingleTx :: (MonadImport m) => TxHash -> m ()
 deleteSingleTx th =
