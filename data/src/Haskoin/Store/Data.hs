@@ -553,7 +553,15 @@ data Unspent = Unspent
     unspentScript :: !ByteString,
     unspentAddress :: !(Maybe Address)
   }
-  deriving (Show, Eq, Ord, Generic, Hashable, NFData)
+  deriving (Show, Eq, Generic, Hashable, NFData)
+
+-- | Follow same order as in database and cache by inverting outpoint sort
+-- order.
+instance Ord Unspent where
+  compare a b =
+    compare
+      (unspentBlock a, unspentPoint b)
+      (unspentBlock b, unspentPoint a)
 
 instance Serial Unspent where
   serialize Unspent {..} = do

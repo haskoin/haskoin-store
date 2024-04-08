@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           haskoin-store
-version:        0.65.11
+version:        0.65.12
 synopsis:       Storage and index for Bitcoin and Bitcoin Cash
 description:    Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category:       Bitcoin, Finance, Network
@@ -17,9 +17,6 @@ maintainer:     jprupp@protonmail.ch
 license:        MIT
 license-file:   LICENSE
 build-type:     Simple
-extra-source-files:
-    README.md
-    CHANGELOG.md
 
 source-repository head
   type: git
@@ -61,7 +58,7 @@ library
     , hashtables >=1.2.4.2
     , haskoin-core >=0.21.1
     , haskoin-node >=0.18.0
-    , haskoin-store-data ==0.65.11
+    , haskoin-store-data ==0.65.12
     , hedis >=0.12.13
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -118,7 +115,7 @@ executable haskoin-store
     , haskoin-core >=0.21.1
     , haskoin-node >=0.18.0
     , haskoin-store
-    , haskoin-store-data ==0.65.11
+    , haskoin-store-data ==0.65.12
     , hedis >=0.12.13
     , http-types >=0.12.3
     , lens >=4.18.1
@@ -180,7 +177,7 @@ test-suite haskoin-store-test
     , haskoin-core >=0.21.1
     , haskoin-node >=0.18.0
     , haskoin-store
-    , haskoin-store-data ==0.65.11
+    , haskoin-store-data ==0.65.12
     , hedis >=0.12.13
     , hspec >=2.7.1
     , http-types >=0.12.3
