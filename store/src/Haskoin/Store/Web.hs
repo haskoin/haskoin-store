@@ -1447,7 +1447,7 @@ getBinfoAddrsParam ::
 getBinfoAddrsParam name = do
   net <- askl (.config.store.net)
   ctx <- askl (.config.store.ctx)
-  p <- param (TL.fromStrict name) `rescue` return ""
+  p <- param name `rescue` return ""
   if T.null p
     then return HashSet.empty
     else case parseBinfoAddr net ctx p of
@@ -1654,7 +1654,7 @@ getAddress txt = do
     Nothing -> raise ThingNotFound
     Just a -> return a
 
-getBinfoAddr :: (MonadUnliftIO m) => TL.Text -> ActionT m BinfoAddr
+getBinfoAddr :: (MonadUnliftIO m) => Text -> ActionT m BinfoAddr
 getBinfoAddr param' = do
   txt <- S.captureParam param'
   net <- askl (.config.store.net)
@@ -1926,7 +1926,7 @@ scottyMultiAddr =
       let f = map (.balance.address)
        in HashSet.fromList . concatMap f . HashMap.elems
 
-getBinfoCount :: (MonadUnliftIO m) => TL.Text -> ActionT m Int
+getBinfoCount :: (MonadUnliftIO m) => Text -> ActionT m Int
 getBinfoCount str = do
   d <- askl (.config.limits.defItemCount)
   x <- askl (.config.limits.maxFullItemCount)
@@ -2597,8 +2597,8 @@ paramOptional = do
     Nothing -> return Nothing -- Parameter was not supplied
     Just ts -> maybe (raise err) (return . Just) (parseParam net ctx ts)
   where
-    label = TL.fromStrict (proxyLabel (Proxy :: Proxy a))
-    err = UserError $ "Unable to parse param " <> TL.unpack label
+    label = proxyLabel (Proxy :: Proxy a)
+    err = UserError $ "Unable to parse param " <> T.unpack label
 
 -- | Raises an exception if the parameter is not supplied
 paramRequired :: forall a m. (Param a, MonadUnliftIO m) => ActionT m a
@@ -2621,7 +2621,7 @@ paramCapture = do
   p <- S.captureParam label `rescue` S.next
   maybe S.next return (parseParam net ctx p)
   where
-    label = TL.fromStrict (proxyLabel (Proxy :: Proxy a))
+    label = proxyLabel (Proxy :: Proxy a)
 
 parseBody :: (MonadIO m, Serial a) => ActionT m a
 parseBody = do
@@ -2750,7 +2750,7 @@ x `rescue` y = x `S.rescue` \S.StatusError {} -> y
 
 param ::
   (MonadUnliftIO m, S.Parsable a) =>
-  TL.Text ->
+  Text ->
   S.ActionT m a
 param t = S.queryParam t `rescue` S.formParam t
 
