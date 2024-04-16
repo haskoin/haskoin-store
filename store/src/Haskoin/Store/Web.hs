@@ -2746,7 +2746,7 @@ rescue ::
   S.ActionT m a ->
   S.ActionT m a ->
   S.ActionT m a
-x `rescue` y = x `S.rescue` \S.StatusError {} -> y
+x `rescue` y = x `S.catch` \(_ :: S.ScottyException) -> y
 
 param ::
   (MonadUnliftIO m, S.Parsable a) =>
