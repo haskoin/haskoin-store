@@ -1,4 +1,6 @@
-resolver: nightly-2024-04-14
+resolver: nightly-2024-04-22
+ghc-options:
+  "$everything": -O2
 nix:
   packages:
   - perl
