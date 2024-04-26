@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## [1.5.2] - 2024-040-24
+
+### Changed
+
+- Use default GHC garbage collector.
+
+## [1.5.1] - 2024-04-23
+
+### Changed
+
+- Compile with GHC 9.8.2.
+- Enable optimisations.
+
 ## [1.5.0] - 2024-04-06
 
 ### Fixed
