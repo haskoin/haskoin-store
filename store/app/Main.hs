@@ -194,7 +194,7 @@ defConfig = do
   statsdAggregates <-
     env "STATSD_AGGREGATES" False parseBool
   statsdPrefix <-
-    getStatsdPrefix
+    env "STATSD_PREFIX" "haskoin_store" pure
   tickerRefresh <-
     env "TICKER_REFRESH" (90 * 1000 * 1000) readMaybe
   tickerURL <-
@@ -235,17 +235,6 @@ defConfig = do
       txTimeout <-
         env "TX_TIMEOUT" d.txTimeout readMaybe
       return WebLimits {..}
-    getStatsdPrefix = do
-      let go = prefix <|> nomad
-          prefix =
-            MaybeT $ lookupEnv "STATSD_PREFIX"
-          nomad = do
-            task <-
-              MaybeT $ lookupEnv "NOMAD_TASK_NAME"
-            service <-
-              MaybeT $ lookupEnv "NOMAD_ALLOC_INDEX"
-            return $ "app." <> task <> "." <> service
-      fromMaybe "haskoin_store" <$> runMaybeT go
 
 netNames :: String
 netNames = intercalate "|" $ map (.name) allNets
