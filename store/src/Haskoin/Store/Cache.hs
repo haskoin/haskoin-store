@@ -772,14 +772,14 @@ withLock f =
       refreshLock
 
 pruneDB ::
-  (MonadLoggerIO m, StoreReadBase m) => CacheX m ()
+  (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) => CacheX m ()
 pruneDB = do
   x <- asks (.maxKeys)
   s <- runRedis Redis.dbsize
   $(logDebugS) "Cache" "Pruning old xpubs"
-  when (s > x) $
+  when (s > x) . void . withLock $
     void . delXPubKeys . map fst
-      =<< runRedis (getFromSortedSet maxKey Nothing 0 32)
+      =<< runRedis (getFromSortedSet maxKey Nothing 0 (fromIntegral (s - x)))
 
 touchKeys :: (MonadLoggerIO m) => [XPubSpec] -> CacheX m ()
 touchKeys xpubs = do
@@ -797,14 +797,17 @@ cacheWriterReact ::
   CacheX m ()
 cacheWriterReact CacheNewBlock = do
   $(logDebugS) "Cache" "Received new block event"
+  pruneDB
   newBlockC
   syncMempoolC
 cacheWriterReact (CacheNewTx txid) = do
   $(logDebugS) "Cache" $
     "Received new transaction event: " <> txHashToHex txid
+  pruneDB
   syncNewTxC [txid]
 cacheWriterReact (CacheSyncMempool l) = do
   $(logDebugS) "Cache" "Received sync mempool event"
+  pruneDB
   newBlockC
   syncMempoolC
   atomically $ l ()
@@ -857,11 +860,7 @@ newXPubC xpub xbals =
     should_index =
       asks (.minAddrs) >>= \x ->
         if x <= lenNotNull xbals
-          then
-            inSync >>= \s ->
-              if s
-                then pruneDB >> return True
-                else return False
+          then inSync
           else return False
     key = idxPfx <> encode xpub
     opts =
