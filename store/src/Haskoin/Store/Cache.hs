@@ -773,11 +773,11 @@ withLock f =
 
 pruneDB ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) => CacheX m ()
-pruneDB = do
+pruneDB = void . withLock $ do
   x <- asks (.maxKeys)
   s <- runRedis Redis.dbsize
   $(logDebugS) "Cache" "Pruning old xpubs"
-  when (s > x) . void . withLock $
+  when (s > x) $
     void . delXPubKeys . map fst
       =<< runRedis (getFromSortedSet maxKey Nothing 0 (fromIntegral (s - x)))
 

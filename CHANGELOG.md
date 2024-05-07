@@ -4,19 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
-## [1.5.4]
+## [Unreleased]
 
 ### Changed
 
-- Fix Redis bug where old keys weren't pruned quickly enough.
+- Lock Redis before checking if the database needs to be pruned, rather than after.
 
-## [1.5.3]
+## [1.5.4] - 2024-05-07
+
+### Fixed
+
+- Fix Redis bug where old keys weren't pruned quickly enough.
 
 ### Changed
 
 - Remove Nomad-specific environment variable parsing for statsd.
 
-## [1.5.2] - 2024-040-24
+## [1.5.2] - 2024-04-24
 
 ### Changed
 
