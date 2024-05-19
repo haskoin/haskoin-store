@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Lock Redis before checking if the database needs to be pruned, rather than after.
 - Lock xpub in Redis to avoid computing derivations multiple times.
 
+### Fixed
+
+- Rename redis-min-gap to redis-min-addrs to match environment config variable.
+
 ## [1.5.4] - 2024-05-07
 
 ### Fixed

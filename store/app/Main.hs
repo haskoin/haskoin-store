@@ -396,7 +396,7 @@ config c = do
   redisMinAddrs <-
     option auto $
       metavar "GAP"
-        <> long "redis-min-gap"
+        <> long "redis-min-addrs"
         <> help "Minimum xpub address count to cache in Redis"
         <> showDefault
         <> value c.redisMinAddrs
