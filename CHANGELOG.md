@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 
 - Lock Redis before checking if the database needs to be pruned, rather than after.
+- Lock xpub in Redis to avoid computing derivations multiple times.
 
 ## [1.5.4] - 2024-05-07
 

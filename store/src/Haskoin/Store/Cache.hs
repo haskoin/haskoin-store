@@ -330,49 +330,38 @@ utxoPfx = "u"
 idxPfx :: ByteString
 idxPfx = "i"
 
+xpubLock :: XPubSpec -> ByteString
+xpubLock xpub = "xlock-" <> encode xpub
+
 getXPubTxs ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   XPubSpec ->
   [XPubBal] ->
   Limits ->
   CacheX m [TxRef]
-getXPubTxs xpub xbals limits = go False
-  where
-    go recursed = do
-      cached <- isXPubCached recursed xpub
-      if cached
-        then do
-          txs <- cacheGetXPubTxs xpub limits
-          withMetrics $ \s ->
-            incrementCounter s.xTxs (length txs)
-          return txs
-        else do
-          if recursed
-            then lift $ xPubTxs xpub xbals limits
-            else do
-              newXPubC xpub xbals
-              go True
+getXPubTxs xpub xbals limits = do
+  cached <- isXPubCached xpub
+  if cached
+    then do
+      txs <- cacheGetXPubTxs xpub limits
+      withMetrics $ \s ->
+        incrementCounter s.xTxs (length txs)
+      return txs
+    else lift $ xPubTxs xpub xbals limits
 
 getXPubTxCount ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   XPubSpec ->
   [XPubBal] ->
   CacheX m Word32
-getXPubTxCount xpub xbals = go False
-  where
-    go recursed = do
-      cached <- isXPubCached recursed xpub
-      if cached
-        then do
-          withMetrics $ \s ->
-            incrementCounter s.xTxCount 1
-          cacheGetXPubTxCount xpub
-        else do
-          if recursed
-            then lift $ xPubTxCount xpub xbals
-            else do
-              newXPubC xpub xbals
-              go True
+getXPubTxCount xpub xbals = do
+  cached <- isXPubCached xpub
+  if cached
+    then do
+      withMetrics $ \s ->
+        incrementCounter s.xTxCount 1
+      cacheGetXPubTxCount xpub
+    else lift $ xPubTxCount xpub xbals
 
 getXPubUnspents ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
@@ -380,72 +369,62 @@ getXPubUnspents ::
   [XPubBal] ->
   Limits ->
   CacheX m [XPubUnspent]
-getXPubUnspents xpub xbals limits =
-  go False
-  where
-    go recursed = do
-      cached <- isXPubCached recursed xpub
-      if cached
-        then do
-          ops <- map snd <$> cacheGetXPubUnspents xpub limits
-          uns <- catMaybes <$> lift (mapM getUnspent ops)
-          ctx <- lift getCtx
-          let f u =
-                either
-                  (const Nothing)
-                  (\a -> Just (a, u))
-                  (scriptToAddressBS ctx u.script)
-              xm =
-                let j x = (x.balance.address, x)
-                    k = (> 0) . (.balance.utxo)
-                 in HashMap.fromList $ map j $ filter k xbals
-              g a = HashMap.lookup a xm
-              h u x =
-                XPubUnspent
-                  { unspent = u,
-                    path = x.path
-                  }
-              us = mapMaybe f uns
-              i a u = h u <$> g a
-          withMetrics $ \s -> incrementCounter s.xUnspents (length us)
-          return $ mapMaybe (uncurry i) us
-        else do
-          if recursed
-            then lift $ xPubUnspents xpub xbals limits
-            else do
-              newXPubC xpub xbals
-              go True
+getXPubUnspents xpub xbals limits = do
+  cached <- isXPubCached xpub
+  if cached
+    then do
+      ops <- map snd <$> cacheGetXPubUnspents xpub limits
+      uns <- catMaybes <$> lift (mapM getUnspent ops)
+      ctx <- lift getCtx
+      let f u =
+            either
+              (const Nothing)
+              (\a -> Just (a, u))
+              (scriptToAddressBS ctx u.script)
+          xm =
+            let j x = (x.balance.address, x)
+                k = (> 0) . (.balance.utxo)
+             in HashMap.fromList $ map j $ filter k xbals
+          g a = HashMap.lookup a xm
+          h u x =
+            XPubUnspent
+              { unspent = u,
+                path = x.path
+              }
+          us = mapMaybe f uns
+          i a u = h u <$> g a
+      withMetrics $ \s -> incrementCounter s.xUnspents (length us)
+      return $ mapMaybe (uncurry i) us
+    else lift $ xPubUnspents xpub xbals limits
 
 getXPubBalances ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   XPubSpec ->
   CacheX m [XPubBal]
 getXPubBalances xpub = do
-  cached <- isXPubCached False xpub
+  cached <- isXPubCached xpub
   if cached
     then do
       xbals <- cacheGetXPubBalances xpub
-      withMetrics $ \s -> incrementCounter s.xBalances (length xbals)
+      withMetrics $ \s -> do
+        incrementCounter s.hits 1
+        incrementCounter s.xBalances (length xbals)
       return xbals
     else do
-      bals <- lift $ xPubBals xpub
-      newXPubC xpub bals
-      return bals
+      withMetrics $ \s -> incrementCounter s.misses 1
+      withRetryLock (xpubLock xpub) $ do
+        bals <- lift $ xPubBals xpub
+        newXPubC xpub bals
+        return bals
 
 isInCache :: (MonadLoggerIO m) => XPubSpec -> CacheT m Bool
 isInCache xpub =
   ReaderT $ \case
     Nothing -> return False
-    Just cfg -> runReaderT (isXPubCached True xpub) cfg
+    Just cfg -> runReaderT (isXPubCached xpub) cfg
 
-isXPubCached :: (MonadLoggerIO m) => Bool -> XPubSpec -> CacheX m Bool
-isXPubCached silent xpub = do
-  cached <- runRedis (redisIsXPubCached xpub)
-  unless silent $ withMetrics $ \s ->
-    if cached
-      then incrementCounter s.hits 1
-      else incrementCounter s.misses 1
-  return cached
+isXPubCached :: (MonadLoggerIO m) => XPubSpec -> CacheX m Bool
+isXPubCached xpub = runRedis (redisIsXPubCached xpub)
 
 redisIsXPubCached :: (RedisCtx m f) => XPubSpec -> m (f Bool)
 redisIsXPubCached xpub = Redis.exists (balancesPfx <> encode xpub)
@@ -703,8 +682,8 @@ cacheWriter cfg inbox =
         x <- receive inbox
         cacheWriterReact x
 
-lockIt :: (MonadLoggerIO m) => CacheX m Bool
-lockIt = do
+lockIt :: (MonadLoggerIO m) => ByteString -> CacheX m Bool
+lockIt l = do
   go >>= \case
     Right Redis.Ok -> do
       $(logDebugS) "Cache" "Acquired lock"
@@ -741,39 +720,55 @@ lockIt = do
                   Redis.setMilliseconds = Nothing,
                   Redis.setCondition = Just Redis.Nx
                 }
-        Redis.setOpts "lock" "locked" opts
+        Redis.setOpts l "locked" opts
 
-refreshLock :: (MonadLoggerIO m) => CacheX m ()
-refreshLock = void . runRedis $ do
+refreshLock :: (MonadLoggerIO m) => ByteString -> CacheX m ()
+refreshLock l = void . runRedis $ do
   let opts =
         Redis.SetOpts
           { Redis.setSeconds = Just 300,
             Redis.setMilliseconds = Nothing,
             Redis.setCondition = Just Redis.Xx
           }
-  Redis.setOpts "lock" "locked" opts
+  Redis.setOpts l "locked" opts
 
-unlockIt :: (MonadLoggerIO m) => Bool -> CacheX m ()
-unlockIt False = return ()
-unlockIt True = void $ runRedis (Redis.del ["lock"])
+unlockIt :: (MonadLoggerIO m) => ByteString -> Bool -> CacheX m ()
+unlockIt l False = return ()
+unlockIt l True = void $ runRedis (Redis.del [l])
 
 withLock ::
   (MonadLoggerIO m, MonadUnliftIO m) =>
+  ByteString ->
   CacheX m a ->
   CacheX m (Maybe a)
-withLock f =
-  bracket lockIt unlockIt $ \case
+withLock l f =
+  bracket (lockIt l) (unlockIt l) $ \case
     True -> Just <$> go
     False -> return Nothing
   where
     go = withAsync refresh $ const f
     refresh = forever $ do
       threadDelay (150 * 1000 * 1000)
-      refreshLock
+      refreshLock l
+
+withRetryLock ::
+  (MonadLoggerIO m, MonadUnliftIO m) =>
+  ByteString ->
+  CacheX m a ->
+  CacheX m a
+withRetryLock l f =
+  go (200 * 1000)
+  where
+    go n =
+      withLock l f >>= \case
+        Just x -> return x
+        Nothing -> do
+          threadDelay n
+          go (n * 2)
 
 pruneDB ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadBase m) => CacheX m ()
-pruneDB = void . withLock $ do
+pruneDB = void . withLock "lock" $ do
   x <- asks (.maxKeys)
   s <- runRedis Redis.dbsize
   $(logDebugS) "Cache" "Pruning old xpubs"
@@ -890,7 +885,7 @@ newBlockC ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheX m ()
 newBlockC =
-  inSync >>= \s -> when s . void . withLock $ do
+  inSync >>= \s -> when s . void . withLock "lock" $ do
     get_best_block_node >>= \case
       Nothing -> $(logErrorS) "Cache" "No best block available"
       Just best_block_node ->
@@ -1204,7 +1199,7 @@ syncNewTxC ::
   [TxHash] ->
   CacheX m ()
 syncNewTxC ths =
-  inSync >>= \s -> when s . void . withLock $ do
+  inSync >>= \s -> when s . void . withLock "lock" $ do
     txs <- catMaybes <$> mapM (lift . getTxData) ths
     unless (null txs) $ do
       forM_ txs $ \tx ->
@@ -1216,7 +1211,7 @@ syncMempoolC ::
   (MonadUnliftIO m, MonadLoggerIO m, StoreReadExtra m) =>
   CacheX m ()
 syncMempoolC =
-  inSync >>= \s -> when s . void . withLock $ do
+  inSync >>= \s -> when s . void . withLock "lock" $ do
     nodepool <- HashSet.fromList . map snd <$> lift getMempool
     cachepool <- HashSet.fromList . map snd <$> cacheGetMempool
     let diff1 = HashSet.difference nodepool cachepool
