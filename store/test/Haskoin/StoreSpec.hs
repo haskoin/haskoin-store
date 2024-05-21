@@ -108,7 +108,8 @@ withTestStore net ctx t f =
                 maxPeerLife = 48 * 3600,
                 connect = dummyPeerConnect net ad,
                 stats = Nothing,
-                redisSyncInterval = 30
+                redisSyncInterval = 30,
+                bloom = True
               }
       withStore cfg $ \store ->
         withSubscription store.pub $ \sub ->

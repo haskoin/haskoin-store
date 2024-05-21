@@ -129,7 +129,8 @@ data Config = Config
     priceHistoryURL :: !String,
     noBlockchainInfo :: !Bool,
     noSlow :: !Bool,
-    healthCheckInterval :: !Int
+    healthCheckInterval :: !Int,
+    bloom :: !Bool
   }
 
 env :: (MonadIO m) => String -> a -> (String -> Maybe a) -> m a
@@ -207,6 +208,8 @@ defConfig = do
     env "NO_SLOW" False parseBool
   healthCheckInterval <-
     env "HEALTH_CHECK_INTERVAL" 30 readMaybe
+  bloom <-
+    env "BLOOM" False parseBool
   return Config {version = False, ..}
   where
     tickerString =
@@ -502,11 +505,11 @@ config c = do
         <> showDefault
         <> value c.priceHistoryURL
   noBlockchainInfo <-
-    flag c.noBlockchainInfo False $
+    flag c.noBlockchainInfo True $
       long "no-blockchain-info"
         <> help "Disable Blockchain.info-style API endpoints"
   noSlow <-
-    flag c.noSlow False $
+    flag c.noSlow True $
       long "no-slow"
         <> help "Disable potentially slow API endpoints"
   healthCheckInterval <-
@@ -516,6 +519,10 @@ config c = do
         <> help "Background check update interval"
         <> showDefault
         <> value c.healthCheckInterval
+  bloom <-
+    flag c.bloom True $
+      long "bloom"
+        <> help "RocksDB Bloom filters"
   pure Config {..}
 
 networkReader :: String -> Either String Network
@@ -573,7 +580,8 @@ run cfg =
                 maxPeerLife = fromIntegral cfg.maxPeerLife,
                 connect = withConnection,
                 stats = stats,
-                redisSyncInterval = cfg.redisSyncInterval
+                redisSyncInterval = cfg.redisSyncInterval,
+                bloom = cfg.bloom
               }
       lift $
         runWeb

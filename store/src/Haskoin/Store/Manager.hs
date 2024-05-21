@@ -154,7 +154,9 @@ data StoreConfig = StoreConfig
     -- | StatsD
     stats :: !(Maybe Stats),
     -- | sync mempool against cache every this many seconds
-    redisSyncInterval :: !Int
+    redisSyncInterval :: !Int,
+    -- | database Bloom filters
+    bloom :: !Bool
   }
 
 withStore ::
@@ -199,6 +201,7 @@ connectDB cfg f = do
     cfg.initGap
     cfg.gap
     cfg.db
+    cfg.bloom
     stats
     f
 

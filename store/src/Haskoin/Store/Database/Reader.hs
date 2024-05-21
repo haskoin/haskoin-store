@@ -130,11 +130,12 @@ withDatabaseReader ::
   Word32 ->
   Word32 ->
   FilePath ->
+  Bool ->
   Maybe DataMetrics ->
   DatabaseReaderT m a ->
   m a
-withDatabaseReader net ctx igap gap dir stats f =
-  withDBCF dir cfg columnFamilyConfig $ \db -> do
+withDatabaseReader net ctx igap gap dir bloom stats f =
+  withDBCF dir cfg (columnFamilyConfig bloom) $ \db -> do
     let bdb =
           DatabaseReader
             { db = db,
@@ -149,16 +150,16 @@ withDatabaseReader net ctx igap gap dir stats f =
   where
     cfg = def {createIfMissing = True}
 
-columnFamilyConfig :: [(String, Config)]
-columnFamilyConfig =
-  [ ("addr-tx", def {prefixLength = Just 22, bloomFilter = True}),
-    ("addr-out", def {prefixLength = Just 22, bloomFilter = True}),
-    ("tx", def {prefixLength = Just 33, bloomFilter = True}),
-    ("spender", def {prefixLength = Just 33, bloomFilter = True}), -- unused
-    ("unspent", def {prefixLength = Just 37, bloomFilter = True}),
-    ("block", def {prefixLength = Just 33, bloomFilter = True}),
-    ("height", def {prefixLength = Nothing, bloomFilter = True}),
-    ("balance", def {prefixLength = Just 22, bloomFilter = True})
+columnFamilyConfig :: Bool -> [(String, Config)]
+columnFamilyConfig bloom =
+  [ ("addr-tx", def {prefixLength = Just 22, bloomFilter = bloom}),
+    ("addr-out", def {prefixLength = Just 22, bloomFilter = bloom}),
+    ("tx", def {prefixLength = Just 33, bloomFilter = bloom}),
+    ("spender", def {prefixLength = Just 33, bloomFilter = bloom}), -- unused
+    ("unspent", def {prefixLength = Just 37, bloomFilter = bloom}),
+    ("block", def {prefixLength = Just 33, bloomFilter = bloom}),
+    ("height", def {prefixLength = Nothing, bloomFilter = bloom}),
+    ("balance", def {prefixLength = Just 22, bloomFilter = bloom})
   ]
 
 addrTxCF :: DB -> ColumnFamily
