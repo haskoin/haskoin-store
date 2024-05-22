@@ -5,12 +5,12 @@
 
 packages:
 - completed:
-    hackage: statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
+    hackage: statsd-rupp-0.5.0.0@sha256:04049a06a6a92aaecd052d1caa36321bfc68c43bcc8e48e93b1f87218c182e0b,2017
     pantry-tree:
-      sha256: 97fa7f2d70f00ef9d57da9b2d590187c6ad4b653248697ceab1423d52101ebfa
-      size: 457
+      sha256: 505c27d0bf0e2c7073437823cf9ec0e557acb06edfc66c6d2718abb39d83669b
+      size: 458
   original:
-    hackage: statsd-rupp-0.4.0.4@sha256:5b6c290488e2117ee9d19f3e836ae349f2756103b2bd7ac3c2102e0b1be156a9,2017
+    hackage: statsd-rupp-0.5.0.0@sha256:04049a06a6a92aaecd052d1caa36321bfc68c43bcc8e48e93b1f87218c182e0b,2017
 - completed:
     hackage: nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
     pantry-tree:
