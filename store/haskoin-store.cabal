@@ -11,8 +11,7 @@ description:    Please see the README on GitHub at <https://github.com/haskoin/h
 category:       Bitcoin, Finance, Network
 homepage:       http://github.com/haskoin/haskoin-store#readme
 bug-reports:    http://github.com/haskoin/haskoin-store/issues
-author:         Jean-Pierre Rupp,
-                Levente Kurusa
+author:         Jean-Pierre Rupp
 maintainer:     jprupp@protonmail.ch
 license:        MIT
 license-file:   LICENSE

@@ -3,9 +3,7 @@ version: 1.5.6
 synopsis: Storage and index for Bitcoin and Bitcoin Cash
 description: Please see the README on GitHub at <https://github.com/haskoin/haskoin-store#readme>
 category: Bitcoin, Finance, Network
-author:
-  - Jean-Pierre Rupp
-  - Levente Kurusa
+author: Jean-Pierre Rupp
 maintainer: jprupp@protonmail.ch
 license: MIT
 license-file: LICENSE
