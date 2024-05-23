@@ -33,12 +33,12 @@ packages:
   original:
     hackage: haskoin-core-1.1.0@sha256:16c9bb689da0efdcedf571de7b0f0e7aa2df8c0c546b8ec7ad0c0fbec85ab135,5639
 - completed:
-    hackage: haskoin-node-1.1.1@sha256:81d17730375abede679585f703b17df6e0c9847019dedd4c5c2a118b036f3bd9,2276
+    hackage: haskoin-node-1.1.2@sha256:e8ba64c524d8aeafa161eec96274e0c139a381e115a78bf526bd2528bf2ab498,2276
     pantry-tree:
-      sha256: 8fea396e3f841cb4083fa5169d0f6723fdbccee2ed670b7f442baa09ec47f6c6
+      sha256: 97949aa847944db10504dbba501f5c942e9232f6a1eb512a2b818e165dbc4086
       size: 636
   original:
-    hackage: haskoin-node-1.1.1@sha256:81d17730375abede679585f703b17df6e0c9847019dedd4c5c2a118b036f3bd9,2276
+    hackage: haskoin-node-1.1.2@sha256:e8ba64c524d8aeafa161eec96274e0c139a381e115a78bf526bd2528bf2ab498,2276
 snapshots:
 - completed:
     sha256: 0d34e2679d476592dda96c9105336dc3985a9303b9ece8684b4e2db8e4d98223
