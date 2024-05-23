@@ -223,7 +223,8 @@ data BlockStore = BlockStore
     peer :: !(TVar (Maybe Syncing)),
     txs :: !(TVar (HashMap TxHash PendingTx)),
     requested :: !(TVar (HashSet TxHash)),
-    metrics :: !(Maybe StoreMetrics)
+    metrics :: !(Maybe StoreMetrics),
+    syncedMempool :: !(TVar (HashSet Text))
   }
 
 data StoreMetrics = StoreMetrics
@@ -382,6 +383,7 @@ withBlockStore cfg action = do
   pb <- newTVarIO Nothing
   ts <- newTVarIO HashMap.empty
   rq <- newTVarIO HashSet.empty
+  sy <- newTVarIO HashSet.empty
   inbox <- newInbox
   metrics <- newStoreMetrics cfg
   let r =
@@ -391,7 +393,8 @@ withBlockStore cfg action = do
             peer = pb,
             txs = ts,
             requested = rq,
-            metrics = metrics
+            metrics = metrics,
+            syncedMempool = sy
           }
   withAsync (runReaderT (go inbox) r) $ \a -> do
     link a
@@ -456,22 +459,22 @@ isInSync =
         then clearSyncingState >> return True
         else return False
 
+guardSync :: (MonadLoggerIO m) => BlockT m () -> BlockT m ()
+guardSync f = isInSync >>= \s -> when s f
+
 guardMempool :: (Monad m) => BlockT m () -> BlockT m ()
-guardMempool f = do
-  n <- asks (.config.noMempool)
-  unless n f
+guardMempool f = asks (.config.noMempool) >>= \n -> unless n f
 
-syncMempool :: (Monad m) => BlockT m () -> BlockT m ()
-syncMempool f = do
-  s <- asks (.config.syncMempool)
-  when s f
-
-requestMempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
-requestMempool p =
-  guardMempool . syncMempool $
-    isInSync >>= \s -> when s $ do
+syncMempool :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
+syncMempool p =
+  guardMempool . guardSync $ do
+    s <- asks (.config.syncMempool)
+    m <- asks (.syncedMempool)
+    y <- not . HashSet.member p.label <$> readTVarIO m
+    when (s && y) $ do
       $(logDebugS) "BlockStore" $
         "Requesting mempool from peer: " <> p.label
+      atomically . modifyTVar m $ HashSet.insert p.label
       MMempool `sendMessage` p
 
 processBlock ::
@@ -525,7 +528,7 @@ processBlock peer block = void . runMaybeT $ do
         False -> syncMe
         True -> do
           updateOrphans
-          requestMempool peer
+          syncMempool peer
     failure e = do
       $(logErrorS) "BlockStore" $
         "Error importing block "
@@ -811,16 +814,14 @@ processTxs ::
   Peer ->
   [TxHash] ->
   BlockT m ()
-processTxs p hs = guardMempool $ do
-  s <- isInSync
-  when s $ do
-    $(logDebugS) "BlockStore" $
-      "Received inventory with "
-        <> cs (show (length hs))
-        <> " transactions from peer: "
-        <> p.label
-    xs <- catMaybes <$> zip_counter process_tx
-    unless (null xs) $ go xs
+processTxs p hs = guardMempool . guardSync $ do
+  $(logDebugS) "BlockStore" $
+    "Received inventory with "
+      <> cs (show (length hs))
+      <> " transactions from peer: "
+      <> p.label
+  xs <- catMaybes <$> zip_counter process_tx
+  unless (null xs) $ go xs
   where
     len = length hs
     zip_counter = forM (zip [(1 :: Int) ..] hs) . uncurry
@@ -1039,6 +1040,8 @@ finishPeer p = do
   readTVarIO box >>= \case
     Just Syncing {peer = p'} | p == p' -> reset_it box
     _ -> return ()
+  y <- asks (.syncedMempool)
+  atomically $ modifyTVar y $ HashSet.delete p.label
   where
     reset_it box = do
       atomically $ writeTVar box Nothing
@@ -1090,7 +1093,7 @@ trySyncing =
 trySyncingPeer :: (MonadUnliftIO m, MonadLoggerIO m) => Peer -> BlockT m ()
 trySyncingPeer p =
   isInSync >>= \case
-    True -> requestMempool p
+    True -> syncMempool p
     False ->
       trySetPeer p >>= \case
         False -> return ()
