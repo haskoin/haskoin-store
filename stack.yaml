@@ -1,4 +1,4 @@
-resolver: nightly-2024-05-19
+resolver: nightly-2024-05-23
 ghc-options:
   "$everything": -O2
 nix:
@@ -17,4 +17,4 @@ extra-deps:
   - nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
   - secp256k1-haskell-1.2.0@sha256:1a21581b0c54be26e1fb706d06dce51ef10cb72c13abfc3614a70189f23d6d50,2235
   - haskoin-core-1.1.0@sha256:16c9bb689da0efdcedf571de7b0f0e7aa2df8c0c546b8ec7ad0c0fbec85ab135,5639
-  - haskoin-node-1.1.0@sha256:9d417ee5c38167807c9556044597758f821946da932382a618acd3f7b694a878,2276
+  - haskoin-node-1.1.1@sha256:81d17730375abede679585f703b17df6e0c9847019dedd4c5c2a118b036f3bd9,2276

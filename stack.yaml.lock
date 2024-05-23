@@ -33,15 +33,15 @@ packages:
   original:
     hackage: haskoin-core-1.1.0@sha256:16c9bb689da0efdcedf571de7b0f0e7aa2df8c0c546b8ec7ad0c0fbec85ab135,5639
 - completed:
-    hackage: haskoin-node-1.1.0@sha256:9d417ee5c38167807c9556044597758f821946da932382a618acd3f7b694a878,2276
+    hackage: haskoin-node-1.1.1@sha256:81d17730375abede679585f703b17df6e0c9847019dedd4c5c2a118b036f3bd9,2276
     pantry-tree:
-      sha256: 20f9b413e24b06870f93e89d6e2ca598680f58af139ad5d2f621ee7c9f56add2
+      sha256: 8fea396e3f841cb4083fa5169d0f6723fdbccee2ed670b7f442baa09ec47f6c6
       size: 636
   original:
-    hackage: haskoin-node-1.1.0@sha256:9d417ee5c38167807c9556044597758f821946da932382a618acd3f7b694a878,2276
+    hackage: haskoin-node-1.1.1@sha256:81d17730375abede679585f703b17df6e0c9847019dedd4c5c2a118b036f3bd9,2276
 snapshots:
 - completed:
-    sha256: 4ceff61a263b1756af4b9fa71b47482f34c752a653906d51ae5227890d4490be
-    size: 640468
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2024/5/19.yaml
-  original: nightly-2024-05-19
+    sha256: 0d34e2679d476592dda96c9105336dc3985a9303b9ece8684b4e2db8e4d98223
+    size: 646028
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2024/5/23.yaml
+  original: nightly-2024-05-23
