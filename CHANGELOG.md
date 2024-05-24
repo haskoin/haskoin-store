@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html)
 
+## [1.5.10] - 2024-05-24
+
+### Fixed
+
+- Prune obsolete transactions from outgoing peer requests.
+- Remove unnecessary module imports.
+
 ## [1.5.9] - 2024-05-23
 
 ### Fixed

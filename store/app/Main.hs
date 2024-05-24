@@ -13,7 +13,6 @@
 
 module Main (main) where
 
-import Control.Applicative ((<|>))
 import Control.Monad (when)
 import Control.Monad.Cont (ContT (ContT), runContT)
 import Control.Monad.Logger
@@ -23,7 +22,6 @@ import Control.Monad.Logger
     runStderrLoggingT,
   )
 import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Char (toLower)
 import Data.Default (Default (..))
 import Data.List (intercalate)

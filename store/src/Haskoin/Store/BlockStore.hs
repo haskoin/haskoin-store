@@ -623,7 +623,7 @@ pruneOrphans = guardMempool $ do
   ts <- asks (.txs)
   now <- liftIO getCurrentTime
   atomically . modifyTVar ts . HashMap.filter $ \p ->
-    now `diffUTCTime` p.time > 600
+    now `diffUTCTime` p.time > 3600
 
 addPendingTx :: (MonadIO m) => PendingTx -> BlockT m ()
 addPendingTx p = do
@@ -836,10 +836,10 @@ processTxs p hs = guardMempool . guardSync $ do
               <> " "
               <> txHashToHex h
               <> ": "
-              <> "Pending"
+              <> "Already Pending"
           return Nothing
         False ->
-          getActiveTxData h >>= \case
+          getTxData h >>= \case
             Just _ -> do
               $(logDebugS) "BlockStore" $
                 "Tx "
