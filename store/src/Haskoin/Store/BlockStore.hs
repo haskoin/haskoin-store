@@ -93,7 +93,8 @@ import Data.Time.Clock
     getCurrentTime,
   )
 import Data.Time.Clock.POSIX
-  ( posixSecondsToUTCTime,
+  ( getPOSIXTime,
+    posixSecondsToUTCTime,
     utcTimeToPOSIXSeconds,
   )
 import Data.Time.Format
@@ -232,7 +233,8 @@ data StoreMetrics = StoreMetrics
     headers :: !StatGauge,
     queuedTxs :: !StatGauge,
     peers :: !StatGauge,
-    mempool :: !StatGauge
+    mempool :: !StatGauge,
+    block :: !StatTiming
   }
 
 newStoreMetrics :: (MonadIO m) => BlockStoreConfig -> m (Maybe StoreMetrics)
@@ -251,9 +253,11 @@ newStoreMetrics cfg =
     queuedTxs <- g s "queued_txs" 0
     peers <- g s "peers" (length p)
     mempool <- g s "mempool" (length m)
+    block <- t s "block" 0
     return StoreMetrics {..}
   where
     g s x = newStatGauge s ("store." <> x)
+    t s x = newStatTiming s ("store." <> x)
 
 setStoreHeight :: (MonadIO m) => BlockT m ()
 setStoreHeight = void $ runMaybeT $ do
@@ -285,6 +289,19 @@ setMempoolSize = void $ runMaybeT $ do
   m <- MaybeT (asks (.metrics))
   p <- lift getMempool
   setGauge m.mempool (length p)
+
+withBlockTiming :: (MonadIO m) => BlockT m (Either l r) -> BlockT m (Either l r)
+withBlockTiming go = do
+  asks (.metrics) >>= \case
+    Just m -> do
+      start <- round . (* 1000) <$> liftIO getPOSIXTime
+      go >>= \case
+        Right x -> do
+          end <- round . (* 1000) <$> liftIO getPOSIXTime
+          addTiming m.block (end - start)
+          return (Right x)
+        Left y -> return (Left y)
+    Nothing -> go
 
 -- | Configuration for a block store.
 data BlockStoreConfig = BlockStoreConfig
@@ -511,8 +528,9 @@ processBlock peer block = void . runMaybeT $ do
       <> peer.label
   net <- lift getNetwork
   ctx <- lift getCtx
-  lift . notify (Just block) $
-    runImport net ctx (importBlock block node) >>= \case
+  lift . notify (Just block) $ do
+    ret <- withBlockTiming $ runImport net ctx (importBlock block node)
+    case ret of
       Left e -> failure e
       Right _ -> success node
   where
