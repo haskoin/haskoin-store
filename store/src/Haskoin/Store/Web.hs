@@ -1873,7 +1873,11 @@ scottyMultiAddr =
           getBlock bh >>= \case
             Nothing -> raise ThingNotFound
             Just b -> return b
-    get_prune = fmap not $ param "noCompact" `rescue` return False
+    get_prune =
+      fmap not $
+        param "noCompact"
+          `rescue` param "no_compact"
+          `rescue` return False
     only_show_xbals sxpubs =
       HashMap.filterWithKey (\k _ -> k.key `HashSet.member` sxpubs)
     only_show_xspecs sxpubs =

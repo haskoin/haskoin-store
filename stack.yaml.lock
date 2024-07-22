@@ -41,7 +41,7 @@ packages:
     hackage: haskoin-node-1.1.3@sha256:4090a2332e037a59d9ef733785b27416bc5e05602cc13cdc7ff274467acca88f,2276
 snapshots:
 - completed:
-    sha256: 0d34e2679d476592dda96c9105336dc3985a9303b9ece8684b4e2db8e4d98223
-    size: 646028
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2024/5/23.yaml
-  original: nightly-2024-05-23
+    sha256: e9de8c2b87275282877fd648d27895f6185ebc7fdae68fa949e04cbd6b34d64e
+    size: 656209
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2024/7/22.yaml
+  original: nightly-2024-07-22
