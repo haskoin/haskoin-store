@@ -1,4 +1,4 @@
-resolver: nightly-2024-07-22
+resolver: nightly-2024-10-25
 ghc-options:
   "$everything": -O2
 nix:
