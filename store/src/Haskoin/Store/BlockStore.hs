@@ -840,13 +840,14 @@ pruneMempool =
         txs = take 1000 $ map snd $ filter ((< thresh) . fst) mempool
     net <- getNetwork
     ctx <- getCtx
-    $(logInfoS) "BlockStore" $
-      "Deleting " <> cs (show (length txs)) <> " old transactions from mempool"
-    runImport net ctx (mapM_ (deleteUnconfirmedTx False) txs) >>= \case
-      Left e ->
-        $(logErrorS) "BlockStore" $
-          "Error pruning mempool: " <> cs (show e)
-      Right () -> return ()
+    when (length txs > 0) $ do
+      $(logInfoS) "BlockStore" $
+        "Deleting " <> cs (show (length txs)) <> " old transactions from mempool"
+      runImport net ctx (mapM_ (deleteUnconfirmedTx False) txs) >>= \case
+        Left e ->
+          $(logErrorS) "BlockStore" $
+            "Error pruning mempool: " <> cs (show e)
+        Right () -> return ()
 
 processTxs ::
   (MonadLoggerIO m) =>
