@@ -837,7 +837,7 @@ pruneMempool =
     mempool <- getMempool
     time <- (floor . utcTimeToPOSIXSeconds) <$> liftIO getCurrentTime
     let thresh = time - (fromIntegral days * 24 * 60 * 60)
-        txs = map snd $ filter ((< thresh) . fst) mempool
+        txs = take 1000 $ map snd $ filter ((< thresh) . fst) mempool
     net <- getNetwork
     ctx <- getCtx
     $(logInfoS) "BlockStore" $

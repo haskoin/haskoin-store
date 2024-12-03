@@ -39,9 +39,16 @@ packages:
       size: 636
   original:
     hackage: haskoin-node-1.1.3@sha256:4090a2332e037a59d9ef733785b27416bc5e05602cc13cdc7ff274467acca88f,2276
+- completed:
+    hackage: scotty-0.22@sha256:b3c799b3c4896176342062c1140c290ffb9a8d81e6da2ea3e12f7a83cbda78d4,6013
+    pantry-tree:
+      sha256: ec781405d9d771ad8e0b0d6f350b4c4296104665668fc7263ba36839f674d835
+      size: 2138
+  original:
+    hackage: scotty-0.22@sha256:b3c799b3c4896176342062c1140c290ffb9a8d81e6da2ea3e12f7a83cbda78d4,6013
 snapshots:
 - completed:
-    sha256: ce8a380780db783b9ae69f782659f0b6a6d3e0deed624999ddbe520c3dcd5948
-    size: 668755
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2024/10/25.yaml
-  original: nightly-2024-10-25
+    sha256: 08bd13ce621b41a8f5e51456b38d5b46d7783ce114a50ab604d6bbab0d002146
+    size: 720271
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/22/43.yaml
+  original: lts-22.43
