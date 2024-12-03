@@ -825,7 +825,7 @@ processMempool = guardMempool . notify Nothing $ do
               Left e -> report_error e
               Right _ -> return ()
     report_error e = do
-      $(logErrorS) "BlockImport" $
+      $(logErrorS) "BlockStore" $
         "Error processing mempool: " <> cs (show e)
       throwIO e
 
@@ -840,9 +840,11 @@ pruneMempool =
         txs = map snd $ filter ((< thresh) . fst) mempool
     net <- getNetwork
     ctx <- getCtx
+    $(logInfoS) "BlockStore" $
+      "Deleting " <> cs (show (length txs)) <> " old transactions from mempool"
     runImport net ctx (mapM_ (deleteUnconfirmedTx False) txs) >>= \case
       Left e ->
-        $(logErrorS) "BlockImport" $
+        $(logErrorS) "BlockStore" $
           "Error pruning mempool: " <> cs (show e)
       Right () -> return ()
 
@@ -1211,12 +1213,7 @@ pingMe :: (MonadLoggerIO m) => Mailbox BlockStoreMessage -> m ()
 pingMe mbox =
   forever $ do
     BlockPing `query` mbox
-    delay <-
-      liftIO $
-        randomRIO
-          ( 100 * 1000,
-            1000 * 1000
-          )
+    delay <- liftIO $ randomRIO (100 * 1000, 1000 * 1000)
     threadDelay delay
 
 blockStorePeerConnect :: (MonadIO m) => Peer -> BlockStore -> m ()
