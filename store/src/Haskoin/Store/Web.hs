@@ -649,11 +649,6 @@ handlePaths cfg = do
     toEncoding
     toJSON
   pathCompact
-    (GetMempool <$> paramOptional <*> parseOffset)
-    (fmap SerialList . scottyMempool)
-    toEncoding
-    toJSON
-  pathCompact
     (GetAddrTxs <$> paramCapture <*> parseLimits)
     (fmap SerialList . scottyAddrTxs)
     toEncoding
@@ -679,8 +674,13 @@ handlePaths cfg = do
     toEncoding
     toJSON
   S.get "/events" scottyEvents
-  S.get "/dbstats" scottyDbStats
   unless cfg.noSlow $ do
+    S.get "/dbstats" scottyDbStats
+    pathCompact
+      (GetMempool <$> paramOptional <*> parseOffset)
+      (fmap SerialList . scottyMempool)
+      toEncoding
+      toJSON
     pathCompact
       (GetBlocks <$> paramRequired <*> paramDef)
       (fmap SerialList . scottyBlocks)

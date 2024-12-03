@@ -1855,6 +1855,7 @@ paths:
     get:
       tags:
         - Transaction
+        - Slow
       operationId: getMempool
       summary: Mempool Transaction Hashes
       parameters:

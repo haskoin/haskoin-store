@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [1.5.14]
 
+### Changed
+
+- Move `/dbstats` and `/mempool` to slow endpoints section.
+
 ### Added
 
 - Cull old transactions from mempool automatically.
