@@ -834,10 +834,10 @@ pruneMempool =
   guardMempool . notify Nothing $ do
   days <- asks (.config.mempoolTimeout)
   when (days > 0) $ do
-    mempool <- getMempool
+    mempool <- reverse <$> getMempool
     time <- (floor . utcTimeToPOSIXSeconds) <$> liftIO getCurrentTime
     let thresh = time - (fromIntegral days * 24 * 60 * 60)
-        txs = take 1000 $ map snd $ filter ((< thresh) . fst) mempool
+        txs = take 1000 $ map snd $ takeWhile ((< thresh) . fst) mempool
     net <- getNetwork
     ctx <- getCtx
     when (length txs > 0) $ do
