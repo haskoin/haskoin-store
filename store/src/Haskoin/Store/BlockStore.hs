@@ -323,6 +323,8 @@ data BlockStoreConfig = BlockStoreConfig
     -- | sync mempool from peers
     syncMempool :: !Bool,
     -- | disconnect syncing peer if inactive for this long
+    mempoolTimeout :: !Int,
+    -- | delete transactions older than this number of days from mempool
     peerTimeout :: !NominalDiffTime,
     stats :: !(Maybe Stats)
   }
@@ -827,6 +829,23 @@ processMempool = guardMempool . notify Nothing $ do
         "Error processing mempool: " <> cs (show e)
       throwIO e
 
+pruneMempool :: (MonadLoggerIO m) => BlockT m ()
+pruneMempool =
+  guardMempool . notify Nothing $ do
+  days <- asks (.config.mempoolTimeout)
+  when (days > 0) $ do
+    mempool <- getMempool
+    time <- (floor . utcTimeToPOSIXSeconds) <$> liftIO getCurrentTime
+    let thresh = time - (fromIntegral days * 24 * 60 * 60)
+        txs = map snd $ filter ((< thresh) . fst) mempool
+    net <- getNetwork
+    ctx <- getCtx
+    runImport net ctx (mapM_ (deleteUnconfirmedTx False) txs) >>= \case
+      Left e ->
+        $(logErrorS) "BlockImport" $
+          "Error pruning mempool: " <> cs (show e)
+      Right () -> return ()
+
 processTxs ::
   (MonadLoggerIO m) =>
   Peer ->
@@ -1184,6 +1203,7 @@ processBlockStoreMessage (BlockPing r) = do
   trySyncing
   processMempool
   pruneOrphans
+  pruneMempool
   checkTime
   atomically (r ())
 

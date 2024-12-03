@@ -104,6 +104,7 @@ withTestStore net ctx t f =
                 noMempool = False,
                 wipeMempool = False,
                 syncMempool = False,
+                mempoolTimeout = 14,
                 peerTimeout = 60,
                 maxPeerLife = 48 * 3600,
                 connect = dummyPeerConnect net ad,

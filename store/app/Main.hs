@@ -115,6 +115,7 @@ data Config = Config
     syncMempool :: !Bool,
     peerTimeout :: !Int,
     maxPeerLife :: !Int,
+    mempoolTimeout :: !Int,
     maxPeers :: !Int,
     statsd :: !Bool,
     statsdHost :: !String,
@@ -176,6 +177,8 @@ defConfig = do
     env "WIPE_MEMPOOL" False parseBool
   syncMempool <-
     env "SYNC_MEMPOOL" False parseBool
+  mempoolTimeout <-
+    env "MEMPOOL_TIMEOUT" 14 readMaybe
   peerTimeout <-
     env "PEER_TIMEOUT" 120 readMaybe
   maxPeerLife <-
@@ -427,6 +430,13 @@ config c = do
     flag c.syncMempool True $
       long "sync-mempool"
         <> help "Attempt to download peer mempools"
+  mempoolTimeout <-
+    option auto $
+      metavar "DAYS"
+        <> long "mempool-timeout"
+        <> help "Cull old mempool transactions"
+        <> showDefault
+        <> value c.mempoolTimeout
   peerTimeout <-
     option auto $
       metavar "SECONDS"
@@ -574,6 +584,7 @@ run cfg =
                 wipeMempool = cfg.wipeMempool,
                 noMempool = cfg.noMempool,
                 syncMempool = cfg.syncMempool,
+                mempoolTimeout = cfg.mempoolTimeout,
                 peerTimeout = fromIntegral cfg.peerTimeout,
                 maxPeerLife = fromIntegral cfg.maxPeerLife,
                 connect = withConnection,
