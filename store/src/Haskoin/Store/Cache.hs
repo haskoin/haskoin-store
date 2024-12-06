@@ -732,9 +732,8 @@ refreshLock l = void . runRedis $ do
           }
   Redis.setOpts l "locked" opts
 
-unlockIt :: (MonadLoggerIO m) => ByteString -> Bool -> CacheX m ()
-unlockIt l False = return ()
-unlockIt l True = void $ runRedis (Redis.del [l])
+unlockIt :: (MonadLoggerIO m) => ByteString -> CacheX m ()
+unlockIt l = void $ runRedis (Redis.del [l])
 
 withLock ::
   (MonadLoggerIO m, MonadUnliftIO m) =>
@@ -742,7 +741,7 @@ withLock ::
   CacheX m a ->
   CacheX m (Maybe a)
 withLock l f =
-  bracket (lockIt l) (unlockIt l) $ \case
+  bracket (lockIt l) (`when` unlockIt l) $ \case
     True -> Just <$> go
     False -> return Nothing
   where
