@@ -254,7 +254,7 @@ data WebConfig = WebConfig
     tickerRefresh :: !Int,
     tickerURL :: !String,
     priceHistoryURL :: !String,
-    noSlow :: !Bool,
+    noXPub :: !Bool,
     noBlockchainInfo :: !Bool,
     healthCheckInterval :: !Int
   }
@@ -516,7 +516,7 @@ runWeb config = do
         S.notFound $ raise ThingNotFound
   where
     priceUpdater session =
-      unless (config.noSlow || config.noBlockchainInfo)
+      unless config.noBlockchainInfo
         . price
           config.store.net
           session
@@ -674,108 +674,108 @@ handlePaths cfg = do
     toEncoding
     toJSON
   S.get "/events" scottyEvents
-  unless cfg.noSlow $ do
-    S.get "/dbstats" scottyDbStats
-    pathCompact
-      (GetMempool <$> paramOptional <*> parseOffset)
-      (fmap SerialList . scottyMempool)
-      toEncoding
-      toJSON
-    pathCompact
-      (GetBlocks <$> paramRequired <*> paramDef)
-      (fmap SerialList . scottyBlocks)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetBlockRaw <$> paramCapture)
-      scottyBlockRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetBlockBestRaw & return)
-      scottyBlockBestRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetBlockLatest <$> paramDef)
-      (fmap SerialList . scottyBlockLatest)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetBlockHeights <$> paramRequired <*> paramDef)
-      (fmap SerialList . scottyBlockHeights)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetBlockHeightRaw <$> paramCapture)
-      scottyBlockHeightRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetBlockTimeRaw <$> paramCapture)
-      scottyBlockTimeRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetBlockMTPRaw <$> paramCapture)
-      scottyBlockMTPRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetTxs <$> paramRequired)
-      (fmap SerialList . scottyTxs)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetTxsRaw <$> paramRequired)
-      scottyTxsRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetTxsBlock <$> paramCapture)
-      (fmap SerialList . scottyTxsBlock)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetTxsBlockRaw <$> paramCapture)
-      scottyTxsBlockRaw
-      toEncoding
-      toJSON
-    pathCompact
-      (GetTxAfter <$> paramCapture <*> paramCapture)
-      scottyTxAfter
-      toEncoding
-      toJSON
-    pathCompact
-      (GetAddrsTxs <$> paramRequired <*> parseLimits)
-      (fmap SerialList . scottyAddrsTxs)
-      toEncoding
-      toJSON
-    pathCompact
-      (GetAddrTxsFull <$> paramCapture <*> parseLimits)
-      (fmap SerialList . scottyAddrTxsFull)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetAddrsTxsFull <$> paramRequired <*> parseLimits)
-      (fmap SerialList . scottyAddrsTxsFull)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetAddrsBalance <$> paramRequired)
-      (fmap SerialList . scottyAddrsBalance)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetAddrsUnspent <$> paramRequired <*> parseLimits)
-      (fmap SerialList . scottyAddrsUnspent)
-      (list (marshalEncoding net) . (.get))
-      (json_list (marshalValue net) . (.get))
-    pathCompact
-      (GetXPub <$> paramCapture <*> paramDef <*> paramDef)
-      scottyXPub
-      toEncoding
-      toJSON
+  S.get "/dbstats" scottyDbStats
+  pathCompact
+    (GetMempool <$> paramOptional <*> parseOffset)
+    (fmap SerialList . scottyMempool)
+    toEncoding
+    toJSON
+  pathCompact
+    (GetBlocks <$> paramRequired <*> paramDef)
+    (fmap SerialList . scottyBlocks)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetBlockRaw <$> paramCapture)
+    scottyBlockRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetBlockBestRaw & return)
+    scottyBlockBestRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetBlockLatest <$> paramDef)
+    (fmap SerialList . scottyBlockLatest)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetBlockHeights <$> paramRequired <*> paramDef)
+    (fmap SerialList . scottyBlockHeights)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetBlockHeightRaw <$> paramCapture)
+    scottyBlockHeightRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetBlockTimeRaw <$> paramCapture)
+    scottyBlockTimeRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetBlockMTPRaw <$> paramCapture)
+    scottyBlockMTPRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetTxs <$> paramRequired)
+    (fmap SerialList . scottyTxs)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetTxsRaw <$> paramRequired)
+    scottyTxsRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetTxsBlock <$> paramCapture)
+    (fmap SerialList . scottyTxsBlock)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetTxsBlockRaw <$> paramCapture)
+    scottyTxsBlockRaw
+    toEncoding
+    toJSON
+  pathCompact
+    (GetTxAfter <$> paramCapture <*> paramCapture)
+    scottyTxAfter
+    toEncoding
+    toJSON
+  pathCompact
+    (GetAddrsTxs <$> paramRequired <*> parseLimits)
+    (fmap SerialList . scottyAddrsTxs)
+    toEncoding
+    toJSON
+  pathCompact
+    (GetAddrTxsFull <$> paramCapture <*> parseLimits)
+    (fmap SerialList . scottyAddrTxsFull)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetAddrsTxsFull <$> paramRequired <*> parseLimits)
+    (fmap SerialList . scottyAddrsTxsFull)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetAddrsBalance <$> paramRequired)
+    (fmap SerialList . scottyAddrsBalance)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetAddrsUnspent <$> paramRequired <*> parseLimits)
+    (fmap SerialList . scottyAddrsUnspent)
+    (list (marshalEncoding net) . (.get))
+    (json_list (marshalValue net) . (.get))
+  pathCompact
+    (GetXPub <$> paramCapture <*> paramDef <*> paramDef)
+    scottyXPub
+    toEncoding
+    toJSON
+  unless cfg.noXPub $ do
     pathCompact
       (GetXPubTxs <$> paramCapture <*> paramDef <*> parseLimits <*> paramDef)
       (fmap SerialList . scottyXPubTxs)
@@ -801,40 +801,40 @@ handlePaths cfg = do
       scottyDelXPub
       toEncoding
       toJSON
-    unless cfg.noBlockchainInfo $ do
-      S.post "/blockchain/multiaddr" scottyMultiAddr
-      S.get "/blockchain/multiaddr" scottyMultiAddr
-      S.get "/blockchain/balance" scottyShortBal
-      S.post "/blockchain/balance" scottyShortBal
-      S.get "/blockchain/rawaddr/:addr" scottyRawAddr
-      S.get "/blockchain/address/:addr" scottyRawAddr
-      S.get "/blockchain/xpub/:addr" scottyRawAddr
-      S.post "/blockchain/unspent" scottyBinfoUnspent
-      S.get "/blockchain/unspent" scottyBinfoUnspent
-      S.get "/blockchain/rawtx/:txid" scottyBinfoTx
-      S.get "/blockchain/rawblock/:block" scottyBinfoBlock
-      S.get "/blockchain/latestblock" scottyBinfoLatest
-      S.get "/blockchain/unconfirmed-transactions" scottyBinfoMempool
-      S.get "/blockchain/block-height/:height" scottyBinfoBlockHeight
-      S.get "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
-      S.get "/blockchain/export-history" scottyBinfoHistory
-      S.post "/blockchain/export-history" scottyBinfoHistory
-      S.get "/blockchain/q/addresstohash/:addr" scottyBinfoAddrToHash
-      S.get "/blockchain/q/hashtoaddress/:hash" scottyBinfoHashToAddr
-      S.get "/blockchain/q/addrpubkey/:pubkey" scottyBinfoAddrPubkey
-      S.get "/blockchain/q/pubkeyaddr/:addr" scottyBinfoPubKeyAddr
-      S.get "/blockchain/q/hashpubkey/:pubkey" scottyBinfoHashPubkey
-      S.get "/blockchain/q/getblockcount" scottyBinfoGetBlockCount
-      S.get "/blockchain/q/latesthash" scottyBinfoLatestHash
-      S.get "/blockchain/q/bcperblock" scottyBinfoSubsidy
-      S.get "/blockchain/q/txtotalbtcoutput/:txid" scottyBinfoTotalOut
-      S.get "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
-      S.get "/blockchain/q/txfee/:txid" scottyBinfoTxFees
-      S.get "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
-      S.get "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
-      S.get "/blockchain/q/getsentbyaddress/:addr" scottyBinfoSent
-      S.get "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
-      S.get "/blockchain/q/addressfirstseen/:addr" scottyFirstSeen
+  unless cfg.noBlockchainInfo $ do
+    S.post "/blockchain/multiaddr" scottyMultiAddr
+    S.get "/blockchain/multiaddr" scottyMultiAddr
+    S.get "/blockchain/balance" scottyShortBal
+    S.post "/blockchain/balance" scottyShortBal
+    S.get "/blockchain/rawaddr/:addr" scottyRawAddr
+    S.get "/blockchain/address/:addr" scottyRawAddr
+    S.get "/blockchain/xpub/:addr" scottyRawAddr
+    S.post "/blockchain/unspent" scottyBinfoUnspent
+    S.get "/blockchain/unspent" scottyBinfoUnspent
+    S.get "/blockchain/rawtx/:txid" scottyBinfoTx
+    S.get "/blockchain/rawblock/:block" scottyBinfoBlock
+    S.get "/blockchain/latestblock" scottyBinfoLatest
+    S.get "/blockchain/unconfirmed-transactions" scottyBinfoMempool
+    S.get "/blockchain/block-height/:height" scottyBinfoBlockHeight
+    S.get "/blockchain/blocks/:milliseconds" scottyBinfoBlocksDay
+    S.get "/blockchain/export-history" scottyBinfoHistory
+    S.post "/blockchain/export-history" scottyBinfoHistory
+    S.get "/blockchain/q/addresstohash/:addr" scottyBinfoAddrToHash
+    S.get "/blockchain/q/hashtoaddress/:hash" scottyBinfoHashToAddr
+    S.get "/blockchain/q/addrpubkey/:pubkey" scottyBinfoAddrPubkey
+    S.get "/blockchain/q/pubkeyaddr/:addr" scottyBinfoPubKeyAddr
+    S.get "/blockchain/q/hashpubkey/:pubkey" scottyBinfoHashPubkey
+    S.get "/blockchain/q/getblockcount" scottyBinfoGetBlockCount
+    S.get "/blockchain/q/latesthash" scottyBinfoLatestHash
+    S.get "/blockchain/q/bcperblock" scottyBinfoSubsidy
+    S.get "/blockchain/q/txtotalbtcoutput/:txid" scottyBinfoTotalOut
+    S.get "/blockchain/q/txtotalbtcinput/:txid" scottyBinfoTotalInput
+    S.get "/blockchain/q/txfee/:txid" scottyBinfoTxFees
+    S.get "/blockchain/q/txresult/:txid/:addr" scottyBinfoTxResult
+    S.get "/blockchain/q/getreceivedbyaddress/:addr" scottyBinfoReceived
+    S.get "/blockchain/q/getsentbyaddress/:addr" scottyBinfoSent
+    S.get "/blockchain/q/addressbalance/:addr" scottyBinfoAddrBalance
+    S.get "/blockchain/q/addressfirstseen/:addr" scottyFirstSeen
   where
     json_list f = toJSONList . map f
     net = cfg.store.net

@@ -127,7 +127,7 @@ data Config = Config
     tickerURL :: !String,
     priceHistoryURL :: !String,
     noBlockchainInfo :: !Bool,
-    noSlow :: !Bool,
+    noXPub :: !Bool,
     healthCheckInterval :: !Int,
     bloom :: !Bool
   }
@@ -205,8 +205,8 @@ defConfig = do
     env "PRICE_HISTORY_URL" priceHistoryString pure
   noBlockchainInfo <-
     env "NO_BLOCKCHAIN_INFO" False parseBool
-  noSlow <-
-    env "NO_SLOW" False parseBool
+  noXPub <-
+    env "NO_XPUB" False parseBool
   healthCheckInterval <-
     env "HEALTH_CHECK_INTERVAL" 30 readMaybe
   bloom <-
@@ -516,10 +516,10 @@ config c = do
     flag c.noBlockchainInfo True $
       long "no-blockchain-info"
         <> help "Disable Blockchain.info-style API endpoints"
-  noSlow <-
-    flag c.noSlow True $
+  noXPub <-
+    flag c.noXPub True $
       long "no-slow"
-        <> help "Disable potentially slow API endpoints"
+        <> help "Disable extended public key support"
   healthCheckInterval <-
     option auto $
       metavar "SECONDS"
@@ -608,7 +608,7 @@ run cfg =
               tickerRefresh = cfg.tickerRefresh,
               tickerURL = cfg.tickerURL,
               priceHistoryURL = cfg.priceHistoryURL,
-              noSlow = cfg.noSlow,
+              noXPub = cfg.noXPub,
               noBlockchainInfo = cfg.noBlockchainInfo,
               healthCheckInterval = cfg.healthCheckInterval
             }
