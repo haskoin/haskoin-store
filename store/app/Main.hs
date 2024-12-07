@@ -518,7 +518,7 @@ config c = do
         <> help "Disable Blockchain.info-style API endpoints"
   noXPub <-
     flag c.noXPub True $
-      long "no-slow"
+      long "no-xpub"
         <> help "Disable extended public key support"
   healthCheckInterval <-
     option auto $
