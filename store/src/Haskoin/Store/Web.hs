@@ -673,8 +673,6 @@ handlePaths cfg = do
     scottyHealth
     toEncoding
     toJSON
-  S.get "/events" scottyEvents
-  S.get "/dbstats" scottyDbStats
   pathCompact
     (GetMempool <$> paramOptional <*> parseOffset)
     (fmap SerialList . scottyMempool)
@@ -770,12 +768,14 @@ handlePaths cfg = do
     (fmap SerialList . scottyAddrsUnspent)
     (list (marshalEncoding net) . (.get))
     (json_list (marshalValue net) . (.get))
-  pathCompact
-    (GetXPub <$> paramCapture <*> paramDef <*> paramDef)
-    scottyXPub
-    toEncoding
-    toJSON
+  S.get "/events" scottyEvents
+  S.get "/dbstats" scottyDbStats
   unless cfg.noXPub $ do
+    pathCompact
+      (GetXPub <$> paramCapture <*> paramDef <*> paramDef)
+      scottyXPub
+      toEncoding
+      toJSON
     pathCompact
       (GetXPubTxs <$> paramCapture <*> paramDef <*> parseLimits <*> paramDef)
       (fmap SerialList . scottyXPubTxs)
