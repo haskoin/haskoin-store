@@ -11,44 +11,9 @@ packages:
       size: 458
   original:
     hackage: statsd-rupp-0.5.0.0@sha256:04049a06a6a92aaecd052d1caa36321bfc68c43bcc8e48e93b1f87218c182e0b,2017
-- completed:
-    hackage: nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
-    pantry-tree:
-      sha256: d08966e9cb80d17561c00fcf68c7c1045f75c2ea7655fdb5453576135f62cd35
-      size: 665
-  original:
-    hackage: nqe-0.6.5@sha256:de95cf47b1e87d2dad1d31ae15cdf0ec6d5869f3170d39259c870549fbaeae8b,1628
-- completed:
-    hackage: secp256k1-haskell-1.2.0@sha256:1a21581b0c54be26e1fb706d06dce51ef10cb72c13abfc3614a70189f23d6d50,2235
-    pantry-tree:
-      sha256: ab80e7d605c2c7aebd049271c4e677989515df011689b07141a385c2a63c950b
-      size: 882
-  original:
-    hackage: secp256k1-haskell-1.2.0@sha256:1a21581b0c54be26e1fb706d06dce51ef10cb72c13abfc3614a70189f23d6d50,2235
-- completed:
-    hackage: haskoin-core-1.1.0@sha256:16c9bb689da0efdcedf571de7b0f0e7aa2df8c0c546b8ec7ad0c0fbec85ab135,5639
-    pantry-tree:
-      sha256: 16644b424cbf3101ec7e129c5e9b1da009293d07899e09935553fd2667b3178c
-      size: 6681
-  original:
-    hackage: haskoin-core-1.1.0@sha256:16c9bb689da0efdcedf571de7b0f0e7aa2df8c0c546b8ec7ad0c0fbec85ab135,5639
-- completed:
-    hackage: haskoin-node-1.1.3@sha256:4090a2332e037a59d9ef733785b27416bc5e05602cc13cdc7ff274467acca88f,2276
-    pantry-tree:
-      sha256: c4427aeedeca2203879f39415959bae6de629fa0d3ace2259391f96e0b993869
-      size: 636
-  original:
-    hackage: haskoin-node-1.1.3@sha256:4090a2332e037a59d9ef733785b27416bc5e05602cc13cdc7ff274467acca88f,2276
-- completed:
-    hackage: scotty-0.22@sha256:b3c799b3c4896176342062c1140c290ffb9a8d81e6da2ea3e12f7a83cbda78d4,6013
-    pantry-tree:
-      sha256: ec781405d9d771ad8e0b0d6f350b4c4296104665668fc7263ba36839f674d835
-      size: 2138
-  original:
-    hackage: scotty-0.22@sha256:b3c799b3c4896176342062c1140c290ffb9a8d81e6da2ea3e12f7a83cbda78d4,6013
 snapshots:
 - completed:
-    sha256: 08bd13ce621b41a8f5e51456b38d5b46d7783ce114a50ab604d6bbab0d002146
-    size: 720271
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/22/43.yaml
-  original: lts-22.43
+    sha256: 9444fadfa30b67a93080254d53872478c087592ad64443e47c546cdcd13149ae
+    size: 678857
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/23/0.yaml
+  original: lts-23.0
